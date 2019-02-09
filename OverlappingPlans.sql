@@ -16,7 +16,7 @@ SELECT TOP (2147483647)
                        WHEN -1 
 				       THEN DATALENGTH(tx.text)  
                        ELSE ds.statement_end_offset  
-                   END - ds.statement_start_offset) / 2) + 1) AS text,
+                   END - ds.statement_start_offset) / 2) +1) AS text,
        qp.query_plan,
        ds.execution_count,
        ds.last_execution_time,
