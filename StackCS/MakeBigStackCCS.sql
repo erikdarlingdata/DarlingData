@@ -288,6 +288,6 @@ END;
 END;
 GO 
 
---EXEC dbo.make_big_stack @loops = 25, @truncate_tables = 1, @count_when_done = 1, @rebuild_when_done = 1;
+--EXEC dbo.make_big_stack_cs @loops = 25, @truncate_tables = 1, @count_when_done = 1, @rebuild_when_done = 1;
 
---EXEC dbo.make_big_stack @loops = 25, @truncate_tables = 0, @count_when_done = 1, @rebuild_when_done = 1;
+--EXEC dbo.make_big_stack_cs @loops = 25, @truncate_tables = 0, @count_when_done = 1, @rebuild_when_done = 1;
