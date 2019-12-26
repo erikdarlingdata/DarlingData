@@ -54,7 +54,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                 waits.wait_type,
                 deqmg.reserved_worker_count,
                 deqmg.used_worker_count,
-				deqp.query_plan
+		deqp.query_plan
     FROM        sys.dm_exec_query_memory_grants AS deqmg
     OUTER APPLY ( SELECT   TOP (1) *
                   FROM     sys.dm_os_waiting_tasks AS dowt
