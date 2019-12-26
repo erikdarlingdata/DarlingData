@@ -80,7 +80,7 @@ SET NOCOUNT, XACT_ABORT ON;
             deqrs.pool_id
     FROM sys.dm_exec_query_resource_semaphores AS deqrs
     WHERE deqrs.resource_semaphore_id = 0
-    AND   pool_id = 2
+    AND   deqrs.pool_id = 2
     OPTION(MAXDOP 1);
 
 
