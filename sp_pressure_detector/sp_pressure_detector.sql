@@ -8,31 +8,47 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-/*
-	Copyright (c) 2020 Erik Darling Data 
-  
-        https://erikdarlingdata.com/
-  
-        MIT License
-
-	Permission is hereby granted, free of charge, to any person obtaining a copy
-	of this software and associated documentation files (the "Software"), to deal
-	in the Software without restriction, including without limitation the rights
-	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-	copies of the Software, and to permit persons to whom the Software is
-	furnished to do so, subject to the following conditions:
-
-	The above copyright notice and this permission notice shall be included in all
-	copies or substantial portions of the Software.
-
-	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-	SOFTWARE.
-*/
+    /*
+    Check to see if the DAC is enabled.
+    If it's not, give people some helpful information.
+    */
+    IF ( SELECT c.value_in_use
+         FROM sys.configurations AS c
+         WHERE c.name = N'remote admin connections' ) = 0
+    BEGIN
+        SELECT 'This works a lot better on a troublesome server with the DAC enabled' AS message,
+    	       'EXEC sp_configure ''remote admin connections'', 1; RECONFIGURE;' AS command_to_run,
+    		'http://bit.ly/RemoteDAC' AS how_to_use_the_dac;
+    END
+    
+    /*
+    See if someone else is using the DAC.
+    Return some helpful information if they are.
+    */
+    IF EXISTS ( SELECT 1/0
+                FROM sys.endpoints AS ep
+                JOIN sys.dm_exec_sessions AS ses
+                    ON ep.endpoint_id = ses.endpoint_id
+                WHERE ep.name = N'Dedicated Admin Connection'
+                AND   ses.session_id <> @@SPID )
+    BEGIN
+        SELECT 'who stole the dac?' AS dac_thief,
+               ses.session_id,
+               ses.login_time,
+               ses.host_name,
+               ses.program_name,
+               ses.login_name,
+               ses.nt_domain,
+               ses.nt_user_name,
+               ses.status,
+               ses.last_request_start_time,
+               ses.last_request_end_time
+        FROM sys.endpoints AS ep
+        JOIN sys.dm_exec_sessions AS ses
+            ON ep.endpoint_id = ses.endpoint_id
+        WHERE ep.name = 'Dedicated Admin Connection'
+        AND   ses.session_id <> @@SPID;
+    END
 
 
     /*Memory Grant info*/
@@ -91,7 +107,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                MAX(osi.max_workers_count) - SUM(dos.active_workers_count) AS available_threads,
                SUM(dos.runnable_tasks_count) AS threads_waiting_for_cpu,
                SUM(dos.work_queue_count) AS requests_waiting_for_threads,
-               SUM(dos.current_workers_count) AS associated_workers
+               SUM(dos.current_workers_count) AS current_workers
     FROM       sys.dm_os_schedulers AS dos
     CROSS JOIN sys.dm_os_sys_info AS osi
     WHERE      dos.status = N'VISIBLE ONLINE'
