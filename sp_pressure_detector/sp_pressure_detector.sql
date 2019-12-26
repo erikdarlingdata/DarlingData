@@ -59,10 +59,10 @@ SET NOCOUNT, XACT_ABORT ON;
                   FROM     sys.dm_os_waiting_tasks AS dowt
                   WHERE    dowt.session_id = deqmg.session_id
                   ORDER BY dowt.session_id ) AS waits
-	CROSS APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
+    CROSS APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
     WHERE deqmg.session_id <> @@SPID
     ORDER BY deqmg.request_time
-	OPTION(MAXDOP 1);
+    OPTION(MAXDOP 1);
     
     
     /*Resource semaphore info*/
@@ -80,8 +80,8 @@ SET NOCOUNT, XACT_ABORT ON;
             deqrs.pool_id
     FROM sys.dm_exec_query_resource_semaphores AS deqrs
     WHERE deqrs.resource_semaphore_id = 0
-	AND   pool_id = 2
-	OPTION(MAXDOP 1);
+    AND   pool_id = 2
+    OPTION(MAXDOP 1);
 
 
     /*Thread usage*/
@@ -93,17 +93,17 @@ SET NOCOUNT, XACT_ABORT ON;
                SUM(dos.current_workers_count) AS associated_workers
     FROM       sys.dm_os_schedulers AS dos
     CROSS JOIN sys.dm_os_sys_info AS osi
-    WHERE      dos.status = 'VISIBLE ONLINE'
-	OPTION(MAXDOP 1);
+    WHERE      dos.status = N'VISIBLE ONLINE'
+    OPTION(MAXDOP 1);
 
 	
-	/*Any threadpool waits*/
-	SELECT dowt.session_id,
+    /*Any threadpool waits*/
+    SELECT dowt.session_id,
            dowt.wait_duration_ms,
            dowt.wait_type
     FROM sys.dm_os_waiting_tasks AS dowt
     WHERE dowt.wait_type = N'THREADPOOL'
     ORDER BY dowt.wait_duration_ms DESC
-	OPTION(MAXDOP 1);
+    OPTION(MAXDOP 1);
 
 END;
