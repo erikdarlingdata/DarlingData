@@ -149,4 +149,70 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     ORDER BY dowt.wait_duration_ms DESC
     OPTION(MAXDOP 1);
 
+
+    /*Figure out who's using a lot of CPU*/
+    DECLARE @sql NVARCHAR(MAX) = N''
+    DECLARE @cool_new_columns BIT = 0;
+    
+    IF ( SELECT COUNT(*)
+    	 FROM sys.all_columns AS ac 
+    	 WHERE OBJECT_NAME(ac.object_id) = N'dm_exec_requests'
+    	 AND ac.name IN (N'dop', N'parallel_worker_count') ) = 2
+    BEGIN
+        SET @cool_new_columns = 1;
+    END
+    
+    SET @sql += N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+    
+    SELECT der.session_id,
+           DB_NAME(der.database_id) AS database_name,
+           der.start_time,
+    	   SUBSTRING(
+                    dest.text, ( der.statement_start_offset / 2 ) + 1,
+                    (( CASE der.statement_end_offset WHEN -1 THEN DATALENGTH(dest.text) ELSE der.statement_end_offset END
+                       - der.statement_start_offset ) / 2 ) + 1) AS query_text,
+	   deqp.query_plan,
+           der.status,
+           der.blocking_session_id,
+           der.wait_type,
+           der.wait_time,
+           der.wait_resource,
+           der.cpu_time,
+           der.total_elapsed_time,
+           der.reads,
+           der.writes,
+           der.logical_reads,
+           CASE 
+    	       WHEN der.transaction_isolation_level = 0 THEN ''Unspecified''
+    	       WHEN der.transaction_isolation_level = 1 THEN ''Read Uncommitted''
+    	       WHEN der.transaction_isolation_level = 2 AND EXISTS ( SELECT 1/0 FROM sys.dm_tran_active_snapshot_database_transactions AS trn WHERE der.session_id = trn.session_id AND is_snapshot = 0 ) THEN ''Read Committed Snapshot Isolation''
+    	       WHEN der.transaction_isolation_level = 2 AND NOT EXISTS ( SELECT 1/0 FROM sys.dm_tran_active_snapshot_database_transactions AS trn WHERE der.session_id = trn.session_id AND is_snapshot = 0 ) THEN ''Read Committed''
+    	       WHEN der.transaction_isolation_level = 3 THEN ''Repeatable Read''
+    	       WHEN der.transaction_isolation_level = 4 THEN ''Serializable''
+    	       WHEN der.transaction_isolation_level = 5 THEN ''Snapshot''
+    	       ELSE ''???''
+    	   END AS transaction_isolation_level ,
+           der.granted_query_memory'
+    	   + CASE WHEN @cool_new_columns = 1
+    		  THEN N',
+           der.dop,
+           der.parallel_worker_count'
+    	          ELSE N''
+    	     END
+    	   + N'
+    FROM sys.dm_exec_requests AS der
+    CROSS APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
+    CROSS APPLY sys.dm_exec_query_plan(der.plan_handle) AS deqp
+    WHERE der.session_id <> @@SPID
+    AND der.session_id >= 50
+    ORDER BY ' + CASE WHEN @cool_new_columns = 1
+    		      THEN N'der.parallel_worker_count DESC
+    			     OPTION(MAXDOP 1);'
+    	              ELSE N'der.cpu_time DESC
+    			     OPTION(MAXDOP 1);'
+    		 END
+    
+    EXEC sys.sp_executesql @sql;
+
 END;
