@@ -44,7 +44,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     BEGIN
         SELECT 'This works a lot better on a troublesome server with the DAC enabled' AS message,
     	       'EXEC sp_configure ''remote admin connections'', 1; RECONFIGURE;' AS command_to_run,
-    		'http://bit.ly/RemoteDAC' AS how_to_use_the_dac;
+    	       'http://bit.ly/RemoteDAC' AS how_to_use_the_dac;
     END
     
     /*
