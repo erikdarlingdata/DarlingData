@@ -60,7 +60,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                   FROM     sys.dm_os_waiting_tasks AS dowt
                   WHERE    dowt.session_id = deqmg.session_id
                   ORDER BY dowt.session_id ) AS waits
-    CROSS APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
+    OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
     WHERE deqmg.session_id <> @@SPID
     ORDER BY deqmg.request_time
     OPTION(MAXDOP 1);
