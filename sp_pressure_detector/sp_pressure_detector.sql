@@ -10,9 +10,9 @@ SET NOCOUNT, XACT_ABORT ON;
 /*
 	Copyright (c) 2020 Erik Darling Data 
   
-  https://erikdarlingdata.com/
+        https://erikdarlingdata.com/
   
-  MIT License
+        MIT License
 
 	Permission is hereby granted, free of charge, to any person obtaining a copy
 	of this software and associated documentation files (the "Software"), to deal
