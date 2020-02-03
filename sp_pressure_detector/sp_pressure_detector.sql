@@ -1,7 +1,3 @@
-USE master;
-GO
-
-
 CREATE OR ALTER PROCEDURE dbo.sp_pressure_detector
 AS 
 BEGIN
