@@ -47,7 +47,8 @@ BEGIN
     /*Warnings, I guess*/
     SELECT N'warning! achtung! peligro! chardonnay!' AS [WARNING WARNING WARNING] UNION ALL 
     SELECT N'misuse of this procedure can harm performance' UNION ALL
-    SELECT N'be very careful about introducing observer overhead, especially when gathering query plans';
+    SELECT N'be very careful about introducing observer overhead, especially when gathering query plans'
+    SELECT N'for additional support: http://bit.ly/sp_HumanEvents';
  
  
     /*Introduction*/
