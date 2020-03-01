@@ -1578,11 +1578,11 @@ END;
 
 
 --Stop the event session
-IF @debug = 1 BEGIN RAISERROR(@stop_sql, 16, 1) WITH NOWAIT; END;
+IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
 EXEC (@stop_sql);
 
 --Drop the event session
-IF @debug = 1 BEGIN RAISERROR(@drop_sql, 16, 1) WITH NOWAIT; END;
+IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
 EXEC (@drop_sql);
 
 END TRY
@@ -1608,11 +1608,11 @@ BEGIN CATCH
         RAISERROR (@msg, 16, 1) WITH NOWAIT;
 
         --Stop the event session
-        IF @debug = 1 BEGIN RAISERROR(@stop_sql, 16, 1) WITH NOWAIT; END;
+        IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
         EXEC (@stop_sql);
         
         --Drop the event session
-        IF @debug = 1 BEGIN RAISERROR(@drop_sql, 16, 1) WITH NOWAIT; END;
+        IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
         EXEC (@drop_sql);
 
         RETURN -138;
