@@ -330,6 +330,8 @@ DECLARE @session_filter_recompile NVARCHAR(MAX) = NCHAR(10) + N'            sqls
 DECLARE @session_filter_statement_completed NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
 /*for blocking because blah blah*/
 DECLARE @session_filter_blocking NVARCHAR(MAX) = NCHAR(10) + N'         sqlserver.is_system = 1 ' + NCHAR(10);
+/*for parameterization because blah blah*/
+DECLARE @session_filter_parameterization NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
 
 /*
 Create one filter per possible input.
@@ -357,6 +359,17 @@ IF EXISTS
 )
 BEGIN 
     SET @compile_events = 1; 
+END;
+
+DECLARE @parameterization_events BIT = 0;
+IF EXISTS
+(
+    SELECT 1/0 
+    FROM sys.dm_xe_objects AS dxo 
+    WHERE dxo.name = N'query_parameterization_data'
+)
+BEGIN 
+    SET @parameterization_events = 1; 
 END;
 
 
@@ -934,6 +947,13 @@ SET @session_filter_blocking += ( ISNULL(@blocking_duration_ms_filter, N'') +
                                   ISNULL(@object_name_filter, N'') +
                                   ISNULL(@requested_memory_mb_filter, N'') );
 
+/*The parameterization event is pretty limited in weird ways*/
+SET @session_filter_parameterization += ( ISNULL(@client_app_name_filter, N'') +
+                                          ISNULL(@client_hostname_filter, N'') +
+                                          ISNULL(@database_name_filter, N'') +
+                                          ISNULL(@session_id_filter, N'') +
+                                          ISNULL(@username_filter, N'') );
+
 --This section sets up the event session definition
 SET @session_sql += 
     CASE WHEN LOWER(@event_type) LIKE N'%lock%'
@@ -1008,7 +1028,14 @@ SET @session_sql +=
   ADD EVENT sqlserver.sql_statement_recompile 
     (SET collect_object_name = 1, collect_statement = 1
     ACTION(sqlserver.database_name)
-    WHERE ( ' + @session_filter_recompile + N' ))'             
+    WHERE ( ' + @session_filter_recompile + N' ))'
+            END
+            + CASE WHEN @parameterization_events = 1
+            THEN N',
+  ADD EVENT sqlserver.query_parameterization_data(
+    ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.sql_text)
+    WHERE ( ' + @session_filter_parameterization + N' ))'
+             ELSE N''
              END 
         ELSE N'i have no idea what i''m doing.'
     END;
@@ -1075,7 +1102,7 @@ BEGIN;
                    c.value('(data[@name="granted_memory_kb"]/value)[1]', 'BIGINT') / 1024. AS granted_memory_mb,
                    CONVERT(BINARY(8), c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'BIGINT')) AS query_plan_hash_signed,
                    CONVERT(BINARY(8), c.value('(action[@name="query_hash_signed"]/value)[1]', 'BIGINT')) AS query_hash_signed,
-                   c.value('xs:hexBinary((action[@name = "plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
+                   c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
          )
@@ -1201,11 +1228,12 @@ IF @compile_events = 1
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
                    c.value('(data[@name="is_recompile"]/value)[1]', 'BIT') AS is_recompile,
-                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') / 1000. AS compile_cpu_ms,
-                   c.value('(data[@name="duration"]/value)[1]', 'INT') / 1000. AS compile_duration_ms
+                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') compile_cpu_ms,
+                   c.value('(data[@name="duration"]/value)[1]', 'INT') compile_duration_ms
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 1
+            AND   c.value('@name', 'NVARCHAR(256)') = N'sql_statement_post_compile'
             ORDER BY event_time
             OPTION (RECOMPILE);
     END
@@ -1222,6 +1250,34 @@ IF @compile_events = 0
             ORDER BY event_time
             OPTION (RECOMPILE);
     END
+
+IF @parameterization_events  = 1
+    BEGIN
+
+            SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
+                   c.value('@name', 'NVARCHAR(256)') AS event_type,
+                   c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
+                   c.value('(action[@name="sql_text"]/value)[1]', 'NVARCHAR(256)') AS sql_text,
+                   c.value('(data[@name="compile_cpu_time"]/value)[1]', 'BIGINT') / 1000. AS compile_cpu_time_ms,
+                   c.value('(data[@name="compile_duration"]/value)[1]', 'BIGINT') / 1000. AS compile_duration_ms,
+                   c.value('(data[@name="query_param_type"]/value)[1]', 'INT') AS query_param_type,
+                   c.value('(data[@name="is_cached"]/value)[1]', 'BIT') AS is_cached,
+                   c.value('(data[@name="is_recompiled"]/value)[1]', 'BIT') AS is_recompiled,
+                   c.value('(data[@name="compile_code"]/text)[1]', 'NVARCHAR(256)') AS compile_code,                  
+                   c.value('(data[@name="has_literals"]/value)[1]', 'BIT') AS has_literals,
+                   c.value('(data[@name="is_parameterizable"]/value)[1]', 'BIT') AS is_parameterizable,
+                   c.value('(data[@name="parameterized_values_count"]/value)[1]', 'BIGINT') AS parameterized_values_count,
+                   c.value('xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])', 'BINARY(8)') AS query_plan_hash,
+                   c.value('xs:hexBinary((data[@name="query_hash"]/value/text())[1])', 'BINARY(8)') AS query_hash,
+                   c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle, 
+                   c.value('xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])', 'VARBINARY(64)') AS statement_sql_hash
+            FROM #human_events_xml AS xet
+            OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
+            WHERE c.value('@name', 'NVARCHAR(256)') = N'query_parameterization_data'
+            ORDER BY event_time
+            OPTION (RECOMPILE);
+    END
+
 
 END;
 
@@ -1276,7 +1332,7 @@ WITH waits AS (
                    CASE WHEN @v = 11 THEN N'Not Available < 2014' ELSE c.value('(data[@name="wait_resource"]/value)[1]', 'NVARCHAR(256)') END AS wait_resource,
                    CONVERT(BINARY(8), c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'BIGINT')) AS query_plan_hash_signed,
                    CONVERT(BINARY(8), c.value('(action[@name="query_hash_signed"]/value)[1]', 'BIGINT')) AS query_hash_signed,
-                   c.value('xs:hexBinary((action[@name = "plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
+                   c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE (c.exist('(data[@name="duration"]/value[. > 0])') = 1 OR @gimme_danger = 1)
