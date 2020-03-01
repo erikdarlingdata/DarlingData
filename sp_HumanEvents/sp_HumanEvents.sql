@@ -44,8 +44,6 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT @version = '1.0', @versiondate = '20200301';
 
-BEGIN TRY
-
 IF @help = 1
 BEGIN
     /*Warnings, I guess*/
@@ -219,10 +217,12 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE 
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-    ', 0, 1) WITH NOWAIT; 
+    ', 16, 1) WITH NOWAIT; 
 
 RETURN;
 END;
+
+BEGIN TRY
 
 /*
 I mean really stop it with the unsupported versions
@@ -233,7 +233,7 @@ SELECT @v =
                CHARINDEX('.', CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion'))) + 1 );
 IF @v < 11
     BEGIN
-        RAISERROR(N'This darn thing doesn''t seem to work on versions older than 2012.', 0, 1) WITH NOWAIT;
+        RAISERROR(N'This darn thing doesn''t seem to work on versions older than 2012.', 16, 1) WITH NOWAIT;
         RETURN;
     END;
 
@@ -415,7 +415,7 @@ IF @event_type NOT IN
           N'compilations',
           N'recompilations' )
 BEGIN
-    RAISERROR(N'you have chosen a value for @event_type... poorly. use @help = 1 to see valid arguments.', 0, 1) WITH NOWAIT;
+    RAISERROR(N'you have chosen a value for @event_type... poorly. use @help = 1 to see valid arguments.', 16, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -426,7 +426,7 @@ IF ( LOWER(@event_type) LIKE N'%quer%' AND @event_type NOT LIKE N'%comp%' --igno
 BEGIN
     RAISERROR(N'you chose a really dangerous value for @query_duration', 0, 1) WITH NOWAIT;
     RAISERROR(N'if you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
-    RAISERROR(N'setting @query_duration to 500', 0, 1) WITH NOWAIT;
+    RAISERROR(N'setting @query_duration to 500', 16, 1) WITH NOWAIT;
     SET @query_duration_ms = 500;
 END;
 
@@ -436,7 +436,7 @@ IF ( LOWER(@event_type) LIKE N'%wait%'
 BEGIN
     RAISERROR(N'you chose a really dangerous value for @wait_duration_ms', 0, 1) WITH NOWAIT;
     RAISERROR(N'if you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
-    RAISERROR(N'setting @wait_duration_ms to 10', 0, 1) WITH NOWAIT;
+    RAISERROR(N'setting @wait_duration_ms to 10', 16, 1) WITH NOWAIT;
     SET @wait_duration_ms = 10;
 END;
 
@@ -446,7 +446,7 @@ IF ( LOWER(@event_type) LIKE N'%lock%'
 BEGIN
     RAISERROR(N'you chose a really dangerous value for @blocking_duration_ms', 0, 1) WITH NOWAIT;
     RAISERROR(N'if you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
-    RAISERROR(N'setting @blocking_duration_ms to 500', 0, 1) WITH NOWAIT;
+    RAISERROR(N'setting @blocking_duration_ms to 500', 16, 1) WITH NOWAIT;
     SET @blocking_duration_ms = 500;
 END;
 
@@ -556,7 +556,7 @@ BEGIN
     )
 
     BEGIN
-        RAISERROR(N'Say... you wouldn''t happen to be trying some funny business, would you?', 0, 1) WITH NOWAIT;
+        RAISERROR(N'Say... you wouldn''t happen to be trying some funny business, would you?', 16, 1) WITH NOWAIT;
         RETURN;
     END;
 
@@ -568,7 +568,7 @@ I just don't want anyone to be disappointed
 */
 IF ( @wait_type <> N'' AND @wait_type <> N'all' AND LOWER(@event_type) NOT LIKE N'%wait%' AND LOWER(@event_type) NOT LIKE N'%all%' )
 BEGIN
-    RAISERROR(N'You can''t filter on wait stats unless you use the wait stats event.', 0, 1) WITH NOWAIT;
+    RAISERROR(N'You can''t filter on wait stats unless you use the wait stats event.', 16, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -577,13 +577,13 @@ This is probably important, huh?
 */
 IF ( LOWER(@event_type) LIKE N'%lock%' AND DB_ID(@database_name) IS NULL AND @object_name <> N'' )
 BEGIN
-    RAISERROR(N'The blocking event can only filter on an object_id, and we need a valid @database_name to resolve it correctly.', 0, 1) WITH NOWAIT;
+    RAISERROR(N'The blocking event can only filter on an object_id, and we need a valid @database_name to resolve it correctly.', 16, 1) WITH NOWAIT;
     RETURN;
 END;
 
 IF ( LOWER(@event_type) LIKE N'%lock%' AND @object_name <> N'' AND OBJECT_ID(@fully_formed_babby) IS NULL )
 BEGIN
-    RAISERROR(N'we couldn''t find the object you''re trying to ', 0, 1) WITH NOWAIT;
+    RAISERROR(N'we couldn''t find the object you''re trying to ', 16, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -613,21 +613,21 @@ IF @database_name <> N''
 BEGIN
     IF DB_ID(@database_name) IS NULL
     BEGIN
-        RAISERROR(N'it looks like you''re looking for a database that doesn''t wanna be looked for -- check that spelling!', 0, 1) WITH NOWAIT;
+        RAISERROR(N'it looks like you''re looking for a database that doesn''t wanna be looked for -- check that spelling!', 16, 1) WITH NOWAIT;
         RETURN;
     END;
 END;
 
 IF LOWER(@session_id) NOT LIKE N'%sample%' AND @session_id LIKE '%[^0-9]%' AND LOWER(@session_id) <> N''
 BEGIN
-   RAISERROR(N'that @session_id doesn''t look proper. double check that for me.', 0, 1) WITH NOWAIT;
+   RAISERROR(N'that @session_id doesn''t look proper. double check that for me.', 16, 1) WITH NOWAIT;
    RETURN;
 END;
 
 IF @sample_divisor < 2
 BEGIN
-    RAISERROR(N'@sample_divisor is used to divide session @session_id when taking a sample of a workload.', 0, 1) WITH NOWAIT;
-    RAISERROR(N'we can''t really divide by zero, and dividing by 1 would be uh... bad.', 0, 1) WITH NOWAIT;
+    RAISERROR(N'@sample_divisor is used to divide session @session_id when taking a sample of a workload.', 16, 1) WITH NOWAIT;
+    RAISERROR(N'we can''t really divide by zero, and dividing by 1 would be uh... bad.', 16, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -641,7 +641,7 @@ IF @username NOT IN
     AND   sp.is_disabled = 0
 ) AND @username <> N''
 BEGIN
-    RAISERROR(N'that username doesn''t exist in sys.server_principals', 0, 1) WITH NOWAIT;
+    RAISERROR(N'that username doesn''t exist in sys.server_principals', 16, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -658,8 +658,8 @@ SET @math = @seconds_sample / 60;
     --I really don't want this running for more than 10 minutes right now.
     IF ( @math > 9 AND @gimme_danger = 0 )
     BEGIN
-        RAISERROR(N'Yeah nah not more than 10 minutes', 0, 1) WITH NOWAIT;
-        RAISERROR(N'(unless you set @gimme_danger = 1)', 0, 1) WITH NOWAIT;
+        RAISERROR(N'Yeah nah not more than 10 minutes', 16, 1) WITH NOWAIT;
+        RAISERROR(N'(unless you set @gimme_danger = 1)', 16, 1) WITH NOWAIT;
         RETURN;
     END;
     
@@ -1578,26 +1578,41 @@ END;
 
 
 --Stop the event session
-IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
+IF @debug = 1 BEGIN RAISERROR(@stop_sql, 16, 1) WITH NOWAIT; END;
 EXEC (@stop_sql);
 
 --Drop the event session
-IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
+IF @debug = 1 BEGIN RAISERROR(@drop_sql, 16, 1) WITH NOWAIT; END;
 EXEC (@drop_sql);
 
 END TRY
 BEGIN CATCH
-    BEGIN    
-        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
-        DECLARE @msg NVARCHAR(2048) = ERROR_MESSAGE();
-        RAISERROR (@msg, 16, 1);
+    BEGIN
+    
+    IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+    
+    DECLARE @msg NVARCHAR(2048) = N'';
+    SELECT @msg += N'Error number '
+          + RTRIM(ERROR_NUMBER()) 
+          + N' with severity '
+          + RTRIM(ERROR_SEVERITY()) 
+          + N' and a state of '
+          + RTRIM(ERROR_STATE()) 
+          + N' in procedure ' 
+          + ERROR_PROCEDURE() 
+          + N' on line '  
+          + RTRIM(ERROR_LINE())
+          + N' '
+          + ERROR_MESSAGE(); 
+          
+        RAISERROR (@msg, 16, 1) WITH NOWAIT;
 
         --Stop the event session
-        IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
+        IF @debug = 1 BEGIN RAISERROR(@stop_sql, 16, 1) WITH NOWAIT; END;
         EXEC (@stop_sql);
         
         --Drop the event session
-        IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
+        IF @debug = 1 BEGIN RAISERROR(@drop_sql, 16, 1) WITH NOWAIT; END;
         EXEC (@drop_sql);
 
         RETURN -138;
