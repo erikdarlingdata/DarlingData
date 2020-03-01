@@ -161,7 +161,8 @@ BEGIN
     INNER JOIN sys.types AS t
         ON  ap.system_type_id = t.system_type_id
         AND ap.user_type_id = t.user_type_id
-    WHERE o.name = N'sp_HumanEvents';
+    WHERE o.name = N'sp_HumanEvents'
+    OPTION(RECOMPILE);
 
 
     SELECT N'EXAMPLE CALLS' AS example_calls UNION ALL    
@@ -245,7 +246,7 @@ IF EXISTS
     FROM sys.server_event_sessions AS s
     LEFT JOIN sys.dm_xe_sessions AS r 
         ON r.name = s.name
-    WHERE s.name LIKE 'HumanEvents%'
+    WHERE s.name LIKE N'HumanEvents%'
     AND   ( r.create_time < DATEADD(MINUTE, -2, SYSDATETIME())
     OR      r.create_time IS NULL ) 
 )
@@ -262,7 +263,8 @@ BEGIN
         ON r.name = s.name
     WHERE s.name LIKE N'HumanEvents%'
     AND   ( r.create_time < DATEADD(MINUTE, -2, SYSDATETIME())
-    OR      r.create_time IS NULL ); 
+    OR      r.create_time IS NULL )
+    OPTION(RECOMPILE);
 
     DECLARE drop_cursor CURSOR LOCAL STATIC FOR
     SELECT  drop_command FROM #drop_commands;
@@ -457,7 +459,6 @@ BEGIN
 END;
 
 
-
 --This will hold the CSV list of wait types someone passes in
 CREATE TABLE #user_waits(wait_type NVARCHAR(60));
 INSERT #user_waits
@@ -473,7 +474,8 @@ FROM
     ) AS w 
         CROSS APPLY wait_type.nodes('x') AS x(x)
 ) AS waits
-WHERE @wait_type <> N'all';
+WHERE @wait_type <> N'all'
+OPTION(RECOMPILE);
 
 /*
 If someone is passing in specific waits, let's make sure that
@@ -493,14 +495,16 @@ BEGIN
         FROM sys.dm_xe_map_values AS dxmv
         WHERE  dxmv.map_value COLLATE Latin1_General_BIN = uw.wait_type COLLATE Latin1_General_BIN
         AND    dxmv.name = N'wait_types'
-    );
+    )
+    OPTION(RECOMPILE);
     
     IF @@ROWCOUNT > 0    
     BEGIN
         SELECT N'You have chosen some invalid wait types' AS invalid_waits
         UNION ALL
         SELECT iw.invalid_waits
-        FROM #invalid_waits AS iw;
+        FROM #invalid_waits AS iw
+        OPTION(RECOMPILE);
         
         RAISERROR(N'waidaminnithataintawait', 16, 1) WITH NOWAIT
         RETURN;
@@ -535,7 +539,8 @@ BEGIN
         (@object_name),
         (@object_schema)
     ) AS pp (ahem)
-    WHERE pp.ahem NOT IN (N'', N'dbo');
+    WHERE pp.ahem NOT IN (N'', N'dbo')
+    OPTION(RECOMPILE);
 
     IF EXISTS
     (
@@ -845,7 +850,8 @@ BEGIN
     
     SELECT uw.wait_type
     FROM #user_waits AS uw
-    WHERE @wait_type <> N'all';
+    WHERE @wait_type <> N'all'
+    OPTION(RECOMPILE);
     
     --This section creates a dynamic WHERE clause based on wait types
     --The problem is that wait type IDs change frequently, which sucks.
@@ -1063,7 +1069,8 @@ FROM ( SELECT CONVERT(XML, t.target_data) AS human_events_xml
        JOIN sys.dm_xe_sessions AS s
            ON s.address = t.event_session_address
        WHERE s.name = @session_name 
-       AND   t.target_name = N'ring_buffer') AS human_events_xml;
+       AND   t.target_name = N'ring_buffer') AS human_events_xml
+OPTION(RECOMPILE);
 
 IF @debug = 1
 BEGIN
@@ -1593,10 +1600,12 @@ END TRY
 BEGIN CATCH
     BEGIN
     
-    IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+    IF @@TRANCOUNT > 0 
+        ROLLBACK TRANSACTION;
     
     DECLARE @msg NVARCHAR(2048) = N'';
-    SELECT @msg += N'Error number '
+    SELECT @msg += 
+            N'Error number '
           + RTRIM(ERROR_NUMBER()) 
           + N' with severity '
           + RTRIM(ERROR_SEVERITY()) 
@@ -1606,7 +1615,7 @@ BEGIN CATCH
           + ERROR_PROCEDURE() 
           + N' on line '  
           + RTRIM(ERROR_LINE())
-          + N' '
+          + NCHAR(10)
           + ERROR_MESSAGE(); 
           
         RAISERROR (@msg, 16, 1) WITH NOWAIT;
