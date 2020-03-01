@@ -202,7 +202,7 @@ BEGIN
 
     /*License to F5*/
     SELECT N'i am MIT licensed, so like, do whatever' AS mit_license_yo UNION ALL
-    SELECT N'see printed messages for full license'
+    SELECT N'see printed messages for full license';
     RAISERROR(N'
 MIT License
 
@@ -388,7 +388,7 @@ END;
  /*I'm also very forgiving of some white space*/
  SET @database_name = RTRIM(LTRIM(@database_name));
 
- DECLARE @fully_formed_babby NVARCHAR(1000) = @database_name + N'.' + @object_schema + N'.' + @object_name
+ DECLARE @fully_formed_babby NVARCHAR(1000) = @database_name + N'.' + @object_schema + N'.' + @object_name;
 
 /*
 Some sanity checking
@@ -701,7 +701,7 @@ BEGIN
     IF LOWER(@event_type) NOT LIKE N'%comp%'
     BEGIN
         SET @query_duration_filter += N'     AND duration >= ' + CONVERT(NVARCHAR(20), (@query_duration_ms * 1000)) + NCHAR(10);
-    END
+    END;
 END;
 
 IF @blocking_duration_ms > 0
@@ -729,11 +729,11 @@ BEGIN
     IF LOWER(@event_type) NOT LIKE N'%lock%'
     BEGIN
         SET @database_name_filter += N'     AND sqlserver.database_name = N' + QUOTENAME(@database_name, '''') + NCHAR(10);
-    END
+    END;
     IF LOWER(@event_type) LIKE N'%lock%'
     BEGIN
         SET @database_name_filter += N'     AND database_name = N' + QUOTENAME(@database_name, '''') + NCHAR(10);
-    END
+    END;
 END;
 
 IF @session_id <> N''
@@ -758,7 +758,7 @@ BEGIN
     IF @event_type LIKE N'%lock%'
     BEGIN
         DECLARE @object_id sysname;
-        SET @object_id = OBJECT_ID(@fully_formed_babby)
+        SET @object_id = OBJECT_ID(@fully_formed_babby);
         SET @object_name_filter += N'     AND object_id = ' + @object_id;
     END;
     IF @event_type NOT LIKE N'%lock%'
@@ -1236,7 +1236,7 @@ IF @compile_events = 1
             AND   c.value('@name', 'NVARCHAR(256)') = N'sql_statement_post_compile'
             ORDER BY event_time
             OPTION (RECOMPILE);
-    END
+    END;
 
 IF @compile_events = 0
     BEGIN
@@ -1249,7 +1249,7 @@ IF @compile_events = 0
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             ORDER BY event_time
             OPTION (RECOMPILE);
-    END
+    END;
 
 IF @parameterization_events  = 1
     BEGIN
@@ -1276,7 +1276,7 @@ IF @parameterization_events  = 1
             WHERE c.value('@name', 'NVARCHAR(256)') = N'query_parameterization_data'
             ORDER BY event_time
             OPTION (RECOMPILE);
-    END
+    END;
 
 
 END;
@@ -1300,7 +1300,7 @@ IF @compile_events = 1
             WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 0
             ORDER BY event_time
             OPTION (RECOMPILE);
-    END
+    END;
 
 IF @compile_events = 0
     BEGIN
@@ -1315,7 +1315,7 @@ IF @compile_events = 0
             WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 0
             ORDER BY event_time
             OPTION (RECOMPILE);
-    END
+    END;
 END;
 
 
