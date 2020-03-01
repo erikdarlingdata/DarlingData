@@ -117,7 +117,8 @@ SELECT @version = '1.0', @versiondate = '20200301';
                        ELSE N''
                 END
                 + N'
-                deqp.query_plan
+                deqp.query_plan,
+                deqmg.plan_handle
     FROM        sys.dm_exec_query_memory_grants AS deqmg
     OUTER APPLY ( SELECT   TOP (1) *
                   FROM     sys.dm_os_waiting_tasks AS dowt
@@ -198,6 +199,7 @@ SELECT @version = '1.0', @versiondate = '20200301';
                     (( CASE der.statement_end_offset WHEN -1 THEN DATALENGTH(dest.text) ELSE der.statement_end_offset END
                        - der.statement_start_offset ) / 2 ) + 1) AS query_text,
        deqp.query_plan,
+           der.plan_handle,
            der.status,
            der.blocking_session_id,
            der.wait_type,
