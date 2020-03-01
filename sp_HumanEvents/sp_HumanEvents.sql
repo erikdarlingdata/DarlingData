@@ -217,7 +217,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE 
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-    ', 16, 1) WITH NOWAIT; 
+    ', 0, 1) WITH NOWAIT; 
 
 RETURN;
 END;
@@ -501,6 +501,8 @@ BEGIN
         UNION ALL
         SELECT iw.invalid_waits
         FROM #invalid_waits AS iw;
+        
+        RAISERROR(N'waidaminnithataintawait', 16, 1) WITH NOWAIT
         RETURN;
     END;
 
@@ -533,8 +535,7 @@ BEGIN
         (@object_name),
         (@object_schema)
     ) AS pp (ahem)
-    WHERE pp.ahem <> N''
-    AND   pp.ahem <> N'dbo';
+    WHERE pp.ahem NOT IN (N'', N'dbo');
 
     IF EXISTS
     (
@@ -637,7 +638,7 @@ IF @username NOT IN
     FROM sys.server_principals AS sp
     LEFT JOIN sys.sql_logins AS sl
         ON sp.principal_id = sl.principal_id
-    WHERE sp.type NOT IN ( 'G', 'R' ) 
+    WHERE sp.type NOT IN ( N'G', N'R' ) 
     AND   sp.is_disabled = 0
 ) AND @username <> N''
 BEGIN
@@ -1343,7 +1344,7 @@ WITH waits AS (
             
             IF @debug = 1 BEGIN SELECT * FROM #waits_agg AS wa; END;
 
-            SELECT 'total_waits' AS wait_pattern,
+            SELECT N'total_waits' AS wait_pattern,
                    MIN(wa.event_time) AS min_event_time,
                    MAX(wa.event_time) AS max_event_time,
                    wa.wait_type,
@@ -1356,7 +1357,7 @@ WITH waits AS (
             ORDER BY sum_duration_ms DESC
             OPTION (RECOMPILE);            
 
-            SELECT 'total_waits_by_database' AS wait_pattern,
+            SELECT N'total_waits_by_database' AS wait_pattern,
                    MIN(wa.event_time) AS min_event_time,
                    MAX(wa.event_time) AS max_event_time,
                    wa.database_name,
@@ -1371,7 +1372,7 @@ WITH waits AS (
             OPTION (RECOMPILE); 
 
             WITH plan_waits AS (
-            SELECT 'waits by query' AS wait_pattern,
+            SELECT N'waits by query' AS wait_pattern,
                    MIN(wa.event_time) AS min_event_time,
                    MAX(wa.event_time) AS max_event_time,
                    wa.wait_type,
@@ -1516,9 +1517,9 @@ BEGIN
                    0 AS wait_time,
                    bg.blocking_status AS status,
                    bg.blocking_isolationlevel AS isolation_level,
-                   'unknown' AS last_transaction_startted,
-                   'unknown' AS transaction_name,
-                   'unknown' AS lock_mode,
+                   N'unknown' AS last_transaction_startted,
+                   N'unknown' AS transaction_name,
+                   N'unknown' AS lock_mode,
                    bg.blocking_priority AS priority,
                    bg.blocking_trancount AS transaction_count,
                    bg.blocking_clientapp AS client_app,
@@ -1526,8 +1527,9 @@ BEGIN
                    bg.blocking_loginname AS login_name,
                    bg.blocked_process_report 
                    FROM pablo_blanco AS pb
-                   CROSS APPLY(SELECT TOP 1 * FROM #blocking AS b WHERE b.blocking_spid = pb.blocking_spid) AS bg
-
+                   CROSS APPLY( SELECT TOP 1 * 
+                                FROM #blocking AS b 
+                                WHERE b.blocking_spid = pb.blocking_spid ) AS bg
                    UNION ALL 
 
             SELECT bl.event_time,
@@ -1550,7 +1552,9 @@ BEGIN
                    bl.blocked_loginname,
                    bl.blocked_process_report
                    FROM pablo_blanco AS pb
-                   CROSS APPLY(SELECT TOP 1 * FROM #blocked AS b WHERE b.blocked_spid = pb.blocking_spid) AS bl
+                   CROSS APPLY( SELECT TOP 1 * 
+                                FROM #blocked AS b 
+                                WHERE b.blocked_spid = pb.blocking_spid ) AS bl
             )
            SELECT att.event_time,
                   att.database_name,
