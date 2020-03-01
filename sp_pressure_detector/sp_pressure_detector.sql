@@ -54,7 +54,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                 WHERE ep.name = N'Dedicated Admin Connection'
                 AND   ses.session_id <> @@SPID )
     BEGIN
-        SELECT 'who stole the dac?' AS dac_thief,
+        SELECT N'who stole the dac?' AS dac_thief,
                ses.session_id,
                ses.login_time,
                ses.host_name,
@@ -68,7 +68,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
         FROM sys.endpoints AS ep
         JOIN sys.dm_exec_sessions AS ses
             ON ep.endpoint_id = ses.endpoint_id
-        WHERE ep.name = 'Dedicated Admin Connection'
+        WHERE ep.name = N'Dedicated Admin Connection'
         AND   ses.session_id <> @@SPID;
     END;
 
