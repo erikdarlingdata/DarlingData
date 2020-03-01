@@ -982,11 +982,18 @@ SET @session_sql +=
     (ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
      WHERE ( ' + @session_filter_waits + N' ))'
          WHEN LOWER(@event_type) LIKE N'%recomp%'
+         THEN CASE WHEN @compile_events = 1
          THEN N' 
+  ADD EVENT sqlserver.sql_statement_post_compile 
+    (SET collect_object_name = 1, collect_statement = 1
+    ACTION(sqlserver.database_name)
+    WHERE ( ' + @session_filter + N' ))'
+             ELSE N' 
   ADD EVENT sqlserver.sql_statement_recompile 
     (SET collect_object_name = 1, collect_statement = 1
     ACTION(sqlserver.database_name)
     WHERE ( ' + @session_filter_recompile + N' ))'
+             END
         WHEN (LOWER(@event_type) LIKE N'%comp%' AND LOWER(@event_type) NOT LIKE N'%re%')
         THEN CASE WHEN @compile_events = 1
              THEN N' 
@@ -1187,7 +1194,7 @@ IF LOWER(@event_type) LIKE N'%comp%' AND LOWER(@event_type) NOT LIKE N'%re%'
 BEGIN
 
 IF @compile_events = 1
-BEGIN
+    BEGIN
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
@@ -1201,10 +1208,10 @@ BEGIN
             WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 1
             ORDER BY event_time
             OPTION (RECOMPILE);
-END
+    END
 
 IF @compile_events = 0
-BEGIN
+    BEGIN
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
@@ -1214,13 +1221,33 @@ BEGIN
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             ORDER BY event_time
             OPTION (RECOMPILE);
-END
+    END
 
 END;
 
 
 IF LOWER(@event_type) LIKE N'%recomp%'
 BEGIN
+
+IF @compile_events = 1
+    BEGIN
+            SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
+                   c.value('@name', 'NVARCHAR(256)') AS event_type,
+                   c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
+                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
+                   c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
+                   c.value('(data[@name="is_recompile"]/value)[1]', 'BIT') AS is_recompile,
+                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') / 1000. AS compile_cpu_ms,
+                   c.value('(data[@name="duration"]/value)[1]', 'INT') / 1000. AS compile_duration_ms
+            FROM #human_events_xml AS xet
+            OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
+            WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 0
+            ORDER BY event_time
+            OPTION (RECOMPILE);
+    END
+
+IF @compile_events = 0
+    BEGIN
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
@@ -1232,8 +1259,8 @@ BEGIN
             WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 0
             ORDER BY event_time
             OPTION (RECOMPILE);
-END
-;
+    END
+END;
 
 
 IF LOWER(@event_type) LIKE N'%wait%'
