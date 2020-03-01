@@ -10,7 +10,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT @version = '1.0', @versiondate = '20200301';
 
 /*
-        Copyright (c) 2020 Erik Darling Data 
+        Copyright (c) 2020 Darling Data, LLC 
   
         https://erikdarlingdata.com/
   
@@ -81,6 +81,19 @@ SELECT @version = '1.0', @versiondate = '20200301';
     /*Memory Grant info*/
     IF @what_to_check IN (N'both', N'memory')
     BEGIN
+
+    DECLARE @mem_sql NVARCHAR(MAX) = N'';
+    DECLARE @helpful_new_columns BIT = 0;  
+    
+    IF ( SELECT COUNT(*)
+         FROM sys.all_columns AS ac 
+         WHERE OBJECT_NAME(ac.object_id) = N'dm_exec_query_memory_grants'
+         AND ac.name IN (N'reserved_worker_count', N'used_worker_count') ) = 2
+    BEGIN
+        SET @helpful_new_columns = 1;
+    END;    
+
+    SET @mem_sql += N'
     SELECT      deqmg.session_id,
                 deqmg.request_time,
                 deqmg.grant_time,
@@ -96,9 +109,14 @@ SELECT @version = '1.0', @versiondate = '20200301';
                 (deqmg.wait_time_ms / 1000.) wait_time_s,
                 (waits.wait_duration_ms / 1000.) wait_duration_s,
                 deqmg.dop,
-                waits.wait_type,
+                waits.wait_type'
+                + CASE WHEN @helpful_new_columns = 1
+                       THEN N',
                 deqmg.reserved_worker_count,
-                deqmg.used_worker_count,
+                deqmg.used_worker_count,'
+                       ELSE N''
+                END
+                + N'
                 deqp.query_plan
     FROM        sys.dm_exec_query_memory_grants AS deqmg
     OUTER APPLY ( SELECT   TOP (1) *
@@ -109,7 +127,9 @@ SELECT @version = '1.0', @versiondate = '20200301';
     WHERE deqmg.session_id <> @@SPID
     ORDER BY deqmg.request_time
     OPTION(MAXDOP 1);
-    
+    ';
+
+    EXEC sys.sp_executesql @mem_sql;
     
     /*Resource semaphore info*/
     SELECT  deqrs.resource_semaphore_id,
@@ -156,7 +176,7 @@ SELECT @version = '1.0', @versiondate = '20200301';
 
 
     /*Figure out who's using a lot of CPU*/
-    DECLARE @sql NVARCHAR(MAX) = N'';
+    DECLARE @cpu_sql NVARCHAR(MAX) = N'';
     DECLARE @cool_new_columns BIT = 0;
     
     IF ( SELECT COUNT(*)
@@ -167,7 +187,7 @@ SELECT @version = '1.0', @versiondate = '20200301';
         SET @cool_new_columns = 1;
     END;
     
-    SET @sql += N'
+    SET @cpu_sql += N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
     SELECT der.session_id,
@@ -218,6 +238,6 @@ SELECT @version = '1.0', @versiondate = '20200301';
                      OPTION(MAXDOP 1);'
              END;
     
-    EXEC sys.sp_executesql @sql;
+    EXEC sys.sp_executesql @cpu_sql;
     END;
 END;
