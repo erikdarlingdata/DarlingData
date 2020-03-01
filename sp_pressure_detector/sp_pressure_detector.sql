@@ -92,7 +92,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                 waits.wait_type,
                 deqmg.reserved_worker_count,
                 deqmg.used_worker_count,
-		deqp.query_plan
+		        deqp.query_plan
     FROM        sys.dm_exec_query_memory_grants AS deqmg
     OUTER APPLY ( SELECT   TOP (1) *
                   FROM     sys.dm_os_waiting_tasks AS dowt
@@ -191,7 +191,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     	   END AS transaction_isolation_level ,
            der.granted_query_memory'
     	   + CASE WHEN @cool_new_columns = 1
-    		  THEN N',
+    		      THEN N',
            der.dop,
            der.parallel_worker_count'
     	          ELSE N''
@@ -203,7 +203,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     WHERE der.session_id <> @@SPID
     AND der.session_id >= 50
     ORDER BY ' + CASE WHEN @cool_new_columns = 1
-    		      THEN N'der.parallel_worker_count DESC
+    		          THEN N'der.parallel_worker_count DESC
     			     OPTION(MAXDOP 1);'
     	              ELSE N'der.cpu_time DESC
     			     OPTION(MAXDOP 1);'
