@@ -1004,25 +1004,25 @@ SET @session_sql +=
      WHERE ( ' + @session_filter_waits + N' ))'
          WHEN LOWER(@event_type) LIKE N'%recomp%'
          THEN CASE WHEN @compile_events = 1
-         THEN N' 
+                   THEN N' 
   ADD EVENT sqlserver.sql_statement_post_compile 
     (SET collect_object_name = 1, collect_statement = 1
     ACTION(sqlserver.database_name)
     WHERE ( ' + @session_filter + N' ))'
-             ELSE N' 
+                   ELSE N' 
   ADD EVENT sqlserver.sql_statement_recompile 
     (SET collect_object_name = 1, collect_statement = 1
     ACTION(sqlserver.database_name)
     WHERE ( ' + @session_filter_recompile + N' ))'
              END
-        WHEN (LOWER(@event_type) LIKE N'%comp%' AND LOWER(@event_type) NOT LIKE N'%re%')
-        THEN CASE WHEN @compile_events = 1
-             THEN N' 
+         WHEN (LOWER(@event_type) LIKE N'%comp%' AND LOWER(@event_type) NOT LIKE N'%re%')
+         THEN CASE WHEN @compile_events = 1
+                   THEN N' 
   ADD EVENT sqlserver.sql_statement_post_compile 
     (SET collect_object_name = 1, collect_statement = 1
     ACTION(sqlserver.database_name)
     WHERE ( ' + @session_filter + N' ))'
-             ELSE N'
+                   ELSE N'
   ADD EVENT sqlserver.uncached_sql_batch_statistics(
     ACTION(sqlserver.database_name)
     WHERE ( ' + @session_filter_recompile + N' )),             
@@ -1030,14 +1030,14 @@ SET @session_sql +=
     (SET collect_object_name = 1, collect_statement = 1
     ACTION(sqlserver.database_name)
     WHERE ( ' + @session_filter_recompile + N' ))'
-            END
+              END
             + CASE WHEN @parameterization_events = 1
-            THEN N',
+                   THEN N',
   ADD EVENT sqlserver.query_parameterization_data(
     ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.sql_text)
     WHERE ( ' + @session_filter_parameterization + N' ))'
-             ELSE N''
-             END 
+                   ELSE N''
+              END 
         ELSE N'i have no idea what i''m doing.'
     END;
                
