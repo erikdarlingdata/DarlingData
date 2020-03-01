@@ -1,4 +1,4 @@
-CREATE OR ALTER PROCEDURE dbo.sp_pressure_detector
+CREATE OR ALTER PROCEDURE dbo.sp_pressure_detector (@what_to_check NVARCHAR(6) = N'both')
 AS 
 BEGIN
 SET NOCOUNT, XACT_ABORT ON;
@@ -41,7 +41,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
         SELECT 'This works a lot better on a troublesome server with the DAC enabled' AS message,
                'EXEC sp_configure ''remote admin connections'', 1; RECONFIGURE;' AS command_to_run,
                'https://bit.ly/RemoteDAC' AS how_to_use_the_dac;
-    END
+    END;
     
     /*
     See if someone else is using the DAC.
@@ -70,10 +70,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
             ON ep.endpoint_id = ses.endpoint_id
         WHERE ep.name = 'Dedicated Admin Connection'
         AND   ses.session_id <> @@SPID;
-    END
+    END;
 
 
     /*Memory Grant info*/
+    IF @what_to_check IN (N'both', N'memory')
+    BEGIN
     SELECT      deqmg.session_id,
                 deqmg.request_time,
                 deqmg.grant_time,
@@ -121,8 +123,10 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     WHERE deqrs.resource_semaphore_id = 0
     AND   deqrs.pool_id = 2
     OPTION(MAXDOP 1);
+    END;
 
-
+    IF @what_to_check IN (N'cpu', N'both')
+    BEGIN
     /*Thread usage*/
     SELECT     MAX(osi.max_workers_count) AS total_threads,
                SUM(dos.active_workers_count) AS used_threads,
@@ -147,7 +151,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 
     /*Figure out who's using a lot of CPU*/
-    DECLARE @sql NVARCHAR(MAX) = N''
+    DECLARE @sql NVARCHAR(MAX) = N'';
     DECLARE @cool_new_columns BIT = 0;
     
     IF ( SELECT COUNT(*)
@@ -156,7 +160,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
          AND ac.name IN (N'dop', N'parallel_worker_count') ) = 2
     BEGIN
         SET @cool_new_columns = 1;
-    END
+    END;
     
     SET @sql += N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -207,8 +211,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                      OPTION(MAXDOP 1);'
                       ELSE N'der.cpu_time DESC
                      OPTION(MAXDOP 1);'
-             END
+             END;
     
     EXEC sys.sp_executesql @sql;
-
+    END;
 END;
