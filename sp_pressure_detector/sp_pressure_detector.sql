@@ -1,8 +1,13 @@
-CREATE OR ALTER PROCEDURE dbo.sp_pressure_detector (@what_to_check NVARCHAR(6) = N'both')
+CREATE OR ALTER PROCEDURE dbo.sp_pressure_detector ( @what_to_check NVARCHAR(6) = N'both',     
+                                                     @version VARCHAR(5) = NULL OUTPUT,
+                                                     @versiondate DATETIME = NULL OUTPUT )
+WITH RECOMPILE
 AS 
 BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+    
+SELECT @version = '1.0', @versiondate = '20200301';
 
 /*
         Copyright (c) 2020 Erik Darling Data 

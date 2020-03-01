@@ -31,6 +31,8 @@ ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
                                     @seconds_sample INTEGER = 10,
                                     @gimme_danger BIT = 0,
                                     @keep_alive BIT = 0,
+                                    @version VARCHAR(30) = NULL OUTPUT,
+                                    @versiondate DATETIME = NULL OUTPUT,
                                     @debug BIT = 0,
                                     @help BIT = 0 )
 WITH RECOMPILE
@@ -39,6 +41,8 @@ BEGIN
 
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+SELECT @version = '1.0', @versiondate = '20200301';
 
 BEGIN TRY
 
@@ -99,6 +103,8 @@ BEGIN
                         WHEN N'@debug' THEN N'use to print out dynamic SQL'
                         WHEN N'@keep_alive' THEN N'not functional; will eventually be used to create permanent sessions'
                         WHEN N'@help' THEN N'well you''re here so you figured this one out'
+                        WHEN N'@version' THEN N'to make sure you have the most recent bits'
+                        WHEN N'@versiondate' THEN N'to make sure you have the most recent bits'
                         ELSE N'????' 
            END AS description,
            CASE ap.name WHEN N'@event_type' THEN N'"blocking", "query", "waits", "recompiles", "compiles" and certain variations on those words'
@@ -122,6 +128,8 @@ BEGIN
                         WHEN N'@debug' THEN N'1 or 0'
                         WHEN N'@keep_alive' THEN N'1 or 0'
                         WHEN N'@help' THEN N'1 or 0'
+                        WHEN N'@version' THEN N'none, output'
+                        WHEN N'@versiondate' THEN N'none, output'
                         ELSE N'????' 
            END AS valid_inputs,
            CASE ap.name WHEN N'@event_type' THEN N'"query"'
@@ -145,6 +153,8 @@ BEGIN
                         WHEN N'@keep_alive' THEN N'0'
                         WHEN N'@debug' THEN N'0'
                         WHEN N'@help' THEN N'0'
+                        WHEN N'@version' THEN N'none, output'
+                        WHEN N'@versiondate' THEN N'none, output'
                         ELSE N'????' 
            END AS defaults
     FROM sys.all_parameters AS ap
