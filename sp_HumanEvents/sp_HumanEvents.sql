@@ -1116,7 +1116,7 @@ BEGIN;
          IF @debug = 1 BEGIN SELECT * FROM #queries AS q OPTION (RECOMPILE); END;
 
 
-         SELECT q.event_time,
+         SELECT MIN(q.event_time) AS event_time,
                 COUNT_BIG(*) AS executions,
                 /*totals*/
                 SUM(ISNULL(q.cpu_ms, 0.)) AS total_cpu_ms,
@@ -1142,11 +1142,10 @@ BEGIN;
                     q.plan_handle
          INTO #totals
          FROM #queries AS q
-         GROUP BY q.event_time,
-                  q.query_plan_hash_signed,
+         GROUP BY q.query_plan_hash_signed,
                   q.query_hash_signed,
                   q.plan_handle
-        OPTION (RECOMPILE);
+         OPTION (RECOMPILE);
 
          
          IF @debug = 1 BEGIN SELECT * FROM #totals AS t OPTION (RECOMPILE); END;
