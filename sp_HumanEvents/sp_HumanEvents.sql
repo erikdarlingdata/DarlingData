@@ -164,7 +164,7 @@ BEGIN
     WHERE o.name = N'sp_HumanEvents'
     OPTION(RECOMPILE);
 
-
+    /*Example calls*/
     SELECT N'EXAMPLE CALLS' AS example_calls UNION ALL    
     SELECT N'note that not all filters are compatible with all sessions' UNION ALL
     SELECT N'this is handled dynamically, but please don''t think you''re crazy if one "doesn''t work"' UNION ALL
@@ -205,7 +205,9 @@ BEGIN
     RAISERROR(N'
 MIT License
 
-Copyright 2020 Darling Data, LLC https://www.erikdarlingdata.com/
+Copyright 2020 Darling Data, LLC 
+
+https://www.erikdarlingdata.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -408,7 +410,7 @@ IF @event_type NOT IN
           N'block',
           N'blocks',
           N'lock',
-          N'lock',
+          N'locks',
           N'query',
           N'compile',
           N'recompile',
@@ -462,7 +464,7 @@ END;
 --This will hold the CSV list of wait types someone passes in
 CREATE TABLE #user_waits(wait_type NVARCHAR(60));
 INSERT #user_waits
-SELECT waits.wait_type
+SELECT LTRIM(RTRIM(waits.wait_type)) AS wait_type
 FROM
 (
     SELECT wait_type = x.x.value('(./text())[1]', 'NVARCHAR(60)')
@@ -560,7 +562,6 @@ BEGIN
         OR    pp.ahem LIKE N'%DBCC%'
         OR    pp.ahem LIKE N'%CONFIGURE%'
     )
-
     BEGIN
         RAISERROR(N'Say... you wouldn''t happen to be trying some funny business, would you?', 16, 1) WITH NOWAIT;
         RETURN;
@@ -650,7 +651,6 @@ BEGIN
     RAISERROR(N'that username doesn''t exist in sys.server_principals', 16, 1) WITH NOWAIT;
     RETURN;
 END;
-
 
 
 /*
@@ -1121,8 +1121,7 @@ BEGIN;
                  OR q.object_name IS NULL )
          OPTION (RECOMPILE);
          
-         IF @debug = 1 BEGIN SELECT * FROM #queries AS q OPTION (RECOMPILE); END;
-
+         IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
 
          SELECT MIN(q.event_time) AS event_time,
                 COUNT_BIG(*) AS executions,
@@ -1145,9 +1144,9 @@ BEGIN;
                 SUM(ISNULL(q.used_memory_mb, 0.)) / COUNT_BIG(*) AS avg_used_memory_mb,
                 SUM(ISNULL(q.granted_memory_mb, 0.)) / COUNT_BIG(*) AS avg_granted_memory_mb,
                 MAX(ISNULL(q.row_count, 0)) AS row_count,
-                    q.query_plan_hash_signed,
-                    q.query_hash_signed,
-                    q.plan_handle
+                q.query_plan_hash_signed,
+                q.query_hash_signed,
+                q.plan_handle
          INTO #totals
          FROM #queries AS q
          GROUP BY q.query_plan_hash_signed,
@@ -1156,7 +1155,7 @@ BEGIN;
          OPTION (RECOMPILE);
 
          
-         IF @debug = 1 BEGIN SELECT * FROM #totals AS t OPTION (RECOMPILE); END;
+         IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION (RECOMPILE); END;
 
 
          SELECT q.event_time,
@@ -1285,7 +1284,6 @@ IF @parameterization_events  = 1
             OPTION (RECOMPILE);
     END;
 
-
 END;
 
 
@@ -1319,7 +1317,6 @@ IF @compile_events = 0
                    c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 0
             ORDER BY event_time
             OPTION (RECOMPILE);
     END;
@@ -1349,7 +1346,7 @@ WITH waits AS (
             FROM waits
             OPTION(RECOMPILE);
             
-            IF @debug = 1 BEGIN SELECT * FROM #waits_agg AS wa; END;
+            IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa; END;
 
             SELECT N'total_waits' AS wait_pattern,
                    MIN(wa.event_time) AS min_event_time,
@@ -1449,6 +1446,7 @@ BEGIN
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
             OPTION (RECOMPILE);
 
+            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #waits_agg AS wa; END;
 
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,        
                    DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'INT')) AS database_name,
@@ -1474,116 +1472,118 @@ BEGIN
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
             OPTION (RECOMPILE);
 
-           WITH pablo_blanco AS
+            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #waits_agg AS wa; END;
+
+            WITH pablo_blanco AS
+             (
+                SELECT DISTINCT
+                       b.event_time,
+                       b.object_id,
+                       b.transaction_id,
+                       b.monitor_loop,
+                       b.blocking_spid,
+                       b.blocking_ecid
+                FROM #blocking AS b
+            
+                UNION ALL 
+                 
+                SELECT x.event_time,
+                       x.object_id,
+                       x.transaction_id,
+                       x.monitor_loop,
+                       x.blocked_spid,
+                       x.blocked_ecid
+                FROM (
+                SELECT b.event_time,
+                       b.object_id,
+                       b.transaction_id,
+                       b.monitor_loop,
+                       b.blocked_spid,
+                       b.blocked_ecid,
+                       ROW_NUMBER() OVER 
+                         ( PARTITION BY b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid
+                           ORDER BY     b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid ) AS n
+                FROM #blocked AS b
+                JOIN pablo_blanco AS p
+                    ON p.event_time = b.event_time
+                    AND p.object_id = b.object_id
+                    AND p.monitor_loop = b.monitor_loop
+                    AND p.blocking_spid <> b.blocked_spid
+                ) AS x
+                WHERE x.n = 1
+             ), 
+             and_another_thing AS 
             (
-               SELECT DISTINCT
-                      b.event_time,
-                      b.object_id,
-                      b.transaction_id,
-                      b.monitor_loop,
-                      b.blocking_spid,
-                      b.blocking_ecid
-               FROM #blocking AS b
-
-               UNION ALL 
-                
-               SELECT x.event_time,
-                      x.object_id,
-                      x.transaction_id,
-                      x.monitor_loop,
-                      x.blocked_spid,
-                      x.blocked_ecid
-               FROM (
-               SELECT b.event_time,
-                      b.object_id,
-                      b.transaction_id,
-                      b.monitor_loop,
-                      b.blocked_spid,
-                      b.blocked_ecid,
-                      ROW_NUMBER() OVER 
-                        ( PARTITION BY b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid
-                          ORDER BY     b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid ) AS n
-               FROM #blocked AS b
-               JOIN pablo_blanco AS p
-                   ON p.event_time = b.event_time
-                   AND p.object_id = b.object_id
-                   AND p.monitor_loop = b.monitor_loop
-                   AND p.blocking_spid <> b.blocked_spid
-               ) AS x
-               WHERE x.n = 1
-            ), 
-            and_another_thing AS 
-           (
-            SELECT bg.event_time,
-                   bg.database_name,
-                   OBJECT_NAME(bg.object_id, bg.database_id) AS contentious_object,
-                   1 AS ordering,
-                   N'blocking' AS activity,
-                   bg.blocking_spid AS spid,
-                   bg.blocking_blocking_text AS query_text,
-                   0 AS wait_time,
-                   bg.blocking_status AS status,
-                   bg.blocking_isolationlevel AS isolation_level,
-                   N'unknown' AS last_transaction_startted,
-                   N'unknown' AS transaction_name,
-                   N'unknown' AS lock_mode,
-                   bg.blocking_priority AS priority,
-                   bg.blocking_trancount AS transaction_count,
-                   bg.blocking_clientapp AS client_app,
-                   bg.blocking_hostname AS host_name,
-                   bg.blocking_loginname AS login_name,
-                   bg.blocked_process_report 
-                   FROM pablo_blanco AS pb
-                   CROSS APPLY( SELECT TOP 1 * 
-                                FROM #blocking AS b 
-                                WHERE b.blocking_spid = pb.blocking_spid ) AS bg
-                   UNION ALL 
-
-            SELECT bl.event_time,
-                   bl.database_name,
-                   OBJECT_NAME(bl.object_id, bl.database_id) AS contentious_object,
-                   2 AS ordering,
-                   N'blocked' AS activity,
-                   bl.blocked_spid,
-                   bl.blocked_text,
-                   bl.blocked_waittime,
-                   bl.blocked_status,
-                   bl.blocked_isolationlevel,
-                   CONVERT(NVARCHAR(30), bl.blocked_lasttranstarted, 127),
-                   bl.blocked_transactionname,
-                   bl.blocked_lockmode,
-                   bl.blocked_priority,
-                   bl.blocked_trancount,
-                   bl.blocked_clientapp,
-                   bl.blocked_hostname,
-                   bl.blocked_loginname,
-                   bl.blocked_process_report
-                   FROM pablo_blanco AS pb
-                   CROSS APPLY( SELECT TOP 1 * 
-                                FROM #blocked AS b 
-                                WHERE b.blocked_spid = pb.blocking_spid ) AS bl
-            )
-           SELECT att.event_time,
-                  att.database_name,
-                  att.contentious_object,
-                  att.activity,
-                  att.spid,
-                  att.query_text,
-                  att.wait_time,
-                  att.status,
-                  att.isolation_level,
-                  att.last_transaction_startted,
-                  att.transaction_name,
-                  att.lock_mode,
-                  att.priority,
-                  att.transaction_count,
-                  att.client_app,
-                  att.host_name,
-                  att.login_name,
-                  att.blocked_process_report 
-           FROM and_another_thing AS att
-           ORDER BY att.event_time, att.ordering
-           OPTION(RECOMPILE);
+             SELECT bg.event_time,
+                    bg.database_name,
+                    OBJECT_NAME(bg.object_id, bg.database_id) AS contentious_object,
+                    1 AS ordering,
+                    N'blocking' AS activity,
+                    bg.blocking_spid AS spid,
+                    bg.blocking_blocking_text AS query_text,
+                    0 AS wait_time,
+                    bg.blocking_status AS status,
+                    bg.blocking_isolationlevel AS isolation_level,
+                    N'unknown' AS last_transaction_startted,
+                    N'unknown' AS transaction_name,
+                    N'unknown' AS lock_mode,
+                    bg.blocking_priority AS priority,
+                    bg.blocking_trancount AS transaction_count,
+                    bg.blocking_clientapp AS client_app,
+                    bg.blocking_hostname AS host_name,
+                    bg.blocking_loginname AS login_name,
+                    bg.blocked_process_report 
+                    FROM pablo_blanco AS pb
+                    CROSS APPLY( SELECT TOP 1 * 
+                                 FROM #blocking AS b 
+                                 WHERE b.blocking_spid = pb.blocking_spid ) AS bg
+                    UNION ALL 
+            
+             SELECT bl.event_time,
+                    bl.database_name,
+                    OBJECT_NAME(bl.object_id, bl.database_id) AS contentious_object,
+                    2 AS ordering,
+                    N'blocked' AS activity,
+                    bl.blocked_spid,
+                    bl.blocked_text,
+                    bl.blocked_waittime,
+                    bl.blocked_status,
+                    bl.blocked_isolationlevel,
+                    CONVERT(NVARCHAR(30), bl.blocked_lasttranstarted, 127),
+                    bl.blocked_transactionname,
+                    bl.blocked_lockmode,
+                    bl.blocked_priority,
+                    bl.blocked_trancount,
+                    bl.blocked_clientapp,
+                    bl.blocked_hostname,
+                    bl.blocked_loginname,
+                    bl.blocked_process_report
+                    FROM pablo_blanco AS pb
+                    CROSS APPLY( SELECT TOP 1 * 
+                                 FROM #blocked AS b 
+                                 WHERE b.blocked_spid = pb.blocking_spid ) AS bl
+             )
+            SELECT att.event_time,
+                   att.database_name,
+                   att.contentious_object,
+                   att.activity,
+                   att.spid,
+                   att.query_text,
+                   att.wait_time,
+                   att.status,
+                   att.isolation_level,
+                   att.last_transaction_startted,
+                   att.transaction_name,
+                   att.lock_mode,
+                   att.priority,
+                   att.transaction_count,
+                   att.client_app,
+                   att.host_name,
+                   att.login_name,
+                   att.blocked_process_report 
+            FROM and_another_thing AS att
+            ORDER BY att.event_time, att.ordering
+            OPTION(RECOMPILE);
 
 END;
 
@@ -1604,19 +1604,18 @@ BEGIN CATCH
         ROLLBACK TRANSACTION;
     
     DECLARE @msg NVARCHAR(2048) = N'';
-    SELECT @msg += 
-            N'Error number '
-          + RTRIM(ERROR_NUMBER()) 
-          + N' with severity '
-          + RTRIM(ERROR_SEVERITY()) 
-          + N' and a state of '
-          + RTRIM(ERROR_STATE()) 
-          + N' in procedure ' 
-          + ERROR_PROCEDURE() 
-          + N' on line '  
-          + RTRIM(ERROR_LINE())
-          + NCHAR(10)
-          + ERROR_MESSAGE(); 
+    SELECT @msg += N'Error number '
+                + RTRIM(ERROR_NUMBER()) 
+                + N' with severity '
+                + RTRIM(ERROR_SEVERITY()) 
+                + N' and a state of '
+                + RTRIM(ERROR_STATE()) 
+                + N' in procedure ' 
+                + ERROR_PROCEDURE() 
+                + N' on line '  
+                + RTRIM(ERROR_LINE())
+                + NCHAR(10)
+                + ERROR_MESSAGE(); 
           
         RAISERROR (@msg, 16, 1) WITH NOWAIT;
 
