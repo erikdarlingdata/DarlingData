@@ -198,7 +198,7 @@ SELECT @version = '1.0', @versiondate = '20200301';
                     dest.text, ( der.statement_start_offset / 2 ) + 1,
                     (( CASE der.statement_end_offset WHEN -1 THEN DATALENGTH(dest.text) ELSE der.statement_end_offset END
                        - der.statement_start_offset ) / 2 ) + 1) AS query_text,
-       deqp.query_plan,
+           deqp.query_plan,
            der.plan_handle,
            der.status,
            der.blocking_session_id,
