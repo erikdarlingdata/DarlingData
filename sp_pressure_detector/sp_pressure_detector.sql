@@ -1,6 +1,20 @@
-CREATE OR ALTER PROCEDURE dbo.sp_pressure_detector ( @what_to_check NVARCHAR(6) = N'both',     
-                                                     @version VARCHAR(5) = NULL OUTPUT,
-                                                     @versiondate DATETIME = NULL OUTPUT )
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET QUOTED_IDENTIFIER ON;
+SET STATISTICS IO OFF;
+SET STATISTICS TIME OFF;
+GO
+
+IF OBJECT_ID('dbo.sp_pressure_detector') IS  NULL
+    EXEC ('CREATE PROCEDURE dbo.sp_pressure_detector AS RETURN 138;');
+GO
+
+ALTER PROCEDURE dbo.sp_pressure_detector ( @what_to_check NVARCHAR(6) = N'both',     
+                                           @version VARCHAR(5) = NULL OUTPUT,
+                                           @versiondate DATETIME = NULL OUTPUT )
 WITH RECOMPILE
 AS 
 BEGIN
