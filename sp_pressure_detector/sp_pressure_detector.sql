@@ -109,9 +109,9 @@ SELECT @version = '1.0', @versiondate = '20200301';
                 (deqmg.wait_time_ms / 1000.) wait_time_s,
                 (waits.wait_duration_ms / 1000.) wait_duration_s,
                 deqmg.dop,
-                waits.wait_type'
+                waits.wait_type,'
                 + CASE WHEN @helpful_new_columns = 1
-                       THEN N',
+                       THEN N'
                 deqmg.reserved_worker_count,
                 deqmg.used_worker_count,'
                        ELSE N''
