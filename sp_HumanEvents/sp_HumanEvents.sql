@@ -1513,7 +1513,7 @@ BEGIN
                 WHERE x.n = 1
              ), 
              and_another_thing AS 
-            (
+             (
              SELECT bg.event_time,
                     bg.database_name,
                     OBJECT_NAME(bg.object_id, bg.database_id) AS contentious_object,
