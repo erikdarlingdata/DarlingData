@@ -1222,7 +1222,39 @@ BEGIN;
          ) AS q2
          WHERE q.showplan_xml.exist('*') = 1
          )
-         SELECT *
+         SELECT q.event_time,
+                q.database_name,
+                q.object_name,
+                q.statement_text,
+                q.sql_text,
+                q.showplan_xml,
+                q.executions,
+                q.total_cpu_ms,
+                q.avg_cpu_ms,
+                q.total_logical_reads,
+                q.avg_logical_reads,
+                q.total_physical_reads,
+                q.avg_physical_reads,
+                q.total_duration_ms,
+                q.avg_duration_ms,
+                q.total_writes,
+                q.avg_writes,
+                q.total_spills_mb,
+                q.avg_spills_mb,
+                q.total_used_memory_mb,
+                q.avg_used_memory_mb,
+                q.total_granted_memory_mb,
+                q.avg_granted_memory_mb,
+                q.total_rows,
+                q.avg_rows,
+                q.serial_ideal_memory_mb,
+                q.requested_memory_mb,
+                q.ideal_memory_mb,
+                q.estimated_rows,
+                q.dop,
+                q.query_plan_hash_signed,
+                q.query_hash_signed,
+                q.plan_handle
          FROM query_results AS q
          WHERE q.n = 1
          ORDER BY CASE @query_sort_order
@@ -1370,7 +1402,7 @@ WITH waits AS (
             
             IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa; END;
 
-            SELECT N'total_waits' AS wait_pattern,
+            SELECT N'total waits' AS wait_pattern,
                    MIN(wa.event_time) AS min_event_time,
                    MAX(wa.event_time) AS max_event_time,
                    wa.wait_type,
@@ -1383,7 +1415,7 @@ WITH waits AS (
             ORDER BY sum_duration_ms DESC
             OPTION (RECOMPILE);            
 
-            SELECT N'total_waits_by_database' AS wait_pattern,
+            SELECT N'total waits by database' AS wait_pattern,
                    MIN(wa.event_time) AS min_event_time,
                    MAX(wa.event_time) AS max_event_time,
                    wa.database_name,
@@ -1393,14 +1425,16 @@ WITH waits AS (
                    SUM(wa.signal_duration_ms) AS sum_signal_duration_ms,
                    SUM(wa.duration_ms) / COUNT_BIG(*) AS avg_ms_per_wait
             FROM #waits_agg AS wa
-            GROUP BY wa.database_name, wa.wait_type
+            GROUP BY wa.database_name, 
+                     wa.wait_type
             ORDER BY sum_duration_ms DESC
             OPTION (RECOMPILE); 
 
             WITH plan_waits AS (
-            SELECT N'waits by query' AS wait_pattern,
+            SELECT N'waits by query and database' AS wait_pattern,
                    MIN(wa.event_time) AS min_event_time,
                    MAX(wa.event_time) AS max_event_time,
+                   wa.database_name,
                    wa.wait_type,
                    COUNT_BIG(*) AS total_waits,
                    wa.plan_handle,
@@ -1410,7 +1444,8 @@ WITH waits AS (
                    SUM(wa.signal_duration_ms) AS sum_signal_duration_ms,
                    SUM(wa.duration_ms) / COUNT_BIG(*) AS avg_ms_per_wait
             FROM #waits_agg AS wa
-            GROUP BY wa.wait_type, 
+            GROUP BY wa.database_name,
+                     wa.wait_type, 
                      wa.query_hash_signed, 
                      wa.query_plan_hash_signed, 
                      wa.plan_handle
@@ -1419,6 +1454,7 @@ WITH waits AS (
             SELECT pw.wait_pattern,
                    pw.min_event_time,
                    pw.max_event_time,
+                   pw.database_name,
                    pw.wait_type,
                    pw.total_waits,
                    pw.sum_duration_ms,
