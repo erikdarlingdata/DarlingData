@@ -1460,8 +1460,8 @@ WITH waits AS (
                    pw.sum_duration_ms,
                    pw.sum_signal_duration_ms,
                    pw.avg_ms_per_wait,
-                   qp.query_plan,
-                   st.text
+                   st.text,
+                   qp.query_plan
             FROM plan_waits AS pw
             OUTER APPLY sys.dm_exec_query_plan(pw.plan_handle) AS qp
             OUTER APPLY sys.dm_exec_sql_text(pw.plan_handle) AS st
