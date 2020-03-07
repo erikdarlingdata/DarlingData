@@ -107,7 +107,7 @@ BEGIN
            END AS description,
            CASE ap.name WHEN N'@event_type' THEN N'"blocking", "query", "waits", "recompiles", "compiles" and certain variations on those words'
                         WHEN N'@query_duration_ms' THEN N'an integer'
-                        WHEN N'@query_sort_order' THEN '"cpu", "reads", "writes", "duration", "memory", "spills"'
+                        WHEN N'@query_sort_order' THEN '"cpu", "reads", "writes", "duration", "memory", "spills", and you can add "avg" to sort by averages, e.g. "avg cpu"'
                         WHEN N'@blocking_duration_ms' THEN N'an integer'
                         WHEN N'@wait_type' THEN N'a single wait type, or a CSV list of wait types'
                         WHEN N'@wait_duration_ms' THEN N'an integer'
@@ -322,8 +322,6 @@ DECLARE @drop_sql  NVARCHAR(MAX) = N'DROP EVENT SESSION '  + @session_name + N' 
 DECLARE @session_filter NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
 /*Others can't use all of them, like app and host name*/
 DECLARE @session_filter_limited NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
-/*batch_completed is especially limited, it can't even use object name*/
-DECLARE @session_filter_batch_completed NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
 /*query plans can filter on requested memory, too, along with the limited filters*/
 DECLARE @session_filter_query_plans NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
 /*only wait stats can filter on wait types, but can filter on everything else*/
@@ -454,7 +452,8 @@ BEGIN
     SET @blocking_duration_ms = 500;
 END;
 
-IF @query_sort_order NOT IN (N'cpu', N'reads', N'writes', N'duration', N'memory', N'spills')
+IF @query_sort_order NOT IN (N'cpu', N'reads', N'writes', N'duration', N'memory', N'spills',
+                             N'avg cpu', N'avg reads', N'avg writes', N'avg duration', N'avg memory', N'avg spills')
 BEGIN
    RAISERROR(N'that sort order you chose is so out of this world that i''m ignoring it', 0, 1) WITH NOWAIT;
    SET @query_sort_order = N'cpu';
@@ -924,12 +923,6 @@ SET @session_filter_query_plans += ( ISNULL(@query_duration_filter, N'') +
                                      ISNULL(@object_name_filter, N'') +
                                      ISNULL(@requested_memory_mb_filter, N'') );
 
-/*Specific for batch completed, because it is a blah*/
-SET @session_filter_batch_completed += ( ISNULL(@query_duration_filter, N'') +
-                                         ISNULL(@database_name_filter, N'') +
-                                         ISNULL(@session_id_filter, N'') +
-                                         ISNULL(@username_filter, N'') );
-
 /*Recompile can have almost everything except... duration.*/
 SET @session_filter_recompile += ( ISNULL(@client_app_name_filter, N'') +
                                    ISNULL(@client_hostname_filter, N'') +
@@ -981,10 +974,6 @@ SET @session_sql +=
      (SET collect_object_name = 1, collect_statement = 1
       ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed) 
       WHERE ( ' + @session_filter + N' )),
-  ADD EVENT sqlserver.sql_batch_completed 
-    (SET collect_batch_text = 1
-    ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
-    WHERE ( ' + @session_filter_batch_completed + N' )),
   ADD EVENT sqlserver.sql_statement_completed 
    (SET collect_statement = 1
     ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
@@ -1090,7 +1079,6 @@ BEGIN;
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
-                   c.value('(data[@name="batch_text"]/value)[1]', 'NVARCHAR(MAX)') AS batch_text,
                    c.value('(action[@name="sql_text"]/value)[1]', 'NVARCHAR(MAX)') AS sql_text,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement,
                    c.query('(data[@name="showplan_xml"]/value/*)[1]') AS [showplan_xml],
@@ -1123,45 +1111,69 @@ BEGIN;
          
          IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
 
-         SELECT MIN(q.event_time) AS event_time,
-                COUNT_BIG(*) AS executions,
-                /*totals*/
-                SUM(ISNULL(q.cpu_ms, 0.)) AS total_cpu_ms,
-                SUM(ISNULL(q.logical_reads, 0.)) AS total_logical_reads,
-                SUM(ISNULL(q.physical_reads, 0.)) AS total_physical_reads,
-                SUM(ISNULL(q.duration_ms, 0.)) AS total_duration_ms,
-                SUM(ISNULL(q.writes, 0.)) AS total_writes,
-                SUM(ISNULL(q.spills_mb, 0.)) AS total_spills_mb,
-                SUM(ISNULL(q.used_memory_mb, 0.)) AS total_used_memory_mb,
-                SUM(ISNULL(q.granted_memory_mb, 0.)) AS total_granted_memory_mb,
-                /*averages*/
-                SUM(ISNULL(q.cpu_ms, 0.)) / COUNT_BIG(*) AS avg_cpu_ms,
-                SUM(ISNULL(q.logical_reads, 0.)) / COUNT_BIG(*) AS avg_logical_reads,
-                SUM(ISNULL(q.physical_reads, 0.)) / COUNT_BIG(*) AS avg_physical_reads,
-                SUM(ISNULL(q.duration_ms, 0.)) / COUNT_BIG(*) AS avg_duration_ms,
-                SUM(ISNULL(q.writes, 0.)) / COUNT_BIG(*) AS avg_writes,
-                SUM(ISNULL(q.spills_mb, 0.)) / COUNT_BIG(*) AS avg_spills_mb,
-                SUM(ISNULL(q.used_memory_mb, 0.)) / COUNT_BIG(*) AS avg_used_memory_mb,
-                SUM(ISNULL(q.granted_memory_mb, 0.)) / COUNT_BIG(*) AS avg_granted_memory_mb,
-                MAX(ISNULL(q.row_count, 0)) AS row_count,
-                q.query_plan_hash_signed,
-                q.query_hash_signed,
-                q.plan_handle
-         INTO #totals
-         FROM #queries AS q
-         GROUP BY q.query_plan_hash_signed,
-                  q.query_hash_signed,
-                  q.plan_handle
-         OPTION (RECOMPILE);
+         WITH queries AS 
+                 (
+                  SELECT COUNT_BIG(*) OVER (PARTITION BY q.query_plan_hash_signed,
+                                                         q.query_hash_signed,
+                                                         q.plan_handle) AS executions,
+                         q.query_plan_hash_signed,
+                         q.query_hash_signed,
+                         q.plan_handle
+                  FROM #queries AS q
+                  GROUP BY q.event_time,
+                           q.query_plan_hash_signed,
+                           q.query_hash_signed,
+                           q.plan_handle
+                 )
+                 SELECT q.query_plan_hash_signed,
+                        q.query_hash_signed,
+                        q.plan_handle,
+                        qq.executions,
+                        /*totals*/
+                        SUM(ISNULL(q.cpu_ms, 0.)) / qq.executions AS total_cpu_ms,
+                        SUM(ISNULL(q.logical_reads, 0.)) / qq.executions AS total_logical_reads,
+                        SUM(ISNULL(q.physical_reads, 0.)) / qq.executions AS total_physical_reads,
+                        SUM(ISNULL(q.duration_ms, 0.)) / qq.executions AS total_duration_ms,
+                        SUM(ISNULL(q.writes, 0.)) / qq.executions AS total_writes,
+                        SUM(ISNULL(q.spills_mb, 0.)) / qq.executions AS total_spills_mb,
+                        SUM(ISNULL(q.used_memory_mb, 0.)) / qq.executions AS total_used_memory_mb,
+                        SUM(ISNULL(q.granted_memory_mb, 0.)) / qq.executions AS total_granted_memory_mb,
+                        SUM(ISNULL(q.row_count, 0.)) / qq.executions AS total_rows,
+                        /*averages*/
+                        AVG(ISNULL(q.cpu_ms, 0.)) AS avg_cpu_ms,
+                        AVG(ISNULL(q.logical_reads, 0.)) AS avg_logical_reads,
+                        AVG(ISNULL(q.physical_reads, 0.)) AS avg_physical_reads,
+                        AVG(ISNULL(q.duration_ms, 0.)) AS avg_duration_ms,
+                        AVG(ISNULL(q.writes, 0.)) AS avg_writes,
+                        AVG(ISNULL(q.spills_mb, 0.)) AS avg_spills_mb,
+                        AVG(ISNULL(q.used_memory_mb, 0.)) AS avg_used_memory_mb,
+                        AVG(ISNULL(q.granted_memory_mb, 0.)) AS avg_granted_memory_mb,
+                        AVG(ISNULL(q.row_count, 0)) AS avg_rows                    
+                 INTO #totals                 
+                 FROM queries AS qq
+                 JOIN #queries AS q
+                     ON    qq.query_plan_hash_signed = q.query_plan_hash_signed
+                     AND   qq.query_hash_signed = q.query_hash_signed
+                     AND   qq.plan_handle = q.plan_handle
+                 WHERE q.event_type <> N'query_post_execution_showplan'
+                 GROUP BY q.query_plan_hash_signed,
+                          q.query_hash_signed,
+                          q.plan_handle,
+                          qq.executions
+                 OPTION (RECOMPILE);
 
          
          IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION (RECOMPILE); END;
 
+         /*
 
+         */
+         WITH query_results AS
+         (
          SELECT q.event_time,
                 q.database_name,
                 q.object_name,
-                q2.batch_statement_text,
+                q2.statement_text,
                 q.sql_text,
                 q.showplan_xml,
                 t.executions,
@@ -1178,44 +1190,54 @@ BEGIN;
                 t.total_spills_mb,
                 t.avg_spills_mb,
                 t.total_used_memory_mb,
-                t.total_granted_memory_mb,
                 t.avg_used_memory_mb,
+                t.total_granted_memory_mb,
                 t.avg_granted_memory_mb,
+                t.total_rows,
+                t.avg_rows,
                 q.serial_ideal_memory_mb,
                 q.requested_memory_mb,
                 q.ideal_memory_mb,
-                t.row_count,
                 q.estimated_rows,
                 q.dop,
                 q.query_plan_hash_signed,
                 q.query_hash_signed,
-                q.plan_handle
+                q.plan_handle,
+                ROW_NUMBER() OVER( PARTITION BY q.query_plan_hash_signed, q.query_hash_signed, q.plan_handle
+                                       ORDER BY q.query_plan_hash_signed, q.query_hash_signed, q.plan_handle ) AS n
          FROM #queries AS q
          JOIN #totals AS t
              ON  q.query_hash_signed = t.query_hash_signed
              AND q.query_plan_hash_signed = t.query_plan_hash_signed
              AND q.plan_handle = t.plan_handle
-             AND q.event_time = t.event_time
          CROSS APPLY
          (
-             SELECT TOP (1) 
-                        ISNULL(q2.batch_text, q2.statement) AS batch_statement_text
+             SELECT TOP (1) q2.statement AS statement_text
              FROM #queries AS q2
              WHERE q.query_hash_signed = q2.query_hash_signed
              AND   q.query_plan_hash_signed = q2.query_plan_hash_signed
              AND   q.plan_handle = q2.plan_handle
-             AND   q.event_time = q2.event_time
-             AND   ISNULL(q2.batch_text, q2.statement) IS NOT NULL
+             AND   q2.statement IS NOT NULL
              ORDER BY q2.event_time DESC
          ) AS q2
          WHERE q.showplan_xml.exist('*') = 1
+         )
+         SELECT *
+         FROM query_results AS q
+         WHERE q.n = 1
          ORDER BY CASE @query_sort_order
-                       WHEN N'cpu' THEN q.cpu_ms
-                       WHEN N'reads' THEN q.logical_reads + q.physical_reads
-                       WHEN N'writes' THEN q.writes
-                       WHEN N'duration' THEN q.duration_ms
-                       WHEN N'spills' THEN q.spills_mb
-                       WHEN N'memory' THEN q.granted_memory_mb
+                       WHEN N'cpu' THEN q.total_cpu_ms
+                       WHEN N'reads' THEN q.total_logical_reads + q.total_physical_reads
+                       WHEN N'writes' THEN q.total_writes
+                       WHEN N'duration' THEN q.total_duration_ms
+                       WHEN N'spills' THEN q.total_spills_mb
+                       WHEN N'memory' THEN q.total_granted_memory_mb
+                       WHEN N'avg cpu' THEN q.avg_cpu_ms
+                       WHEN N'avg reads' THEN q.avg_logical_reads + q.avg_physical_reads
+                       WHEN N'avg writes' THEN q.avg_writes
+                       WHEN N'avg duration' THEN q.avg_duration_ms
+                       WHEN N'avg spills' THEN q.avg_spills_mb
+                       WHEN N'avg memory' THEN q.avg_granted_memory_mb
                        ELSE N'cpu'
                   END DESC
          OPTION (RECOMPILE);
