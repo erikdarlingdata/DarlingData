@@ -220,7 +220,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE 
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-    ', 0, 1) WITH NOWAIT; 
+', 0, 1) WITH NOWAIT; 
 
 RETURN;
 END;
@@ -231,7 +231,7 @@ BEGIN TRY
 I mean really stop it with the unsupported versions
 */
 DECLARE @v DECIMAL(5,0);
-SELECT @v =
+SELECT  @v =
     SUBSTRING( CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion')), 1,
                CHARINDEX('.', CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion'))) + 1 );
 IF @v < 11
@@ -469,9 +469,9 @@ FROM
     SELECT wait_type = x.x.value('(./text())[1]', 'NVARCHAR(60)')
     FROM 
     ( 
-      SELECT wait_type = CONVERT(XML, N'<x>' 
-                         + REPLACE(REPLACE(@wait_type, N',', N'</x><x>'), N' ', N'') 
-                         + N'</x>').query('.')
+      SELECT wait_type =  CONVERT(XML, N'<x>' 
+                        + REPLACE(REPLACE(@wait_type, N',', N'</x><x>'), N' ', N'') 
+                        + N'</x>').query('.')
     ) AS w 
         CROSS APPLY wait_type.nodes('x') AS x(x)
 ) AS waits
@@ -484,7 +484,6 @@ they're valid waits by checking them against what's available.
 */
 IF @wait_type <> N'all'
 BEGIN
-
     SET @wait_type = REPLACE(@wait_type, N'THREADPOOL', N'SOS_WORKER');
 
     SELECT DISTINCT uw.wait_type AS invalid_waits
@@ -688,11 +687,11 @@ SET @math = @seconds_sample / 60;
     BEGIN
         DECLARE @seconds_ INT;        
         SET @seconds_ = @seconds_sample % 60;        
-        SET @waitfor = N'00:' 
-                     + N'00'
-                     + N':'
-                     + CONVERT(NVARCHAR(11), RIGHT(N'00' + RTRIM(@seconds_), 2))
-                     + N'.000';        
+        SET @waitfor  = N'00:' 
+                      + N'00'
+                      + N':'
+                      + CONVERT(NVARCHAR(11), RIGHT(N'00' + RTRIM(@seconds_), 2))
+                      + N'.000';        
     END;
 END;
 
@@ -1647,11 +1646,11 @@ END;
 
 
 --Stop the event session
-IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
+IF @debug = 1 BEGIN RAISERROR(@stop_sql, 16, 1) WITH NOWAIT; END;
 EXEC (@stop_sql);
 
 --Drop the event session
-IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
+IF @debug = 1 BEGIN RAISERROR(@drop_sql, 16, 1) WITH NOWAIT; END;
 EXEC (@drop_sql);
 
 END TRY
@@ -1678,11 +1677,11 @@ BEGIN CATCH
         RAISERROR (@msg, 16, 1) WITH NOWAIT;
 
         --Stop the event session
-        IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
+        IF @debug = 1 BEGIN RAISERROR(@stop_sql, 16, 1) WITH NOWAIT; END;
         EXEC (@stop_sql);
         
         --Drop the event session
-        IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
+        IF @debug = 1 BEGIN RAISERROR(@drop_sql, 16, 1) WITH NOWAIT; END;
         EXEC (@drop_sql);
 
         RETURN -138;
