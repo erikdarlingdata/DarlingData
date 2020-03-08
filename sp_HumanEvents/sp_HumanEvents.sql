@@ -428,7 +428,7 @@ IF ( LOWER(@event_type) LIKE N'%quer%' AND @event_type NOT LIKE N'%comp%' --igno
 BEGIN
     RAISERROR(N'you chose a really dangerous value for @query_duration', 0, 1) WITH NOWAIT;
     RAISERROR(N'if you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
-    RAISERROR(N'setting @query_duration to 500', 16, 1) WITH NOWAIT;
+    RAISERROR(N'setting @query_duration to 500', 0, 1) WITH NOWAIT;
     SET @query_duration_ms = 500;
 END;
 
@@ -438,7 +438,7 @@ IF ( LOWER(@event_type) LIKE N'%wait%'
 BEGIN
     RAISERROR(N'you chose a really dangerous value for @wait_duration_ms', 0, 1) WITH NOWAIT;
     RAISERROR(N'if you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
-    RAISERROR(N'setting @wait_duration_ms to 10', 16, 1) WITH NOWAIT;
+    RAISERROR(N'setting @wait_duration_ms to 10', 0, 1) WITH NOWAIT;
     SET @wait_duration_ms = 10;
 END;
 
@@ -448,12 +448,12 @@ IF ( LOWER(@event_type) LIKE N'%lock%'
 BEGIN
     RAISERROR(N'you chose a really dangerous value for @blocking_duration_ms', 0, 1) WITH NOWAIT;
     RAISERROR(N'if you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
-    RAISERROR(N'setting @blocking_duration_ms to 500', 16, 1) WITH NOWAIT;
+    RAISERROR(N'setting @blocking_duration_ms to 500', 0, 1) WITH NOWAIT;
     SET @blocking_duration_ms = 500;
 END;
 
-IF @query_sort_order NOT IN (N'cpu', N'reads', N'writes', N'duration', N'memory', N'spills',
-                             N'avg cpu', N'avg reads', N'avg writes', N'avg duration', N'avg memory', N'avg spills')
+IF @query_sort_order NOT IN ( N'cpu', N'reads', N'writes', N'duration', N'memory', N'spills',
+                              N'avg cpu', N'avg reads', N'avg writes', N'avg duration', N'avg memory', N'avg spills' )
 BEGIN
    RAISERROR(N'that sort order you chose is so out of this world that i''m ignoring it', 0, 1) WITH NOWAIT;
    SET @query_sort_order = N'cpu';
@@ -631,8 +631,8 @@ END;
 
 IF @sample_divisor < 2
 BEGIN
-    RAISERROR(N'@sample_divisor is used to divide session @session_id when taking a sample of a workload.', 16, 1) WITH NOWAIT;
-    RAISERROR(N'we can''t really divide by zero, and dividing by 1 would be uh... bad.', 16, 1) WITH NOWAIT;
+    RAISERROR(N'@sample_divisor is used to divide @session_id when taking a sample of a workload.', 16, 1) WITH NOWAIT;
+    RAISERROR(N'we can''t really divide by zero, and dividing by 1 would be useless.', 16, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -763,7 +763,7 @@ BEGIN
     BEGIN
         DECLARE @object_id sysname;
         SET @object_id = OBJECT_ID(@fully_formed_babby);
-        SET @object_name_filter += N'     AND object_id = ' + @object_id;
+        SET @object_name_filter += N'     AND object_id = ' + @object_id + NCHAR(10);
     END;
     IF @event_type NOT LIKE N'%lock%'
     BEGIN
@@ -963,73 +963,76 @@ SET @session_sql +=
          THEN N' 
   ADD EVENT sqlserver.module_end 
     (SET collect_statement = 1
-    ACTION (sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
+     ACTION (sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
      WHERE ( ' + @session_filter + N' )),
   ADD EVENT sqlserver.rpc_completed 
     (SET collect_statement = 1
-    ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
+     ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
      WHERE ( ' + @session_filter + N' )),
   ADD EVENT sqlserver.sp_statement_completed 
-     (SET collect_object_name = 1, collect_statement = 1
-      ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed) 
-      WHERE ( ' + @session_filter + N' )),
+    (SET collect_object_name = 1, collect_statement = 1
+     ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed) 
+     WHERE ( ' + @session_filter + N' )),
   ADD EVENT sqlserver.sql_statement_completed 
-   (SET collect_statement = 1
-    ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
-    WHERE ( ' + @session_filter_statement_completed + N' ))'            
+    (SET collect_statement = 1
+     ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
+     WHERE ( ' + @session_filter_statement_completed + N' ))'            
             + CASE WHEN @capture_plans = 1 
               THEN N',
   ADD EVENT sqlserver.query_post_execution_showplan
     (
-    ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
-    WHERE ( ' + @session_filter_query_plans + N' ))'
+     ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
+     WHERE ( ' + @session_filter_query_plans + N' ))'
               ELSE N''
               END
          WHEN LOWER(@event_type) LIKE N'%wait%' AND @v > 11
          THEN N' 
   ADD EVENT sqlos.wait_completed
     (SET collect_wait_resource = 1
-    ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
-    WHERE ( ' + @session_filter_waits + N' ))'
+     ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
+     WHERE ( ' + @session_filter_waits + N' ))'
          WHEN LOWER(@event_type) LIKE N'%wait%' AND @v = 11
          THEN N' 
   ADD EVENT sqlos.wait_info
-    (ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
+    (
+     ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
      WHERE ( ' + @session_filter_waits + N' ))'
          WHEN LOWER(@event_type) LIKE N'%recomp%'
          THEN CASE WHEN @compile_events = 1
                    THEN N' 
   ADD EVENT sqlserver.sql_statement_post_compile 
     (SET collect_object_name = 1, collect_statement = 1
-    ACTION(sqlserver.database_name)
-    WHERE ( ' + @session_filter + N' ))'
+     ACTION(sqlserver.database_name)
+     WHERE ( ' + @session_filter + N' ))'
                    ELSE N' 
   ADD EVENT sqlserver.sql_statement_recompile 
     (SET collect_object_name = 1, collect_statement = 1
-    ACTION(sqlserver.database_name)
-    WHERE ( ' + @session_filter_recompile + N' ))'
+     ACTION(sqlserver.database_name)
+     WHERE ( ' + @session_filter_recompile + N' ))'
              END
          WHEN (LOWER(@event_type) LIKE N'%comp%' AND LOWER(@event_type) NOT LIKE N'%re%')
          THEN CASE WHEN @compile_events = 1
                    THEN N' 
   ADD EVENT sqlserver.sql_statement_post_compile 
     (SET collect_object_name = 1, collect_statement = 1
-    ACTION(sqlserver.database_name)
-    WHERE ( ' + @session_filter + N' ))'
+     ACTION(sqlserver.database_name)
+     WHERE ( ' + @session_filter + N' ))'
                    ELSE N'
-  ADD EVENT sqlserver.uncached_sql_batch_statistics(
-    ACTION(sqlserver.database_name)
-    WHERE ( ' + @session_filter_recompile + N' )),             
+  ADD EVENT sqlserver.uncached_sql_batch_statistics
+    (
+     ACTION(sqlserver.database_name)
+     WHERE ( ' + @session_filter_recompile + N' )),             
   ADD EVENT sqlserver.sql_statement_recompile 
     (SET collect_object_name = 1, collect_statement = 1
-    ACTION(sqlserver.database_name)
-    WHERE ( ' + @session_filter_recompile + N' ))'
+     ACTION(sqlserver.database_name)
+     WHERE ( ' + @session_filter_recompile + N' ))'
               END
             + CASE WHEN @parameterization_events = 1
                    THEN N',
-  ADD EVENT sqlserver.query_parameterization_data(
-    ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.sql_text)
-    WHERE ( ' + @session_filter_parameterization + N' ))'
+  ADD EVENT sqlserver.query_parameterization_data
+    (
+     ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.sql_text)
+     WHERE ( ' + @session_filter_parameterization + N' ))'
                    ELSE N''
               END 
         ELSE N'i have no idea what i''m doing.'
@@ -1111,19 +1114,19 @@ BEGIN;
          IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
 
          WITH queries AS 
-                 (
-                  SELECT COUNT_BIG(*) OVER (PARTITION BY q.query_plan_hash_signed,
+             (
+                 SELECT COUNT_BIG(*) OVER ( PARTITION BY q.query_plan_hash_signed,
                                                          q.query_hash_signed,
-                                                         q.plan_handle) AS executions,
-                         q.query_plan_hash_signed,
-                         q.query_hash_signed,
-                         q.plan_handle
-                  FROM #queries AS q
-                  GROUP BY q.event_time,
-                           q.query_plan_hash_signed,
-                           q.query_hash_signed,
-                           q.plan_handle
-                 )
+                                                         q.plan_handle ) AS executions,
+                        q.query_plan_hash_signed,
+                        q.query_hash_signed,
+                        q.plan_handle
+                 FROM #queries AS q
+                 GROUP BY q.event_time,
+                          q.query_plan_hash_signed,
+                          q.query_hash_signed,
+                          q.plan_handle
+             )
                  SELECT q.query_plan_hash_signed,
                         q.query_hash_signed,
                         q.plan_handle,
@@ -1164,114 +1167,111 @@ BEGIN;
          
          IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION (RECOMPILE); END;
 
-         /*
-
-         */
          WITH query_results AS
-         (
-         SELECT q.event_time,
-                q.database_name,
-                q.object_name,
-                q2.statement_text,
-                q.sql_text,
-                q.showplan_xml,
-                t.executions,
-                t.total_cpu_ms,
-                t.avg_cpu_ms,
-                t.total_logical_reads,
-                t.avg_logical_reads,
-                t.total_physical_reads,
-                t.avg_physical_reads,
-                t.total_duration_ms,
-                t.avg_duration_ms,
-                t.total_writes,
-                t.avg_writes,
-                t.total_spills_mb,
-                t.avg_spills_mb,
-                t.total_used_memory_mb,
-                t.avg_used_memory_mb,
-                t.total_granted_memory_mb,
-                t.avg_granted_memory_mb,
-                t.total_rows,
-                t.avg_rows,
-                q.serial_ideal_memory_mb,
-                q.requested_memory_mb,
-                q.ideal_memory_mb,
-                q.estimated_rows,
-                q.dop,
-                q.query_plan_hash_signed,
-                q.query_hash_signed,
-                q.plan_handle,
-                ROW_NUMBER() OVER( PARTITION BY q.query_plan_hash_signed, q.query_hash_signed, q.plan_handle
-                                       ORDER BY q.query_plan_hash_signed, q.query_hash_signed, q.plan_handle ) AS n
-         FROM #queries AS q
-         JOIN #totals AS t
-             ON  q.query_hash_signed = t.query_hash_signed
-             AND q.query_plan_hash_signed = t.query_plan_hash_signed
-             AND q.plan_handle = t.plan_handle
-         CROSS APPLY
-         (
-             SELECT TOP (1) q2.statement AS statement_text
-             FROM #queries AS q2
-             WHERE q.query_hash_signed = q2.query_hash_signed
-             AND   q.query_plan_hash_signed = q2.query_plan_hash_signed
-             AND   q.plan_handle = q2.plan_handle
-             AND   q2.statement IS NOT NULL
-             ORDER BY q2.event_time DESC
-         ) AS q2
-         WHERE q.showplan_xml.exist('*') = 1
-         )
-         SELECT q.event_time,
-                q.database_name,
-                q.object_name,
-                q.statement_text,
-                q.sql_text,
-                q.showplan_xml,
-                q.executions,
-                q.total_cpu_ms,
-                q.avg_cpu_ms,
-                q.total_logical_reads,
-                q.avg_logical_reads,
-                q.total_physical_reads,
-                q.avg_physical_reads,
-                q.total_duration_ms,
-                q.avg_duration_ms,
-                q.total_writes,
-                q.avg_writes,
-                q.total_spills_mb,
-                q.avg_spills_mb,
-                q.total_used_memory_mb,
-                q.avg_used_memory_mb,
-                q.total_granted_memory_mb,
-                q.avg_granted_memory_mb,
-                q.total_rows,
-                q.avg_rows,
-                q.serial_ideal_memory_mb,
-                q.requested_memory_mb,
-                q.ideal_memory_mb,
-                q.estimated_rows,
-                q.dop,
-                q.query_plan_hash_signed,
-                q.query_hash_signed,
-                q.plan_handle
-         FROM query_results AS q
-         WHERE q.n = 1
-         ORDER BY CASE @query_sort_order
-                       WHEN N'cpu' THEN q.total_cpu_ms
-                       WHEN N'reads' THEN q.total_logical_reads + q.total_physical_reads
-                       WHEN N'writes' THEN q.total_writes
-                       WHEN N'duration' THEN q.total_duration_ms
-                       WHEN N'spills' THEN q.total_spills_mb
-                       WHEN N'memory' THEN q.total_granted_memory_mb
-                       WHEN N'avg cpu' THEN q.avg_cpu_ms
-                       WHEN N'avg reads' THEN q.avg_logical_reads + q.avg_physical_reads
-                       WHEN N'avg writes' THEN q.avg_writes
-                       WHEN N'avg duration' THEN q.avg_duration_ms
-                       WHEN N'avg spills' THEN q.avg_spills_mb
-                       WHEN N'avg memory' THEN q.avg_granted_memory_mb
-                       ELSE N'cpu'
-                  END DESC
-         OPTION (RECOMPILE);
+             (
+                 SELECT q.event_time,
+                        q.database_name,
+                        q.object_name,
+                        q2.statement_text,
+                        q.sql_text,
+                        q.showplan_xml,
+                        t.executions,
+                        t.total_cpu_ms,
+                        t.avg_cpu_ms,
+                        t.total_logical_reads,
+                        t.avg_logical_reads,
+                        t.total_physical_reads,
+                        t.avg_physical_reads,
+                        t.total_duration_ms,
+                        t.avg_duration_ms,
+                        t.total_writes,
+                        t.avg_writes,
+                        t.total_spills_mb,
+                        t.avg_spills_mb,
+                        t.total_used_memory_mb,
+                        t.avg_used_memory_mb,
+                        t.total_granted_memory_mb,
+                        t.avg_granted_memory_mb,
+                        t.total_rows,
+                        t.avg_rows,
+                        q.serial_ideal_memory_mb,
+                        q.requested_memory_mb,
+                        q.ideal_memory_mb,
+                        q.estimated_rows,
+                        q.dop,
+                        q.query_plan_hash_signed,
+                        q.query_hash_signed,
+                        q.plan_handle,
+                        ROW_NUMBER() OVER( PARTITION BY q.query_plan_hash_signed, q.query_hash_signed, q.plan_handle
+                                               ORDER BY q.query_plan_hash_signed, q.query_hash_signed, q.plan_handle ) AS n
+                 FROM #queries AS q
+                 JOIN #totals AS t
+                     ON  q.query_hash_signed = t.query_hash_signed
+                     AND q.query_plan_hash_signed = t.query_plan_hash_signed
+                     AND q.plan_handle = t.plan_handle
+                 CROSS APPLY
+                 (
+                     SELECT TOP (1) q2.statement AS statement_text
+                     FROM #queries AS q2
+                     WHERE q.query_hash_signed = q2.query_hash_signed
+                     AND   q.query_plan_hash_signed = q2.query_plan_hash_signed
+                     AND   q.plan_handle = q2.plan_handle
+                     AND   q2.statement IS NOT NULL
+                     ORDER BY q2.event_time DESC
+                 ) AS q2
+                 WHERE q.showplan_xml.exist('*') = 1
+             )
+                 SELECT q.event_time,
+                        q.database_name,
+                        q.object_name,
+                        q.statement_text,
+                        q.sql_text,
+                        q.showplan_xml,
+                        q.executions,
+                        q.total_cpu_ms,
+                        q.avg_cpu_ms,
+                        q.total_logical_reads,
+                        q.avg_logical_reads,
+                        q.total_physical_reads,
+                        q.avg_physical_reads,
+                        q.total_duration_ms,
+                        q.avg_duration_ms,
+                        q.total_writes,
+                        q.avg_writes,
+                        q.total_spills_mb,
+                        q.avg_spills_mb,
+                        q.total_used_memory_mb,
+                        q.avg_used_memory_mb,
+                        q.total_granted_memory_mb,
+                        q.avg_granted_memory_mb,
+                        q.total_rows,
+                        q.avg_rows,
+                        q.serial_ideal_memory_mb,
+                        q.requested_memory_mb,
+                        q.ideal_memory_mb,
+                        q.estimated_rows,
+                        q.dop,
+                        q.query_plan_hash_signed,
+                        q.query_hash_signed,
+                        q.plan_handle
+                 FROM query_results AS q
+                 WHERE q.n = 1
+                 ORDER BY CASE @query_sort_order
+                               WHEN N'cpu' THEN q.total_cpu_ms
+                               WHEN N'reads' THEN q.total_logical_reads + q.total_physical_reads
+                               WHEN N'writes' THEN q.total_writes
+                               WHEN N'duration' THEN q.total_duration_ms
+                               WHEN N'spills' THEN q.total_spills_mb
+                               WHEN N'memory' THEN q.total_granted_memory_mb
+                               WHEN N'avg cpu' THEN q.avg_cpu_ms
+                               WHEN N'avg reads' THEN q.avg_logical_reads + q.avg_physical_reads
+                               WHEN N'avg writes' THEN q.avg_writes
+                               WHEN N'avg duration' THEN q.avg_duration_ms
+                               WHEN N'avg spills' THEN q.avg_spills_mb
+                               WHEN N'avg memory' THEN q.avg_granted_memory_mb
+                               ELSE N'cpu'
+                          END DESC
+                 OPTION (RECOMPILE);
 END
 ;
 
@@ -1379,25 +1379,27 @@ END;
 IF LOWER(@event_type) LIKE N'%wait%'
 BEGIN;
 
-WITH waits AS (
-            SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
-                   c.value('@name', 'NVARCHAR(256)') AS event_type,
-                   c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
-                   c.value('(data[@name="wait_type"]/text)[1]', 'NVARCHAR(256)') AS wait_type,
-                   c.value('(data[@name="duration"]/value)[1]', 'BIGINT')  AS duration_ms,
-                   c.value('(data[@name="signal_duration"]/value)[1]', 'BIGINT') AS signal_duration_ms,
-                   CASE WHEN @v = 11 THEN N'Not Available < 2014' ELSE c.value('(data[@name="wait_resource"]/value)[1]', 'NVARCHAR(256)') END AS wait_resource,
-                   CONVERT(BINARY(8), c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'BIGINT')) AS query_plan_hash_signed,
-                   CONVERT(BINARY(8), c.value('(action[@name="query_hash_signed"]/value)[1]', 'BIGINT')) AS query_hash_signed,
-                   c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
-            FROM #human_events_xml AS xet
-            OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            WHERE (c.exist('(data[@name="duration"]/value[. > 0])') = 1 OR @gimme_danger = 1)
-            )
-            SELECT *
-            INTO #waits_agg
-            FROM waits
-            OPTION(RECOMPILE);
+         WITH waits AS 
+             (
+                 SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
+                        c.value('@name', 'NVARCHAR(256)') AS event_type,
+                        c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
+                        c.value('(data[@name="wait_type"]/text)[1]', 'NVARCHAR(256)') AS wait_type,
+                        c.value('(data[@name="duration"]/value)[1]', 'BIGINT')  AS duration_ms,
+                        c.value('(data[@name="signal_duration"]/value)[1]', 'BIGINT') AS signal_duration_ms,
+                        CASE WHEN @v = 11 THEN N'Not Available < 2014' ELSE c.value('(data[@name="wait_resource"]/value)[1]', 'NVARCHAR(256)') END AS wait_resource,
+                        CONVERT(BINARY(8), c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'BIGINT')) AS query_plan_hash_signed,
+                        CONVERT(BINARY(8), c.value('(action[@name="query_hash_signed"]/value)[1]', 'BIGINT')) AS query_hash_signed,
+                        c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
+                 FROM #human_events_xml AS xet
+                 OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
+                 WHERE ( c.exist('(data[@name="duration"]/value[. > 0])') = 1 
+                             OR @gimme_danger = 1 )
+             )
+                 SELECT *
+                 INTO #waits_agg
+                 FROM waits
+                 OPTION(RECOMPILE);
             
             IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa; END;
 
@@ -1429,43 +1431,44 @@ WITH waits AS (
             ORDER BY sum_duration_ms DESC
             OPTION (RECOMPILE); 
 
-            WITH plan_waits AS (
-            SELECT N'waits by query and database' AS wait_pattern,
-                   MIN(wa.event_time) AS min_event_time,
-                   MAX(wa.event_time) AS max_event_time,
-                   wa.database_name,
-                   wa.wait_type,
-                   COUNT_BIG(*) AS total_waits,
-                   wa.plan_handle,
-                   wa.query_plan_hash_signed,
-                   wa.query_hash_signed,
-                   SUM(wa.duration_ms) AS sum_duration_ms,
-                   SUM(wa.signal_duration_ms) AS sum_signal_duration_ms,
-                   SUM(wa.duration_ms) / COUNT_BIG(*) AS avg_ms_per_wait
-            FROM #waits_agg AS wa
-            GROUP BY wa.database_name,
-                     wa.wait_type, 
-                     wa.query_hash_signed, 
-                     wa.query_plan_hash_signed, 
-                     wa.plan_handle
-            
-            )
-            SELECT pw.wait_pattern,
-                   pw.min_event_time,
-                   pw.max_event_time,
-                   pw.database_name,
-                   pw.wait_type,
-                   pw.total_waits,
-                   pw.sum_duration_ms,
-                   pw.sum_signal_duration_ms,
-                   pw.avg_ms_per_wait,
-                   st.text,
-                   qp.query_plan
-            FROM plan_waits AS pw
-            OUTER APPLY sys.dm_exec_query_plan(pw.plan_handle) AS qp
-            OUTER APPLY sys.dm_exec_sql_text(pw.plan_handle) AS st
-            ORDER BY pw.sum_duration_ms DESC
-            OPTION (RECOMPILE);
+            WITH plan_waits AS 
+                (
+                     SELECT N'waits by query and database' AS wait_pattern,
+                            MIN(wa.event_time) AS min_event_time,
+                            MAX(wa.event_time) AS max_event_time,
+                            wa.database_name,
+                            wa.wait_type,
+                            COUNT_BIG(*) AS total_waits,
+                            wa.plan_handle,
+                            wa.query_plan_hash_signed,
+                            wa.query_hash_signed,
+                            SUM(wa.duration_ms) AS sum_duration_ms,
+                            SUM(wa.signal_duration_ms) AS sum_signal_duration_ms,
+                            SUM(wa.duration_ms) / COUNT_BIG(*) AS avg_ms_per_wait
+                     FROM #waits_agg AS wa
+                     GROUP BY wa.database_name,
+                              wa.wait_type, 
+                              wa.query_hash_signed, 
+                              wa.query_plan_hash_signed, 
+                              wa.plan_handle
+                     
+                )
+                     SELECT pw.wait_pattern,
+                            pw.min_event_time,
+                            pw.max_event_time,
+                            pw.database_name,
+                            pw.wait_type,
+                            pw.total_waits,
+                            pw.sum_duration_ms,
+                            pw.sum_signal_duration_ms,
+                            pw.avg_ms_per_wait,
+                            st.text,
+                            qp.query_plan
+                     FROM plan_waits AS pw
+                     OUTER APPLY sys.dm_exec_query_plan(pw.plan_handle) AS qp
+                     OUTER APPLY sys.dm_exec_sql_text(pw.plan_handle) AS st
+                     ORDER BY pw.sum_duration_ms DESC
+                     OPTION (RECOMPILE);
 END;
 
 
@@ -1532,115 +1535,115 @@ BEGIN
             IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #waits_agg AS wa; END;
 
             WITH pablo_blanco AS
-             (
-                SELECT DISTINCT
-                       b.event_time,
-                       b.object_id,
-                       b.transaction_id,
-                       b.monitor_loop,
-                       b.blocking_spid,
-                       b.blocking_ecid
-                FROM #blocking AS b
-            
-                UNION ALL 
-                 
-                SELECT x.event_time,
-                       x.object_id,
-                       x.transaction_id,
-                       x.monitor_loop,
-                       x.blocked_spid,
-                       x.blocked_ecid
-                FROM (
-                SELECT b.event_time,
-                       b.object_id,
-                       b.transaction_id,
-                       b.monitor_loop,
-                       b.blocked_spid,
-                       b.blocked_ecid,
-                       ROW_NUMBER() OVER 
-                         ( PARTITION BY b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid
-                           ORDER BY     b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid ) AS n
-                FROM #blocked AS b
-                JOIN pablo_blanco AS p
-                    ON p.event_time = b.event_time
-                    AND p.object_id = b.object_id
-                    AND p.monitor_loop = b.monitor_loop
-                    AND p.blocking_spid <> b.blocked_spid
-                ) AS x
-                WHERE x.n = 1
-             ), 
-             and_another_thing AS 
-             (
-             SELECT bg.event_time,
-                    bg.database_name,
-                    OBJECT_NAME(bg.object_id, bg.database_id) AS contentious_object,
-                    1 AS ordering,
-                    N'blocking' AS activity,
-                    bg.blocking_spid AS spid,
-                    bg.blocking_blocking_text AS query_text,
-                    0 AS wait_time,
-                    bg.blocking_status AS status,
-                    bg.blocking_isolationlevel AS isolation_level,
-                    N'unknown' AS last_transaction_startted,
-                    N'unknown' AS transaction_name,
-                    N'unknown' AS lock_mode,
-                    bg.blocking_priority AS priority,
-                    bg.blocking_trancount AS transaction_count,
-                    bg.blocking_clientapp AS client_app,
-                    bg.blocking_hostname AS host_name,
-                    bg.blocking_loginname AS login_name,
-                    bg.blocked_process_report 
-                    FROM pablo_blanco AS pb
-                    CROSS APPLY( SELECT TOP 1 * 
-                                 FROM #blocking AS b 
-                                 WHERE b.blocking_spid = pb.blocking_spid ) AS bg
-                    UNION ALL 
-            
-             SELECT bl.event_time,
-                    bl.database_name,
-                    OBJECT_NAME(bl.object_id, bl.database_id) AS contentious_object,
-                    2 AS ordering,
-                    N'blocked' AS activity,
-                    bl.blocked_spid,
-                    bl.blocked_text,
-                    bl.blocked_waittime,
-                    bl.blocked_status,
-                    bl.blocked_isolationlevel,
-                    CONVERT(NVARCHAR(30), bl.blocked_lasttranstarted, 127),
-                    bl.blocked_transactionname,
-                    bl.blocked_lockmode,
-                    bl.blocked_priority,
-                    bl.blocked_trancount,
-                    bl.blocked_clientapp,
-                    bl.blocked_hostname,
-                    bl.blocked_loginname,
-                    bl.blocked_process_report
-                    FROM pablo_blanco AS pb
-                    CROSS APPLY( SELECT TOP 1 * 
-                                 FROM #blocked AS b 
-                                 WHERE b.blocked_spid = pb.blocking_spid ) AS bl
-             )
-            SELECT att.event_time,
-                   att.database_name,
-                   att.contentious_object,
-                   att.activity,
-                   att.spid,
-                   att.query_text,
-                   att.wait_time,
-                   att.status,
-                   att.isolation_level,
-                   att.last_transaction_startted,
-                   att.transaction_name,
-                   att.lock_mode,
-                   att.priority,
-                   att.transaction_count,
-                   att.client_app,
-                   att.host_name,
-                   att.login_name,
-                   att.blocked_process_report 
-            FROM and_another_thing AS att
-            ORDER BY att.event_time, att.ordering
-            OPTION(RECOMPILE);
+                (
+                     SELECT DISTINCT
+                            b.event_time,
+                            b.object_id,
+                            b.transaction_id,
+                            b.monitor_loop,
+                            b.blocking_spid,
+                            b.blocking_ecid
+                     FROM #blocking AS b
+                     
+                     UNION ALL 
+                      
+                     SELECT x.event_time,
+                            x.object_id,
+                            x.transaction_id,
+                            x.monitor_loop,
+                            x.blocked_spid,
+                            x.blocked_ecid
+                     FROM (
+                     SELECT b.event_time,
+                            b.object_id,
+                            b.transaction_id,
+                            b.monitor_loop,
+                            b.blocked_spid,
+                            b.blocked_ecid,
+                            ROW_NUMBER() OVER 
+                              ( PARTITION BY b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid
+                                ORDER BY     b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid ) AS n
+                     FROM #blocked AS b
+                     JOIN pablo_blanco AS p
+                         ON p.event_time = b.event_time
+                         AND p.object_id = b.object_id
+                         AND p.monitor_loop = b.monitor_loop
+                         AND p.blocking_spid <> b.blocked_spid
+                     ) AS x
+                     WHERE x.n = 1
+                ), 
+                 and_another_thing AS 
+                (
+                     SELECT bg.event_time,
+                            bg.database_name,
+                            OBJECT_NAME(bg.object_id, bg.database_id) AS contentious_object,
+                            1 AS ordering,
+                            N'blocking' AS activity,
+                            bg.blocking_spid AS spid,
+                            bg.blocking_blocking_text AS query_text,
+                            0 AS wait_time,
+                            bg.blocking_status AS status,
+                            bg.blocking_isolationlevel AS isolation_level,
+                            N'unknown' AS last_transaction_startted,
+                            N'unknown' AS transaction_name,
+                            N'unknown' AS lock_mode,
+                            bg.blocking_priority AS priority,
+                            bg.blocking_trancount AS transaction_count,
+                            bg.blocking_clientapp AS client_app,
+                            bg.blocking_hostname AS host_name,
+                            bg.blocking_loginname AS login_name,
+                            bg.blocked_process_report 
+                            FROM pablo_blanco AS pb
+                            CROSS APPLY( SELECT TOP 1 * 
+                                         FROM #blocking AS b 
+                                         WHERE b.blocking_spid = pb.blocking_spid ) AS bg
+                            UNION ALL 
+                     
+                     SELECT bl.event_time,
+                            bl.database_name,
+                            OBJECT_NAME(bl.object_id, bl.database_id) AS contentious_object,
+                            2 AS ordering,
+                            N'blocked' AS activity,
+                            bl.blocked_spid,
+                            bl.blocked_text,
+                            bl.blocked_waittime,
+                            bl.blocked_status,
+                            bl.blocked_isolationlevel,
+                            CONVERT(NVARCHAR(30), bl.blocked_lasttranstarted, 127),
+                            bl.blocked_transactionname,
+                            bl.blocked_lockmode,
+                            bl.blocked_priority,
+                            bl.blocked_trancount,
+                            bl.blocked_clientapp,
+                            bl.blocked_hostname,
+                            bl.blocked_loginname,
+                            bl.blocked_process_report
+                            FROM pablo_blanco AS pb
+                            CROSS APPLY( SELECT TOP 1 * 
+                                         FROM #blocked AS b 
+                                         WHERE b.blocked_spid = pb.blocking_spid ) AS bl
+                )
+                     SELECT att.event_time,
+                            att.database_name,
+                            att.contentious_object,
+                            att.activity,
+                            att.spid,
+                            att.query_text,
+                            att.wait_time,
+                            att.status,
+                            att.isolation_level,
+                            att.last_transaction_startted,
+                            att.transaction_name,
+                            att.lock_mode,
+                            att.priority,
+                            att.transaction_count,
+                            att.client_app,
+                            att.host_name,
+                            att.login_name,
+                            att.blocked_process_report 
+                     FROM and_another_thing AS att
+                     ORDER BY att.event_time, att.ordering
+                     OPTION(RECOMPILE);
 
 END;
 
