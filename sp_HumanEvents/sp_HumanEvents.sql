@@ -1293,6 +1293,8 @@ IF @compile_events = 1
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 1
             AND   c.value('@name', 'NVARCHAR(256)') = N'sql_statement_post_compile'
+            AND   ( c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') <> N'sp_HumanEvents'
+                     OR c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') IS NULL )
             ORDER BY event_time
             OPTION (RECOMPILE);
     END;
@@ -1306,6 +1308,8 @@ IF @compile_events = 0
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
+            WHERE ( c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') <> N'sp_HumanEvents'
+                     OR c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') IS NULL )
             ORDER BY event_time
             OPTION (RECOMPILE);
     END;
@@ -1316,7 +1320,7 @@ IF @parameterization_events  = 1
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
-                   c.value('(action[@name="sql_text"]/value)[1]', 'NVARCHAR(256)') AS sql_text,
+                   c.value('(action[@name="sql_text"]/value)[1]', 'NVARCHAR(MAX)') AS sql_text,
                    c.value('(data[@name="compile_cpu_time"]/value)[1]', 'BIGINT') / 1000. AS compile_cpu_time_ms,
                    c.value('(data[@name="compile_duration"]/value)[1]', 'BIGINT') / 1000. AS compile_duration_ms,
                    c.value('(data[@name="query_param_type"]/value)[1]', 'INT') AS query_param_type,
@@ -1333,6 +1337,7 @@ IF @parameterization_events  = 1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.value('@name', 'NVARCHAR(256)') = N'query_parameterization_data'
+            AND c.value('(action[@name="sql_text"]/value)[1]', 'NVARCHAR(20)') NOT LIKE N'EXEC sp_HumanEvents%'
             ORDER BY event_time
             OPTION (RECOMPILE);
     END;
@@ -1356,6 +1361,8 @@ IF @compile_events = 1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 0
+            AND   ( c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') <> N'sp_HumanEvents'
+                     OR c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') IS NULL )
             ORDER BY event_time
             OPTION (RECOMPILE);
     END;
@@ -1370,6 +1377,8 @@ IF @compile_events = 0
                    c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
+            WHERE ( c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') <> N'sp_HumanEvents'
+                     OR c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') IS NULL )
             ORDER BY event_time
             OPTION (RECOMPILE);
     END;
@@ -1506,7 +1515,7 @@ BEGIN
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
             OPTION (RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #waits_agg AS wa; END;
+            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa; END;
 
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,        
                    DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'INT')) AS database_name,
@@ -1532,7 +1541,7 @@ BEGIN
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
             OPTION (RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #waits_agg AS wa; END;
+            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa; END;
 
             WITH pablo_blanco AS
                 (
