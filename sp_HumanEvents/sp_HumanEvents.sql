@@ -9,7 +9,9 @@ SET STATISTICS TIME OFF;
 GO
 
 IF OBJECT_ID('dbo.sp_HumanEvents') IS  NULL
-    EXEC ('CREATE PROCEDURE dbo.sp_HumanEvents AS RETURN 138;');
+   BEGIN
+       EXEC ('CREATE PROCEDURE dbo.sp_HumanEvents AS RETURN 138;');
+   END
 GO
 
 ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
@@ -31,6 +33,9 @@ ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
                                     @seconds_sample INTEGER = 10,
                                     @gimme_danger BIT = 0,
                                     @keep_alive BIT = 0,
+                                    @output_database_name sysname = N'',
+                                    @output_schema_name sysname = N'',
+                                    @output_table_name sysname = N'',
                                     @version VARCHAR(30) = NULL OUTPUT,
                                     @version_date DATETIME = NULL OUTPUT,
                                     @debug BIT = 0,
@@ -249,7 +254,7 @@ IF EXISTS
     LEFT JOIN sys.dm_xe_sessions AS r 
         ON r.name = s.name
     WHERE s.name LIKE N'HumanEvents%'
-    AND   ( r.create_time < DATEADD(MINUTE, -2, SYSDATETIME())
+    AND   ( r.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
     OR      r.create_time IS NULL ) 
 )
 BEGIN 
@@ -264,7 +269,7 @@ BEGIN
     LEFT JOIN sys.dm_xe_sessions AS r 
         ON r.name = s.name
     WHERE s.name LIKE N'HumanEvents%'
-    AND   ( r.create_time < DATEADD(MINUTE, -2, SYSDATETIME())
+    AND   ( r.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
     OR      r.create_time IS NULL )
     OPTION(RECOMPILE);
 
