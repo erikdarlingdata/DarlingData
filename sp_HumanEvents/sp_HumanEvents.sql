@@ -1887,13 +1887,14 @@ WHILE @keep_alive = 1
                     N'' + NCHAR(10) +  
                     N'CREATE TABLE ' + @object_name_check + N'_total_waits_database' + NCHAR(10) +
                     N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
-                    N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, ' + NCHAR(10) +
+                    N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, database_name sysname, ' + NCHAR(10) +
                     N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT );' + NCHAR(10) +
                     N'' + NCHAR(10) +  
                     N'CREATE TABLE ' + @object_name_check + N'_total_waits_query_database' + NCHAR(10) +
                     N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
                     N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, ' + NCHAR(10) +
-                    N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT );' + NCHAR(10) +
+                    N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT, ' + NCHAR(10) +
+                    N'  query_text NVARCHAR(MAX), query_plan XML );' + NCHAR(10) +
                     N'' + NCHAR(10) 
                WHEN @event_type_check LIKE N'%lock%'
                THEN N''
@@ -1906,7 +1907,11 @@ WHILE @keep_alive = 1
           END
         FROM #human_events_worker AS hew
         WHERE hew.id = @min_id
-        
+
+        SELECT TOP 1 @min_id = (id)
+        FROM #human_events_worker AS hew
+        WHERE hew.id > @min_id;
+
         END
 
     END
