@@ -11,7 +11,7 @@ GO
 IF OBJECT_ID('dbo.sp_HumanEvents') IS  NULL
    BEGIN
        EXEC ('CREATE PROCEDURE dbo.sp_HumanEvents AS RETURN 138;');
-   END
+   END;
 GO
 
 ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
@@ -20,7 +20,6 @@ ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
                                     @blocking_duration_ms INTEGER = 500,
                                     @wait_type NVARCHAR(4000) = N'all',
                                     @wait_duration_ms INTEGER = 10,
-                                    @capture_plans BIT = 1,
                                     @client_app_name sysname = N'',
                                     @client_hostname sysname = N'',
                                     @database_name sysname = N'',
@@ -33,9 +32,9 @@ ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
                                     @seconds_sample INTEGER = 10,
                                     @gimme_danger BIT = 0,
                                     @keep_alive BIT = 0,
+                                    @custom_name NVARCHAR(256) = N'',
                                     @output_database_name sysname = N'',
                                     @output_schema_name sysname = N'',
-                                    @output_table_name sysname = N'',
                                     @version VARCHAR(30) = NULL OUTPUT,
                                     @version_date DATETIME = NULL OUTPUT,
                                     @debug BIT = 0,
@@ -63,8 +62,8 @@ BEGIN
     SELECT N'this can be used to start a time-limited extended event session to capture various things:' UNION ALL
     SELECT N'  * blocking' UNION ALL 
     SELECT N'  * query performance and plans' UNION ALL 
-    SELECT N'  * query compilations' UNION ALL 
-    SELECT N'  * query recompilations' UNION ALL 
+    SELECT N'  * compilations' UNION ALL 
+    SELECT N'  * recompilations' UNION ALL 
     SELECT N'  * wait stats'; 
 
 
@@ -250,12 +249,12 @@ IF @v < 11
 IF EXISTS
 (    
     SELECT 1/0
-    FROM sys.server_event_sessions AS s
-    LEFT JOIN sys.dm_xe_sessions AS r 
-        ON r.name = s.name
-    WHERE s.name LIKE N'HumanEvents%'
-    AND   ( r.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR      r.create_time IS NULL ) 
+    FROM sys.server_event_sessions AS ses
+    LEFT JOIN sys.dm_xe_sessions AS dxe
+        ON dxe.name = ses.name
+    WHERE ses.name LIKE N'HumanEvents%'
+    AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+    OR      dxe.create_time IS NULL ) 
 )
 BEGIN 
     RAISERROR(N'Found old sessions, dropping those.', 0, 1) WITH NOWAIT;
@@ -264,13 +263,13 @@ BEGIN
     
     CREATE TABLE #drop_commands (id INT IDENTITY PRIMARY KEY, drop_command NVARCHAR(1000));
     INSERT #drop_commands WITH (TABLOCK) (drop_command)
-    SELECT N'DROP EVENT SESSION '  + s.name + N' ON SERVER;'
-    FROM sys.server_event_sessions AS s
-    LEFT JOIN sys.dm_xe_sessions AS r 
-        ON r.name = s.name
-    WHERE s.name LIKE N'HumanEvents%'
-    AND   ( r.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR      r.create_time IS NULL )
+    SELECT N'DROP EVENT SESSION '  + ses.name + N' ON SERVER;'
+    FROM sys.server_event_sessions AS ses
+    LEFT JOIN sys.dm_xe_sessions AS dxe
+        ON dxe.name = ses.name
+    WHERE ses.name LIKE N'HumanEvents%'
+    AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+    OR      dxe.create_time IS NULL ) 
     OPTION(RECOMPILE);
 
     DECLARE drop_cursor CURSOR LOCAL STATIC FOR
@@ -297,7 +296,16 @@ END;
 --How long we let the session run
 DECLARE @waitfor NVARCHAR(20) = N'';
 --Give sessions super unique names in case more than one person uses it at a time
-DECLARE @session_name NVARCHAR(100) = REPLACE(N'HumanEvents' + @event_type + CONVERT(NVARCHAR(36), NEWID()), N'-', N''); 
+DECLARE @session_name NVARCHAR(100) = N'';
+IF @keep_alive = 0
+BEGIN
+    SET @session_name += REPLACE(N'HumanEvents_' + @event_type + CONVERT(NVARCHAR(36), NEWID()), N'-', N''); 
+END;
+IF @keep_alive = 1
+BEGIN
+    SET @session_name += N'keeper_HumanEvents_'  + @event_type + N'_' + ISNULL(@custom_name, N'');
+END;
+
 --Universal, yo
 DECLARE @session_with NVARCHAR(MAX) = N'    
 ADD TARGET package0.ring_buffer
@@ -383,19 +391,24 @@ END;
  /*
  You know what I don't wanna deal with? NULLs.
  */
- SET @event_type      = ISNULL(@event_type, N'');
- SET @client_app_name = ISNULL(@client_app_name, N'');
- SET @client_hostname = ISNULL(@client_hostname, N'');
- SET @database_name   = ISNULL(@database_name, N'');
- SET @session_id      = ISNULL(@session_id, N'');
- SET @username        = ISNULL(@username, N'');
- SET @object_name     = ISNULL(@object_name, N'');
- SET @object_schema   = ISNULL(@object_schema, N'');
+ SET @event_type            = ISNULL(@event_type, N'');
+ SET @client_app_name       = ISNULL(@client_app_name, N'');
+ SET @client_hostname       = ISNULL(@client_hostname, N'');
+ SET @database_name         = ISNULL(@database_name, N'');
+ SET @session_id            = ISNULL(@session_id, N'');
+ SET @username              = ISNULL(@username, N'');
+ SET @object_name           = ISNULL(@object_name, N'');
+ SET @object_schema         = ISNULL(@object_schema, N'');
+ SET @custom_name           = ISNULL(@custom_name, N'');
+ SET @output_database_name  = ISNULL(@output_database_name, N'');
+ SET @output_schema_name    = ISNULL(@output_schema_name, N'');
 
  /*I'm also very forgiving of some white space*/
  SET @database_name = RTRIM(LTRIM(@database_name));
 
- DECLARE @fully_formed_babby NVARCHAR(1000) = @database_name + N'.' + @object_schema + N'.' + @object_name;
+ DECLARE @fully_formed_babby NVARCHAR(1000) = QUOTENAME(@database_name) + N'.' + 
+                                              QUOTENAME(@object_schema) + N'.' + 
+                                              QUOTENAME(@object_name);
 
 /*
 Some sanity checking
@@ -460,7 +473,7 @@ END;
 IF @query_sort_order NOT IN ( N'cpu', N'reads', N'writes', N'duration', N'memory', N'spills',
                               N'avg cpu', N'avg reads', N'avg writes', N'avg duration', N'avg memory', N'avg spills' )
 BEGIN
-   RAISERROR(N'that sort order you chose is so out of this world that i''m ignoring it', 0, 1) WITH NOWAIT;
+   RAISERROR(N'that sort order (%s) you chose is so out of this world that i''m ignoring it', 0, 1, @query_sort_order) WITH NOWAIT;
    SET @query_sort_order = N'cpu';
 END;
 
@@ -511,7 +524,7 @@ BEGIN
         FROM #invalid_waits AS iw
         OPTION(RECOMPILE);
         
-        RAISERROR(N'waidaminnithataintawait', 16, 1) WITH NOWAIT
+        RAISERROR(N'waidaminnithataintawait', 16, 1) WITH NOWAIT;
         RETURN;
     END;
 
@@ -528,7 +541,10 @@ IF
       OR @session_id <> N''
       OR @username <> N''
       OR @object_name <> N''
-      OR @object_name <> N'dbo')
+      OR @object_name <> N'dbo'
+      OR @custom_name <> N''       
+      OR @output_database_name <> N''
+      OR @output_schema_name <> N'' )
 BEGIN
 
     CREATE TABLE #papers_please(ahem sysname);
@@ -542,7 +558,10 @@ BEGIN
         (@session_id),
         (@username),
         (@object_name),
-        (@object_schema)
+        (@object_schema),
+        (@custom_name),
+        (@output_database_name),
+        (@output_schema_name)
     ) AS pp (ahem)
     WHERE pp.ahem NOT IN (N'', N'dbo')
     OPTION(RECOMPILE);
@@ -593,7 +612,7 @@ END;
 
 IF ( LOWER(@event_type) LIKE N'%lock%' AND @object_name <> N'' AND OBJECT_ID(@fully_formed_babby) IS NULL )
 BEGIN
-    RAISERROR(N'we couldn''t find the object you''re trying to ', 16, 1) WITH NOWAIT;
+    RAISERROR(N'we couldn''t find the object you''re trying to find: %s', 16, 1, @fully_formed_babby) WITH NOWAIT;
     RETURN;
 END;
 
@@ -623,14 +642,14 @@ IF @database_name <> N''
 BEGIN
     IF DB_ID(@database_name) IS NULL
     BEGIN
-        RAISERROR(N'it looks like you''re looking for a database that doesn''t wanna be looked for -- check that spelling!', 16, 1) WITH NOWAIT;
+        RAISERROR(N'it looks like you''re looking for a database that doesn''t wanna be looked for (%s) -- check that spelling!', 16, 1, @database_name) WITH NOWAIT;
         RETURN;
     END;
 END;
 
 IF LOWER(@session_id) NOT LIKE N'%sample%' AND @session_id LIKE '%[^0-9]%' AND LOWER(@session_id) <> N''
 BEGIN
-   RAISERROR(N'that @session_id doesn''t look proper. double check that for me.', 16, 1) WITH NOWAIT;
+   RAISERROR(N'that @session_id doesn''t look proper (%s). double check it for me.', 16, 1, @session_id) WITH NOWAIT;
    RETURN;
 END;
 
@@ -651,7 +670,7 @@ IF @username NOT IN
     AND   sp.is_disabled = 0
 ) AND @username <> N''
 BEGIN
-    RAISERROR(N'that username doesn''t exist in sys.server_principals', 16, 1) WITH NOWAIT;
+    RAISERROR(N'that username (%s) doesn''t exist in sys.server_principals', 16, 1, @username) WITH NOWAIT;
     RETURN;
 END;
 
@@ -699,6 +718,79 @@ SET @math = @seconds_sample / 60;
                       + N'.000';        
     END;
 END;
+
+
+/*
+CH-CH-CH-CHECKITOUT
+*/
+IF EXISTS
+(
+    SELECT 1/0
+    FROM sys.server_event_sessions AS ses
+    LEFT JOIN sys.dm_xe_sessions AS dxs 
+        ON dxs.name = ses.name
+    WHERE ses.name = @session_name
+)
+BEGIN
+    RAISERROR('a session with the name %s already exists. try again, hoss.', 16, 1, @event_type) WITH NOWAIT;
+    RETURN;
+END;
+
+IF @output_database_name <> N''
+BEGIN
+    IF DB_ID(@output_database_name) IS NULL
+    BEGIN
+        RAISERROR(N'it looks like you''re looking for a database (%s) that doesn''t wanna be looked for -- check that spelling!', 16, 1, @output_database_name) WITH NOWAIT;
+        RETURN;
+    END;
+END;
+
+IF @output_schema_name <> N''
+BEGIN
+    DECLARE @s_out INT,
+    		@schema_check BIT,
+    		@s_sql NVARCHAR(MAX) = N'
+    SELECT @is_out = COUNT(*) 
+    FROM ' + QUOTENAME(@output_database_name) + N'.sys.schemas
+    WHERE name = ' + QUOTENAME(@output_schema_name, '''') + ' 
+    OPTION (RECOMPILE);',
+    		@s_params NVARCHAR(MAX) = N'@is_out INT OUTPUT';
+    
+    EXEC sys.sp_executesql @s_sql, @s_params, @is_out = @s_out OUTPUT;
+    
+    IF @s_out = 0
+    BEGIN
+        RAISERROR(N'it looks like the schema %s doesn''t exist in the database %s', 16, 1, @output_schema_name, @output_database_name);
+        RETURN;
+    END;
+END;
+ 
+IF LEN(@output_database_name + @output_schema_name) > 0
+AND ( @output_database_name  = N'' 
+      OR @output_schema_name = N'' )
+BEGIN
+    IF @output_database_name = N''
+        BEGIN
+            RAISERROR(N'@output_database_name can''t blank when outputting to tables', 16, 1) WITH NOWAIT;
+            RETURN;
+        END;
+    IF @output_schema_name = N''
+        BEGIN
+            RAISERROR(N'@output_schema_name can''t blank when outputting to tables', 16, 1) WITH NOWAIT;
+            RETURN;
+        END;
+END;
+
+
+/*
+If we're writing to a table, we don't want to do anything else
+Or anything else after this, really
+We want the session to get set up
+*/
+IF ( @output_database_name <> N''
+     AND @output_schema_name <> N'' )
+GOTO output_results;
+RETURN;
 
 
 /*
@@ -981,15 +1073,11 @@ SET @session_sql +=
   ADD EVENT sqlserver.sql_statement_completed 
     (SET collect_statement = 1
      ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
-     WHERE ( ' + @session_filter_statement_completed + N' ))'            
-            + CASE WHEN @capture_plans = 1 
-              THEN N',
+     WHERE ( ' + @session_filter_statement_completed + N' )),
   ADD EVENT sqlserver.query_post_execution_showplan
     (
      ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
      WHERE ( ' + @session_filter_query_plans + N' ))'
-              ELSE N''
-              END
          WHEN LOWER(@event_type) LIKE N'%wait%' AND @v > 11
          THEN N' 
   ADD EVENT sqlos.wait_completed
@@ -1072,7 +1160,6 @@ IF @debug = 1
 BEGIN
     SELECT N'#human_events_xml' AS table_name, * FROM #human_events_xml AS hex;
 END;
-
 
 /*
 This is where magic will happen
@@ -1662,13 +1749,175 @@ BEGIN
 END;
 
 
---Stop the event session
-IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
-EXEC (@stop_sql);
+IF @keep_alive = 0
+BEGIN
+    --Stop the event session
+    IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
+    EXEC (@stop_sql);
+    
+    --Drop the event session
+    IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
+    EXEC (@drop_sql);
+END;
 
---Drop the event session
-IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
-EXEC (@drop_sql);
+output_results:
+
+WHILE @keep_alive = 1
+
+    BEGIN
+    
+    IF NOT EXISTS
+    (
+        SELECT 1/0
+        FROM sys.server_event_sessions AS ses
+        LEFT JOIN sys.dm_xe_sessions AS dxs
+            ON dxs.name = ses.name
+        WHERE ses.name LIKE N'keeper_HumanEvents_%'
+        AND   dxs.create_time IS NOT NULL
+    )
+    BEGIN
+        RAISERROR(N'No matching active session names found', 16, 1) WITH NOWAIT;
+        SET @keep_alive = 0;
+        RETURN;
+    END;
+    
+    IF NOT EXISTS
+    (
+        SELECT 1/0
+        FROM sys.server_event_sessions AS ses
+        LEFT JOIN sys.dm_xe_sessions AS dxs
+            ON dxs.name = ses.name
+        WHERE ses.name = N'keeper_HumanEvents_server_diagnostics'
+    )
+    BEGIN 
+        CREATE EVENT SESSION keeper_HumanEvents_server_diagnostics
+            ON SERVER
+            ADD EVENT sqlserver.sp_server_diagnostics_component_result
+                ( SET collect_data = 1  )
+                ADD TARGET package0.ring_buffer
+                ( SET max_memory = 1048576 );
+        
+        ALTER EVENT SESSION keeper_HumanEvents_server_diagnostics ON SERVER STATE = START;
+    END;
+    
+    IF EXISTS
+    (
+        SELECT 1/0
+        FROM sys.server_event_sessions AS ses
+        LEFT JOIN sys.dm_xe_sessions AS dxs
+            ON dxs.name = ses.name
+        WHERE ses.name = N'keeper_HumanEvents_server_diagnostics'
+        AND   dxs.create_time IS NULL
+    )
+    BEGIN 
+        ALTER EVENT SESSION keeper_HumanEvents_server_diagnostics ON SERVER STATE = START;
+    END;
+
+    IF OBJECT_ID(N'tempdb..#human_events_worker') IS NULL
+    BEGIN
+        CREATE TABLE #human_events_worker
+        (
+            id INT NOT NULL PRIMARY KEY IDENTITY,
+            event_type sysname NOT NULL,
+            is_table_created BIT NOT NULL DEFAULT 0,
+            last_checked DATETIME NOT NULL DEFAULT '19000101',
+            last_updated DATETIME NOT NULL DEFAULT '19000101',
+            output_database sysname NOT NULL,
+            output_schema sysname NOT NULL,
+            output_table NVARCHAR(400) NOT NULL, 
+            INDEX no_dupes NONCLUSTERED (output_table) WITH (IGNORE_DUP_KEY = ON)
+        );
+
+        INSERT #human_events_worker
+            ( event_type, is_table_created, last_checked, last_updated, 
+              output_database, output_schema, output_table )        
+        SELECT s.name, 0, '19000101', '19000101', 
+               @output_database_name, @output_schema_name, @session_name
+        FROM sys.server_event_sessions AS s
+        LEFT JOIN sys.dm_xe_sessions AS r 
+            ON r.name = s.name
+        WHERE s.name LIKE N'keeper_HumanEvents_%'
+        AND   r.create_time IS NOT NULL;
+
+    END;
+
+    IF EXISTS
+    (
+        SELECT 1/0
+        FROM #human_events_worker AS hew
+        WHERE hew.is_table_created = 0   
+    )
+    BEGIN
+
+    DECLARE @min_id INT = 0,
+            @max_id INT = 0,
+            @event_type_check sysname,
+            @object_name_check NVARCHAR(1000) = N'',
+            @create_table_sql NVARCHAR(MAX) = N''
+
+    SELECT @min_id = MIN(hew.id), @max_id = MAX(hew.id)
+    FROM #human_events_worker AS hew
+    WHERE hew.is_table_created = 0;
+
+    WHILE @min_id <= @max_id
+    BEGIN
+        SELECT @event_type_check  = hew.event_type,
+               @object_name_check = QUOTENAME(hew.output_database)
+                                  + N'.'
+                                  + QUOTENAME(hew.output_schema)
+                                  + N'.'
+                                  + QUOTENAME(hew.output_table)
+        FROM #human_events_worker AS hew
+        WHERE hew.id = @min_id;
+
+        IF OBJECT_ID(@object_name_check) IS NOT NULL
+        BEGIN
+            RAISERROR(N'object already exists, skipping and updating worker table', 0, 1) WITH NOWAIT;
+            UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id;
+        END
+        ELSE
+        BEGIN
+        
+        SELECT @create_table_sql +=  
+          CASE WHEN @event_type_check LIKE N'%wait%'
+               THEN N'CREATE TABLE ' + @object_name_check + N'_total_waits' + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
+                    N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, ' + NCHAR(10) +
+                    N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT );' + NCHAR(10) +
+                    N'' + NCHAR(10) +  
+                    N'CREATE TABLE ' + @object_name_check + N'_total_waits_database' + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
+                    N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, ' + NCHAR(10) +
+                    N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT );' + NCHAR(10) +
+                    N'' + NCHAR(10) +  
+                    N'CREATE TABLE ' + @object_name_check + N'_total_waits_query_database' + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
+                    N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, ' + NCHAR(10) +
+                    N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT );' + NCHAR(10) +
+                    N'' + NCHAR(10) 
+               WHEN @event_type_check LIKE N'%lock%'
+               THEN N''
+               WHEN @event_type_check LIKE N'%quer%'
+               THEN N''
+               WHEN @event_type_check LIKE N'%recomp%'
+               THEN N''
+               WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
+               THEN N''
+          END
+        FROM #human_events_worker AS hew
+        WHERE hew.id = @min_id
+        
+        END
+
+    END
+
+    END
+
+
+WAITFOR DELAY '00:00:05.000';
+
+END;
+
 
 END TRY
 BEGIN CATCH
@@ -1693,13 +1942,16 @@ BEGIN CATCH
           
         RAISERROR (@msg, 16, 1) WITH NOWAIT;
 
-        --Stop the event session
-        IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
-        EXEC (@stop_sql);
-        
-        --Drop the event session
-        IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
-        EXEC (@drop_sql);
+        IF @keep_alive = 0
+        BEGIN
+            --Stop the event session
+            IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
+            EXEC (@stop_sql);
+            
+            --Drop the event session
+            IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
+            EXEC (@drop_sql);
+        END;
 
         RETURN -138;
     END;
