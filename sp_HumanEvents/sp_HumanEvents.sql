@@ -790,7 +790,6 @@ We want the session to get set up
 IF ( @output_database_name <> N''
      AND @output_schema_name <> N'' )
 GOTO output_results;
-RETURN;
 
 
 /*
@@ -1378,7 +1377,6 @@ IF @compile_events = 1
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
-                   c.value('(data[@name="is_recompile"]/value)[1]', 'BIT') AS is_recompile,
                    c.value('(data[@name="cpu_time"]/value)[1]', 'INT') compile_cpu_ms,
                    c.value('(data[@name="duration"]/value)[1]', 'INT') compile_duration_ms
             FROM #human_events_xml AS xet
@@ -1446,8 +1444,8 @@ IF @compile_events = 1
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
+                   c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
-                   c.value('(data[@name="is_recompile"]/value)[1]', 'BIT') AS is_recompile,
                    c.value('(data[@name="cpu_time"]/value)[1]', 'INT') / 1000. AS compile_cpu_ms,
                    c.value('(data[@name="duration"]/value)[1]', 'INT') / 1000. AS compile_duration_ms
             FROM #human_events_xml AS xet
@@ -1465,8 +1463,8 @@ IF @compile_events = 0
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
-                   c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
-                   c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause
+                   c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause,
+                   c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE ( c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') <> N'sp_HumanEvents'
@@ -1776,9 +1774,9 @@ WHILE @keep_alive = 1
         AND   dxs.create_time IS NOT NULL
     )
     BEGIN
-        RAISERROR(N'No matching active session names found', 16, 1) WITH NOWAIT;
-        SET @keep_alive = 0;
-        RETURN;
+        RAISERROR(N'No matching active session names found', 0, 1) WITH NOWAIT;
+        RAISERROR(N'Waiting additional 5 seconds before checking again', 0, 1) WITH NOWAIT;
+        WAITFOR DELAY '00:00:05.000';
     END;
     
     IF NOT EXISTS
@@ -1825,7 +1823,7 @@ WHILE @keep_alive = 1
             output_database sysname NOT NULL,
             output_schema sysname NOT NULL,
             output_table NVARCHAR(400) NOT NULL, 
-            INDEX no_dupes NONCLUSTERED (output_table) WITH (IGNORE_DUP_KEY = ON)
+            INDEX no_dupes UNIQUE NONCLUSTERED (output_table) WITH (IGNORE_DUP_KEY = ON)
         );
 
         INSERT #human_events_worker
@@ -1838,6 +1836,8 @@ WHILE @keep_alive = 1
             ON r.name = s.name
         WHERE s.name LIKE N'keeper_HumanEvents_%'
         AND   r.create_time IS NOT NULL;
+
+        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker END
 
     END;
 
@@ -1878,39 +1878,61 @@ WHILE @keep_alive = 1
         ELSE
         BEGIN
         
-        SELECT @create_table_sql +=  
+        SELECT @create_table_sql =  
           CASE WHEN @event_type_check LIKE N'%wait%'
                THEN N'CREATE TABLE ' + @object_name_check + N'_total_waits' + NCHAR(10) +
-                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_type sysname, ' + NCHAR(10) +
                     N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, ' + NCHAR(10) +
                     N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT );' + NCHAR(10) +
                     N'' + NCHAR(10) +  
                     N'CREATE TABLE ' + @object_name_check + N'_total_waits_database' + NCHAR(10) +
-                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_type sysname,  ' + NCHAR(10) +
                     N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, database_name sysname, ' + NCHAR(10) +
                     N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT );' + NCHAR(10) +
                     N'' + NCHAR(10) +  
                     N'CREATE TABLE ' + @object_name_check + N'_total_waits_query_database' + NCHAR(10) +
-                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_type sysname,  ' + NCHAR(10) +
                     N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, ' + NCHAR(10) +
                     N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT, ' + NCHAR(10) +
                     N'  query_text NVARCHAR(MAX), query_plan XML );' + NCHAR(10) +
                     N'' + NCHAR(10) 
                WHEN @event_type_check LIKE N'%lock%'
-               THEN N''
+               THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_time DATETIME2,  ' + NCHAR(10) +
+                    N'  database_name sysname, contentious_object NVARCHAR(512), activity NVARCHAR(20), session_id INT, ' + NCHAR(10) +
+                    N'  query_text NVARCHAR(MAX), wait_time BIGINT, status NVARCHAR(20), isolation_level NVARCHAR(30),  ' + NCHAR(10) +
+                    N'  last_transaction_started NVARCHAR(30), lock_mode NVARCHAR(10), priority INT, transaction_count INT, ' + NCHAR(10) +
+                    N'  client_app sysname, host_name sysname, login_name sysname, blocked_process_report XML );'
                WHEN @event_type_check LIKE N'%quer%'
-               THEN N''
+               THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
+                    N'  database_name sysname, object_name NVARCHAR(512), statement_text NVARCHAR(MAX), sql_text NVARCHAR(MAX), ' + NCHAR(10) +
+                    N'  showplan_xml XML, executions DECIMAL(18,2), total_cpu_ms DECIMAL(18,2), avg_cpu_ms DECIMAL(18,2), ' + NCHAR(10) +
+                    N'  total_logical_reads DECIMAL(18,2), avg_logical_reads DECIMAL(18,2), total_physical_reads DECIMAL(18,2), avg_physical_reads DECIMAL(18,2),  ' + NCHAR(10) +
+                    N'  total_duration_ms DECIMAL(18,2), avg_duration_ms DECIMAL(18,2), total_writes DECIMAL(18,2), avg_writes DECIMAL(18,2), ' + NCHAR(10) +
+                    N'  total_spills_mb DECIMAL(18,2), avg_spills_mb DECIMAL(18,2), total_used_memory_mb DECIMAL(18,2), avg_used_memory_mb DECIMAL(18,2), ' + NCHAR(10) +
+                    N'  total_granted_memory_mb DECIMAL(18,2), avg_granted_memory_mb DECIMAL(18,2), total_rows DECIMAL(18,2), avg_rows DECIMAL(18,2), ' + NCHAR(10) +
+                    N'  serial_ideal_memory_mb DECIMAL(18,2), requested_memory_mb DECIMAL(18,2), ideal_memory_mb DECIMAL(18,2), estimated_rows DECIMAL(18,2), dop INT, ' + NCHAR(10) +
+                    N'  query_plan_hash_signed BINARY(8), query_hash_signed BINARY(8), plan_handle VARBINARY(64) );'
                WHEN @event_type_check LIKE N'%recomp%'
-               THEN N''
+               THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_time DATETIME2,  event_type sysname,  ' + NCHAR(10) +
+                    N'  database_name sysname, object_name NVARCHAR(512), recompile_cause NVARCHAR(256), statement_text NVARCHAR(MAX) '
+                    + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms BIGINT, compile_duration_ms BIGINT );' ELSE N' );' END
                WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
-               THEN N''
+               THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
+                    N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_time DATETIME2,  event_type sysname,  ' + NCHAR(10) +
+                    N'  '
           END
         FROM #human_events_worker AS hew
         WHERE hew.id = @min_id
 
+        UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id;
+
         SELECT TOP 1 @min_id = (id)
         FROM #human_events_worker AS hew
-        WHERE hew.id > @min_id;
+        WHERE hew.id > @min_id
+        AND   hew.is_table_created = 0;
 
         END
 
