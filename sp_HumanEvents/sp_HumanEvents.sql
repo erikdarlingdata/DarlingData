@@ -291,7 +291,7 @@ BEGIN
     DEALLOCATE drop_cursor;
 END;
 
-
+RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT;
 /*helper variables*/
 --How long we let the session run
 DECLARE @waitfor NVARCHAR(20) = N'';
@@ -299,13 +299,12 @@ DECLARE @waitfor NVARCHAR(20) = N'';
 DECLARE @session_name NVARCHAR(100) = N'';
 IF @keep_alive = 0
 BEGIN
-    SET @session_name += REPLACE(N'HumanEvents_' + @event_type + CONVERT(NVARCHAR(36), NEWID()), N'-', N''); 
+    SET @session_name += REPLACE(N'HumanEvents_' + @event_type + N'_' + CONVERT(NVARCHAR(36), NEWID()), N'-', N''); 
 END;
 IF @keep_alive = 1
 BEGIN
-    SET @session_name += N'keeper_HumanEvents_'  + @event_type + N'_' + ISNULL(@custom_name, N'');
-END;
-
+    SET @session_name += N'keeper_HumanEvents_'  + @event_type + CASE WHEN @custom_name <> N'' THEN N'_' + @custom_name ELSE N'' END;
+END
 --Universal, yo
 DECLARE @session_with NVARCHAR(MAX) = N'    
 ADD TARGET package0.ring_buffer
@@ -364,6 +363,7 @@ DECLARE @username_filter NVARCHAR(MAX) = N'';
 DECLARE @object_name_filter NVARCHAR(MAX) = N'';
 DECLARE @requested_memory_mb_filter NVARCHAR(MAX) = N'';
 
+RAISERROR(N'Checking for some event existence', 0, 1) WITH NOWAIT;
 --Determines if we use the new event or the old event(s) to track compiles
 DECLARE @compile_events BIT = 0;
 IF EXISTS
@@ -391,6 +391,7 @@ END;
  /*
  You know what I don't wanna deal with? NULLs.
  */
+ RAISERROR(N'Nixing NULLs', 0, 1) WITH NOWAIT;
  SET @event_type            = ISNULL(@event_type, N'');
  SET @client_app_name       = ISNULL(@client_app_name, N'');
  SET @client_hostname       = ISNULL(@client_hostname, N'');
@@ -410,6 +411,7 @@ END;
                                               QUOTENAME(@object_schema) + N'.' + 
                                               QUOTENAME(@object_name);
 
+RAISERROR(N'Sanity checking event types', 0, 1) WITH NOWAIT;
 /*
 Some sanity checking
 */
@@ -435,10 +437,11 @@ IF @event_type NOT IN
           N'compilations',
           N'recompilations' )
 BEGIN
-    RAISERROR(N'you have chosen a value for @event_type... poorly. use @help = 1 to see valid arguments.', 16, 1) WITH NOWAIT;
+    RAISERROR(N'You have chosen a value for @event_type... poorly. use @help = 1 to see valid arguments.', 16, 1) WITH NOWAIT;
     RETURN;
 END;
 
+RAISERROR(N'Checking query duration filter', 0, 1) WITH NOWAIT;
 --Set these durations to non-crazy numbers unless someone asks for @gimme_danger = 1
 IF ( LOWER(@event_type) LIKE N'%quer%' AND @event_type NOT LIKE N'%comp%' --ignore compile and recompile because this is a filter on query compilation time 🙄
      AND @gimme_danger = 0 )
@@ -450,34 +453,37 @@ BEGIN
     SET @query_duration_ms = 500;
 END;
 
+RAISERROR(N'Checking wait duration filter', 0, 1) WITH NOWAIT;
 IF ( LOWER(@event_type) LIKE N'%wait%' 
      AND @gimme_danger = 0 )
      AND (@wait_duration_ms < 10 OR @wait_duration_ms IS NULL ) 
 BEGIN
-    RAISERROR(N'you chose a really dangerous value for @wait_duration_ms', 0, 1) WITH NOWAIT;
-    RAISERROR(N'if you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
-    RAISERROR(N'setting @wait_duration_ms to 10', 0, 1) WITH NOWAIT;
+    RAISERROR(N'You chose a really dangerous value for @wait_duration_ms', 0, 1) WITH NOWAIT;
+    RAISERROR(N'If you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
+    RAISERROR(N'Setting @wait_duration_ms to 10', 0, 1) WITH NOWAIT;
     SET @wait_duration_ms = 10;
 END;
 
+RAISERROR(N'Checking block duration filter', 0, 1) WITH NOWAIT;
 IF ( LOWER(@event_type) LIKE N'%lock%' 
      AND @gimme_danger = 0 )
      AND (@blocking_duration_ms < 500 OR @blocking_duration_ms IS NULL ) 
 BEGIN
-    RAISERROR(N'you chose a really dangerous value for @blocking_duration_ms', 0, 1) WITH NOWAIT;
-    RAISERROR(N'if you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
-    RAISERROR(N'setting @blocking_duration_ms to 500', 0, 1) WITH NOWAIT;
+    RAISERROR(N'You chose a really dangerous value for @blocking_duration_ms', 0, 1) WITH NOWAIT;
+    RAISERROR(N'If you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
+    RAISERROR(N'Setting @blocking_duration_ms to 500', 0, 1) WITH NOWAIT;
     SET @blocking_duration_ms = 500;
 END;
 
+RAISERROR(N'Checking query sort order', 0, 1) WITH NOWAIT;
 IF @query_sort_order NOT IN ( N'cpu', N'reads', N'writes', N'duration', N'memory', N'spills',
                               N'avg cpu', N'avg reads', N'avg writes', N'avg duration', N'avg memory', N'avg spills' )
 BEGIN
-   RAISERROR(N'that sort order (%s) you chose is so out of this world that i''m ignoring it', 0, 1, @query_sort_order) WITH NOWAIT;
+   RAISERROR(N'That sort order (%s) you chose is so out of this world that i''m ignoring it', 0, 1, @query_sort_order) WITH NOWAIT;
    SET @query_sort_order = N'cpu';
 END;
 
-
+RAISERROR(N'Parsing any supplied waits', 0, 1) WITH NOWAIT;
 --This will hold the CSV list of wait types someone passes in
 CREATE TABLE #user_waits(wait_type NVARCHAR(60));
 INSERT #user_waits
@@ -502,6 +508,8 @@ they're valid waits by checking them against what's available.
 */
 IF @wait_type <> N'all'
 BEGIN
+RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT;
+
     SET @wait_type = REPLACE(@wait_type, N'THREADPOOL', N'SOS_WORKER');
 
     SELECT DISTINCT uw.wait_type AS invalid_waits
@@ -524,7 +532,7 @@ BEGIN
         FROM #invalid_waits AS iw
         OPTION(RECOMPILE);
         
-        RAISERROR(N'waidaminnithataintawait', 16, 1) WITH NOWAIT;
+        RAISERROR(N'Waidaminnithataintawait', 16, 1) WITH NOWAIT;
         RETURN;
     END;
 
@@ -546,6 +554,7 @@ IF
       OR @output_database_name <> N''
       OR @output_schema_name <> N'' )
 BEGIN
+RAISERROR(N'Checking for unsanitary inputs', 0, 1) WITH NOWAIT;
 
     CREATE TABLE #papers_please(ahem sysname);
     INSERT #papers_please
@@ -595,6 +604,7 @@ END;
 /*
 I just don't want anyone to be disappointed
 */
+RAISERROR(N'Avoiding disappointment', 0, 1) WITH NOWAIT;
 IF ( @wait_type <> N'' AND @wait_type <> N'all' AND LOWER(@event_type) NOT LIKE N'%wait%' AND LOWER(@event_type) NOT LIKE N'%all%' )
 BEGIN
     RAISERROR(N'You can''t filter on wait stats unless you use the wait stats event.', 16, 1) WITH NOWAIT;
@@ -604,6 +614,7 @@ END;
 /*
 This is probably important, huh?
 */
+RAISERROR(N'Are we trying to filter for a blocking session?', 0, 1) WITH NOWAIT;
 IF ( LOWER(@event_type) LIKE N'%lock%' AND DB_ID(@database_name) IS NULL AND @object_name <> N'' )
 BEGIN
     RAISERROR(N'The blocking event can only filter on an object_id, and we need a valid @database_name to resolve it correctly.', 16, 1) WITH NOWAIT;
@@ -612,11 +623,11 @@ END;
 
 IF ( LOWER(@event_type) LIKE N'%lock%' AND @object_name <> N'' AND OBJECT_ID(@fully_formed_babby) IS NULL )
 BEGIN
-    RAISERROR(N'we couldn''t find the object you''re trying to find: %s', 16, 1, @fully_formed_babby) WITH NOWAIT;
+    RAISERROR(N'We couldn''t find the object you''re trying to find: %s', 16, 1, @fully_formed_babby) WITH NOWAIT;
     RETURN;
 END;
 
-
+RAISERROR(N'Validating if the Blocked Process Report is on if the session is for blocking', 0, 1) WITH NOWAIT;
 IF @event_type LIKE N'%lock%'
 AND  EXISTS
 (
@@ -638,21 +649,24 @@ BEGIN
     RETURN;
 END;
 
+RAISERROR(N'If there''s a database filter, is the name valid?', 0, 1) WITH NOWAIT;
 IF @database_name <> N''
 BEGIN
     IF DB_ID(@database_name) IS NULL
     BEGIN
-        RAISERROR(N'it looks like you''re looking for a database that doesn''t wanna be looked for (%s) -- check that spelling!', 16, 1, @database_name) WITH NOWAIT;
+        RAISERROR(N'It looks like you''re looking for a database that doesn''t wanna be looked for (%s) -- check that spelling!', 16, 1, @database_name) WITH NOWAIT;
         RETURN;
     END;
 END;
 
+RAISERROR(N'If there''s a session id filter, is it valid?', 0, 1) WITH NOWAIT;
 IF LOWER(@session_id) NOT LIKE N'%sample%' AND @session_id LIKE '%[^0-9]%' AND LOWER(@session_id) <> N''
 BEGIN
-   RAISERROR(N'that @session_id doesn''t look proper (%s). double check it for me.', 16, 1, @session_id) WITH NOWAIT;
+   RAISERROR(N'That @session_id doesn''t look proper (%s). double check it for me.', 16, 1, @session_id) WITH NOWAIT;
    RETURN;
 END;
 
+RAISERROR(N'No dividing by zero', 0, 1) WITH NOWAIT;
 IF @sample_divisor < 2
 BEGIN
     RAISERROR(N'@sample_divisor is used to divide @session_id when taking a sample of a workload.', 16, 1) WITH NOWAIT;
@@ -660,6 +674,7 @@ BEGIN
     RETURN;
 END;
 
+RAISERROR(N'If there''s a user name filter, does the name exist?', 0, 1) WITH NOWAIT;
 IF @username NOT IN 
 (
     SELECT sp.name
@@ -670,7 +685,7 @@ IF @username NOT IN
     AND   sp.is_disabled = 0
 ) AND @username <> N''
 BEGIN
-    RAISERROR(N'that username (%s) doesn''t exist in sys.server_principals', 16, 1, @username) WITH NOWAIT;
+    RAISERROR(N'That username (%s) doesn''t exist in sys.server_principals', 16, 1, @username) WITH NOWAIT;
     RETURN;
 END;
 
@@ -678,6 +693,7 @@ END;
 /*
 We need to do some seconds math here, because WAITFOR is very stupid
 */
+RAISERROR(N'Wait For It! Wait For it!', 0, 1) WITH NOWAIT;
 IF @seconds_sample > 1
 BEGIN
 DECLARE @math INT = 0;
@@ -723,6 +739,7 @@ END;
 /*
 CH-CH-CH-CHECK-IT-OUT
 */
+RAISERROR(N'Make sure the session doesn''t exist already', 0, 1) WITH NOWAIT;
 IF EXISTS
 (
     SELECT 1/0
@@ -732,19 +749,21 @@ IF EXISTS
     WHERE ses.name = @session_name
 )
 BEGIN
-    RAISERROR('a session with the name %s already exists. try again, hoss.', 16, 1, @event_type) WITH NOWAIT;
-    RETURN;
+    RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
+    EXEC sys.sp_executesql @drop_sql;
 END;
 
+RAISERROR(N'Does the output database exist?', 0, 1) WITH NOWAIT;
 IF @output_database_name <> N''
 BEGIN
     IF DB_ID(@output_database_name) IS NULL
     BEGIN
-        RAISERROR(N'it looks like you''re looking for a database (%s) that doesn''t wanna be looked for -- check that spelling!', 16, 1, @output_database_name) WITH NOWAIT;
+        RAISERROR(N'It looks like you''re looking for a database (%s) that doesn''t wanna be looked for -- check that spelling!', 16, 1, @output_database_name) WITH NOWAIT;
         RETURN;
     END;
 END;
 
+RAISERROR(N'Does the output schema exist?', 0, 1) WITH NOWAIT;
 IF @output_schema_name <> N''
 BEGIN
     DECLARE @s_out INT,
@@ -760,11 +779,12 @@ BEGIN
     
     IF @s_out = 0
     BEGIN
-        RAISERROR(N'it looks like the schema %s doesn''t exist in the database %s', 16, 1, @output_schema_name, @output_database_name);
+        RAISERROR(N'It looks like the schema %s doesn''t exist in the database %s', 16, 1, @output_schema_name, @output_database_name);
         RETURN;
     END;
 END;
  
+RAISERROR(N'Is output database or schema filled in?', 0, 1) WITH NOWAIT;
 IF LEN(@output_database_name + @output_schema_name) > 0
 AND ( @output_database_name  = N'' 
       OR @output_schema_name = N'' )
@@ -787,16 +807,20 @@ If we're writing to a table, we don't want to do anything else
 Or anything else after this, really
 We want the session to get set up
 */
+RAISERROR(N'Do we skip to the GOTO?', 0, 1) WITH NOWAIT;
 IF ( @output_database_name <> N''
      AND @output_schema_name <> N'' )
-RAISERROR(N'Skipping all the other stuff and going to data collection', 0, 1) WITH NOWAIT;
-GOTO output_results;
-
+BEGIN
+    RAISERROR(N'Skipping all the other stuff and going to data collection', 0, 1) WITH NOWAIT;
+    GOTO output_results;
+    RETURN;
+END
 
 /*
 Start setting up individual filters
 */
 
+RAISERROR(N'Setting up individual filters', 0, 1) WITH NOWAIT;
 IF @query_duration_ms > 0
 BEGIN
     IF LOWER(@event_type) NOT LIKE N'%comp%'
@@ -985,6 +1009,7 @@ END;
 
 --This section sets event-dependent filters
 
+RAISERROR(N'Combining session filters', 0, 1) WITH NOWAIT;
 /*For full filter-able sessions*/
 SET @session_filter += ( ISNULL(@query_duration_filter, N'') +
                          ISNULL(@client_app_name_filter, N'') +
@@ -1051,6 +1076,7 @@ SET @session_filter_parameterization += ( ISNULL(@client_app_name_filter, N'') +
                                           ISNULL(@username_filter, N'') );
 
 --This section sets up the event session definition
+RAISERROR(N'Setting up the event session', 0, 1) WITH NOWAIT;
 SET @session_sql += 
     CASE WHEN LOWER(@event_type) LIKE N'%lock%'
          THEN N' 
@@ -1143,10 +1169,10 @@ EXEC (@start_sql);
 
 IF @keep_alive = 1
 BEGIN
-    RAISERROR(N'session %s created, exiting.', 0, 1) WITH NOWAIT;
-    RAISERROR(N'to collect data from it, run this proc from an agent job with an output database and schema name', 0, 1) WITH NOWAIT;
-    RAISERROR(N'alternately, you can watch live data stream in by accessing the GUI', 0, 1) WITH NOWAIT;
-    RAISERROR(N'just don''t forget to stop it when you''re done with it!', 0, 1) WITH NOWAIT;
+    RAISERROR(N'Session %s created, exiting.', 0, 1, @session_name) WITH NOWAIT;
+    RAISERROR(N'To collect data from it, run this proc from an agent job with an output database and schema name', 0, 1) WITH NOWAIT;
+    RAISERROR(N'Alternately, you can watch live data stream in by accessing the GUI', 0, 1) WITH NOWAIT;
+    RAISERROR(N'Just don''t forget to stop it when you''re done with it!', 0, 1) WITH NOWAIT;
     RETURN;
 END
 
@@ -1774,8 +1800,8 @@ WHILE 1 = 1
 
     BEGIN
     
-    RAISERROR(N'starting data collection.', 0, 1) WITH NOWAIT;
-    RAISERROR(N'see? i told you.', 0, 1) WITH NOWAIT;
+    RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
+    RAISERROR(N'See? I told you.', 0, 1) WITH NOWAIT;
     
     IF NOT EXISTS
     (
@@ -1788,8 +1814,6 @@ WHILE 1 = 1
     )
     BEGIN
         RAISERROR(N'No matching active session names found starting with keeper_HumanEvents ', 0, 1) WITH NOWAIT;
-        RAISERROR(N'Waiting additional 5 seconds before checking again', 0, 1) WITH NOWAIT;
-        WAITFOR DELAY '00:00:05.000';
     END;
     
     --IF NOT EXISTS
@@ -1801,7 +1825,7 @@ WHILE 1 = 1
     --    WHERE ses.name = N'keeper_HumanEvents_server_diagnostics'
     --)
     --BEGIN     
-    --RAISERROR(N'starting data collection.', 0, 1) WITH NOWAIT;
+    --RAISERROR(N'Setting up server diagnostics.', 0, 1) WITH NOWAIT;
 
     --    CREATE EVENT SESSION keeper_HumanEvents_server_diagnostics
     --        ON SERVER
@@ -1845,7 +1869,7 @@ WHILE 1 = 1
             ( event_type, is_table_created, last_checked, last_updated, 
               output_database, output_schema, output_table )        
         SELECT s.name, 0, '19000101', '19000101', 
-               @output_database_name, @output_schema_name, @session_name
+               @output_database_name, @output_schema_name, s.name
         FROM sys.server_event_sessions AS s
         LEFT JOIN sys.dm_xe_sessions AS r 
             ON r.name = s.name
@@ -1948,17 +1972,20 @@ WHILE 1 = 1
                   END
                 FROM #human_events_worker AS hew
                 WHERE hew.id = @min_id
-                
-                IF @debug = 1 BEGIN RAISERROR(@create_table_sql, 0, 1) WITH NOWAIT; END;
+                AND is_table_created = 0;
+
+                EXEC sp_executesql @create_table_sql;
                 
                 UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id;
                 
-                SELECT TOP 1 @min_id = (id)
+                SELECT TOP (1) @min_id = (id)
                 FROM #human_events_worker AS hew
                 WHERE hew.id > @min_id
-                AND   hew.is_table_created = 0;
+                AND   hew.is_table_created = 0
+                ORDER BY id;
                 
-                IF @debug = 1 BEGIN RAISERROR(N'@min_id %i', 0, 1, @min_id) WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(@create_table_sql, 0, 1) WITH NOWAIT; END;
         
             END
         
@@ -1966,18 +1993,18 @@ WHILE 1 = 1
 
     END
 
-IF EXISTS
-(
-    SELECT 1/0
-    FROM #human_events_worker AS hew
-    WHERE hew.is_table_created = 1
-    AND   hew.last_checked < DATEADD(SECOND, -5, SYSDATETIME())
-)
-BEGIN
-
-
-
-END
+    IF EXISTS
+    (
+        SELECT 1/0
+        FROM #human_events_worker AS hew
+        WHERE hew.is_table_created = 1
+        AND   hew.last_checked < DATEADD(SECOND, -5, SYSDATETIME())
+    )
+    BEGIN
+    
+        SELECT  1
+    
+    END
 
 
 
