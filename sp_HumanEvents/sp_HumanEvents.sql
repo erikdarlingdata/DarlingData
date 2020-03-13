@@ -103,7 +103,10 @@ BEGIN
                         WHEN N'@seconds_sample' THEN N'the duration in seconds to run the event session for'
                         WHEN N'@gimme_danger' THEN N'used in some circumstances to override me trying to protect you from yourself'
                         WHEN N'@debug' THEN N'use to print out dynamic SQL'
-                        WHEN N'@keep_alive' THEN N'not functional; will eventually be used to create permanent sessions'
+                        WHEN N'@keep_alive' THEN N'creates a permanent session, either to watch live or log to a table from'
+                        WHEN N'@custom_name' THEN N'if you want to custom name a permanent session'
+                        WHEN N'@output_database_name' THEN N'the database you want to log data to'
+                        WHEN N'@output_schema_name' THEN N'the schema you want to log data to'
                         WHEN N'@help' THEN N'well you''re here so you figured this one out'
                         WHEN N'@version' THEN N'to make sure you have the most recent bits'
                         WHEN N'@version_date' THEN N'to make sure you have the most recent bits'
@@ -129,6 +132,9 @@ BEGIN
                         WHEN N'@gimme_danger' THEN N'1 or 0'
                         WHEN N'@debug' THEN N'1 or 0'
                         WHEN N'@keep_alive' THEN N'1 or 0'
+                        WHEN N'@custom_name' THEN N'a stringy thing'
+                        WHEN N'@output_database_name' THEN N'a valid database name'
+                        WHEN N'@output_schema_name' THEN N'a valid schema'
                         WHEN N'@help' THEN N'1 or 0'
                         WHEN N'@version' THEN N'none, output'
                         WHEN N'@version_date' THEN N'none, output'
@@ -153,6 +159,9 @@ BEGIN
                         WHEN N'@seconds_sample' THEN N'10'
                         WHEN N'@gimme_danger' THEN N'0'
                         WHEN N'@keep_alive' THEN N'0'
+                        WHEN N'@custom_name' THEN N'intentionally left blank'
+                        WHEN N'@output_database_name' THEN N'intentionally left blank'
+                        WHEN N'@output_schema_name' THEN N'intentionally left blank'
                         WHEN N'@debug' THEN N'0'
                         WHEN N'@help' THEN N'0'
                         WHEN N'@version' THEN N'none, output'
@@ -200,6 +209,14 @@ BEGIN
     SELECT N'note that THREADPOOL is SOS_WORKER in xe-land. why? i dunno.' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
     SELECT N'EXEC dbo.sp_HumanEvents @event_type = ''waits'', @wait_duration_ms = 10, @seconds_sample = 100, @wait_type = N''SOS_WORKER,RESOURCE_SEMAPHORE,YOUR_MOM'';' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL
+    SELECT N'to set up a permanent session for compiles, but you can specify any of the session types here' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL    
+    SELECT N'EXEC sp_HumanEvents @event_type = N''compiles'', @debug = 1, @keep_alive = 1;' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL
+    SELECT N'to log to a database named whatever, and a schema called dbo' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL    
+    SELECT N'EXEC sp_HumanEvents @debug = 1, @output_database_name = N''whatever'', @output_schema_name = N''dbo'';' UNION ALL
     SELECT REPLICATE(N'-', 100);
 
 
