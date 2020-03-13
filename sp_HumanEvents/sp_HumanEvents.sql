@@ -296,7 +296,7 @@ RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT;
 --How long we let the session run
 DECLARE @waitfor NVARCHAR(20) = N'';
 --Give sessions super unique names in case more than one person uses it at a time
-DECLARE @session_name NVARCHAR(100) = N'';
+DECLARE @session_name NVARCHAR(512) = N'';
 IF @keep_alive = 0
 BEGIN
     SET @session_name += REPLACE(N'HumanEvents_' + @event_type + N'_' + CONVERT(NVARCHAR(36), NEWID()), N'-', N''); 
@@ -767,13 +767,13 @@ RAISERROR(N'Does the output schema exist?', 0, 1) WITH NOWAIT;
 IF @output_schema_name <> N''
 BEGIN
     DECLARE @s_out INT,
-    		@schema_check BIT,
-    		@s_sql NVARCHAR(MAX) = N'
+            @schema_check BIT,
+            @s_sql NVARCHAR(MAX) = N'
     SELECT @is_out = COUNT(*) 
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.schemas
     WHERE name = ' + QUOTENAME(@output_schema_name, '''') + ' 
     OPTION (RECOMPILE);',
-    		@s_params NVARCHAR(MAX) = N'@is_out INT OUTPUT';
+            @s_params NVARCHAR(MAX) = N'@is_out INT OUTPUT';
     
     EXEC sys.sp_executesql @s_sql, @s_params, @is_out = @s_out OUTPUT;
     
@@ -811,7 +811,10 @@ RAISERROR(N'Do we skip to the GOTO?', 0, 1) WITH NOWAIT;
 IF ( @output_database_name <> N''
      AND @output_schema_name <> N'' )
 BEGIN
-    RAISERROR(N'Skipping all the other stuff and going to data collection', 0, 1) WITH NOWAIT;
+    RAISERROR(N'Skipping all the other stuff and going to data collection', 0, 1) WITH NOWAIT;    
+    
+    CREATE TABLE #human_events_xml_internal (human_events_xml XML)        
+    
     GOTO output_results;
     RETURN;
 END
@@ -1632,8 +1635,6 @@ BEGIN
                    bd.value('(process/@loginname)[1]', 'NVARCHAR(256)') AS blocked_loginname,
                    bd.value('(process/@isolationlevel)[1]', 'NVARCHAR(50)') AS blocked_isolationlevel,
                    bd.value('(process/executionStack/frame/@sqlhandle)[1]', 'NVARCHAR(100)') AS blocked_sqlhandle,
-                   bd.value('(process/executionStack/frame/@stmtstart)[1]', 'INT') AS blocked_stmtstart,
-                   bd.value('(process/executionStack/frame/@stmtend)[1]', 'INT') AS blocked_stmtend,
                    c.query('.') AS blocked_process_report
             INTO #blocked
             FROM #human_events_xml AS xet
@@ -1802,6 +1803,7 @@ WHILE 1 = 1
     
     RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
     RAISERROR(N'See? I told you.', 0, 1) WITH NOWAIT;
+
     
     IF NOT EXISTS
     (
@@ -1916,60 +1918,49 @@ WHILE 1 = 1
             RAISERROR(N'Generating create table statement', 0, 1) WITH NOWAIT;
                 SELECT @table_sql =  
                   CASE WHEN @event_type_check LIKE N'%wait%'
-                       THEN N'CREATE TABLE ' + @object_name_check + N'_total_waits' + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_type sysname, ' + NCHAR(10) +
-                            N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, ' + NCHAR(10) +
-                            N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT );' + NCHAR(10) +
-                            N'' + NCHAR(10) +  
-                            N'CREATE TABLE ' + @object_name_check + N'_total_waits_database' + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_type sysname,  ' + NCHAR(10) +
-                            N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, database_name sysname, ' + NCHAR(10) +
-                            N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT );' + NCHAR(10) +
-                            N'' + NCHAR(10) +  
-                            N'CREATE TABLE ' + @object_name_check + N'_total_waits_query_database' + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_type sysname,  ' + NCHAR(10) +
-                            N'  wait_pattern NVARCHAR(50), min_event_time DATETIME2, max_event_time DATETIME2, ' + NCHAR(10) +
-                            N'  wait_type NVARCHAR(60), total_waits BIGINT, sum_duration_ms BIGINT, sum_signal_duration_ms BIGINT, avg_ms_per_wait BIGINT, ' + NCHAR(10) +
-                            N'  query_text NVARCHAR(MAX), query_plan XML );' + NCHAR(10) +
-                            N'' + NCHAR(10) 
+                       THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
+                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, event_type sysname NULL,  ' + NCHAR(10) +
+                            N'  database_name sysname NULL, wait_type NVARCHAR(60) NULL, duration_ms BIGINT NULL, signal_duration_ms BIGINT NULL, ' + NCHAR(10) +
+                            N'  wait_resource NVARCHAR(256) NULL,  query_plan_hash_signed BINARY(8) NULL, query_hash_signed BINARY(8) NULL, plan_handle VARBINARY(64) NULL );'
                        WHEN @event_type_check LIKE N'%lock%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_time DATETIME2,  ' + NCHAR(10) +
-                            N'  database_name sysname, contentious_object NVARCHAR(512), activity NVARCHAR(20), session_id INT, ' + NCHAR(10) +
-                            N'  query_text NVARCHAR(MAX), wait_time BIGINT, status NVARCHAR(20), isolation_level NVARCHAR(30),  ' + NCHAR(10) +
-                            N'  last_transaction_started NVARCHAR(30), lock_mode NVARCHAR(10), priority INT, transaction_count INT, ' + NCHAR(10) +
-                            N'  client_app sysname, host_name sysname, login_name sysname, blocked_process_report XML );'
+                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, ' + NCHAR(10) +
+                            N'  activity NVARCHAR(20) NULL, database_name sysname NULL, database_id INT NULL, object_id INT NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + NCHAR(10) +
+                            N'  transaction_id INT NULL, resource_owner_type NVARCHAR(256) NULL, monitor_loop INT NULL, spid INT NULL, ecid INT NULL, query_text NVARCHAR(MAX) NULL, ' + 
+                            N'  wait_time BIGINT NULL, transaction_name NVARCHAR(256) NULL,  last_transaction_started NVARCHAR(30) NULL, ' + NCHAR(10) +
+                            N'  lock_mode NVARCHAR(10) NULL, status NVARCHAR(10) NULL, priority INT NULL, transaction_count INT NULL, ' + NCHAR(10) +
+                            N'  client_app sysname NULL, host_name sysname NULL, login_name sysname NULL, isolation_level NVARCHAR(30) NULL, sql_handle VARBINARY(64) NULL, blocked_process_report XML NULL );'
                        WHEN @event_type_check LIKE N'%quer%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), ' + NCHAR(10) +
-                            N'  database_name sysname, object_name NVARCHAR(512), statement_text NVARCHAR(MAX), sql_text NVARCHAR(MAX), ' + NCHAR(10) +
-                            N'  showplan_xml XML, executions DECIMAL(18,2), total_cpu_ms DECIMAL(18,2), avg_cpu_ms DECIMAL(18,2), ' + NCHAR(10) +
-                            N'  total_logical_reads DECIMAL(18,2), avg_logical_reads DECIMAL(18,2), total_physical_reads DECIMAL(18,2), avg_physical_reads DECIMAL(18,2),  ' + NCHAR(10) +
-                            N'  total_duration_ms DECIMAL(18,2), avg_duration_ms DECIMAL(18,2), total_writes DECIMAL(18,2), avg_writes DECIMAL(18,2), ' + NCHAR(10) +
-                            N'  total_spills_mb DECIMAL(18,2), avg_spills_mb DECIMAL(18,2), total_used_memory_mb DECIMAL(18,2), avg_used_memory_mb DECIMAL(18,2), ' + NCHAR(10) +
-                            N'  total_granted_memory_mb DECIMAL(18,2), avg_granted_memory_mb DECIMAL(18,2), total_rows DECIMAL(18,2), avg_rows DECIMAL(18,2), ' + NCHAR(10) +
-                            N'  serial_ideal_memory_mb DECIMAL(18,2), requested_memory_mb DECIMAL(18,2), ideal_memory_mb DECIMAL(18,2), estimated_rows DECIMAL(18,2), dop INT, ' + NCHAR(10) +
-                            N'  query_plan_hash_signed BINARY(8), query_hash_signed BINARY(8), plan_handle VARBINARY(64) );'
+                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, event_type sysname NULL, ' + NCHAR(10) +
+                            N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, sql_text NVARCHAR(MAX) NULL, statement NVARCHAR(MAX) NULL, ' + NCHAR(10) +
+                            N'  showplan_xml XML NULL, cpu_ms DECIMAL(18,2) NULL, logical_reads DECIMAL(18,2) NULL, ' + NCHAR(10) +
+                            N'  physical_reads DECIMAL(18,2) NULL,  duration_ms DECIMAL(18,2) NULL, writes_mb DECIMAL(18,2) NULL,' + NCHAR(10) +
+                            N'  spills_mb DECIMAL(18,2) NULL, row_count DECIMAL(18,2) NULL, estimated_rows DECIMAL(18,2) NULL, dop INT NULL,  ' + NCHAR(10) +
+                            N'  serial_ideal_memory_mb DECIMAL(18,2) NULL, requested_memory_mb DECIMAL(18,2) NULL, used_memory_mb DECIMAL(18,2) NULL, ideal_memory_mb DECIMAL(18,2) NULL, ' + NCHAR(10) +
+                            N'  granted_memory_mb DECIMAL(18,2) NULL, query_plan_hash_signed BINARY(8) NULL, query_hash_signed BINARY(8) NULL, plan_handle VARBINARY(64) NULL );'
                        WHEN @event_type_check LIKE N'%recomp%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_time DATETIME2,  event_type sysname,  ' + NCHAR(10) +
-                            N'  database_name sysname, object_name NVARCHAR(512), recompile_cause NVARCHAR(256), statement_text NVARCHAR(MAX) '
-                            + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms BIGINT, compile_duration_ms BIGINT );' ELSE N' );' END
+                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
+                            N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, recompile_cause NVARCHAR(256) NULL, statement_text NVARCHAR(MAX) NULL '
+                            + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms BIGINT NULL, compile_duration_ms BIGINT NULL );' ELSE N' );' END
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_time DATETIME2,  event_type sysname,  ' + NCHAR(10) +
-                            N'  database_name sysname, object_name NVARCHAR(512), recompile_cause NVARCHAR(256), statement_text NVARCHAR(MAX) '
-                            + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms BIGINT, compile_duration_ms BIGINT );' ELSE N' );' END
-                            + NCHAR(10) +
+                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
+                            N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, statement_text NVARCHAR(MAX) NULL '
+                            + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms BIGINT NULL, compile_duration_ms BIGINT NULL );' ELSE N' );' END
+                            + CASE WHEN @parameterization_events = 1 
+                                   THEN 
+                            NCHAR(10) + 
                             N'CREATE TABLE ' + @object_name_check + N'_parameterization' + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_time DATETIME2,  event_type sysname,  ' + NCHAR(10) +
-                            N'  database_name sysname, sql_text NVARCHAR(MAX), compile_cpu_time_ms BIGINT, compile_duration_ms BIGINT, query_param_type INT,  ' + NCHAR(10) +
-                            N'  is_cache BIT, is_recompiled BIT, compile_code NVARCHAR(256), has_literals BIT, is_parameterizable BIT, query_plan_hash BINARY(8), ' + NCHAR(10) +
-                            N'  query_hash BINARY(8), plan_handle VARBINARY(64), statement_sql_hash VARBINARY(64) );'
-                  END
-                FROM #human_events_worker AS hew
-                WHERE hew.id = @min_id
-                AND is_table_created = 0;                
+                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
+                            N'  database_name sysname NULL, sql_text NVARCHAR(MAX) NULL, compile_cpu_time_ms BIGINT NULL, compile_duration_ms BIGINT NULL, query_param_type INT NULL,  ' + NCHAR(10) +
+                            N'  is_cached BIT NULL, is_recompiled BIT NULL, compile_code NVARCHAR(256) NULL, has_literals BIT NULL, is_parameterizable BIT NULL, parameterized_values_count BIGINT NULL, ' + NCHAR(10) +
+                            N'  query_plan_hash BINARY(8) NULL, query_hash BINARY(8) NULL, plan_handle VARBINARY(64) NULL, statement_sql_hash VARBINARY(64) NULL );'
+                                   ELSE N'' 
+                              END  
+                       ELSE N''
+                  END          
             END        
             
             IF @debug = 1 BEGIN RAISERROR(@table_sql, 0, 1) WITH NOWAIT; END;
@@ -2008,7 +1999,7 @@ WHILE 1 = 1
     )
     BEGIN
     
-        RAISERROR(N'Sessions without tables found, starting loop.', 0, 1) WITH NOWAIT;
+        RAISERROR(N'Sessions that need data found, starting loop.', 0, 1) WITH NOWAIT;
         
         SELECT @min_id = MIN(hew.id), @max_id = MAX(hew.id)
         FROM #human_events_worker AS hew
@@ -2017,12 +2008,296 @@ WHILE 1 = 1
         WHILE @min_id <= @max_id
         BEGIN
 
+        DECLARE @date_filter DATETIME
 
+            SELECT @event_type_check  = hew.event_type,
+                   @object_name_check = QUOTENAME(hew.output_database)
+                                      + N'.'
+                                      + QUOTENAME(hew.output_schema)
+                                      + N'.'
+                                      + hew.output_table,
+                   @date_filter = hew.last_checked
+            FROM #human_events_worker AS hew
+            WHERE hew.id = @min_id
+            AND hew.is_table_created = 1;
+        
+            IF OBJECT_ID(@object_name_check) IS NOT NULL
+            BEGIN
+            RAISERROR(N'Generating insert table statement', 0, 1) WITH NOWAIT;
+                SELECT @table_sql =  
+                  CASE WHEN @event_type_check LIKE N'%wait%'
+                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
+                            N'( server_name, event_time, event_type, database_name, wait_type, duration_ms, ' + NCHAR(10) +
+                            N'  signal_duration_ms, wait_resource,  query_plan_hash_signed, query_hash_signed, plan_handle )' + NCHAR(10) +
+                            N'SELECT @@SERVERNAME,
+        DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,
+        c.value(''@name'', ''NVARCHAR(256)'') AS event_type,
+        c.value(''(action[@name="database_name"]/value)[1]'', ''NVARCHAR(256)'') AS database_name,                
+        c.value(''(data[@name="wait_type"]/text)[1]'', ''NVARCHAR(256)'') AS wait_type,
+        c.value(''(data[@name="duration"]/value)[1]'', ''BIGINT'')  AS duration_ms,
+        c.value(''(data[@name="signal_duration"]/value)[1]'', ''BIGINT'') AS signal_duration_ms,' + NCHAR(10) +
+CASE WHEN @v = 11 
+     THEN N' ''Not Available < 2014'', ' + NCHAR(10)
+     ELSE N' c.value(''(data[@name="wait_resource"]/value)[1]'', ''NVARCHAR(256)'')  AS wait_resource, ' + NCHAR(10)
+END + N'    CONVERT(BINARY(8), c.value(''(action[@name="query_plan_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_plan_hash_signed,
+            CONVERT(BINARY(8), c.value(''(action[@name="query_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_hash_signed,
+            c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''VARBINARY(64)'') AS plan_handle
+     FROM #human_events_xml_internal AS xet
+     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+     WHERE c.exist(''(data[@name="duration"]/value[. > 0])'') = 1 
+     AND DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+     OPTION(RECOMPILE);'
+                       WHEN @event_type_check LIKE N'%lock%'
+                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
+                            N'( server_name, event_time, activity, database_name, database_id, object_id, ' + NCHAR(10) +
+                            N'  transaction_id, resource_owner_type, monitor_loop, spid, ecid, query_text, wait_time, ' + NCHAR(10) +
+                            N'  transaction_name,  last_transaction_started, lock_mode, status, priority, ' + NCHAR(10) +
+                            N'  transaction_count, client_app, host_name, login_name, isolation_level, sql_handle, blocked_process_report )' + NCHAR(10) +
+N'SELECT *
+FROM (
+    SELECT @@SERVERNAME AS server_name,
+           DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,        
+           ''blocked'' AS activity,
+           DB_NAME(c.value(''(data[@name="database_id"]/value)[1]'', ''INT'')) AS database_name,
+           c.value(''(data[@name="database_id"]/value)[1]'', ''INT'') AS database_id,
+           c.value(''(data[@name="object_id"]/value)[1]'', ''INT'') AS object_id,
+           c.value(''(data[@name="transaction_id"]/value)[1]'', ''BIGINT'') AS transaction_id,
+           c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''NVARCHAR(256)'') AS resource_owner_type,
+           c.value(''(//@monitorLoop)[1]'', ''INT'') AS monitor_loop,
+           bd.value(''(process/@spid)[1]'', ''INT'') AS spid,
+           bd.value(''(process/@ecid)[1]'', ''INT'') AS ecid,
+           bd.value(''(process/inputbuf/text())[1]'', ''NVARCHAR(MAX)'') AS text,
+           bd.value(''(process/@waittime)[1]'', ''BIGINT'') AS waittime,
+           bd.value(''(process/@transactionname)[1]'', ''NVARCHAR(256)'') AS transactionname,
+           bd.value(''(process/@lasttranstarted)[1]'', ''DATETIME2'') AS lasttranstarted,
+           bd.value(''(process/@lockMode)[1]'', ''NVARCHAR(10)'') AS lockmode,
+           bd.value(''(process/@status)[1]'', ''NVARCHAR(10)'') AS status,
+           bd.value(''(process/@priority)[1]'', ''INT'') AS priority,
+           bd.value(''(process/@trancount)[1]'', ''INT'') AS trancount,
+           bd.value(''(process/@clientapp)[1]'', ''NVARCHAR(256)'') AS clientapp,
+           bd.value(''(process/@hostname)[1]'', ''NVARCHAR(256)'') AS hostname,
+           bd.value(''(process/@loginname)[1]'', ''NVARCHAR(256)'') AS loginname,
+           bd.value(''(process/@isolationlevel)[1]'', ''NVARCHAR(50)'') AS isolationlevel,
+           CONVERT(VARBINARY(64), bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''NVARCHAR(100)'')) AS sqlhandle,
+           c.query(''.'') AS process_report
+    FROM ##human_events_xml_internal AS xet
+    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
+    
+    UNION ALL
+    
+    SELECT @@SERVERNAME AS server_name,
+           DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,        
+           ''blocking'' AS activity,
+           DB_NAME(c.value(''(data[@name="database_id"]/value)[1]'', ''INT'')) AS database_name,
+           c.value(''(data[@name="database_id"]/value)[1]'', ''INT'') AS database_id,
+           c.value(''(data[@name="object_id"]/value)[1]'', ''INT'') AS object_id,
+           c.value(''(data[@name="transaction_id"]/value)[1]'', ''BIGINT'') AS transaction_id,
+           c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''NVARCHAR(256)'') AS resource_owner_type,
+           c.value(''(//@monitorLoop)[1]'', ''INT'') AS monitor_loop,
+           bg.value(''(process/@spid)[1]'', ''INT'') AS spid,
+           bg.value(''(process/@ecid)[1]'', ''INT'') AS ecid,
+           bg.value(''(process/inputbuf/text())[1]'', ''NVARCHAR(MAX)'') AS text,
+           NULL AS waittime,
+           NULL AS transactionname,
+           NULL AS lasttranstarted,
+           NULL AS lockmode,
+           bg.value(''(process/@status)[1]'', ''NVARCHAR(10)'') AS status,
+           bg.value(''(process/@priority)[1]'', ''INT'') AS priority,
+           bg.value(''(process/@trancount)[1]'', ''INT'') AS trancount,
+           bg.value(''(process/@clientapp)[1]'', ''NVARCHAR(256)'') AS clientapp,
+           bg.value(''(process/@hostname)[1]'', ''NVARCHAR(256)'') AS hostname,
+           bg.value(''(process/@loginname)[1]'', ''NVARCHAR(256)'') AS loginname,
+           bg.value(''(process/@isolationlevel)[1]'', ''NVARCHAR(50)'') AS isolationlevel,
+           NULL AS sqlhandle,
+           c.query(''.'') AS process_report
+    FROM ##human_events_xml_internal AS xet
+    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
+) AS x
+WHERE event_time > @date_filter
+OPTION (RECOMPILE);'
+                       WHEN @event_type_check LIKE N'%quer%'
+                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
+                            N'( server_name, event_time, event_type, database_name, object_name, sql_text, statement, ' + NCHAR(10) +
+                            N'  showplan_xml, cpu_ms, logical_reads, physical_reads, duration_ms, writes_mb, ' + NCHAR(10) +
+                            N'  spills_mb, row_count, estimated_rows, dop,  serial_ideal_memory_mb, ' + NCHAR(10) +
+                            N'  requested_memory_mb, used_memory_mb, ideal_memory_mb, granted_memory_mb, ' + NCHAR(10) +
+                            N'  query_plan_hash_signed, query_hash_signed, plan_handle )' + NCHAR(10) +
+                            N'SELECT @@SERVERNAME, 
+       DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,
+       c.value(''@name'', ''NVARCHAR(256)'') AS event_type,
+       c.value(''(action[@name="database_name"]/value)[1]'', ''NVARCHAR(256)'') AS database_name,                
+       c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') AS [object_name],
+       c.value(''(action[@name="sql_text"]/value)[1]'', ''NVARCHAR(MAX)'') AS sql_text,
+       c.value(''(data[@name="statement"]/value)[1]'', ''NVARCHAR(MAX)'') AS statement,
+       c.query(''(data[@name="showplan_xml"]/value/*)[1]'') AS [showplan_xml],
+       c.value(''(data[@name="cpu_time"]/value)[1]'', ''INT'') / 1000. AS cpu_ms,
+      (c.value(''(data[@name="logical_reads"]/value)[1]'', ''INT'') * 8) / 1024. AS logical_reads,
+      (c.value(''(data[@name="physical_reads"]/value)[1]'', ''INT'') * 8) / 1024. AS physical_reads,
+       c.value(''(data[@name="duration"]/value)[1]'', ''INT'') / 1000. AS duration_ms,
+      (c.value(''(data[@name="writes"]/value)[1]'', ''INT'') * 8) / 1024. AS writes_mb,
+      (c.value(''(data[@name="spills"]/value)[1]'', ''INT'') * 8) / 1024. AS spills_mb,
+       c.value(''(data[@name="row_count"]/value)[1]'', ''INT'') AS row_count,
+       c.value(''(data[@name="estimated_rows"]/value)[1]'', ''INT'') AS estimated_rows,
+       c.value(''(data[@name="dop"]/value)[1]'', ''INT'') AS dop,
+       c.value(''(data[@name="serial_ideal_memory_kb"]/value)[1]'', ''BIGINT'') / 1024. AS serial_ideal_memory_mb,
+       c.value(''(data[@name="requested_memory_kb"]/value)[1]'', ''BIGINT'') / 1024. AS requested_memory_mb,
+       c.value(''(data[@name="used_memory_kb"]/value)[1]'', ''BIGINT'') / 1024. AS used_memory_mb,
+       c.value(''(data[@name="ideal_memory_kb"]/value)[1]'', ''BIGINT'') / 1024. AS ideal_memory_mb,
+       c.value(''(data[@name="granted_memory_kb"]/value)[1]'', ''BIGINT'') / 1024. AS granted_memory_mb,
+       CONVERT(BINARY(8), c.value(''(action[@name="query_plan_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_plan_hash_signed,
+       CONVERT(BINARY(8), c.value(''(action[@name="query_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_hash_signed,
+       c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''VARBINARY(64)'') AS plan_handle
+FROM #human_events_xml_internal AS xet
+OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+WHERE DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+OPTION(RECOMPILE); '
+                       WHEN @event_type_check LIKE N'%recomp%'
+                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
+                            N'( server_name, event_time,  event_type,  ' + NCHAR(10) +
+                            N'  database_name, object_name, recompile_cause, statement_text '
+                            + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END + NCHAR(10) +
+                            N'SELECT @@SERVERNAME,
+          DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,
+          c.value(''@name'', ''NVARCHAR(256)'') AS event_type,
+          c.value(''(action[@name="database_name"]/value)[1]'', ''NVARCHAR(256)'') AS database_name,                
+          c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') AS [object_name],
+          c.value(''(data[@name="recompile_cause"]/text)[1]'', ''NVARCHAR(256)'') AS recompile_cause,
+          c.value(''(data[@name="statement"]/value)[1]'', ''NVARCHAR(MAX)'') AS statement_text '
+      + CASE WHEN @compile_events = 1 
+             THEN 
+      N'  , 
+          c.value(''(data[@name="cpu_time"]/value)[1]'', ''INT'') / 1000. AS compile_cpu_ms,
+          c.value(''(data[@name="duration"]/value)[1]'', ''INT'') / 1000. AS compile_duration_ms'
+             ELSE N''
+        END + N'
+   FROM #human_events_xml_internal AS xet
+   OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+   WHERE 1 = 1 '
+      + CASE WHEN @compile_events = 1 
+             THEN 
+N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 0 '
+             ELSE N''
+        END + N'
+   AND   ( c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') <> N''sp_HumanEvents''
+           OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
+   AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+   ORDER BY event_time
+   OPTION (RECOMPILE);'
+                       WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
+                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
+                            N'( server_name, event_time,  event_type,  ' + NCHAR(10) +
+                            N'  database_name, object_name, statement_text '
+                            + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END + NCHAR(10) +
+                            N'SELECT @@SERVERNAME,
+       DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,
+       c.value(''@name'', ''NVARCHAR(256)'') AS event_type,
+       c.value(''(action[@name="database_name"]/value)[1]'', ''NVARCHAR(256)'') AS database_name,                
+       c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') AS [object_name],
+       c.value(''(data[@name="statement"]/value)[1]'', ''NVARCHAR(MAX)'') AS statement_text,
+       c.value(''(data[@name="cpu_time"]/value)[1]'', ''INT'') compile_cpu_ms,
+       c.value(''(data[@name="duration"]/value)[1]'', ''INT'') compile_duration_ms
+FROM #human_events_xml_internal AS xet
+OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+WHERE 1 = 1 '
+      + CASE WHEN @compile_events = 1 
+             THEN 
+N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 1 '
+             ELSE N''
+        END + N'
+   AND   c.value(''@name'', ''NVARCHAR(256)'') = N''sql_statement_post_compile''
+   AND   ( c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') <> N''sp_HumanEvents''
+            OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
+   AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+   ORDER BY event_time
+   OPTION (RECOMPILE);'
+                            + CASE WHEN @parameterization_events = 1 
+                                   THEN 
+                            NCHAR(10) + 
+                            N'INSERT INTO ' + @object_name_check + N'_parameterization' + N' WITH(TABLOCK) ' + NCHAR(10) + 
+                            N'( server_name, event_time,  event_type, database_name, sql_text, compile_cpu_time_ms, ' + NCHAR(10) +
+                            N'  compile_duration_ms, query_param_type, is_cached, is_recompiled, compile_code, has_literals, ' + NCHAR(10) +
+                            N'  is_parameterizable, parameterized_values_count, query_plan_hash, query_hash, plan_handle, statement_sql_hash ) ' + NCHAR(10) +
+                            N'SELECT @@SERVERNAME,
+       DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,
+       c.value(''@name'', ''NVARCHAR(256)'') AS event_type,
+       c.value(''(action[@name="database_name"]/value)[1]'', ''NVARCHAR(256)'') AS database_name,                
+       c.value(''(action[@name="sql_text"]/value)[1]'', ''NVARCHAR(MAX)'') AS sql_text,
+       c.value(''(data[@name="compile_cpu_time"]/value)[1]'', ''BIGINT'') / 1000. AS compile_cpu_time_ms,
+       c.value(''(data[@name="compile_duration"]/value)[1]'', ''BIGINT'') / 1000. AS compile_duration_ms,
+       c.value(''(data[@name="query_param_type"]/value)[1]'', ''INT'') AS query_param_type,
+       c.value(''(data[@name="is_cached"]/value)[1]'', ''BIT'') AS is_cached,
+       c.value(''(data[@name="is_recompiled"]/value)[1]'', ''BIT'') AS is_recompiled,
+       c.value(''(data[@name="compile_code"]/text)[1]'', ''NVARCHAR(256)'') AS compile_code,                  
+       c.value(''(data[@name="has_literals"]/value)[1]'', ''BIT'') AS has_literals,
+       c.value(''(data[@name="is_parameterizable"]/value)[1]'', ''BIT'') AS is_parameterizable,
+       c.value(''(data[@name="parameterized_values_count"]/value)[1]'', ''BIGINT'') AS parameterized_values_count,
+       c.value(''xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])'', ''BINARY(8)'') AS query_plan_hash,
+       c.value(''xs:hexBinary((data[@name="query_hash"]/value/text())[1])'', ''BINARY(8)'') AS query_hash,
+       c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''VARBINARY(64)'') AS plan_handle, 
+       c.value(''xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])'', ''VARBINARY(64)'') AS statement_sql_hash
+FROM #human_events_xml_internal AS xet
+OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+WHERE c.value(''@name'', ''NVARCHAR(256)'') = N''query_parameterization_data''
+AND   c.value(''(action[@name="sql_text"]/value)[1]'', ''NVARCHAR(20)'') NOT LIKE N''EXEC sp_HumanEvents%''
+AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+ORDER BY event_time
+OPTION (RECOMPILE);'
+                                   ELSE N'' 
+                              END  
+                       ELSE N''
+                  END
+            
+            INSERT #human_events_xml_internal WITH (TABLOCK)
+                   (human_events_xml)
+            SELECT CONVERT(XML, human_events_xml.human_events_xml) AS human_events_xml
+            FROM ( SELECT CONVERT(XML, t.target_data) AS human_events_xml
+                   FROM sys.dm_xe_session_targets AS t
+                   JOIN sys.dm_xe_sessions AS s
+                       ON s.address = t.event_session_address
+                   WHERE s.name = @event_type_check 
+                   AND   t.target_name = N'ring_buffer') AS human_events_xml
+            OPTION(RECOMPILE);           
+            
+            IF @debug = 1
+            BEGIN 
+                PRINT SUBSTRING(@table_sql, 0, 4000);
+                PRINT SUBSTRING(@table_sql, 4000, 8000);
+                PRINT SUBSTRING(@table_sql, 8000, 12000);
+                PRINT SUBSTRING(@table_sql, 12000, 16000);
+                PRINT SUBSTRING(@table_sql, 16000, 20000);
+                PRINT SUBSTRING(@table_sql, 20000, 24000);
+                PRINT SUBSTRING(@table_sql, 24000, 28000);
+                PRINT SUBSTRING(@table_sql, 28000, 32000);
+                PRINT SUBSTRING(@table_sql, 32000, 36000);
+                PRINT SUBSTRING(@table_sql, 36000, 40000);           
+            END;
+            
+            EXEC sp_executesql @table_sql, N'@date_filter DATETIME', @date_filter;
+            TRUNCATE TABLE #human_events_xml_internal
 
+            IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
+
+            RAISERROR(N'Setting next id', 0, 1) WITH NOWAIT;
+            
+            SET @min_id = 
+            (
+                SELECT TOP (1) id
+                FROM #human_events_worker AS hew
+                WHERE hew.id > @min_id
+                AND   hew.is_table_created = 1
+                ORDER BY hew.id
+            );
+
+            IF @debug = 1 BEGIN RAISERROR(N'new @min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
+
+            IF @min_id IS NULL BREAK;
+            
+            END
         END
     
     END
-
 
 
 WAITFOR DELAY '00:00:05.000';
@@ -2053,7 +2328,8 @@ BEGIN CATCH
           
         RAISERROR (@msg, 16, 1) WITH NOWAIT;
 
-        IF @keep_alive = 0
+        IF ( @output_database_name = N''
+              AND @output_schema_name = N'' )
         BEGIN
             --Stop the event session
             IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
