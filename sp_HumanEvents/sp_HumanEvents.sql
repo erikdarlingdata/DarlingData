@@ -1786,24 +1786,21 @@ END;
 
 IF @keep_alive = 0
 BEGIN
-    --Stop the event session
     IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
     EXEC (@stop_sql);
     
-    --Drop the event session
     IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
     EXEC (@drop_sql);
 END;
+RETURN;
 
 output_results:
-
 WHILE 1 = 1
 
     BEGIN
     
     RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
     RAISERROR(N'See? I told you.', 0, 1) WITH NOWAIT;
-
     
     IF NOT EXISTS
     (
@@ -1817,40 +1814,33 @@ WHILE 1 = 1
     BEGIN
         RAISERROR(N'No matching active session names found starting with keeper_HumanEvents ', 0, 1) WITH NOWAIT;
     END;
-    
-    --IF NOT EXISTS
-    --(
-    --    SELECT 1/0
-    --    FROM sys.server_event_sessions AS ses
-    --    LEFT JOIN sys.dm_xe_sessions AS dxs
-    --        ON dxs.name = ses.name
-    --    WHERE ses.name = N'keeper_HumanEvents_server_diagnostics'
-    --)
-    --BEGIN     
-    --RAISERROR(N'Setting up server diagnostics.', 0, 1) WITH NOWAIT;
 
-    --    CREATE EVENT SESSION keeper_HumanEvents_server_diagnostics
-    --        ON SERVER
-    --        ADD EVENT sqlserver.sp_server_diagnostics_component_result
-    --            ( SET collect_data = 1  )
-    --            ADD TARGET package0.ring_buffer
-    --            ( SET max_memory = 1048576 );
+    IF EXISTS
+    (
+        SELECT 1/0
+        FROM sys.server_event_sessions AS ses
+        LEFT JOIN sys.dm_xe_sessions AS dxs
+            ON dxs.name = ses.name
+        WHERE ses.name LIKE N'keeper_HumanEvents_%'
+        AND   dxs.create_time IS NULL
+    )
+    BEGIN
         
-    --    ALTER EVENT SESSION keeper_HumanEvents_server_diagnostics ON SERVER STATE = START;
-    --END;
-    
-    --IF EXISTS
-    --(
-    --    SELECT 1/0
-    --    FROM sys.server_event_sessions AS ses
-    --    LEFT JOIN sys.dm_xe_sessions AS dxs
-    --        ON dxs.name = ses.name
-    --    WHERE ses.name = N'keeper_HumanEvents_server_diagnostics'
-    --    AND   dxs.create_time IS NULL
-    --)
-    --BEGIN 
-    --    ALTER EVENT SESSION keeper_HumanEvents_server_diagnostics ON SERVER STATE = START;
-    --END;
+     DECLARE @the_sleeper_must_awaken NVARCHAR(MAX) = N'';    
+     
+     SELECT @the_sleeper_must_awaken += 
+     N'ALTER EVENT SESSION ' + ses.name + N' ON SERVER STATE = START;' + NCHAR(10)
+     FROM sys.server_event_sessions AS ses
+     LEFT JOIN sys.dm_xe_sessions AS dxs
+         ON dxs.name = ses.name
+     WHERE ses.name LIKE N'keeper_HumanEvents_%'
+     AND   dxs.create_time IS NULL;
+     
+     IF @debug = 1 BEGIN RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT; END;
+     
+     EXEC sys.sp_executesql @the_sleeper_must_awaken;
+
+    END;
 
     IF OBJECT_ID(N'tempdb..#human_events_worker') IS NULL
     BEGIN
@@ -2304,7 +2294,6 @@ WAITFOR DELAY '00:00:05.000';
 
 END;
 
-
 END TRY
 BEGIN CATCH
     BEGIN
@@ -2331,11 +2320,9 @@ BEGIN CATCH
         IF ( @output_database_name = N''
               AND @output_schema_name = N'' )
         BEGIN
-            --Stop the event session
             IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
             EXEC (@stop_sql);
             
-            --Drop the event session
             IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
             EXEC (@drop_sql);
         END;
