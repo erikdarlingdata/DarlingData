@@ -2300,6 +2300,18 @@ OPTION (RECOMPILE);'
             END;
             
             EXEC sp_executesql @table_sql, N'@date_filter DATETIME', @date_filter;
+            
+            UPDATE hew
+                   SET hew.last_checked = SYSDATETIME(),
+                       hew.last_updated = CASE WHEN @@ROWCOUNT > 0 
+                                               THEN SYSDATETIME()
+                                               ELSE hew.last_updated
+                                          END 
+            FROM #human_events_worker AS hew
+            WHERE hew.id = @min_id;
+            
+            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew END;
+
             TRUNCATE TABLE #human_events_xml_internal
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
