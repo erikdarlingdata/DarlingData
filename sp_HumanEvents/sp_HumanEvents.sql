@@ -2080,7 +2080,7 @@ FROM (
            bd.value(''(process/@isolationlevel)[1]'', ''NVARCHAR(50)'') AS isolationlevel,
            CONVERT(VARBINARY(64), bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''NVARCHAR(100)'')) AS sqlhandle,
            c.query(''.'') AS process_report
-    FROM ##human_events_xml_internal AS xet
+    FROM #human_events_xml_internal AS xet
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
     
@@ -2111,7 +2111,7 @@ FROM (
            bg.value(''(process/@isolationlevel)[1]'', ''NVARCHAR(50)'') AS isolationlevel,
            NULL AS sqlhandle,
            c.query(''.'') AS process_report
-    FROM ##human_events_xml_internal AS xet
+    FROM #human_events_xml_internal AS xet
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
 ) AS x
