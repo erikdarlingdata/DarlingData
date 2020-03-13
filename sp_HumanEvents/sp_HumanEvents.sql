@@ -1977,7 +1977,7 @@ WHILE 1 = 1
                             + CASE WHEN @parameterization_events = 1 
                                    THEN 
                             NCHAR(10) + 
-                            N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
+                            N'CREATE TABLE ' + @object_name_check + N'_parameterization' + NCHAR(10) +
                             N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
                             N'  database_name sysname NULL, sql_text NVARCHAR(MAX) NULL, compile_cpu_time_ms BIGINT NULL, compile_duration_ms BIGINT NULL, query_param_type INT NULL,  ' + NCHAR(10) +
                             N'  is_cached BIT NULL, is_recompiled BIT NULL, compile_code NVARCHAR(256) NULL, has_literals BIT NULL, is_parameterizable BIT NULL, parameterized_values_count BIGINT NULL, ' + NCHAR(10) +
