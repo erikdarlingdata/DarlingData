@@ -1887,17 +1887,18 @@ WHILE 1 = 1
         WHERE hew.is_table_created = 0   
     )
     BEGIN
-
-        DECLARE @min_id INT = 0,
-                @max_id INT = 0,
+        RAISERROR(N'Sessions without tables found, starting loop.', 0, 1) WITH NOWAIT;
+        DECLARE @min_id INT,
+                @max_id INT,
                 @event_type_check sysname,
                 @object_name_check NVARCHAR(1000) = N'',
-                @create_table_sql NVARCHAR(MAX) = N''
+                @table_sql NVARCHAR(MAX) = N''
         
         SELECT @min_id = MIN(hew.id), @max_id = MAX(hew.id)
         FROM #human_events_worker AS hew
         WHERE hew.is_table_created = 0;
         
+        RAISERROR(N'While, while, while...', 0, 1) WITH NOWAIT;
         WHILE @min_id <= @max_id
         BEGIN
             SELECT @event_type_check  = hew.event_type,
@@ -1905,19 +1906,15 @@ WHILE 1 = 1
                                       + N'.'
                                       + QUOTENAME(hew.output_schema)
                                       + N'.'
-                                      + QUOTENAME(hew.output_table)
+                                      + hew.output_table
             FROM #human_events_worker AS hew
-            WHERE hew.id = @min_id;
+            WHERE hew.id = @min_id
+            AND hew.is_table_created = 0;
         
-            IF OBJECT_ID(@object_name_check) IS NOT NULL
+            IF OBJECT_ID(@object_name_check) IS NULL
             BEGIN
-                RAISERROR(N'object already exists, skipping and updating worker table', 0, 1) WITH NOWAIT;
-                UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id;
-            END
-            ELSE
-            BEGIN
-            
-                SELECT @create_table_sql =  
+            RAISERROR(N'Generating create table statement', 0, 1) WITH NOWAIT;
+                SELECT @table_sql =  
                   CASE WHEN @event_type_check LIKE N'%wait%'
                        THEN N'CREATE TABLE ' + @object_name_check + N'_total_waits' + NCHAR(10) +
                             N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname, version VARCHAR(30), event_type sysname, ' + NCHAR(10) +
@@ -1972,26 +1969,35 @@ WHILE 1 = 1
                   END
                 FROM #human_events_worker AS hew
                 WHERE hew.id = @min_id
-                AND is_table_created = 0;
+                AND is_table_created = 0;                
+            END        
+            
+            IF @debug = 1 BEGIN RAISERROR(@table_sql, 0, 1) WITH NOWAIT; END;
+            EXEC sp_executesql @table_sql;
+            
+            RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @session_name) WITH NOWAIT;
+            UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id AND is_table_created = 0;
 
-                EXEC sp_executesql @create_table_sql;
-                
-                UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id;
-                
-                SELECT TOP (1) @min_id = (id)
+            IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
+
+            RAISERROR(N'Setting next id', 0, 1) WITH NOWAIT;
+            
+            SET @min_id = 
+            (
+                SELECT TOP (1) id
                 FROM #human_events_worker AS hew
                 WHERE hew.id > @min_id
                 AND   hew.is_table_created = 0
-                ORDER BY id;
-                
-                IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
-                IF @debug = 1 BEGIN RAISERROR(@create_table_sql, 0, 1) WITH NOWAIT; END;
-        
-            END
-        
-        END
+                ORDER BY hew.id
+            );
 
+            IF @debug = 1 BEGIN RAISERROR(N'new @min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
+
+            IF @min_id IS NULL BREAK;
+
+        END
     END
+
 
     IF EXISTS
     (
@@ -2002,7 +2008,18 @@ WHILE 1 = 1
     )
     BEGIN
     
-        SELECT  1
+        RAISERROR(N'Sessions without tables found, starting loop.', 0, 1) WITH NOWAIT;
+        
+        SELECT @min_id = MIN(hew.id), @max_id = MAX(hew.id)
+        FROM #human_events_worker AS hew
+        WHERE hew.is_table_created = 1;
+
+        WHILE @min_id <= @max_id
+        BEGIN
+
+
+
+        END
     
     END
 
