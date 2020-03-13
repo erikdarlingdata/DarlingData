@@ -35,6 +35,7 @@ ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
                                     @custom_name NVARCHAR(256) = N'',
                                     @output_database_name sysname = N'',
                                     @output_schema_name sysname = N'',
+                                    @delete_retention_days INT = 3,
                                     @version VARCHAR(30) = NULL OUTPUT,
                                     @version_date DATETIME = NULL OUTPUT,
                                     @debug BIT = 0,
@@ -1885,6 +1886,20 @@ WHILE 1 = 1
         WHERE s.name LIKE N'keeper_HumanEvents_%'
         AND   r.create_time IS NOT NULL;
 
+        IF @parameterization_events = 1
+           AND EXISTS ( SELECT 1/0 
+                        FROM #human_events_worker 
+                        WHERE event_type LIKE N'keeper_HumanEvents_compiles%' )
+        BEGIN
+            INSERT #human_events_worker 
+                ( event_type, is_table_created, last_checked, last_updated, 
+                  output_database, output_schema, output_table )
+            SELECT event_type + N'_parameterization', 1, last_checked, last_updated, 
+                  output_database, output_schema, output_table + N'_parameterization'
+            FROM #human_events_worker 
+            WHERE event_type LIKE N'keeper_HumanEvents_compiles%'
+        END
+
         IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker END
 
     END;
@@ -1959,7 +1974,7 @@ WHILE 1 = 1
                             + CASE WHEN @parameterization_events = 1 
                                    THEN 
                             NCHAR(10) + 
-                            N'CREATE TABLE ' + @object_name_check + N'_parameterization' + NCHAR(10) +
+                            N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
                             N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
                             N'  database_name sysname NULL, sql_text NVARCHAR(MAX) NULL, compile_cpu_time_ms BIGINT NULL, compile_duration_ms BIGINT NULL, query_param_type INT NULL,  ' + NCHAR(10) +
                             N'  is_cached BIT NULL, is_recompiled BIT NULL, compile_code NVARCHAR(256) NULL, has_literals BIT NULL, is_parameterizable BIT NULL, parameterized_values_count BIGINT NULL, ' + NCHAR(10) +
@@ -2166,22 +2181,22 @@ OPTION(RECOMPILE); '
                             N'  database_name, object_name, recompile_cause, statement_text '
                             + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END + NCHAR(10) +
                             N'SELECT @@SERVERNAME,
-          DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,
-          c.value(''@name'', ''NVARCHAR(256)'') AS event_type,
-          c.value(''(action[@name="database_name"]/value)[1]'', ''NVARCHAR(256)'') AS database_name,                
-          c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') AS [object_name],
-          c.value(''(data[@name="recompile_cause"]/text)[1]'', ''NVARCHAR(256)'') AS recompile_cause,
-          c.value(''(data[@name="statement"]/value)[1]'', ''NVARCHAR(MAX)'') AS statement_text '
-      + CASE WHEN @compile_events = 1 
-             THEN 
-      N'  , 
-          c.value(''(data[@name="cpu_time"]/value)[1]'', ''INT'') / 1000. AS compile_cpu_ms,
-          c.value(''(data[@name="duration"]/value)[1]'', ''INT'') / 1000. AS compile_duration_ms'
-             ELSE N''
-        END + N'
-   FROM #human_events_xml_internal AS xet
-   OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-   WHERE 1 = 1 '
+       DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,
+       c.value(''@name'', ''NVARCHAR(256)'') AS event_type,
+       c.value(''(action[@name="database_name"]/value)[1]'', ''NVARCHAR(256)'') AS database_name,                
+       c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') AS [object_name],
+       c.value(''(data[@name="recompile_cause"]/text)[1]'', ''NVARCHAR(256)'') AS recompile_cause,
+       c.value(''(data[@name="statement"]/value)[1]'', ''NVARCHAR(MAX)'') AS statement_text '
+   + CASE WHEN @compile_events = 1 
+          THEN 
+   N'  , 
+       c.value(''(data[@name="cpu_time"]/value)[1]'', ''INT'') / 1000. AS compile_cpu_ms,
+       c.value(''(data[@name="duration"]/value)[1]'', ''INT'') / 1000. AS compile_duration_ms'
+          ELSE N''
+     END + N'
+FROM #human_events_xml_internal AS xet
+OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+WHERE 1 = 1 '
       + CASE WHEN @compile_events = 1 
              THEN 
 N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 0 '
@@ -2193,7 +2208,7 @@ N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 0 '
    ORDER BY event_time
    OPTION (RECOMPILE);'
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
-                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
+                       THEN N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + NCHAR(10) + 
                             N'( server_name, event_time,  event_type,  ' + NCHAR(10) +
                             N'  database_name, object_name, statement_text '
                             + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END + NCHAR(10) +
@@ -2222,7 +2237,7 @@ N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 1 '
                             + CASE WHEN @parameterization_events = 1 
                                    THEN 
                             NCHAR(10) + 
-                            N'INSERT INTO ' + @object_name_check + N'_parameterization' + N' WITH(TABLOCK) ' + NCHAR(10) + 
+                            N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N'_parameterization' + N' WITH(TABLOCK) ' + NCHAR(10) + 
                             N'( server_name, event_time,  event_type, database_name, sql_text, compile_cpu_time_ms, ' + NCHAR(10) +
                             N'  compile_duration_ms, query_param_type, is_cached, is_recompiled, compile_code, has_literals, ' + NCHAR(10) +
                             N'  is_parameterizable, parameterized_values_count, query_plan_hash, query_hash, plan_handle, statement_sql_hash ) ' + NCHAR(10) +
@@ -2306,6 +2321,33 @@ OPTION (RECOMPILE);'
     
     END
 
+DECLARE @Time TIME = SYSDATETIME();
+IF (DATEPART(MINUTE, @Time) < 5)
+BEGIN
+
+     DECLARE @delete_tracker INT;
+
+     IF (@delete_tracker IS NULL
+             OR @delete_tracker <> DATEPART(HOUR, @Time) )
+     BEGIN 
+
+     DECLARE @the_deleter_must_awaken NVARCHAR(MAX) = N'';    
+     
+     SELECT @the_deleter_must_awaken += 
+       N'DELETE FROM ' + QUOTENAME(hew.output_database) + N'.' +
+                       + QUOTENAME(hew.output_schema) + N'.' +
+                       + QUOTENAME(hew.event_type)   
+     + N' WHERE event_time < DATEADD(DAY, (-1 * @delete_retention_days), SYSDATETIME());' + NCHAR(10)
+     FROM #human_events_worker AS hew;
+     
+     IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;
+     
+     EXEC sys.sp_executesql @the_deleter_must_awaken, N'@delete_retention_days INT', @delete_retention_days;
+
+     SET @delete_tracker = DATEPART(HOUR, SYSDATETIME());
+     
+     END
+END
 
 WAITFOR DELAY '00:00:05.000';
 
