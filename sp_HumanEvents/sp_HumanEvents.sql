@@ -809,8 +809,8 @@ END;
  
 RAISERROR(N'Is output database or schema filled in?', 0, 1) WITH NOWAIT;
 IF LEN(@output_database_name + @output_schema_name) > 0
-AND ( @output_database_name  = N'' 
-      OR @output_schema_name = N'' )
+ AND ( @output_database_name  = N'' 
+       OR @output_schema_name = N'' )
 BEGIN
     IF @output_database_name = N''
         BEGIN
