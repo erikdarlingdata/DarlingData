@@ -2078,16 +2078,16 @@ WHILE 1 = 1
         c.value(''(data[@name="duration"]/value)[1]'', ''BIGINT'')  AS duration_ms,
         c.value(''(data[@name="signal_duration"]/value)[1]'', ''BIGINT'') AS signal_duration_ms,' + NCHAR(10) +
 CASE WHEN @v = 11 
-     THEN N' ''Not Available < 2014'', ' + NCHAR(10)
-     ELSE N' c.value(''(data[@name="wait_resource"]/value)[1]'', ''NVARCHAR(256)'')  AS wait_resource, ' + NCHAR(10)
-END + N'    CONVERT(BINARY(8), c.value(''(action[@name="query_plan_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_plan_hash_signed,
-            CONVERT(BINARY(8), c.value(''(action[@name="query_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_hash_signed,
-            c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''VARBINARY(64)'') AS plan_handle
-     FROM #human_events_xml_internal AS xet
-     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-     WHERE c.exist(''(data[@name="duration"]/value[. > 0])'') = 1 
-     AND DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
-     OPTION(RECOMPILE);'
+     THEN N'        ''Not Available < 2014'', ' + NCHAR(10)
+     ELSE N'        c.value(''(data[@name="wait_resource"]/value)[1]'', ''NVARCHAR(256)'')  AS wait_resource, ' + NCHAR(10)
+END + N'        CONVERT(BINARY(8), c.value(''(action[@name="query_plan_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_plan_hash_signed,
+        CONVERT(BINARY(8), c.value(''(action[@name="query_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_hash_signed,
+        c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''VARBINARY(64)'') AS plan_handle
+FROM #human_events_xml_internal AS xet
+OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+WHERE c.exist(''(data[@name="duration"]/value[. > 0])'') = 1 
+AND DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+OPTION(RECOMPILE);'
                        WHEN @event_type_check LIKE N'%lock%'
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
                             N'( server_name, event_time, activity, database_name, database_id, object_id, ' + NCHAR(10) +
@@ -2218,14 +2218,15 @@ OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE 1 = 1 '
       + CASE WHEN @compile_events = 1 
              THEN 
-N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 0 '
+N'
+AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 0 '
              ELSE N''
         END + N'
-   AND   ( c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') <> N''sp_HumanEvents''
-           OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
-   AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
-   ORDER BY event_time
-   OPTION (RECOMPILE);'
+AND   ( c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') <> N''sp_HumanEvents''
+        OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
+AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+ORDER BY event_time
+OPTION (RECOMPILE);'
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
                        THEN N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + NCHAR(10) + 
                             N'( server_name, event_time,  event_type,  ' + NCHAR(10) +
@@ -2252,7 +2253,7 @@ N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 1 '
             OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
    AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
    ORDER BY event_time
-   OPTION (RECOMPILE);'
+   OPTION (RECOMPILE);' + NCHAR(10)
                             + CASE WHEN @parameterization_events = 1 
                                    THEN 
                             NCHAR(10) + 
