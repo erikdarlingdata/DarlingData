@@ -2094,7 +2094,14 @@ OPTION(RECOMPILE);'
                             N'  transaction_id, resource_owner_type, monitor_loop, spid, ecid, query_text, wait_time, ' + NCHAR(10) +
                             N'  transaction_name,  last_transaction_started, lock_mode, status, priority, ' + NCHAR(10) +
                             N'  transaction_count, client_app, host_name, login_name, isolation_level, sql_handle, blocked_process_report )' + NCHAR(10) +
-N'SELECT *
+N'
+SELECT server_name, event_time, activity, database_name, database_id, object_id, 
+       transaction_id, resource_owner_type, monitor_loop, spid, ecid, text, waittime, 
+       transactionname,  lasttranstarted, lockmode, status, priority, 
+       trancount, clientapp, hostname, loginname, isolationlevel, sqlhandle, process_report
+FROM ( 
+SELECT *, ROW_NUMBER() OVER(PARTITION BY x.spid, x.ecid, x.transaction_id, x.activity 
+                            ORDER BY     x.spid, x.ecid, x.transaction_id, x.activity) AS x
 FROM (
     SELECT @@SERVERNAME AS server_name,
            DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,        
@@ -2156,8 +2163,54 @@ FROM (
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
 ) AS x
-WHERE event_time > @date_filter
-OPTION (RECOMPILE);'
+) AS x
+WHERE x.event_time > @date_filter
+AND NOT EXISTS
+(
+    SELECT 1/0
+    FROM ' + @object_name_check + N' AS x2
+    WHERE x.database_id = x2.database_id
+    AND   x.object_id = x2.object_id
+    AND   x.transaction_id = x2.transaction_id
+    AND   x.spid = x2.spid
+    AND   x.ecid = x2.ecid
+    AND   x.clientapp = x2.client_app
+    AND   x.hostname = x2.host_name
+    AND   x.loginname = x2.login_name
+)
+AND x.x = 1
+OPTION (RECOMPILE);
+
+UPDATE x2
+    SET x2.wait_time = x.waittime
+FROM ' + @object_name_check + N' AS x2
+JOIN 
+(
+    SELECT @@SERVERNAME AS server_name,       
+           ''blocked'' AS activity,
+           c.value(''(data[@name="database_id"]/value)[1]'', ''INT'') AS database_id,
+           c.value(''(data[@name="object_id"]/value)[1]'', ''INT'') AS object_id,
+           c.value(''(data[@name="transaction_id"]/value)[1]'', ''BIGINT'') AS transaction_id,
+           bd.value(''(process/@spid)[1]'', ''INT'') AS spid,
+           bd.value(''(process/@ecid)[1]'', ''INT'') AS ecid,
+           bd.value(''(process/@waittime)[1]'', ''BIGINT'') AS waittime,
+           bd.value(''(process/@clientapp)[1]'', ''NVARCHAR(256)'') AS clientapp,
+           bd.value(''(process/@hostname)[1]'', ''NVARCHAR(256)'') AS hostname,
+           bd.value(''(process/@loginname)[1]'', ''NVARCHAR(256)'') AS loginname
+    FROM #human_events_xml_internal AS xet
+    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
+) AS x
+    ON    x.database_id = x2.database_id
+    AND   x.object_id = x2.object_id
+    AND   x.spid = x2.spid
+    AND   x.ecid = x2.ecid
+    AND   x.clientapp = x2.client_app
+    AND   x.hostname = x2.host_name
+    AND   x.loginname = x2.login_name
+    AND   x.activity = x2.activity
+OPTION (RECOMPILE);
+'
                        WHEN @event_type_check LIKE N'%quer%'
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
                             N'( server_name, event_time, event_type, database_name, object_name, sql_text, statement, ' + NCHAR(10) +
@@ -2329,6 +2382,7 @@ OPTION (RECOMPILE);'
             OPTION (RECOMPILE);
             
             IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew OPTION (RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#human_events_xml_internal' AS table_name, * FROM #human_events_xml_internal AS hew OPTION (RECOMPILE); END;
 
             TRUNCATE TABLE #human_events_xml_internal;
 
