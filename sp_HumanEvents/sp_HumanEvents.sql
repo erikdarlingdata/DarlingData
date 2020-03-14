@@ -325,7 +325,7 @@ END;
 IF @keep_alive = 1
 BEGIN
     SET @session_name += N'keeper_HumanEvents_'  + @event_type + CASE WHEN @custom_name <> N'' THEN N'_' + @custom_name ELSE N'' END;
-END
+END;
 --Universal, yo
 DECLARE @session_with NVARCHAR(MAX) = N'    
 ADD TARGET package0.ring_buffer
@@ -834,11 +834,11 @@ IF ( @output_database_name <> N''
 BEGIN
     RAISERROR(N'Skipping all the other stuff and going to data collection', 0, 1) WITH NOWAIT;    
     
-    CREATE TABLE #human_events_xml_internal (human_events_xml XML)        
+    CREATE TABLE #human_events_xml_internal (human_events_xml XML);        
     
     GOTO output_results;
     RETURN;
-END
+END;
 
 /*
 Start setting up individual filters
@@ -1198,7 +1198,7 @@ BEGIN
     RAISERROR(N'Alternately, you can watch live data stream in by accessing the GUI', 0, 1) WITH NOWAIT;
     RAISERROR(N'Just don''t forget to stop it when you''re done with it!', 0, 1) WITH NOWAIT;
     RETURN;
-END
+END;
 
 
 --NOW WE WAIT, MR. BOND
@@ -1900,10 +1900,10 @@ WHILE 1 = 1
             SELECT event_type + N'_parameterization', 1, last_checked, last_updated, 
                   output_database, output_schema, output_table + N'_parameterization'
             FROM #human_events_worker 
-            WHERE event_type LIKE N'keeper_HumanEvents_compiles%'
-        END
+            WHERE event_type LIKE N'keeper_HumanEvents_compiles%';
+        END;
 
-        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker END
+        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker; END;
 
     END;
 
@@ -1919,7 +1919,7 @@ WHILE 1 = 1
                 @max_id INT,
                 @event_type_check sysname,
                 @object_name_check NVARCHAR(1000) = N'',
-                @table_sql NVARCHAR(MAX) = N''
+                @table_sql NVARCHAR(MAX) = N'';
         
         SELECT @min_id = MIN(hew.id), @max_id = MAX(hew.id)
         FROM #human_events_worker AS hew
@@ -1985,11 +1985,11 @@ WHILE 1 = 1
                                    ELSE N'' 
                               END  
                        ELSE N''
-                  END          
-            END        
+                  END;          
+            END;        
             
             IF @debug = 1 BEGIN RAISERROR(@table_sql, 0, 1) WITH NOWAIT; END;
-            EXEC sp_executesql @table_sql;
+            EXEC sys.sp_executesql @table_sql;
             
             RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @session_name) WITH NOWAIT;
             UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id AND is_table_created = 0;
@@ -2011,8 +2011,8 @@ WHILE 1 = 1
 
             IF @min_id IS NULL BREAK;
 
-        END
-    END
+        END;
+    END;
 
 
     IF EXISTS
@@ -2033,7 +2033,7 @@ WHILE 1 = 1
         WHILE @min_id <= @max_id
         BEGIN
 
-        DECLARE @date_filter DATETIME
+        DECLARE @date_filter DATETIME;
 
             SELECT @event_type_check  = hew.event_type,
                    @object_name_check = QUOTENAME(hew.output_database)
@@ -2272,7 +2272,7 @@ OPTION (RECOMPILE);'
                                    ELSE N'' 
                               END  
                        ELSE N''
-                  END
+                  END;
             
             INSERT #human_events_xml_internal WITH (TABLOCK)
                    (human_events_xml)
@@ -2299,7 +2299,7 @@ OPTION (RECOMPILE);'
                 PRINT SUBSTRING(@table_sql, 36000, 40000);           
             END;
             
-            EXEC sp_executesql @table_sql, N'@date_filter DATETIME', @date_filter;
+            EXEC sys.sp_executesql @table_sql, N'@date_filter DATETIME', @date_filter;
             
             UPDATE hew
                    SET hew.last_checked = SYSDATETIME(),
@@ -2310,9 +2310,9 @@ OPTION (RECOMPILE);'
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id;
             
-            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew END;
+            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew; END;
 
-            TRUNCATE TABLE #human_events_xml_internal
+            TRUNCATE TABLE #human_events_xml_internal;
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
@@ -2331,13 +2331,13 @@ OPTION (RECOMPILE);'
 
             IF @min_id IS NULL BREAK;
             
-            END
-        END
+            END;
+        END;
     
-    END
+    END;
 
 DECLARE @Time TIME = SYSDATETIME();
-IF (DATEPART(MINUTE, @Time) < 5)
+IF ( DATEPART(MINUTE, @Time) <= 5 )
 BEGIN
 
      DECLARE @delete_tracker INT;
@@ -2349,10 +2349,10 @@ BEGIN
      DECLARE @the_deleter_must_awaken NVARCHAR(MAX) = N'';    
      
      SELECT @the_deleter_must_awaken += 
-       N'DELETE FROM ' + QUOTENAME(hew.output_database) + N'.' +
+       N' DELETE FROM ' + QUOTENAME(hew.output_database) + N'.' +
                        + QUOTENAME(hew.output_schema) + N'.' +
                        + QUOTENAME(hew.event_type)   
-     + N' WHERE event_time < DATEADD(DAY, (-1 * @delete_retention_days), SYSDATETIME());' + NCHAR(10)
+     + N' WHERE event_time < DATEADD(DAY, (-1 * @delete_retention_days), SYSDATETIME()); ' + NCHAR(10)
      FROM #human_events_worker AS hew;
      
      IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;
@@ -2361,8 +2361,8 @@ BEGIN
 
      SET @delete_tracker = DATEPART(HOUR, SYSDATETIME());
      
-     END
-END
+     END;
+END;
 
 WAITFOR DELAY '00:00:05.000';
 
