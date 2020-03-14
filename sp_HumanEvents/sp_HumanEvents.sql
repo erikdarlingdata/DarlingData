@@ -55,6 +55,7 @@ BEGIN
     SELECT N'warning! achtung! peligro! chardonnay!' AS [WARNING WARNING WARNING] UNION ALL 
     SELECT N'misuse of this procedure can harm performance' UNION ALL
     SELECT N'be very careful about introducing observer overhead, especially when gathering query plans' UNION ALL
+    SELECT N'be even more careful when setting up permanent sessions!' UNION ALL
     SELECT N'for additional support: http://bit.ly/sp_HumanEvents';
  
  
@@ -283,6 +284,7 @@ BEGIN
     DECLARE @drop_old_sql  NVARCHAR(1000) = N'';
     
     CREATE TABLE #drop_commands (id INT IDENTITY PRIMARY KEY, drop_command NVARCHAR(1000));
+    
     INSERT #drop_commands WITH (TABLOCK) (drop_command)
     SELECT N'DROP EVENT SESSION '  + ses.name + N' ON SERVER;'
     FROM sys.server_event_sessions AS ses
@@ -313,7 +315,6 @@ BEGIN
 END;
 
 RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT;
-/*helper variables*/
 --How long we let the session run
 DECLARE @waitfor NVARCHAR(20) = N'';
 --Give sessions super unique names in case more than one person uses it at a time
@@ -396,7 +397,7 @@ IF EXISTS
 BEGIN 
     SET @compile_events = 1; 
 END;
-
+--Or if we use this event at all!
 DECLARE @parameterization_events BIT = 0;
 IF EXISTS
 (
@@ -459,6 +460,7 @@ IF @event_type NOT IN
           N'recompilations' )
 BEGIN
     RAISERROR(N'You have chosen a value for @event_type... poorly. use @help = 1 to see valid arguments.', 16, 1) WITH NOWAIT;
+    RAISERROR(N'What on earth is %s?', 16, 1, @event_type) WITH NOWAIT;
     RETURN;
 END;
 
@@ -468,9 +470,9 @@ IF ( LOWER(@event_type) LIKE N'%quer%' AND @event_type NOT LIKE N'%comp%' --igno
      AND @gimme_danger = 0 )
      AND (@query_duration_ms < 500 OR @query_duration_ms IS NULL )
 BEGIN
-    RAISERROR(N'you chose a really dangerous value for @query_duration', 0, 1) WITH NOWAIT;
-    RAISERROR(N'if you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
-    RAISERROR(N'setting @query_duration to 500', 0, 1) WITH NOWAIT;
+    RAISERROR(N'You chose a really dangerous value for @query_duration', 0, 1) WITH NOWAIT;
+    RAISERROR(N'If you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;
+    RAISERROR(N'Setting @query_duration to 500', 0, 1) WITH NOWAIT;
     SET @query_duration_ms = 500;
 END;
 
@@ -570,7 +572,7 @@ IF
       OR @session_id <> N''
       OR @username <> N''
       OR @object_name <> N''
-      OR @object_name <> N'dbo'
+      OR @object_schema <> N'dbo'
       OR @custom_name <> N''       
       OR @output_database_name <> N''
       OR @output_schema_name <> N'' )
@@ -728,7 +730,7 @@ SET @math = @seconds_sample / 60;
         RETURN;
     END;
     
-    --Fun fact: running WAITFOR DELAY '00:00:60.000' throws an error
+    -- Fun fact: running WAITFOR DELAY '00:00:60.000' throws an error
     -- If we have over 60 seconds, we need to populate the minutes section
     IF ( @math < 10 AND @math >= 1 )
     BEGIN
@@ -822,6 +824,14 @@ BEGIN
         END;
 END;
 
+RAISERROR(N'Is custom name something stupid?', 0, 1) WITH NOWAIT;
+IF ( PATINDEX(N'%[^a-zA-Z0-9]%', @custom_name) > 0 
+     OR @custom_name LIKE N'[0-9]%' )
+BEGIN
+    RAISERROR(N'Dunno if I like the looks of @custom_name: %s', 16, 1, @custom_name) WITH NOWAIT;
+    RAISERROR(N'You can''t use special characters, or leading numbers.', 16, 1, @custom_name) WITH NOWAIT;
+    RETURN;
+END
 
 /*
 If we're writing to a table, we don't want to do anything else
@@ -843,7 +853,6 @@ END;
 /*
 Start setting up individual filters
 */
-
 RAISERROR(N'Setting up individual filters', 0, 1) WITH NOWAIT;
 IF @query_duration_ms > 0
 BEGIN
@@ -1560,7 +1569,7 @@ BEGIN;
                  FROM waits
                  OPTION(RECOMPILE);
             
-            IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa; END;
+            IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa OPTION (RECOMPILE); END;
 
             SELECT N'total waits' AS wait_pattern,
                    MIN(wa.event_time) AS min_event_time,
@@ -1663,7 +1672,7 @@ BEGIN
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
             OPTION (RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa; END;
+            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa OPTION (RECOMPILE); END;
 
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,        
                    DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'INT')) AS database_name,
@@ -1689,7 +1698,7 @@ BEGIN
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
             OPTION (RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa; END;
+            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa OPTION (RECOMPILE); END;
 
             WITH pablo_blanco AS
                 (
@@ -1722,7 +1731,7 @@ BEGIN
                                 ORDER BY     b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid ) AS n
                      FROM #blocked AS b
                      JOIN pablo_blanco AS p
-                         ON p.event_time = b.event_time
+                         ON  p.event_time = b.event_time
                          AND p.object_id = b.object_id
                          AND p.monitor_loop = b.monitor_loop
                          AND p.blocking_spid <> b.blocked_spid
@@ -1855,7 +1864,8 @@ WHILE 1 = 1
      LEFT JOIN sys.dm_xe_sessions AS dxs
          ON dxs.name = ses.name
      WHERE ses.name LIKE N'keeper_HumanEvents_%'
-     AND   dxs.create_time IS NULL;
+     AND   dxs.create_time IS NULL
+     OPTION (RECOMPILE);
      
      IF @debug = 1 BEGIN RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT; END;
      
@@ -1887,7 +1897,8 @@ WHILE 1 = 1
         LEFT JOIN sys.dm_xe_sessions AS r 
             ON r.name = s.name
         WHERE s.name LIKE N'keeper_HumanEvents_%'
-        AND   r.create_time IS NOT NULL;
+        AND   r.create_time IS NOT NULL
+        OPTION (RECOMPILE);
 
         IF @parameterization_events = 1
            AND EXISTS ( SELECT 1/0 
@@ -1898,12 +1909,13 @@ WHILE 1 = 1
                 ( event_type, is_table_created, last_checked, last_updated, 
                   output_database, output_schema, output_table )
             SELECT event_type + N'_parameterization', 1, last_checked, last_updated, 
-                  output_database, output_schema, output_table + N'_parameterization'
+                   output_database, output_schema, output_table + N'_parameterization'
             FROM #human_events_worker 
-            WHERE event_type LIKE N'keeper_HumanEvents_compiles%';
+            WHERE event_type LIKE N'keeper_HumanEvents_compiles%'
+            OPTION (RECOMPILE);
         END;
 
-        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker; END;
+        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker OPTION (RECOMPILE); END;
 
     END;
 
@@ -1923,7 +1935,8 @@ WHILE 1 = 1
         
         SELECT @min_id = MIN(hew.id), @max_id = MAX(hew.id)
         FROM #human_events_worker AS hew
-        WHERE hew.is_table_created = 0;
+        WHERE hew.is_table_created = 0
+        OPTION (RECOMPILE);
         
         RAISERROR(N'While, while, while...', 0, 1) WITH NOWAIT;
         WHILE @min_id <= @max_id
@@ -1936,7 +1949,8 @@ WHILE 1 = 1
                                       + hew.output_table
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
-            AND hew.is_table_created = 0;
+            AND hew.is_table_created = 0
+            OPTION (RECOMPILE);
         
             IF OBJECT_ID(@object_name_check) IS NULL
             BEGIN
@@ -1992,7 +2006,7 @@ WHILE 1 = 1
             EXEC sys.sp_executesql @table_sql;
             
             RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @session_name) WITH NOWAIT;
-            UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id AND is_table_created = 0;
+            UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id AND is_table_created = 0 OPTION (RECOMPILE);
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
@@ -2028,7 +2042,8 @@ WHILE 1 = 1
         
         SELECT @min_id = MIN(hew.id), @max_id = MAX(hew.id)
         FROM #human_events_worker AS hew
-        WHERE hew.is_table_created = 1;
+        WHERE hew.is_table_created = 1
+        OPTION (RECOMPILE);
 
         WHILE @min_id <= @max_id
         BEGIN
@@ -2044,7 +2059,8 @@ WHILE 1 = 1
                    @date_filter = hew.last_checked
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
-            AND hew.is_table_created = 1;
+            AND hew.is_table_created = 1
+            OPTION (RECOMPILE);
         
             IF OBJECT_ID(@object_name_check) IS NOT NULL
             BEGIN
@@ -2308,9 +2324,10 @@ OPTION (RECOMPILE);'
                                                ELSE hew.last_updated
                                           END 
             FROM #human_events_worker AS hew
-            WHERE hew.id = @min_id;
+            WHERE hew.id = @min_id
+            OPTION (RECOMPILE);
             
-            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew; END;
+            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew OPTION (RECOMPILE); END;
 
             TRUNCATE TABLE #human_events_xml_internal;
 
@@ -2350,10 +2367,12 @@ BEGIN
      
      SELECT @the_deleter_must_awaken += 
        N' DELETE FROM ' + QUOTENAME(hew.output_database) + N'.' +
-                       + QUOTENAME(hew.output_schema) + N'.' +
-                       + QUOTENAME(hew.event_type)   
-     + N' WHERE event_time < DATEADD(DAY, (-1 * @delete_retention_days), SYSDATETIME()); ' + NCHAR(10)
-     FROM #human_events_worker AS hew;
+                        + QUOTENAME(hew.output_schema)   + N'.' +
+                        + QUOTENAME(hew.event_type)   
+     + N' WHERE event_time < DATEADD(DAY, (-1 * @delete_retention_days), SYSDATETIME())
+          OPTION (RECOMPILE); ' + NCHAR(10)
+     FROM #human_events_worker AS hew
+     OPTION (RECOMPILE);
      
      IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;
      
