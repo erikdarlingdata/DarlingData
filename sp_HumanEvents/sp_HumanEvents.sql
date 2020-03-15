@@ -138,7 +138,7 @@ BEGIN
                         WHEN N'@custom_name' THEN N'a stringy thing'
                         WHEN N'@output_database_name' THEN N'a valid database name'
                         WHEN N'@output_schema_name' THEN N'a valid schema'
-                        WHEN N'@delete_retention_days' THEN N'an integer'
+                        WHEN N'@delete_retention_days' THEN N'a POSITIVE integer'
                         WHEN N'@help' THEN N'1 or 0'
                         WHEN N'@version' THEN N'none, output'
                         WHEN N'@version_date' THEN N'none, output'
@@ -831,6 +831,13 @@ BEGIN
     RAISERROR(N'Dunno if I like the looks of @custom_name: %s', 16, 1, @custom_name) WITH NOWAIT;
     RAISERROR(N'You can''t use special characters, or leading numbers.', 16, 1, @custom_name) WITH NOWAIT;
     RETURN;
+END
+
+RAISERROR(N'Someone is going to try it.', 0, 1) WITH NOWAIT;
+IF @delete_retention_days < 0
+BEGIN
+    SET @delete_retention_days *= -1
+    RAISERROR(N'Stay positive', 0, 1) WITH NOWAIT;
 END
 
 /*
