@@ -138,7 +138,7 @@ BEGIN
                         WHEN N'@custom_name' THEN N'a stringy thing'
                         WHEN N'@output_database_name' THEN N'a valid database name'
                         WHEN N'@output_schema_name' THEN N'a valid schema'
-                        WHEN N'@delete_retention_days' THEN N'an integer'
+                        WHEN N'@delete_retention_days' THEN N'a POSITIVE integer'
                         WHEN N'@help' THEN N'1 or 0'
                         WHEN N'@version' THEN N'none, output'
                         WHEN N'@version_date' THEN N'none, output'
@@ -809,8 +809,8 @@ END;
  
 RAISERROR(N'Is output database or schema filled in?', 0, 1) WITH NOWAIT;
 IF LEN(@output_database_name + @output_schema_name) > 0
-AND ( @output_database_name  = N'' 
-      OR @output_schema_name = N'' )
+ AND ( @output_database_name  = N'' 
+       OR @output_schema_name = N'' )
 BEGIN
     IF @output_database_name = N''
         BEGIN
@@ -831,6 +831,13 @@ BEGIN
     RAISERROR(N'Dunno if I like the looks of @custom_name: %s', 16, 1, @custom_name) WITH NOWAIT;
     RAISERROR(N'You can''t use special characters, or leading numbers.', 16, 1, @custom_name) WITH NOWAIT;
     RETURN;
+END
+
+RAISERROR(N'Someone is going to try it.', 0, 1) WITH NOWAIT;
+IF @delete_retention_days < 0
+BEGIN
+    SET @delete_retention_days *= -1
+    RAISERROR(N'Stay positive', 0, 1) WITH NOWAIT;
 END
 
 /*
@@ -2078,23 +2085,30 @@ WHILE 1 = 1
         c.value(''(data[@name="duration"]/value)[1]'', ''BIGINT'')  AS duration_ms,
         c.value(''(data[@name="signal_duration"]/value)[1]'', ''BIGINT'') AS signal_duration_ms,' + NCHAR(10) +
 CASE WHEN @v = 11 
-     THEN N' ''Not Available < 2014'', ' + NCHAR(10)
-     ELSE N' c.value(''(data[@name="wait_resource"]/value)[1]'', ''NVARCHAR(256)'')  AS wait_resource, ' + NCHAR(10)
-END + N'    CONVERT(BINARY(8), c.value(''(action[@name="query_plan_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_plan_hash_signed,
-            CONVERT(BINARY(8), c.value(''(action[@name="query_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_hash_signed,
-            c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''VARBINARY(64)'') AS plan_handle
-     FROM #human_events_xml_internal AS xet
-     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-     WHERE c.exist(''(data[@name="duration"]/value[. > 0])'') = 1 
-     AND DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
-     OPTION(RECOMPILE);'
+     THEN N'        ''Not Available < 2014'', ' + NCHAR(10)
+     ELSE N'        c.value(''(data[@name="wait_resource"]/value)[1]'', ''NVARCHAR(256)'')  AS wait_resource, ' + NCHAR(10)
+END + N'        CONVERT(BINARY(8), c.value(''(action[@name="query_plan_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_plan_hash_signed,
+        CONVERT(BINARY(8), c.value(''(action[@name="query_hash_signed"]/value)[1]'', ''BIGINT'')) AS query_hash_signed,
+        c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''VARBINARY(64)'') AS plan_handle
+FROM #human_events_xml_internal AS xet
+OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+WHERE c.exist(''(data[@name="duration"]/value[. > 0])'') = 1 
+AND DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+OPTION(RECOMPILE);'
                        WHEN @event_type_check LIKE N'%lock%'
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
                             N'( server_name, event_time, activity, database_name, database_id, object_id, ' + NCHAR(10) +
                             N'  transaction_id, resource_owner_type, monitor_loop, spid, ecid, query_text, wait_time, ' + NCHAR(10) +
                             N'  transaction_name,  last_transaction_started, lock_mode, status, priority, ' + NCHAR(10) +
                             N'  transaction_count, client_app, host_name, login_name, isolation_level, sql_handle, blocked_process_report )' + NCHAR(10) +
-N'SELECT *
+N'
+SELECT server_name, event_time, activity, database_name, database_id, object_id, 
+       transaction_id, resource_owner_type, monitor_loop, spid, ecid, text, waittime, 
+       transactionname,  lasttranstarted, lockmode, status, priority, 
+       trancount, clientapp, hostname, loginname, isolationlevel, sqlhandle, process_report
+FROM ( 
+SELECT *, ROW_NUMBER() OVER(PARTITION BY x.spid, x.ecid, x.transaction_id, x.activity 
+                            ORDER BY     x.spid, x.ecid, x.transaction_id, x.activity) AS x
 FROM (
     SELECT @@SERVERNAME AS server_name,
            DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) AS event_time,        
@@ -2156,8 +2170,54 @@ FROM (
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
 ) AS x
-WHERE event_time > @date_filter
-OPTION (RECOMPILE);'
+) AS x
+WHERE x.event_time > @date_filter
+AND NOT EXISTS
+(
+    SELECT 1/0
+    FROM ' + @object_name_check + N' AS x2
+    WHERE x.database_id = x2.database_id
+    AND   x.object_id = x2.object_id
+    AND   x.transaction_id = x2.transaction_id
+    AND   x.spid = x2.spid
+    AND   x.ecid = x2.ecid
+    AND   x.clientapp = x2.client_app
+    AND   x.hostname = x2.host_name
+    AND   x.loginname = x2.login_name
+)
+AND x.x = 1
+OPTION (RECOMPILE);
+
+UPDATE x2
+    SET x2.wait_time = x.waittime
+FROM ' + @object_name_check + N' AS x2
+JOIN 
+(
+    SELECT @@SERVERNAME AS server_name,       
+           ''blocked'' AS activity,
+           c.value(''(data[@name="database_id"]/value)[1]'', ''INT'') AS database_id,
+           c.value(''(data[@name="object_id"]/value)[1]'', ''INT'') AS object_id,
+           c.value(''(data[@name="transaction_id"]/value)[1]'', ''BIGINT'') AS transaction_id,
+           bd.value(''(process/@spid)[1]'', ''INT'') AS spid,
+           bd.value(''(process/@ecid)[1]'', ''INT'') AS ecid,
+           bd.value(''(process/@waittime)[1]'', ''BIGINT'') AS waittime,
+           bd.value(''(process/@clientapp)[1]'', ''NVARCHAR(256)'') AS clientapp,
+           bd.value(''(process/@hostname)[1]'', ''NVARCHAR(256)'') AS hostname,
+           bd.value(''(process/@loginname)[1]'', ''NVARCHAR(256)'') AS loginname
+    FROM #human_events_xml_internal AS xet
+    OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
+    OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
+) AS x
+    ON    x.database_id = x2.database_id
+    AND   x.object_id = x2.object_id
+    AND   x.spid = x2.spid
+    AND   x.ecid = x2.ecid
+    AND   x.clientapp = x2.client_app
+    AND   x.hostname = x2.host_name
+    AND   x.loginname = x2.login_name
+    AND   x.activity = x2.activity
+OPTION (RECOMPILE);
+'
                        WHEN @event_type_check LIKE N'%quer%'
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
                             N'( server_name, event_time, event_type, database_name, object_name, sql_text, statement, ' + NCHAR(10) +
@@ -2218,14 +2278,15 @@ OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE 1 = 1 '
       + CASE WHEN @compile_events = 1 
              THEN 
-N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 0 '
+N'
+AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 0 '
              ELSE N''
         END + N'
-   AND   ( c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') <> N''sp_HumanEvents''
-           OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
-   AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
-   ORDER BY event_time
-   OPTION (RECOMPILE);'
+AND   ( c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') <> N''sp_HumanEvents''
+        OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
+AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+ORDER BY event_time
+OPTION (RECOMPILE);'
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
                        THEN N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + NCHAR(10) + 
                             N'( server_name, event_time,  event_type,  ' + NCHAR(10) +
@@ -2252,7 +2313,7 @@ N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 1 '
             OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
    AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
    ORDER BY event_time
-   OPTION (RECOMPILE);'
+   OPTION (RECOMPILE);' + NCHAR(10)
                             + CASE WHEN @parameterization_events = 1 
                                    THEN 
                             NCHAR(10) + 
@@ -2328,6 +2389,7 @@ OPTION (RECOMPILE);'
             OPTION (RECOMPILE);
             
             IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew OPTION (RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#human_events_xml_internal' AS table_name, * FROM #human_events_xml_internal AS hew OPTION (RECOMPILE); END;
 
             TRUNCATE TABLE #human_events_xml_internal;
 
