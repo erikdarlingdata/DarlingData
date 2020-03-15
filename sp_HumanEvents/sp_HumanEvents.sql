@@ -1769,7 +1769,10 @@ BEGIN
                             FROM pablo_blanco AS pb
                             CROSS APPLY( SELECT TOP 1 * 
                                          FROM #blocking AS b 
-                                         WHERE b.blocking_spid = pb.blocking_spid ) AS bg
+                                         WHERE b.blocking_spid = pb.blocking_spid
+                                         AND   b.blocking_ecid = pb.blocking_ecid
+                                         AND   b.monitor_loop = pb.monitor_loop
+                                         AND   b.transaction_id = pb.transaction_id ) AS bg
                             UNION ALL 
                      
                      SELECT bl.event_time,
@@ -1794,7 +1797,10 @@ BEGIN
                             FROM pablo_blanco AS pb
                             CROSS APPLY( SELECT TOP 1 * 
                                          FROM #blocked AS b 
-                                         WHERE b.blocked_spid = pb.blocking_spid ) AS bl
+                                         WHERE b.blocked_spid = pb.blocking_spid
+                                         AND   b.blocked_ecid = pb.blocking_ecid
+                                         AND   b.monitor_loop = pb.monitor_loop
+                                         AND   b.transaction_id = pb.transaction_id ) AS bl
                 )
                      SELECT att.event_time,
                             att.database_name,
@@ -2063,7 +2069,7 @@ WHILE 1 = 1
                                       + QUOTENAME(hew.output_schema)
                                       + N'.'
                                       + hew.output_table,
-                   @date_filter = hew.last_checked
+                   @date_filter       = DATEADD(MINUTE, DATEDIFF(MINUTE, SYSDATETIME(), GETUTCDATE()), hew.last_checked)
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
             AND hew.is_table_created = 1
@@ -2093,7 +2099,7 @@ END + N'        CONVERT(BINARY(8), c.value(''(action[@name="query_plan_hash_sign
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''(data[@name="duration"]/value[. > 0])'') = 1 
-AND DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 OPTION(RECOMPILE);'
                        WHEN @event_type_check LIKE N'%lock%'
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
@@ -2138,6 +2144,7 @@ FROM (
     FROM #human_events_xml_internal AS xet
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
+    WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
     
     UNION ALL
     
@@ -2169,10 +2176,10 @@ FROM (
     FROM #human_events_xml_internal AS xet
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
+    WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ) AS x
 ) AS x
-WHERE x.event_time > @date_filter
-AND NOT EXISTS
+WHERE NOT EXISTS
 (
     SELECT 1/0
     FROM ' + @object_name_check + N' AS x2
@@ -2207,6 +2214,7 @@ JOIN
     FROM #human_events_xml_internal AS xet
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
+    WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ) AS x
     ON    x.database_id = x2.database_id
     AND   x.object_id = x2.object_id
@@ -2252,7 +2260,7 @@ OPTION (RECOMPILE);
        c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''VARBINARY(64)'') AS plan_handle
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
-WHERE DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 OPTION(RECOMPILE); '
                        WHEN @event_type_check LIKE N'%recomp%'
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
@@ -2284,7 +2292,7 @@ AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 0 '
         END + N'
 AND   ( c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') <> N''sp_HumanEvents''
         OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
-AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+AND c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY event_time
 OPTION (RECOMPILE);'
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
@@ -2305,15 +2313,16 @@ OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE 1 = 1 '
       + CASE WHEN @compile_events = 1 
              THEN 
-N' AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 1 '
+N' 
+AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 1 '
              ELSE N''
         END + N'
-   AND   c.value(''@name'', ''NVARCHAR(256)'') = N''sql_statement_post_compile''
-   AND   ( c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') <> N''sp_HumanEvents''
-            OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
-   AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
-   ORDER BY event_time
-   OPTION (RECOMPILE);' + NCHAR(10)
+AND   c.value(''@name'', ''NVARCHAR(256)'') = N''sql_statement_post_compile''
+AND   ( c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') <> N''sp_HumanEvents''
+         OR c.value(''(data[@name="object_name"]/value)[1]'', ''NVARCHAR(256)'') IS NULL )
+AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+ORDER BY event_time
+OPTION (RECOMPILE);' + NCHAR(10)
                             + CASE WHEN @parameterization_events = 1 
                                    THEN 
                             NCHAR(10) + 
@@ -2343,7 +2352,7 @@ FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.value(''@name'', ''NVARCHAR(256)'') = N''query_parameterization_data''
 AND   c.value(''(action[@name="sql_text"]/value)[1]'', ''NVARCHAR(20)'') NOT LIKE N''EXEC sp_HumanEvents%''
-AND   DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value(''@timestamp'', ''DATETIME2'')) > @date_filter
+AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY event_time
 OPTION (RECOMPILE);'
                                    ELSE N'' 
