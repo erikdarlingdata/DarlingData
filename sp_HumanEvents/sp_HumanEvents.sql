@@ -1455,15 +1455,53 @@ IF @compile_events = 1
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
                    c.value('(data[@name="cpu_time"]/value)[1]', 'INT') compile_cpu_ms,
                    c.value('(data[@name="duration"]/value)[1]', 'INT') compile_duration_ms
+            INTO #compiles_1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 1
+            WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 1
             AND   c.exist('@name[.= "sql_statement_post_compile"]') = 1
             AND   c.exist('(data[@name="statement"]/value/text())[1]') = 1
             AND   ( c.exist('(data[@name="object_name"]/value[. != ("sp_HumanEvents")])[1]') = 1
                     OR c.exist('(data[@name="object_name"]/value[empty(text())])[1]') = 1 )
             ORDER BY event_time
             OPTION (RECOMPILE);
+
+            ALTER TABLE #compiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
+
+            IF @debug = 1 BEGIN SELECT N'#compiles_1' AS table_name, * FROM #compiles_1 AS c OPTION(RECOMPILE); END;
+
+            WITH cbq
+              AS (
+                 SELECT statement_text_checksum,
+                        COUNT_BIG(*) AS total_compiles,
+                        SUM(compile_cpu_ms) AS total_compile_cpu,
+                        AVG(compile_cpu_ms) AS avg_compile_cpu,
+                        MAX(compile_cpu_ms) AS max_compile_cpu,
+                        SUM(compile_duration_ms) AS total_compile_duration,
+                        AVG(compile_duration_ms) AS avg_compile_duration,
+                        MAX(compile_duration_ms) AS max_compile_duration
+                 FROM #compiles_1
+                 GROUP BY statement_text_checksum )
+            SELECT N'total compiles' AS pattern,
+                   k.statement_text,
+                   c.total_compiles,
+                   c.total_compile_cpu,
+                   c.avg_compile_cpu,
+                   c.max_compile_cpu,
+                   c.total_compile_duration,
+                   c.avg_compile_duration,
+                   c.max_compile_duration
+            FROM cbq AS c
+            CROSS APPLY
+                (
+                    SELECT TOP( 1 ) *
+                    FROM #compiles_1 AS k
+                    WHERE c.statement_text_checksum = k.statement_text_checksum
+                    ORDER BY k.event_time DESC
+                ) AS k
+            ORDER BY c.total_compiles DESC
+            OPTION(RECOMPILE);
+
     END;
 
 IF @compile_events = 0
@@ -1473,12 +1511,50 @@ IF @compile_events = 0
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text
+            INTO #compiles_0
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE ( c.exist('(data[@name="object_name"]/value[. != ("sp_HumanEvents")])[1]') = 1
                     OR c.exist('(data[@name="object_name"]/value[empty(text())])[1]') = 1 )
             ORDER BY event_time
             OPTION (RECOMPILE);
+
+            ALTER TABLE #compiles_0 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
+
+            IF @debug = 1 BEGIN SELECT N'#compiles_0' AS table_name, * FROM #compiles_0 AS c OPTION(RECOMPILE); END;
+
+            WITH cbq
+              AS (
+                 SELECT statement_text_checksum,
+                        COUNT_BIG(*) AS total_compiles,
+                        SUM(compile_cpu_ms) AS total_compile_cpu,
+                        AVG(compile_cpu_ms) AS avg_compile_cpu,
+                        MAX(compile_cpu_ms) AS max_compile_cpu,
+                        SUM(compile_duration_ms) AS total_compile_duration,
+                        AVG(compile_duration_ms) AS avg_compile_duration,
+                        MAX(compile_duration_ms) AS max_compile_duration
+                 FROM #compiles_0
+                 GROUP BY statement_text_checksum )
+            SELECT N'total compiles' AS pattern,
+                   k.statement_text,
+                   c.total_compiles,
+                   c.total_compile_cpu,
+                   c.avg_compile_cpu,
+                   c.max_compile_cpu,
+                   c.total_compile_duration,
+                   c.avg_compile_duration,
+                   c.max_compile_duration
+            FROM cbq AS c
+            CROSS APPLY
+                (
+                    SELECT TOP( 1 ) *
+                    FROM #compiles_0 AS k
+                    WHERE c.statement_text_checksum = k.statement_text_checksum
+                    ORDER BY k.event_time DESC
+                ) AS k
+            ORDER BY c.total_compiles DESC
+            OPTION(RECOMPILE);
+
     END;
 
 IF @parameterization_events  = 1
@@ -1500,12 +1576,61 @@ IF @parameterization_events  = 1
                    c.value('xs:hexBinary((data[@name="query_hash"]/value/text())[1])', 'BINARY(8)') AS query_hash,
                    c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle, 
                    c.value('xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])', 'VARBINARY(64)') AS statement_sql_hash
+            INTO #parameterization
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('@name[.= "query_parameterization_data"]') = 1
+            AND   c.exist('(data[@name="is_recompiled"]/value[. = "false"])') = 1
             AND   c.value('(action[@name="sql_text"]/value/text())[1]', 'NVARCHAR(20)') NOT LIKE N'EXEC sp_HumanEvents%'
             ORDER BY event_time
             OPTION (RECOMPILE);
+
+            IF @debug = 1 BEGIN SELECT N'#parameterization' AS table_name, * FROM #parameterization AS p OPTION(RECOMPILE); END;
+
+            WITH cpq AS 
+               (
+                SELECT database_name,
+                       query_hash,
+                       COUNT_BIG(*) AS total_compiles,
+                       COUNT(DISTINCT query_plan_hash) AS plan_count,
+                       SUM(compile_cpu_time_ms) AS total_compile_cpu,
+                       AVG(compile_cpu_time_ms) AS avg_compile_cpu,
+                       MAX(compile_cpu_time_ms) AS max_compile_cpu,
+                       SUM(compile_duration_ms) AS total_compile_duration,
+                       AVG(compile_duration_ms) AS avg_compile_duration,
+                       MAX(compile_duration_ms) AS max_compile_duration
+                FROM #parameterization
+                GROUP BY database_name, 
+                         query_hash
+               )
+               SELECT N'parameterization opportunities' AS pattern,
+                      c.database_name,
+                      k.sql_text,
+                      k.is_parameterizable,
+                      c.total_compiles,
+                      c.plan_count,
+                      c.total_compile_cpu,
+                      c.avg_compile_cpu,
+                      c.max_compile_cpu,
+                      c.total_compile_duration,
+                      c.avg_compile_duration,
+                      c.max_compile_duration,
+                      k.query_param_type,
+                      k.is_cached,
+                      k.is_recompiled,
+                      k.compile_code,
+                      k.has_literals,
+                      k.parameterized_values_count
+               FROM cpq AS c
+               CROSS APPLY
+               (
+                   SELECT TOP (1) *
+                   FROM #parameterization AS k
+                   WHERE k.query_hash = c.query_hash
+                   ORDER BY k.event_time DESC
+               ) AS k
+            ORDER BY c.total_compiles DESC
+            OPTION(RECOMPILE);
     END;
 
 END;
@@ -1524,14 +1649,53 @@ IF @compile_events = 1
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
                    c.value('(data[@name="cpu_time"]/value)[1]', 'INT') / 1000. AS compile_cpu_ms,
                    c.value('(data[@name="duration"]/value)[1]', 'INT') / 1000. AS compile_duration_ms
+            INTO #recompiles_1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 0
+            WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 0
             AND   ( c.exist('(data[@name="object_name"]/value/text()[. != ("sp_HumanEvents")])[1]') = 1
                     OR c.exist('(data[@name="object_name"]/value[empty(text())])[1]') = 1 )
             AND   c.exist('(data[@name="statement"]/value/text())[1]') = 1
             ORDER BY event_time
             OPTION (RECOMPILE);
+
+            ALTER TABLE #recompiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
+
+            IF @debug = 1 BEGIN SELECT N'#recompiles_1' AS table_name, * FROM #recompiles_1 AS r OPTION(RECOMPILE); END;
+
+            WITH cbq
+              AS (
+                 SELECT statement_text_checksum,
+                        COUNT_BIG(*) AS total_compiles,
+                        SUM(compile_cpu_ms) AS total_compile_cpu,
+                        AVG(compile_cpu_ms) AS avg_compile_cpu,
+                        MAX(compile_cpu_ms) AS max_compile_cpu,
+                        SUM(compile_duration_ms) AS total_compile_duration,
+                        AVG(compile_duration_ms) AS avg_compile_duration,
+                        MAX(compile_duration_ms) AS max_compile_duration
+                 FROM #recompiles_1
+                 GROUP BY statement_text_checksum )
+            SELECT N'total recompiles' AS pattern,
+                   k.recompile_cause,
+                   k.statement_text,
+                   c.total_compiles,
+                   c.total_compile_cpu,
+                   c.avg_compile_cpu,
+                   c.max_compile_cpu,
+                   c.total_compile_duration,
+                   c.avg_compile_duration,
+                   c.max_compile_duration
+            FROM cbq AS c
+            CROSS APPLY
+                (
+                    SELECT TOP( 1 ) *
+                    FROM #recompiles_1 AS k
+                    WHERE c.statement_text_checksum = k.statement_text_checksum
+                    ORDER BY k.event_time DESC
+                ) AS k
+            ORDER BY c.total_compiles DESC
+            OPTION(RECOMPILE);
+
     END;
 
 IF @compile_events = 0
@@ -1542,12 +1706,51 @@ IF @compile_events = 0
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
                    c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text
+            INTO #recompiles_0
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE ( c.exist('(data[@name="object_name"]/value/text()[. != ("sp_HumanEvents")])[1]') = 1
                     OR c.exist('(data[@name="object_name"]/value[empty(text())])[1]') = 1 )
             ORDER BY event_time
             OPTION (RECOMPILE);
+
+            ALTER TABLE #recompiles_0 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
+
+            IF @debug = 1 BEGIN SELECT N'#recompiles_0' AS table_name, * FROM #recompiles_0 AS r OPTION(RECOMPILE); END;
+
+            WITH cbq
+              AS (
+                 SELECT statement_text_checksum,
+                        COUNT_BIG(*) AS total_compiles,
+                        SUM(compile_cpu_ms) AS total_compile_cpu,
+                        AVG(compile_cpu_ms) AS avg_compile_cpu,
+                        MAX(compile_cpu_ms) AS max_compile_cpu,
+                        SUM(compile_duration_ms) AS total_compile_duration,
+                        AVG(compile_duration_ms) AS avg_compile_duration,
+                        MAX(compile_duration_ms) AS max_compile_duration
+                 FROM #recompiles_0
+                 GROUP BY statement_text_checksum
+                 HAVING COUNT_BIG(*) >= 10 )
+            SELECT N'total recompiles' AS pattern,
+                   k.statement_text,
+                   c.total_compiles,
+                   c.total_compile_cpu,
+                   c.avg_compile_cpu,
+                   c.max_compile_cpu,
+                   c.total_compile_duration,
+                   c.avg_compile_duration,
+                   c.max_compile_duration
+            FROM cbq AS c
+            CROSS APPLY
+                (
+                    SELECT TOP( 1 ) *
+                    FROM #recompiles_0 AS k
+                    WHERE c.statement_text_checksum = k.statement_text_checksum
+                    ORDER BY k.event_time DESC
+                ) AS k
+            ORDER BY c.total_compiles DESC
+            OPTION(RECOMPILE);
+
     END;
 END;
 
@@ -1609,7 +1812,7 @@ BEGIN;
 
             WITH plan_waits AS 
                 (
-                     SELECT N'waits by query and database' AS wait_pattern,
+                     SELECT N'total waits by query and database' AS wait_pattern,
                             MIN(wa.event_time) AS min_event_time,
                             MAX(wa.event_time) AS max_event_time,
                             wa.database_name,
@@ -1995,12 +2198,12 @@ WHILE 1 = 1
                        WHEN @event_type_check LIKE N'%recomp%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
                             N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
-                            N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, recompile_cause NVARCHAR(256) NULL, statement_text NVARCHAR(MAX) NULL '
+                            N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, recompile_cause NVARCHAR(256) NULL, statement_text NVARCHAR(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
                             + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms BIGINT NULL, compile_duration_ms BIGINT NULL );' ELSE N' );' END
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
                             N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
-                            N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, statement_text NVARCHAR(MAX) NULL '
+                            N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, statement_text NVARCHAR(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
                             + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms BIGINT NULL, compile_duration_ms BIGINT NULL );' ELSE N' );' END
                             + CASE WHEN @parameterization_events = 1 
                                    THEN 
@@ -2293,7 +2496,7 @@ WHERE 1 = 1 '
       + CASE WHEN @compile_events = 1 
              THEN 
 N'
-AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 0 '
+AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 0 '
              ELSE N''
         END + N'
 AND ( c.exist(''(data[@name="object_name"]/value[. != ("sp_HumanEvents")])[1]'') = 1
@@ -2320,7 +2523,7 @@ WHERE 1 = 1 '
       + CASE WHEN @compile_events = 1 
              THEN 
 N' 
-AND c.exist(''(data[@name="is_recompile"]/value[.="false"])'') = 1 '
+AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 1 '
              ELSE N''
         END + N'
 AND   c.exist(''@name[.= "sql_statement_post_compile"]'') = 1
@@ -2357,6 +2560,7 @@ OPTION (RECOMPILE);' + NCHAR(10)
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''@name[.= "query_parameterization_data"]'') = 1
+AND   c.exist(''(data[@name="is_recompiled"]/value[. = "false"])'') = 1
 AND   c.value(''(action[@name="sql_text"]/value)[1]'', ''NVARCHAR(20)'') NOT LIKE N''EXEC sp_HumanEvents%''
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY event_time
