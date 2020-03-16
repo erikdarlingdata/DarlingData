@@ -1461,6 +1461,7 @@ IF @compile_events = 1
             AND   c.value('@name', 'NVARCHAR(256)') = N'sql_statement_post_compile'
             AND   ( c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') <> N'sp_HumanEvents'
                      OR c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') IS NULL )
+            AND   c.exist('(data[@name="statement"]/value/text())[1]') = 1
             ORDER BY event_time
             OPTION (RECOMPILE);
     END;
@@ -1529,6 +1530,7 @@ IF @compile_events = 1
             WHERE c.exist('(data[@name="is_recompile"]/value[.="false"])') = 0
             AND   ( c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') <> N'sp_HumanEvents'
                      OR c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') IS NULL )
+            AND   c.exist('(data[@name="statement"]/value/text())[1]') = 1
             ORDER BY event_time
             OPTION (RECOMPILE);
     END;
@@ -1727,21 +1729,21 @@ BEGIN
                             x.blocked_spid,
                             x.blocked_ecid
                      FROM (
-                     SELECT b.event_time,
-                            b.object_id,
-                            b.transaction_id,
-                            b.monitor_loop,
-                            b.blocked_spid,
-                            b.blocked_ecid,
-                            ROW_NUMBER() OVER 
-                              ( PARTITION BY b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid
-                                ORDER BY     b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid ) AS n
-                     FROM #blocked AS b
-                     JOIN pablo_blanco AS p
-                         ON  p.event_time = b.event_time
-                         AND p.object_id = b.object_id
-                         AND p.monitor_loop = b.monitor_loop
-                         AND p.blocking_spid <> b.blocked_spid
+                         SELECT b.event_time,
+                                b.object_id,
+                                b.transaction_id,
+                                b.monitor_loop,
+                                b.blocked_spid,
+                                b.blocked_ecid,
+                                ROW_NUMBER() OVER 
+                                  ( PARTITION BY b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid
+                                    ORDER BY     b.event_time, b.object_id, b.transaction_id, b.monitor_loop, b.blocked_spid, b.blocked_ecid ) AS n
+                         FROM #blocked AS b
+                         JOIN pablo_blanco AS p
+                             ON  p.event_time = b.event_time
+                             AND p.object_id = b.object_id
+                             AND p.monitor_loop = b.monitor_loop
+                             AND p.blocking_spid <> b.blocked_spid
                      ) AS x
                      WHERE x.n = 1
                 ), 
@@ -2205,6 +2207,7 @@ JOIN
            c.value(''(data[@name="database_id"]/value)[1]'', ''INT'') AS database_id,
            c.value(''(data[@name="object_id"]/value)[1]'', ''INT'') AS object_id,
            c.value(''(data[@name="transaction_id"]/value)[1]'', ''BIGINT'') AS transaction_id,
+           c.value(''(//@monitorLoop)[1]'', ''INT'') AS monitor_loop,
            bd.value(''(process/@spid)[1]'', ''INT'') AS spid,
            bd.value(''(process/@ecid)[1]'', ''INT'') AS ecid,
            bd.value(''(process/@waittime)[1]'', ''BIGINT'') AS waittime,
@@ -2224,6 +2227,8 @@ JOIN
     AND   x.hostname = x2.host_name
     AND   x.loginname = x2.login_name
     AND   x.activity = x2.activity
+    AND   x.transaction_id = x2.transaction_id
+    AND   x.monitor_loop = x2.monitor_loop
 OPTION (RECOMPILE);
 '
                        WHEN @event_type_check LIKE N'%quer%'
