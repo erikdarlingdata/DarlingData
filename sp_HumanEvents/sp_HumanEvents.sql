@@ -224,6 +224,28 @@ BEGIN
     SELECT N'EXEC sp_HumanEvents @debug = 1, @output_database_name = N''whatever'', @output_schema_name = N''dbo'';' UNION ALL
     SELECT REPLICATE(N'-', 100);
 
+    /*Views*/
+    SELECT N'views that get created when you log to tables' AS views_and_stuff UNION ALL
+    SELECT N'these will get created in the same database that your output tables get created in for simplicity' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL
+    SELECT N'HumanEvents_Queries: View to look at data pulled from logged queries' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL
+    SELECT N'HumanEvents_WaitsByQueryAndDatabase: waits generated grouped by query and database. this is best effort, as the query grouping relies on them being present in the plan cache' UNION ALL
+    SELECT N'HumanEvents_WaitsByDatabase: waits generated grouped by database' UNION ALL
+    SELECT N'HumanEvents_WaitsTotal: total waits' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL
+    SELECT N'HumanEvents_Blocking: view to assemble blocking chains' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL
+    SELECT N'HumanEvents_CompilesByDatabaseAndObject: compiles by database and object' UNION ALL
+    SELECT N'HumanEvents_CompilesByQuery: compiles by query' UNION ALL
+    SELECT N'HumanEvents_CompilesByDuration: compiles by duration length' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL
+    SELECT N'HumanEvents_Parameterization: data collected from the parameterization event' UNION ALL
+    SELECT REPLICATE(N'-', 100) UNION ALL
+    SELECT N'HumanEvents_RecompilesByDatabaseAndObject: recompiles by database and object' UNION ALL
+    SELECT N'HumanEvents_RecompilesByQuery: recompiles by query' UNION ALL
+    SELECT N'HumanEvents_RecompilesByDuration: recompiles by long duration' UNION ALL
+    SELECT REPLICATE(N'-', 100);
 
     /*License to F5*/
     SELECT N'i am MIT licensed, so like, do whatever' AS mit_license_yo UNION ALL
