@@ -2404,7 +2404,7 @@ WHILE 1 = 1
                                               + N'.'
                                               + QUOTENAME(vc.output_schema)
                                               + N'.'
-                                              + vc.output_table,
+                                              + vc.view_name,
                            @view_database     = QUOTENAME(vc.output_database),
                            @view_sql          = REPLACE(
                                                 REPLACE(vc.view_converted, 
