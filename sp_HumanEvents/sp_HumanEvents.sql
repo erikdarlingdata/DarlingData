@@ -853,14 +853,14 @@ BEGIN
     RAISERROR(N'Dunno if I like the looks of @custom_name: %s', 16, 1, @custom_name) WITH NOWAIT;
     RAISERROR(N'You can''t use special characters, or leading numbers.', 16, 1, @custom_name) WITH NOWAIT;
     RETURN;
-END
+END;
 
 RAISERROR(N'Someone is going to try it.', 0, 1) WITH NOWAIT;
 IF @delete_retention_days < 0
 BEGIN
-    SET @delete_retention_days *= -1
+    SET @delete_retention_days *= -1;
     RAISERROR(N'Stay positive', 0, 1) WITH NOWAIT;
-END
+END;
 
 /*
 If we're writing to a table, we don't want to do anything else
@@ -2359,7 +2359,7 @@ WHILE 1 = 1
             JOIN #human_events_worker AS hew
                 ON  vc.view_name LIKE N'%' + hew.event_type_short + N'%'
                 AND hew.is_table_created = 1
-                AND hew.is_view_created = 0
+                AND hew.is_view_created = 0;
         
             UPDATE vc SET vc.output_table = hew.output_table + N'_parameterization'
             FROM #view_check AS vc
@@ -2367,11 +2367,11 @@ WHILE 1 = 1
                 ON  vc.view_name = N'HumanEvents_Parameterization'
                 AND hew.output_table LIKE N'keeper_HumanEvents_compiles%'
                 AND hew.is_table_created = 1
-                AND hew.is_view_created = 0
+                AND hew.is_view_created = 0;
         
             IF @debug = 1 BEGIN SELECT N'#view_check' AS table_name, * FROM #view_check AS vc OPTION(RECOMPILE); END;
         
-        END
+        END;
         
         DECLARE @view_tracker BIT;
         
@@ -2381,7 +2381,7 @@ WHILE 1 = 1
         
             DECLARE @spe NVARCHAR(MAX) = N'.sys.sp_executesql ';
             DECLARE @view_sql NVARCHAR(MAX) = N'';
-            DECLARE @view_database sysname = N''
+            DECLARE @view_database sysname = N'';
             
             SELECT @min_id = MIN(vc.id), @max_id = MAX(vc.id)
             FROM #view_check AS vc
@@ -2422,10 +2422,10 @@ WHILE 1 = 1
                     BEGIN
                       RAISERROR(N'Uh oh, found a view', 0, 1) WITH NOWAIT;
                       SET @view_sql = REPLACE(@view_sql, N'CREATE VIEW', N'ALTER VIEW');
-                    END
+                    END;
                     
-                    SELECT @spe = @view_database + @spe
-                    IF @debug = 1 BEGIN RAISERROR(@spe, 0, 1) WITH NOWAIT END;
+                    SELECT @spe = @view_database + @spe;
+                    IF @debug = 1 BEGIN RAISERROR(@spe, 0, 1) WITH NOWAIT; END;
             
                     IF @debug = 1
                     BEGIN 
@@ -2448,7 +2448,7 @@ WHILE 1 = 1
                     
                     SET @min_id = 
                     (
-                        SELECT TOP (1) id
+                        SELECT TOP (1) vc.id
                         FROM #view_check AS vc
                         WHERE vc.id > @min_id
                         ORDER BY vc.id
@@ -2460,7 +2460,7 @@ WHILE 1 = 1
             
                     SET @spe = N'.sys.sp_executesql ';
             
-                END
+                END;
             
                 UPDATE #human_events_worker SET is_view_created = 1;
                 SET @view_tracker = 1;
