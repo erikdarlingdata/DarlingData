@@ -2353,7 +2353,8 @@ WHILE 1 = 1
         
             RAISERROR(N'Updating #view_check with output database and schema', 0, 1) WITH NOWAIT;
             UPDATE #view_check SET output_database = @output_database_name, output_schema = @output_schema_name;
-        
+            
+            RAISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT;
             UPDATE vc SET vc.output_table = hew.output_table
             FROM #view_check AS vc
             JOIN #human_events_worker AS hew
@@ -2407,11 +2408,11 @@ WHILE 1 = 1
                                               + vc.view_name,
                            @view_database     = QUOTENAME(vc.output_database),
                            @view_sql          = REPLACE(
-                                                REPLACE(vc.view_converted, 
-                                                        N'[replace_me]', 
-                                                        QUOTENAME(vc.output_schema) 
-                                                        + N'.' 
-                                                        + vc.output_table), 
+                                                    REPLACE(vc.view_converted, 
+                                                            N'[replace_me]', 
+                                                            QUOTENAME(vc.output_schema) 
+                                                            + N'.' 
+                                                            + vc.output_table), 
                                                 N'', 
                                                 N'''')
                     FROM #view_check AS vc
@@ -2425,6 +2426,7 @@ WHILE 1 = 1
                     END;
                     
                     SELECT @spe = @view_database + @spe;
+                    
                     IF @debug = 1 BEGIN RAISERROR(@spe, 0, 1) WITH NOWAIT; END;
             
                     IF @debug = 1
@@ -2440,6 +2442,7 @@ WHILE 1 = 1
                         PRINT SUBSTRING(@view_sql, 32000, 36000);
                         PRINT SUBSTRING(@view_sql, 36000, 40000);           
                     END;
+                    
                     EXEC @spe @view_sql;
             
                     IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
