@@ -34,7 +34,7 @@ ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
                                     @keep_alive BIT = 0,
                                     @custom_name NVARCHAR(256) = N'',
                                     @output_database_name sysname = N'',
-                                    @output_schema_name sysname = N'',
+                                    @output_schema_name sysname = N'dbo',
                                     @delete_retention_days INT = 3,
                                     @version VARCHAR(30) = NULL OUTPUT,
                                     @version_date DATETIME = NULL OUTPUT,
@@ -165,7 +165,7 @@ BEGIN
                         WHEN N'@keep_alive' THEN N'0'
                         WHEN N'@custom_name' THEN N'intentionally left blank'
                         WHEN N'@output_database_name' THEN N'intentionally left blank'
-                        WHEN N'@output_schema_name' THEN N'intentionally left blank'
+                        WHEN N'@output_schema_name' THEN N'dbo'
                         WHEN N'@delete_retention_days' THEN N'3 (days)'
                         WHEN N'@debug' THEN N'0'
                         WHEN N'@help' THEN N'0'
@@ -598,10 +598,10 @@ IF
       OR @session_id <> N''
       OR @username <> N''
       OR @object_name <> N''
-      OR @object_schema <> N'dbo'
+      OR @object_schema NOT IN (N'dbo', N'') 
       OR @custom_name <> N''       
       OR @output_database_name <> N''
-      OR @output_schema_name <> N'' )
+      OR @output_schema_name NOT IN (N'dbo', N'') )
 BEGIN
 RAISERROR(N'Checking for unsanitary inputs', 0, 1) WITH NOWAIT;
 
@@ -814,7 +814,7 @@ BEGIN
 END;
 
 RAISERROR(N'Does the output schema exist?', 0, 1) WITH NOWAIT;
-IF @output_schema_name <> N''
+IF @output_schema_name NOT IN (N'dbo', N'')
 BEGIN
     DECLARE @s_out INT,
             @schema_check BIT,
