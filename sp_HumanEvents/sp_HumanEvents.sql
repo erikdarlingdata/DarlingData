@@ -2296,7 +2296,7 @@ WHILE 1 = 1
             IF @debug = 1 BEGIN RAISERROR(@table_sql, 0, 1) WITH NOWAIT; END;
             EXEC sys.sp_executesql @table_sql;
             
-            RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @session_name) WITH NOWAIT;
+            RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @event_type_check) WITH NOWAIT;
             UPDATE #human_events_worker SET is_table_created = 1 WHERE id = @min_id AND is_table_created = 0 OPTION (RECOMPILE);
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
@@ -2960,6 +2960,7 @@ BEGIN
            + N''.''
            + QUOTENAME(s.name)
            + ''; ''
+           + NCHAR(10)
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
     WHERE s.name LIKE ''' + '%HumanEvents%' + N''';'
     
@@ -2984,6 +2985,7 @@ BEGIN
            + N''.''
            + QUOTENAME(v.name)
            + ''; ''
+           + NCHAR(10)
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
     WHERE v.name LIKE ''' + '%HumanEvents%' + N''';'
     
