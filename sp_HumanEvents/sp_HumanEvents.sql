@@ -36,6 +36,7 @@ ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
                                     @output_database_name sysname = N'',
                                     @output_schema_name sysname = N'dbo',
                                     @delete_retention_days INT = 3,
+                                    @cleanup BIT = 0,
                                     @version VARCHAR(30) = NULL OUTPUT,
                                     @version_date DATETIME = NULL OUTPUT,
                                     @debug BIT = 0,
@@ -110,6 +111,7 @@ BEGIN
                         WHEN N'@output_database_name' THEN N'the database you want to log data to'
                         WHEN N'@output_schema_name' THEN N'the schema you want to log data to'
                         WHEN N'@delete_retention_days' THEN N'how many days of logged data you want to keep'
+                        WHEN N'@cleanup' THEN N'deletes all sessions, tables, and views. requires output database and schema.'
                         WHEN N'@help' THEN N'well you''re here so you figured this one out'
                         WHEN N'@version' THEN N'to make sure you have the most recent bits'
                         WHEN N'@version_date' THEN N'to make sure you have the most recent bits'
@@ -139,6 +141,7 @@ BEGIN
                         WHEN N'@output_database_name' THEN N'a valid database name'
                         WHEN N'@output_schema_name' THEN N'a valid schema'
                         WHEN N'@delete_retention_days' THEN N'a POSITIVE integer'
+                        WHEN N'@cleanup' THEN N'1 or 0'
                         WHEN N'@help' THEN N'1 or 0'
                         WHEN N'@version' THEN N'none, output'
                         WHEN N'@version_date' THEN N'none, output'
@@ -168,6 +171,7 @@ BEGIN
                         WHEN N'@output_schema_name' THEN N'dbo'
                         WHEN N'@delete_retention_days' THEN N'3 (days)'
                         WHEN N'@debug' THEN N'0'
+                        WHEN N'@cleanup' THEN N'0'
                         WHEN N'@help' THEN N'0'
                         WHEN N'@version' THEN N'none, output'
                         WHEN N'@version_date' THEN N'none, output'
@@ -836,17 +840,18 @@ END;
  
 RAISERROR(N'Is output database OR schema filled in?', 0, 1) WITH NOWAIT;
 IF LEN(@output_database_name + @output_schema_name) > 0
+ AND @output_schema_name <> N'dbo'
  AND ( @output_database_name  = N'' 
        OR @output_schema_name = N'' )
 BEGIN
     IF @output_database_name = N''
         BEGIN
-            RAISERROR(N'@output_database_name can''t blank when outputting to tables', 16, 1) WITH NOWAIT;
+            RAISERROR(N'@output_database_name can''t blank when outputting to tables or cleaning up', 16, 1) WITH NOWAIT;
             RETURN;
         END;
     IF @output_schema_name = N''
         BEGIN
-            RAISERROR(N'@output_schema_name can''t blank when outputting to tables', 16, 1) WITH NOWAIT;
+            RAISERROR(N'@output_schema_name can''t blank when outputting to tables or cleaning up', 16, 1) WITH NOWAIT;
             RETURN;
         END;
 END;
@@ -872,15 +877,27 @@ If we're writing to a table, we don't want to do anything else
 Or anything else after this, really
 We want the session to get set up
 */
-RAISERROR(N'Do we skip to the GOTO?', 0, 1) WITH NOWAIT;
+RAISERROR(N'Do we skip to the GOTO and log tables?', 0, 1) WITH NOWAIT;
 IF ( @output_database_name <> N''
-     AND @output_schema_name <> N'' )
+     AND @output_schema_name <> N''
+     AND @cleanup = 0 )
 BEGIN
-    RAISERROR(N'Skipping all the other stuff and going to data collection', 0, 1) WITH NOWAIT;    
+    RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT;    
     
     CREATE TABLE #human_events_xml_internal (human_events_xml XML);        
     
     GOTO output_results;
+    RETURN;
+END;
+
+RAISERROR(N'Do we skip to the GOTO and cleanup?', 0, 1) WITH NOWAIT;
+IF ( @output_database_name <> N''
+     AND @output_schema_name <> N''
+     AND @cleanup = 1 )
+BEGIN
+    RAISERROR(N'Skipping all the other stuff and going to cleanup', 0, 1) WITH NOWAIT;       
+    
+    GOTO cleanup;
     RETURN;
 END;
 
@@ -2910,6 +2927,78 @@ END;
 WAITFOR DELAY '00:00:05.000';
 
 END;
+
+/*This section handles cleaning up stuff.*/
+cleanup:
+BEGIN     
+    RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT;
+
+    DECLARE @executer NVARCHAR(MAX) = QUOTENAME(@output_database_name) + N'.sys.sp_executesql ';
+
+    /*Clean up sessions, this isn't database-specific*/
+    DECLARE @cleanup_sessions NVARCHAR(MAX) = N'';             
+    SELECT @cleanup_sessions +=   
+    N'DROP EVENT SESSION ' + ses.name + N' ON SERVER;' + NCHAR(10)  
+    FROM sys.server_event_sessions AS ses  
+    LEFT JOIN sys.dm_xe_sessions AS dxs  
+        ON dxs.name = ses.name  
+    WHERE ses.name LIKE N'%HumanEvents_%';  
+        
+    EXEC sys.sp_executesql @cleanup_sessions;  
+    IF @debug = 1 BEGIN RAISERROR(@cleanup_sessions, 0, 1) WITH NOWAIT; END;
+  
+
+    /*Clean up tables*/
+    RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT;
+
+    DECLARE @cleanup_tables NVARCHAR(MAX) = N'';
+    DECLARE @drop_holder NVARCHAR(MAX) = N'';
+  
+    SELECT @cleanup_tables += N'
+    SELECT @i_cleanup_tables += N''DROP TABLE ''  
+           + SCHEMA_NAME(s.schema_id)
+           + N''.''
+           + QUOTENAME(s.name)
+           + ''; ''
+    FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
+    WHERE s.name LIKE ''' + '%HumanEvents%' + N''';'
+    
+    EXEC sys.sp_executesql @cleanup_tables, N'@i_cleanup_tables NVARCHAR(MAX) OUTPUT', @i_cleanup_tables = @drop_holder OUTPUT;  
+    IF @debug = 1 
+    BEGIN
+        RAISERROR(@executer, 0, 1) WITH NOWAIT;
+        RAISERROR(@drop_holder, 0, 1) WITH NOWAIT;
+    END
+    
+    EXEC @executer @drop_holder;
+  
+    /*Cleanup views*/
+    RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT;
+
+    DECLARE @cleanup_views NVARCHAR(MAX) = N'';
+    SET @drop_holder = N'';
+  
+    SELECT @cleanup_views += N'
+    SELECT @i_cleanup_views += N''DROP VIEW ''  
+           + SCHEMA_NAME(v.schema_id)
+           + N''.''
+           + QUOTENAME(v.name)
+           + ''; ''
+    FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
+    WHERE v.name LIKE ''' + '%HumanEvents%' + N''';'
+    
+    EXEC sys.sp_executesql @cleanup_views, N'@i_cleanup_views NVARCHAR(MAX) OUTPUT', @i_cleanup_views = @drop_holder OUTPUT;  
+    IF @debug = 1 
+    BEGIN
+        RAISERROR(@executer, 0, 1) WITH NOWAIT;
+        RAISERROR(@drop_holder, 0, 1) WITH NOWAIT;
+    END
+
+    EXEC @executer @drop_holder;
+
+    RETURN;
+END 
+
 
 END TRY
 
