@@ -2996,8 +2996,6 @@ BEGIN CATCH
                  +  NCHAR(10)
                  +  ERROR_MESSAGE(); 
           
-        RAISERROR (@msg, 16, 1) WITH NOWAIT;
-
         /*Only try to drop a session if we're not outputting*/
         IF ( @output_database_name = N''
               AND @output_schema_name = N'' )
@@ -3008,6 +3006,9 @@ BEGIN CATCH
             IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
             EXEC (@drop_sql);
         END;
+
+        RAISERROR (@msg, 16, 1) WITH NOWAIT;
+        THROW;
 
         RETURN -138;
     END;
