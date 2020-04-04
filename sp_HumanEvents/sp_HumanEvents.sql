@@ -104,7 +104,7 @@ BEGIN
                         WHEN N'@object_schema' THEN N'(inclusive) the schema of the object you want to filter to; only needed with blocking events'
                         WHEN N'@requested_memory_mb' THEN N'(>=) the memory grant a query must ask for to have data collected'
                         WHEN N'@seconds_sample' THEN N'the duration in seconds to run the event session for'
-                        WHEN N'@gimme_danger' THEN N'used in some circumstances to override me trying to protect you from yourself'
+                        WHEN N'@gimme_danger' THEN N'used to override default minimums for query, wait, and blocking durations. only use if you''re okay with potentially adding a lot of observer overhead on your system, or for testing purposes.'
                         WHEN N'@debug' THEN N'use to print out dynamic SQL'
                         WHEN N'@keep_alive' THEN N'creates a permanent session, either to watch live or log to a table from'
                         WHEN N'@custom_name' THEN N'if you want to custom name a permanent session'
@@ -2996,8 +2996,6 @@ BEGIN CATCH
                  +  NCHAR(10)
                  +  ERROR_MESSAGE(); 
           
-        RAISERROR (@msg, 16, 1) WITH NOWAIT;
-
         /*Only try to drop a session if we're not outputting*/
         IF ( @output_database_name = N''
               AND @output_schema_name = N'' )
@@ -3008,6 +3006,9 @@ BEGIN CATCH
             IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
             EXEC (@drop_sql);
         END;
+
+        RAISERROR (@msg, 16, 1) WITH NOWAIT;
+        THROW;
 
         RETURN -138;
     END;
