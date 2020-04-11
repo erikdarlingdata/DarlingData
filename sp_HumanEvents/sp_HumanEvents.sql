@@ -1315,8 +1315,6 @@ BEGIN;
                    c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            WHERE ( c.exist('(data[@name="object_name"]/value/text()[. != ("sp_HumanEvents")])[1]') = 1
-                    OR c.exist('(data[@name="object_name"]/value[empty(text())])[1]') = 1 )
          )
          SELECT *
          INTO #queries
@@ -1505,9 +1503,6 @@ IF @compile_events = 1
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 1
             AND   c.exist('@name[.= "sql_statement_post_compile"]') = 1
-            AND   c.exist('(data[@name="statement"]/value/text())[1]') = 1
-            AND   ( c.exist('(data[@name="object_name"]/value[. != ("sp_HumanEvents")])[1]') = 1
-                    OR c.exist('(data[@name="object_name"]/value[empty(text())])[1]') = 1 )
             ORDER BY event_time
             OPTION (RECOMPILE);
 
@@ -1560,8 +1555,6 @@ IF @compile_events = 0
             INTO #compiles_0
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            WHERE ( c.exist('(data[@name="object_name"]/value[. != ("sp_HumanEvents")])[1]') = 1
-                    OR c.exist('(data[@name="object_name"]/value[empty(text())])[1]') = 1 )
             ORDER BY event_time
             OPTION (RECOMPILE);
 
@@ -1602,7 +1595,6 @@ IF @parameterization_events  = 1
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('@name[. = "query_parameterization_data"]') = 1
             AND   c.exist('(data[@name="is_recompiled"]/value[. = "false"])') = 1
-            AND   c.value('(action[@name="sql_text"]/value/text())[1]', 'NVARCHAR(20)') NOT LIKE N'%sp_HumanEvents%'
             ORDER BY event_time
             OPTION (RECOMPILE);
 
@@ -1674,9 +1666,6 @@ IF @compile_events = 1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 0
-            AND   ( c.exist('(data[@name="object_name"]/value/text()[. != ("sp_HumanEvents")])[1]') = 1
-                    OR c.exist('(data[@name="object_name"]/value[empty(text())])[1]') = 1 )
-            AND   c.exist('(data[@name="statement"]/value/text())[1]') = 1
             ORDER BY event_time
             OPTION (RECOMPILE);
 
@@ -1731,8 +1720,6 @@ IF @compile_events = 0
             INTO #recompiles_0
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            WHERE ( c.exist('(data[@name="object_name"]/value/text()[. != ("sp_HumanEvents")])[1]') = 1
-                    OR c.exist('(data[@name="object_name"]/value[empty(text())])[1]') = 1 )
             ORDER BY event_time
             OPTION (RECOMPILE);
 
@@ -2693,8 +2680,6 @@ OPTION (RECOMPILE);
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-AND   ( c.exist(''(data[@name="object_name"]/value[. != ("sp_HumanEvents")])[1]'') = 1
-          OR c.exist(''(data[@name="object_name"]/value[empty(text())])[1]'') = 1 )
 OPTION(RECOMPILE); '
                        WHEN @event_type_check LIKE N'%recomp%' /*Recompiles!*/
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
@@ -2724,8 +2709,6 @@ N'
 AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 0 '
              ELSE N''
         END + N'
-AND ( c.exist(''(data[@name="object_name"]/value[. != ("sp_HumanEvents")])[1]'') = 1
-        OR c.exist(''(data[@name="object_name"]/value[empty(text())])[1]'') = 1 )
 AND c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY event_time
 OPTION (RECOMPILE);'
@@ -2757,8 +2740,6 @@ AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 1 '
              ELSE N''
         END + N'
 AND   c.exist(''@name[.= "sql_statement_post_compile"]'') = 1
-AND   ( c.exist(''(data[@name="object_name"]/value[. != ("sp_HumanEvents")])[1]'') = 1
-          OR c.exist(''(data[@name="object_name"]/value[empty(text())])[1]'') = 1 )
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY event_time
 OPTION (RECOMPILE);' + NCHAR(10)
@@ -2791,7 +2772,6 @@ FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''@name[.= "query_parameterization_data"]'') = 1
 AND   c.exist(''(data[@name="is_recompiled"]/value[. = "false"])'') = 1
-AND   c.value(''(action[@name="sql_text"]/value)[1]'', ''NVARCHAR(20)'') NOT LIKE N''%sp_HumanEvents%''
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY event_time
 OPTION (RECOMPILE);'
