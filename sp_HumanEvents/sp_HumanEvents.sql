@@ -282,9 +282,10 @@ BEGIN TRY
 I mean really stop it with the unsupported versions
 */
 DECLARE @v DECIMAL(5,0);
-SELECT  @v =
-    SUBSTRING( CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion')), 1,
-               CHARINDEX('.', CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion'))) + 1 );
+SELECT  @v = SUBSTRING( CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion')), 
+                        1,
+                        CHARINDEX('.', CONVERT(NVARCHAR(128), 
+                            SERVERPROPERTY('ProductVersion'))) + 1 );
 IF @v < 11
     BEGIN
         RAISERROR(N'This darn thing doesn''t seem to work on versions older than 2012.', 16, 1) WITH NOWAIT;
@@ -367,6 +368,7 @@ WITH
             TRACK_CAUSALITY = OFF,
             STARTUP_STATE = OFF
         );' + NCHAR(10);
+
 --I guess we need to do this, too
 DECLARE @session_sql NVARCHAR(MAX) = N'
 CREATE EVENT SESSION ' + @session_name + N'
@@ -412,6 +414,7 @@ DECLARE @object_name_filter NVARCHAR(MAX) = N'';
 DECLARE @requested_memory_mb_filter NVARCHAR(MAX) = N'';
 
 RAISERROR(N'Checking for some event existence', 0, 1) WITH NOWAIT;
+
 --Determines if we use the new event or the old event(s) to track compiles
 DECLARE @compile_events BIT = 0;
 IF EXISTS
@@ -767,6 +770,7 @@ SET @math = @seconds_sample / 60;
     BEGIN
         DECLARE @minutes INT;
         DECLARE @seconds INT;
+        
         SET @minutes = @seconds_sample / 60;
         SET @seconds = @seconds_sample % 60;
         SET @waitfor = N'00:' 
@@ -849,6 +853,7 @@ BEGIN
             RAISERROR(N'@output_database_name can''t blank when outputting to tables or cleaning up', 16, 1) WITH NOWAIT;
             RETURN;
         END;
+    
     IF @output_schema_name = N''
         BEGIN
             RAISERROR(N'@output_schema_name can''t blank when outputting to tables or cleaning up', 16, 1) WITH NOWAIT;
@@ -2140,7 +2145,8 @@ WHILE 1 = 1
                                         ELSE N'?'
                                    END    
         FROM #human_events_worker AS hew
-        WHERE hew.event_type_short = N'';
+        WHERE hew.event_type_short = N''
+        OPTION(RECOMPILE);
 
         IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker OPTION (RECOMPILE); END;
 
@@ -2910,7 +2916,7 @@ BEGIN
            + ''; ''
            + NCHAR(10)
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
-    WHERE s.name LIKE ''' + '%HumanEvents%' + N''';';
+    WHERE s.name LIKE ''' + '%HumanEvents%' + N''' OPTION(RECOMPILE);';
     
     EXEC sys.sp_executesql @cleanup_tables, N'@i_cleanup_tables NVARCHAR(MAX) OUTPUT', @i_cleanup_tables = @drop_holder OUTPUT;  
     IF @debug = 1 
@@ -2935,7 +2941,7 @@ BEGIN
            + ''; ''
            + NCHAR(10)
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
-    WHERE v.name LIKE ''' + '%HumanEvents%' + N''';';
+    WHERE v.name LIKE ''' + '%HumanEvents%' + N''' OPTION(RECOMPILE);';
     
     EXEC sys.sp_executesql @cleanup_views, N'@i_cleanup_views NVARCHAR(MAX) OUTPUT', @i_cleanup_views = @drop_holder OUTPUT;  
     IF @debug = 1 
