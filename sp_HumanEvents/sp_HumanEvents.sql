@@ -2090,9 +2090,9 @@ WHILE 1 = 1
             output_table NVARCHAR(400) NOT NULL
         );
 
-		CREATE UNIQUE NONCLUSTERED INDEX no_dupes 
-		    ON #human_events_worker (output_table) 
-			    WITH (IGNORE_DUP_KEY = ON);
+        CREATE UNIQUE NONCLUSTERED INDEX no_dupes 
+            ON #human_events_worker (output_table) 
+                WITH (IGNORE_DUP_KEY = ON);
 
         /*Insert any sessions we find*/
         INSERT #human_events_worker
@@ -2126,16 +2126,16 @@ WHILE 1 = 1
 
         /*Update this column for when we see if we need to create views.*/
         UPDATE hew
-            SET event_type_short = CASE WHEN event_type LIKE N'%block%' 
+            SET hew.event_type_short = CASE WHEN hew.event_type LIKE N'%block%' 
                                         THEN N'[_]Blocking'
-                                        WHEN ( event_type LIKE N'%comp%' 
-                                                 AND event_type NOT LIKE N'%re%' )
+                                        WHEN ( hew.event_type LIKE N'%comp%' 
+                                                 AND hew.event_type NOT LIKE N'%re%' )
                                         THEN N'[_]Compiles'
-                                        WHEN event_type LIKE N'%quer%'
+                                        WHEN hew.event_type LIKE N'%quer%'
                                         THEN N'[_]Queries'
-                                        WHEN event_type LIKE N'%recomp%'
+                                        WHEN hew.event_type LIKE N'%recomp%'
                                         THEN N'[_]Recompiles'
-                                        WHEN event_type LIKE N'%wait%'
+                                        WHEN hew.event_type LIKE N'%wait%'
                                         THEN N'[_]Waits'
                                         ELSE N'?'
                                    END    
@@ -2242,7 +2242,7 @@ WHILE 1 = 1
             
             SET @min_id = 
             (
-                SELECT TOP (1) id
+                SELECT TOP (1) hew.id
                 FROM #human_events_worker AS hew
                 WHERE hew.id > @min_id
                 AND   hew.is_table_created = 0
@@ -2827,7 +2827,7 @@ OPTION (RECOMPILE);'
             
             SET @min_id = 
             (
-                SELECT TOP (1) id
+                SELECT TOP (1) hew.id
                 FROM #human_events_worker AS hew
                 WHERE hew.id > @min_id
                 AND   hew.is_table_created = 1
@@ -2910,14 +2910,14 @@ BEGIN
            + ''; ''
            + NCHAR(10)
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
-    WHERE s.name LIKE ''' + '%HumanEvents%' + N''';'
+    WHERE s.name LIKE ''' + '%HumanEvents%' + N''';';
     
     EXEC sys.sp_executesql @cleanup_tables, N'@i_cleanup_tables NVARCHAR(MAX) OUTPUT', @i_cleanup_tables = @drop_holder OUTPUT;  
     IF @debug = 1 
     BEGIN
         RAISERROR(@executer, 0, 1) WITH NOWAIT;
         RAISERROR(@drop_holder, 0, 1) WITH NOWAIT;
-    END
+    END;
     
     EXEC @executer @drop_holder;
   
@@ -2935,19 +2935,19 @@ BEGIN
            + ''; ''
            + NCHAR(10)
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
-    WHERE v.name LIKE ''' + '%HumanEvents%' + N''';'
+    WHERE v.name LIKE ''' + '%HumanEvents%' + N''';';
     
     EXEC sys.sp_executesql @cleanup_views, N'@i_cleanup_views NVARCHAR(MAX) OUTPUT', @i_cleanup_views = @drop_holder OUTPUT;  
     IF @debug = 1 
     BEGIN
         RAISERROR(@executer, 0, 1) WITH NOWAIT;
         RAISERROR(@drop_holder, 0, 1) WITH NOWAIT;
-    END
+    END;
 
     EXEC @executer @drop_holder;
 
     RETURN;
-END 
+END; 
 
 
 END TRY
