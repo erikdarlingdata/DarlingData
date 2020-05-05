@@ -1662,8 +1662,8 @@ IF @compile_events = 1
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
                    c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
-                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') AS compile_cpu_ms,
-                   c.value('(data[@name="duration"]/value)[1]', 'INT') AS compile_duration_ms
+                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') AS recompile_cpu_ms,
+                   c.value('(data[@name="duration"]/value)[1]', 'INT') AS recompile_duration_ms
             INTO #recompiles_1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
@@ -1678,26 +1678,26 @@ IF @compile_events = 1
             WITH cbq
               AS (
                  SELECT statement_text_checksum,
-                        COUNT_BIG(*) AS total_compiles,
-                        SUM(compile_cpu_ms) AS total_compile_cpu,
-                        AVG(compile_cpu_ms) AS avg_compile_cpu,
-                        MAX(compile_cpu_ms) AS max_compile_cpu,
-                        SUM(compile_duration_ms) AS total_compile_duration,
-                        AVG(compile_duration_ms) AS avg_compile_duration,
-                        MAX(compile_duration_ms) AS max_compile_duration
+                        COUNT_BIG(*) AS total_recompiles,
+                        SUM(recompile_cpu_ms) AS total_recompile_cpu,
+                        AVG(recompile_cpu_ms) AS avg_recompile_cpu,
+                        MAX(recompile_cpu_ms) AS max_recompile_cpu,
+                        SUM(recompile_duration_ms) AS total_recompile_duration,
+                        AVG(recompile_duration_ms) AS avg_recompile_duration,
+                        MAX(recompile_duration_ms) AS max_recompile_duration
                  FROM #recompiles_1
                  GROUP BY statement_text_checksum )
             SELECT N'total recompiles' AS pattern,
                    k.recompile_cause,
                    k.object_name,
                    k.statement_text,
-                   c.total_compiles,
-                   c.total_compile_cpu,
-                   c.avg_compile_cpu,
-                   c.max_compile_cpu,
-                   c.total_compile_duration,
-                   c.avg_compile_duration,
-                   c.max_compile_duration
+                   c.total_recompiles,
+                   c.total_recompile_cpu,
+                   c.avg_recompile_cpu,
+                   c.max_recompile_cpu,
+                   c.total_recompile_duration,
+                   c.avg_recompile_duration,
+                   c.max_recompile_duration
             FROM cbq AS c
             CROSS APPLY
                 (
@@ -1706,7 +1706,7 @@ IF @compile_events = 1
                     WHERE c.statement_text_checksum = k.statement_text_checksum
                     ORDER BY k.event_time DESC
                 ) AS k
-            ORDER BY c.total_compiles DESC
+            ORDER BY c.total_recompiles DESC
             OPTION(RECOMPILE);
 
     END;
