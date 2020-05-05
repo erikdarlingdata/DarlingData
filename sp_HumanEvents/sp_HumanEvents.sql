@@ -1804,16 +1804,12 @@ BEGIN;
                             wa.wait_type,
                             COUNT_BIG(*) AS total_waits,
                             wa.plan_handle,
-                            wa.query_plan_hash_signed,
-                            wa.query_hash_signed,
                             SUM(wa.duration_ms) AS sum_duration_ms,
                             SUM(wa.signal_duration_ms) AS sum_signal_duration_ms,
                             SUM(wa.duration_ms) / COUNT_BIG(*) AS avg_ms_per_wait
                      FROM #waits_agg AS wa
                      GROUP BY wa.database_name,
                               wa.wait_type, 
-                              wa.query_hash_signed, 
-                              wa.query_plan_hash_signed, 
                               wa.plan_handle
                      
                 )
