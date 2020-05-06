@@ -1371,6 +1371,91 @@ BEGIN;
          
          IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
 
+         WITH query_agg AS 
+             (
+                SELECT q.query_plan_hash_signed,
+                       q.query_hash_signed,
+                       q.plan_handle,
+                       /*totals*/
+                       ISNULL(q.cpu_ms, 0.) AS total_cpu_ms,
+                       ISNULL(q.logical_reads, 0.) AS total_logical_reads,
+                       ISNULL(q.physical_reads, 0.) AS total_physical_reads,
+                       ISNULL(q.duration_ms, 0.) AS total_duration_ms,
+                       ISNULL(q.writes, 0.) AS total_writes,
+                       ISNULL(q.spills_mb, 0.) AS total_spills_mb,
+                       NULL AS total_used_memory_mb,
+                       NULL AS total_granted_memory_mb,
+                       ISNULL(q.row_count, 0.) AS total_rows,
+                       /*averages*/
+                       ISNULL(q.cpu_ms, 0.) AS avg_cpu_ms,
+                       ISNULL(q.logical_reads, 0.) AS avg_logical_reads,
+                       ISNULL(q.physical_reads, 0.) AS avg_physical_reads,
+                       ISNULL(q.duration_ms, 0.) AS avg_duration_ms,
+                       ISNULL(q.writes, 0.) AS avg_writes,
+                       ISNULL(q.spills_mb, 0.) AS avg_spills_mb,
+                       NULL AS avg_used_memory_mb,
+                       NULL AS avg_granted_memory_mb,
+                       ISNULL(q.row_count, 0) AS avg_rows                    
+                FROM #queries AS q
+                WHERE q.event_type <> N'query_post_execution_showplan'
+                
+                UNION ALL 
+                
+                SELECT q.query_plan_hash_signed,
+                       q.query_hash_signed,
+                       q.plan_handle,
+                       /*totals*/
+                       NULL AS total_cpu_ms,
+                       NULL AS total_logical_reads,
+                       NULL AS total_physical_reads,
+                       NULL AS total_duration_ms,
+                       NULL AS total_writes,
+                       NULL AS total_spills_mb,                        
+                       ISNULL(used_memory_mb, 0.) AS total_used_memory_mb,
+                       ISNULL(granted_memory_mb, 0.) AS total_granted_memory_mb,
+                       NULL AS total_rows,
+                       /*averages*/
+                       NULL AS avg_cpu_ms,
+                       NULL AS avg_logical_reads,
+                       NULL AS avg_physical_reads,
+                       NULL AS avg_duration_ms,
+                       NULL AS avg_writes,
+                       NULL AS avg_spills_mb,
+                       ISNULL(q.used_memory_mb, 0.) AS avg_used_memory_mb,
+                       ISNULL(q.granted_memory_mb, 0.) AS avg_granted_memory_mb,
+                       NULL AS avg_rows                    
+                FROM #queries AS q
+                WHERE q.event_type = N'query_post_execution_showplan'        
+             )
+             SELECT qa.query_plan_hash_signed,
+                    qa.query_hash_signed,
+                    qa.plan_handle,
+                    SUM(qa.total_cpu_ms) AS total_cpu_ms,
+                    SUM(qa.total_logical_reads) AS total_logical_reads,
+                    SUM(qa.total_physical_reads) AS total_physical_reads,
+                    SUM(qa.total_duration_ms) AS total_duration_ms,
+                    SUM(qa.total_writes) AS total_writes,
+                    SUM(qa.total_spills_mb) AS total_spills_mb,
+                    SUM(qa.total_used_memory_mb) AS total_used_memory_mb,
+                    SUM(qa.total_granted_memory_mb) AS total_granted_memory_mb,
+                    SUM(qa.total_rows) AS total_rows,
+                    AVG(qa.avg_cpu_ms) AS avg_cpu_ms,
+                    AVG(qa.avg_logical_reads) AS avg_logical_reads,
+                    AVG(qa.avg_physical_reads) AS avg_physical_reads,
+                    AVG(qa.avg_duration_ms) AS avg_duration_ms,
+                    AVG(qa.avg_writes) AS avg_writes,
+                    AVG(qa.avg_spills_mb) AS avg_spills_mb,
+                    AVG(qa.avg_used_memory_mb) AS avg_used_memory_mb,
+                    AVG(qa.avg_granted_memory_mb) AS avg_granted_memory_mb,
+                    AVG(qa.avg_rows) AS avg_rows
+             INTO #query_agg
+             FROM query_agg AS qa
+             GROUP BY qa.query_plan_hash_signed,
+                      qa.query_hash_signed,
+                      qa.plan_handle;
+
+             IF @debug = 1 BEGIN SELECT N'#query_agg' AS table_name, * FROM #query_agg AS qa OPTION (RECOMPILE); END;
+
          WITH queries AS 
              (
                  SELECT COUNT_BIG(*) OVER ( PARTITION BY q.query_plan_hash_signed,
@@ -1390,36 +1475,31 @@ BEGIN;
                         q.plan_handle,
                         qq.executions,
                         /*totals*/
-                        SUM(ISNULL(q.cpu_ms, 0.)) / qq.executions AS total_cpu_ms,
-                        SUM(ISNULL(q.logical_reads, 0.)) / qq.executions AS total_logical_reads,
-                        SUM(ISNULL(q.physical_reads, 0.)) / qq.executions AS total_physical_reads,
-                        SUM(ISNULL(q.duration_ms, 0.)) / qq.executions AS total_duration_ms,
-                        SUM(ISNULL(q.writes, 0.)) / qq.executions AS total_writes,
-                        SUM(ISNULL(q.spills_mb, 0.)) / qq.executions AS total_spills_mb,
-                        SUM(ISNULL(q.used_memory_mb, 0.)) / qq.executions AS total_used_memory_mb,
-                        SUM(ISNULL(q.granted_memory_mb, 0.)) / qq.executions AS total_granted_memory_mb,
-                        SUM(ISNULL(q.row_count, 0.)) / qq.executions AS total_rows,
+                        q.total_cpu_ms,
+                        q.total_logical_reads,
+                        q.total_physical_reads,
+                        q.total_duration_ms,
+                        q.total_writes,
+                        q.total_spills_mb,
+                        q.total_used_memory_mb,
+                        q.total_granted_memory_mb,
+                        q.total_rows,
                         /*averages*/
-                        AVG(ISNULL(q.cpu_ms, 0.)) AS avg_cpu_ms,
-                        AVG(ISNULL(q.logical_reads, 0.)) AS avg_logical_reads,
-                        AVG(ISNULL(q.physical_reads, 0.)) AS avg_physical_reads,
-                        AVG(ISNULL(q.duration_ms, 0.)) AS avg_duration_ms,
-                        AVG(ISNULL(q.writes, 0.)) AS avg_writes,
-                        AVG(ISNULL(q.spills_mb, 0.)) AS avg_spills_mb,
-                        AVG(ISNULL(q.used_memory_mb, 0.)) AS avg_used_memory_mb,
-                        AVG(ISNULL(q.granted_memory_mb, 0.)) AS avg_granted_memory_mb,
-                        AVG(ISNULL(q.row_count, 0)) AS avg_rows                    
+                        q.avg_cpu_ms,
+                        q.avg_logical_reads,
+                        q.avg_physical_reads,
+                        q.avg_duration_ms,
+                        q.avg_writes,
+                        q.avg_spills_mb,
+                        q.avg_used_memory_mb,
+                        q.avg_granted_memory_mb,
+                        q.avg_rows AS avg_rows                    
                  INTO #totals                 
                  FROM queries AS qq
-                 JOIN #queries AS q
+                 JOIN #query_agg AS q
                      ON    qq.query_plan_hash_signed = q.query_plan_hash_signed
                      AND   qq.query_hash_signed = q.query_hash_signed
-                     AND   qq.plan_handle = q.plan_handle
-                 WHERE q.event_type <> N'query_post_execution_showplan'
-                 GROUP BY q.query_plan_hash_signed,
-                          q.query_hash_signed,
-                          q.plan_handle,
-                          qq.executions
+                     AND   qq.plan_handle = q.plan_handle                 
                  OPTION (RECOMPILE);
 
          
