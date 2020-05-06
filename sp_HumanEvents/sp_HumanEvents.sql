@@ -2157,11 +2157,9 @@ RETURN;
 
 /*This section handles outputting data to tables*/
 output_results:
+RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
 WHILE 1 = 1
-
     BEGIN
-    
-    RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
     
     /*If we don't find any sessions to poll from, wait 5 seconds and restart loop*/
     IF NOT EXISTS
@@ -2320,7 +2318,7 @@ WHILE 1 = 1
         
             IF OBJECT_ID(@object_name_check) IS NULL
             BEGIN
-            RAISERROR(N'Generating create table statement', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Generating create table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;
                 SELECT @table_sql =  
                   CASE WHEN @event_type_check LIKE N'%wait%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
@@ -2376,7 +2374,7 @@ WHILE 1 = 1
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
-            RAISERROR(N'Setting next id', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
             
             SET @min_id = 
             (
@@ -2468,7 +2466,7 @@ WHILE 1 = 1
             SELECT N'HumanEvents_Recompiles_Legacy', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F005200650063006F006D00700069006C00650073005F004C00650067006100630079000D000A00410053000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A0020002000200020002000200020006500760065006E0074005F00740069006D0065002C000D000A0020002000200020002000200020006500760065006E0074005F0074007900700065002C000D000A002000200020002000200020002000640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020002000200020006F0062006A006500630074005F006E0061006D0065002C000D000A0020002000200020002000200020007200650063006F006D00700069006C0065005F00630061007500730065002C000D000A002000200020002000200020002000730074006100740065006D0065006E0074005F0074006500780074000D000A00460052004F004D0020005B007200650070006C006100630065005F006D0065005D000D000A004F00520044004500520020004200590020006500760065006E0074005F00740069006D0065003B00
             WHERE @compile_events = 0;
 
-            RAISERROR(N'Updating #view_check with output database and schema', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Updating #view_check with output database (%s) and schema (%s)', 0, 1, @output_database_name, @output_schema_name) WITH NOWAIT;
             UPDATE #view_check SET output_database = @output_database_name, output_schema = @output_schema_name OPTION(RECOMPILE);
             
             RAISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT;
@@ -2498,7 +2496,8 @@ WHILE 1 = 1
         IF (@view_tracker IS NULL
                 OR @view_tracker = 0 )
         BEGIN 
-        
+            RAISERROR(N'Starting view creation loop', 0, 1) WITH NOWAIT;
+
             DECLARE @spe NVARCHAR(MAX) = N'.sys.sp_executesql ';
             DECLARE @view_sql NVARCHAR(MAX) = N'';
             DECLARE @view_database sysname = N'';
@@ -2518,9 +2517,7 @@ WHILE 1 = 1
             
                 WHILE @min_id <= @max_id
                 BEGIN
-                    
-                    RAISERROR(N'Starting view creation loop', 0, 1) WITH NOWAIT;
-            
+                                
                     SELECT @event_type_check  = LOWER(vc.view_name),
                            @object_name_check = QUOTENAME(vc.output_database)
                                               + N'.'
@@ -2564,11 +2561,12 @@ WHILE 1 = 1
                         PRINT SUBSTRING(@view_sql, 36000, 40000);           
                     END;
                     
+                    RAISERROR(N'creating view %s', 0, 1, @event_type_check) WITH NOWAIT;
                     EXEC @spe @view_sql;
             
                     IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
             
-                    RAISERROR(N'Setting next id', 0, 1) WITH NOWAIT;
+                    RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
                     
                     SET @min_id = 
                     (
@@ -2628,7 +2626,7 @@ WHILE 1 = 1
         
             IF OBJECT_ID(@object_name_check) IS NOT NULL
             BEGIN
-            RAISERROR(N'Generating insert table statement', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Generating insert table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;
                 SELECT @table_sql =  
                   CASE WHEN @event_type_check LIKE N'%wait%' /*Wait stats!*/
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
@@ -2966,7 +2964,7 @@ OPTION (RECOMPILE);'
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
-            RAISERROR(N'Setting next id', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
             
             SET @min_id = 
             (
