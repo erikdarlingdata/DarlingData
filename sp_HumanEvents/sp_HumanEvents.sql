@@ -1869,7 +1869,6 @@ END;
 
 IF LOWER(@event_type) LIKE N'%wait%'
 BEGIN;
-
          WITH waits AS 
              (
                  SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
@@ -1882,10 +1881,13 @@ BEGIN;
                         CONVERT(BINARY(8), c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'BIGINT')) AS query_plan_hash_signed,
                         CONVERT(BINARY(8), c.value('(action[@name="query_hash_signed"]/value)[1]', 'BIGINT')) AS query_hash_signed,
                         c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
-                 FROM #human_events_xml AS xet
-                 OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-                 WHERE ( c.exist('(data[@name="duration"]/value/text()[. > 0])') = 1 
-                             OR @gimme_danger = 1 )
+                 FROM (
+                           SELECT TOP (2147483647) xet.human_events_xml
+                           FROM #human_events_xml AS xet
+                           WHERE ( xet.human_events_xml.exist('(//event/data[@name="duration"]/value[. > 0])') = 1 
+                                       OR @gimme_danger = 1 )
+                      )AS c
+                 OUTER APPLY c.human_events_xml.nodes('//event') AS oa(c)
              )
                  SELECT *
                  INTO #waits_agg
