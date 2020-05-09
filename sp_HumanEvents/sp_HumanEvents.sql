@@ -183,6 +183,7 @@ BEGIN
     WHERE o.name = N'sp_HumanEvents'
     OPTION(RECOMPILE);
 
+
     /*Example calls*/
     SELECT N'EXAMPLE CALLS' AS example_calls UNION ALL    
     SELECT N'note that not all filters are compatible with all sessions' UNION ALL
@@ -225,6 +226,7 @@ BEGIN
     SELECT N'EXEC sp_HumanEvents @debug = 1, @output_database_name = N''whatever'', @output_schema_name = N''dbo'';' UNION ALL
     SELECT REPLICATE(N'-', 100);
 
+
     /*Views*/
     SELECT N'views that get created when you log to tables' AS views_and_stuff UNION ALL
     SELECT N'these will get created in the same database that your output tables get created in for simplicity' UNION ALL
@@ -249,6 +251,7 @@ BEGIN
     SELECT N'HumanEvents_RecompilesByDuration: recompiles by long duration' UNION ALL
     SELECT N'HumanEvents_Recompiles_Legacy: recompiles on older versions that don''t support new events' UNION ALL
     SELECT REPLICATE(N'-', 100);
+
 
     /*License to F5*/
     SELECT N'i am MIT licensed, so like, do whatever' AS mit_license_yo UNION ALL
@@ -282,9 +285,10 @@ BEGIN TRY
 I mean really stop it with the unsupported versions
 */
 DECLARE @v DECIMAL(5,0);
-SELECT  @v =
-    SUBSTRING( CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion')), 1,
-               CHARINDEX('.', CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion'))) + 1 );
+SELECT  @v = SUBSTRING( CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion')), 
+                        1,
+                        CHARINDEX('.', CONVERT(NVARCHAR(128), 
+                            SERVERPROPERTY('ProductVersion'))) + 1 );
 IF @v < 11
     BEGIN
         RAISERROR(N'This darn thing doesn''t seem to work on versions older than 2012.', 16, 1) WITH NOWAIT;
@@ -343,6 +347,7 @@ END;
 RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT;
 --How long we let the session run
 DECLARE @waitfor NVARCHAR(20) = N'';
+
 --Give sessions super unique names in case more than one person uses it at a time
 DECLARE @session_name NVARCHAR(512) = N'';
 IF @keep_alive = 0
@@ -353,6 +358,7 @@ IF @keep_alive = 1
 BEGIN
     SET @session_name += N'keeper_HumanEvents_'  + @event_type + CASE WHEN @custom_name <> N'' THEN N'_' + @custom_name ELSE N'' END;
 END;
+
 --Universal, yo
 DECLARE @session_with NVARCHAR(MAX) = N'    
 ADD TARGET package0.ring_buffer
@@ -367,10 +373,12 @@ WITH
             TRACK_CAUSALITY = OFF,
             STARTUP_STATE = OFF
         );' + NCHAR(10);
+
 --I guess we need to do this, too
 DECLARE @session_sql NVARCHAR(MAX) = N'
 CREATE EVENT SESSION ' + @session_name + N'
     ON SERVER ';
+
 
 -- STOP. DROP. SHUT'EM DOWN OPEN UP SHOP.
 DECLARE @start_sql NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON SERVER STATE = START;' + NCHAR(10);
@@ -394,6 +402,7 @@ DECLARE @session_filter_statement_completed NVARCHAR(MAX) = NCHAR(10) + N'      
 DECLARE @session_filter_blocking NVARCHAR(MAX) = NCHAR(10) + N'         sqlserver.is_system = 1 ' + NCHAR(10);
 /*for parameterization because blah blah*/
 DECLARE @session_filter_parameterization NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+
 
 /*
 Create one filter per possible input.
@@ -423,6 +432,8 @@ IF EXISTS
 BEGIN 
     SET @compile_events = 1; 
 END;
+
+
 --Or if we use this event at all!
 DECLARE @parameterization_events BIT = 0;
 IF EXISTS
@@ -460,11 +471,10 @@ DECLARE @fully_formed_babby NVARCHAR(1000) = QUOTENAME(@database_name) + N'.' +
                                              QUOTENAME(@object_schema) + N'.' + 
                                              QUOTENAME(@object_name);
 
-RAISERROR(N'Sanity checking event types', 0, 1) WITH NOWAIT;
 /*
 Some sanity checking
 */
-
+RAISERROR(N'Sanity checking event types', 0, 1) WITH NOWAIT;
 --You can only do this right now.
 IF @event_type NOT IN 
         ( N'waits',
@@ -491,6 +501,7 @@ BEGIN
     RETURN;
 END;
 
+
 RAISERROR(N'Checking query duration filter', 0, 1) WITH NOWAIT;
 --Set these durations to non-crazy numbers unless someone asks for @gimme_danger = 1
 --ignore compile and recompile because this is a filter on query compilation time 🙄
@@ -504,6 +515,7 @@ BEGIN
     SET @query_duration_ms = 500;
 END;
 
+
 RAISERROR(N'Checking wait duration filter', 0, 1) WITH NOWAIT;
 IF ( LOWER(@event_type) LIKE N'%wait%' 
      AND @gimme_danger = 0 )
@@ -514,6 +526,7 @@ BEGIN
     RAISERROR(N'Setting @wait_duration_ms to 10', 0, 1) WITH NOWAIT;
     SET @wait_duration_ms = 10;
 END;
+
 
 RAISERROR(N'Checking block duration filter', 0, 1) WITH NOWAIT;
 IF ( LOWER(@event_type) LIKE N'%lock%' 
@@ -526,6 +539,7 @@ BEGIN
     SET @blocking_duration_ms = 500;
 END;
 
+
 RAISERROR(N'Checking query sort order', 0, 1) WITH NOWAIT;
 IF @query_sort_order NOT IN ( N'cpu', N'reads', N'writes', N'duration', N'memory', N'spills',
                               N'avg cpu', N'avg reads', N'avg writes', N'avg duration', N'avg memory', N'avg spills' )
@@ -533,6 +547,7 @@ BEGIN
    RAISERROR(N'That sort order (%s) you chose is so out of this world that i''m ignoring it', 0, 1, @query_sort_order) WITH NOWAIT;
    SET @query_sort_order = N'cpu';
 END;
+
 
 RAISERROR(N'Parsing any supplied waits', 0, 1) WITH NOWAIT;
 --This will hold the CSV list of wait types someone passes in
@@ -552,6 +567,7 @@ FROM
 ) AS waits
 WHERE @wait_type <> N'all'
 OPTION(RECOMPILE);
+
 
 /*
 If someone is passing in specific waits, let's make sure that
@@ -665,23 +681,27 @@ BEGIN
     RETURN;
 END;
 
+
 /*
 This is probably important, huh?
 */
 RAISERROR(N'Are we trying to filter for a blocking session?', 0, 1) WITH NOWAIT;
+--blocking events need a database name to resolve objects
 IF ( LOWER(@event_type) LIKE N'%lock%' AND DB_ID(@database_name) IS NULL AND @object_name <> N'' )
 BEGIN
     RAISERROR(N'The blocking event can only filter on an object_id, and we need a valid @database_name to resolve it correctly.', 16, 1) WITH NOWAIT;
     RETURN;
 END;
 
+--but could we resolve the object name?
 IF ( LOWER(@event_type) LIKE N'%lock%' AND @object_name <> N'' AND OBJECT_ID(@fully_formed_babby) IS NULL )
 BEGIN
     RAISERROR(N'We couldn''t find the object you''re trying to find: %s', 16, 1, @fully_formed_babby) WITH NOWAIT;
     RETURN;
 END;
 
-RAISERROR(N'Validating if the Blocked Process Report is on if the session is for blocking', 0, 1) WITH NOWAIT;
+--no blocked process report, no love
+RAISERROR(N'Validating if the Blocked Process Report is on, if the session is for blocking', 0, 1) WITH NOWAIT;
 IF @event_type LIKE N'%lock%'
 AND  EXISTS
 (
@@ -703,6 +723,7 @@ BEGIN
     RETURN;
 END;
 
+--validatabase name
 RAISERROR(N'If there''s a database filter, is the name valid?', 0, 1) WITH NOWAIT;
 IF @database_name <> N''
 BEGIN
@@ -713,6 +734,8 @@ BEGIN
     END;
 END;
 
+
+--session id has be be "sampled" or a number.
 RAISERROR(N'If there''s a session id filter, is it valid?', 0, 1) WITH NOWAIT;
 IF LOWER(@session_id) NOT LIKE N'%sample%' AND @session_id LIKE '%[^0-9]%' AND LOWER(@session_id) <> N''
 BEGIN
@@ -720,6 +743,8 @@ BEGIN
    RETURN;
 END;
 
+
+--some numbers won't be effective as sample divisors
 RAISERROR(N'No dividing by zero', 0, 1) WITH NOWAIT;
 IF @sample_divisor < 2 AND LOWER(@session_id) LIKE N'%sample%'
 BEGIN
@@ -728,6 +753,8 @@ BEGIN
     RETURN;
 END;
 
+
+--i'll probably regret this check someday.
 RAISERROR(N'If there''s a user name filter, does the name exist?', 0, 1) WITH NOWAIT;
 IF @username NOT IN 
 (
@@ -767,6 +794,7 @@ SET @math = @seconds_sample / 60;
     BEGIN
         DECLARE @minutes INT;
         DECLARE @seconds INT;
+        
         SET @minutes = @seconds_sample / 60;
         SET @seconds = @seconds_sample % 60;
         SET @waitfor = N'00:' 
@@ -793,6 +821,7 @@ END;
 /*
 CH-CH-CH-CHECK-IT-OUT
 */
+--check for existing session with the same name
 RAISERROR(N'Make sure the session doesn''t exist already', 0, 1) WITH NOWAIT;
 IF EXISTS
 (
@@ -807,6 +836,8 @@ BEGIN
     EXEC sys.sp_executesql @drop_sql;
 END;
 
+
+--check that the output database exists
 RAISERROR(N'Does the output database exist?', 0, 1) WITH NOWAIT;
 IF @output_database_name <> N''
 BEGIN
@@ -817,6 +848,8 @@ BEGIN
     END;
 END;
 
+
+--check that the output schema exists
 RAISERROR(N'Does the output schema exist?', 0, 1) WITH NOWAIT;
 IF @output_schema_name NOT IN (N'dbo', N'')
 BEGIN
@@ -838,6 +871,8 @@ BEGIN
     END;
 END;
  
+
+--we need an output schema and database
 RAISERROR(N'Is output database OR schema filled in?', 0, 1) WITH NOWAIT;
 IF LEN(@output_database_name + @output_schema_name) > 0
  AND @output_schema_name <> N'dbo'
@@ -849,6 +884,7 @@ BEGIN
             RAISERROR(N'@output_database_name can''t blank when outputting to tables or cleaning up', 16, 1) WITH NOWAIT;
             RETURN;
         END;
+    
     IF @output_schema_name = N''
         BEGIN
             RAISERROR(N'@output_schema_name can''t blank when outputting to tables or cleaning up', 16, 1) WITH NOWAIT;
@@ -856,6 +892,8 @@ BEGIN
         END;
 END;
 
+
+--no goofballing in custom names
 RAISERROR(N'Is custom name something stupid?', 0, 1) WITH NOWAIT;
 IF ( PATINDEX(N'%[^a-zA-Z0-9]%', @custom_name) > 0 
      OR @custom_name LIKE N'[0-9]%' )
@@ -865,12 +903,15 @@ BEGIN
     RETURN;
 END;
 
+
+--I'M LOOKING AT YOU
 RAISERROR(N'Someone is going to try it.', 0, 1) WITH NOWAIT;
 IF @delete_retention_days < 0
 BEGIN
     SET @delete_retention_days *= -1;
     RAISERROR(N'Stay positive', 0, 1) WITH NOWAIT;
 END;
+
 
 /*
 If we're writing to a table, we don't want to do anything else
@@ -890,6 +931,8 @@ BEGIN
     RETURN;
 END;
 
+
+--just finishing up the second coat now
 RAISERROR(N'Do we skip to the GOTO and cleanup?', 0, 1) WITH NOWAIT;
 IF ( @output_database_name <> N''
      AND @output_schema_name <> N''
@@ -901,13 +944,14 @@ BEGIN
     RETURN;
 END;
 
+
 /*
 Start setting up individual filters
 */
 RAISERROR(N'Setting up individual filters', 0, 1) WITH NOWAIT;
 IF @query_duration_ms > 0
 BEGIN
-    IF LOWER(@event_type) NOT LIKE N'%comp%'
+    IF LOWER(@event_type) NOT LIKE N'%comp%' --compile and recompile durations are tiny
     BEGIN
         SET @query_duration_filter += N'     AND duration >= ' + CONVERT(NVARCHAR(20), (@query_duration_ms * 1000)) + NCHAR(10);
     END;
@@ -981,6 +1025,7 @@ BEGIN
     DECLARE @requested_memory_kb NVARCHAR(11) = @requested_memory_mb / 1024.;
     SET @requested_memory_mb_filter += N'     AND requested_memory_kb >= ' + @requested_memory_kb + NCHAR(10);
 END;
+
 
 --At this point we'll either put my list of interesting waits in a temp table, 
 --or a list of user defined waits
@@ -1088,9 +1133,11 @@ BEGIN
                                      , 1, 13, N'') ), 0, 8000) + N')';
 END; 
 
+/*
+End individual filters
+*/
 
 --This section sets event-dependent filters
-
 RAISERROR(N'Combining session filters', 0, 1) WITH NOWAIT;
 /*For full filter-able sessions*/
 SET @session_filter += ( ISNULL(@query_duration_filter, N'') +
@@ -1156,6 +1203,7 @@ SET @session_filter_parameterization += ( ISNULL(@client_app_name_filter, N'') +
                                           ISNULL(@database_name_filter, N'') +
                                           ISNULL(@session_id_filter, N'') +
                                           ISNULL(@username_filter, N'') );
+
 
 --This section sets up the event session definition
 RAISERROR(N'Setting up the event session', 0, 1) WITH NOWAIT;
@@ -1238,7 +1286,8 @@ SET @session_sql +=
               END 
         ELSE N'i have no idea what i''m doing.'
     END;
-               
+--End event session definition  
+  
 
 --This creates the event session
 SET @session_sql += @session_with;
@@ -1249,6 +1298,7 @@ EXEC (@session_sql);
 IF @debug = 1 BEGIN RAISERROR(@start_sql, 0, 1) WITH NOWAIT; END;
 EXEC (@start_sql);
 
+--bail out here if we want to keep the session
 IF @keep_alive = 1
 BEGIN
     RAISERROR(N'Session %s created, exiting.', 0, 1, @session_name) WITH NOWAIT;
@@ -1261,6 +1311,7 @@ END;
 
 --NOW WE WAIT, MR. BOND
 WAITFOR DELAY @waitfor;
+
 
 --Dump whatever we got into a temp table
 SELECT CONVERT(XML, human_events_xml.human_events_xml) AS human_events_xml
@@ -1278,10 +1329,10 @@ BEGIN
     SELECT N'#human_events_xml' AS table_name, * FROM #human_events_xml AS hex;
 END;
 
+
 /*
 This is where magic will happen
 */
-
 IF LOWER(@event_type) LIKE N'%quer%'
 BEGIN;
          WITH queries AS 
@@ -1312,6 +1363,7 @@ BEGIN;
                    c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
+            WHERE c.exist('(action[@name="query_hash_signed"]/value[. != 0])') = 1
          )
          SELECT *
          INTO #queries
@@ -1319,6 +1371,91 @@ BEGIN;
          OPTION (RECOMPILE);
          
          IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
+
+         WITH query_agg AS 
+             (
+                SELECT q.query_plan_hash_signed,
+                       q.query_hash_signed,
+                       q.plan_handle,
+                       /*totals*/
+                       ISNULL(q.cpu_ms, 0.) AS total_cpu_ms,
+                       ISNULL(q.logical_reads, 0.) AS total_logical_reads,
+                       ISNULL(q.physical_reads, 0.) AS total_physical_reads,
+                       ISNULL(q.duration_ms, 0.) AS total_duration_ms,
+                       ISNULL(q.writes, 0.) AS total_writes,
+                       ISNULL(q.spills_mb, 0.) AS total_spills_mb,
+                       NULL AS total_used_memory_mb,
+                       NULL AS total_granted_memory_mb,
+                       ISNULL(q.row_count, 0.) AS total_rows,
+                       /*averages*/
+                       ISNULL(q.cpu_ms, 0.) AS avg_cpu_ms,
+                       ISNULL(q.logical_reads, 0.) AS avg_logical_reads,
+                       ISNULL(q.physical_reads, 0.) AS avg_physical_reads,
+                       ISNULL(q.duration_ms, 0.) AS avg_duration_ms,
+                       ISNULL(q.writes, 0.) AS avg_writes,
+                       ISNULL(q.spills_mb, 0.) AS avg_spills_mb,
+                       NULL AS avg_used_memory_mb,
+                       NULL AS avg_granted_memory_mb,
+                       ISNULL(q.row_count, 0) AS avg_rows                    
+                FROM #queries AS q
+                WHERE q.event_type <> N'query_post_execution_showplan'
+                
+                UNION ALL 
+                
+                SELECT q.query_plan_hash_signed,
+                       q.query_hash_signed,
+                       q.plan_handle,
+                       /*totals*/
+                       NULL AS total_cpu_ms,
+                       NULL AS total_logical_reads,
+                       NULL AS total_physical_reads,
+                       NULL AS total_duration_ms,
+                       NULL AS total_writes,
+                       NULL AS total_spills_mb,                        
+                       ISNULL(used_memory_mb, 0.) AS total_used_memory_mb,
+                       ISNULL(granted_memory_mb, 0.) AS total_granted_memory_mb,
+                       NULL AS total_rows,
+                       /*averages*/
+                       NULL AS avg_cpu_ms,
+                       NULL AS avg_logical_reads,
+                       NULL AS avg_physical_reads,
+                       NULL AS avg_duration_ms,
+                       NULL AS avg_writes,
+                       NULL AS avg_spills_mb,
+                       ISNULL(q.used_memory_mb, 0.) AS avg_used_memory_mb,
+                       ISNULL(q.granted_memory_mb, 0.) AS avg_granted_memory_mb,
+                       NULL AS avg_rows                    
+                FROM #queries AS q
+                WHERE q.event_type = N'query_post_execution_showplan'        
+             )
+             SELECT qa.query_plan_hash_signed,
+                    qa.query_hash_signed,
+                    qa.plan_handle,
+                    SUM(qa.total_cpu_ms) AS total_cpu_ms,
+                    SUM(qa.total_logical_reads) AS total_logical_reads_mb,
+                    SUM(qa.total_physical_reads) AS total_physical_reads_mb,
+                    SUM(qa.total_duration_ms) AS total_duration_ms,
+                    SUM(qa.total_writes) AS total_writes_mb,
+                    SUM(qa.total_spills_mb) AS total_spills_mb,
+                    SUM(qa.total_used_memory_mb) AS total_used_memory_mb,
+                    SUM(qa.total_granted_memory_mb) AS total_granted_memory_mb,
+                    SUM(qa.total_rows) AS total_rows,
+                    AVG(qa.avg_cpu_ms) AS avg_cpu_ms,
+                    AVG(qa.avg_logical_reads) AS avg_logical_reads_mb,
+                    AVG(qa.avg_physical_reads) AS avg_physical_reads_mb,
+                    AVG(qa.avg_duration_ms) AS avg_duration_ms,
+                    AVG(qa.avg_writes) AS avg_writes_mb,
+                    AVG(qa.avg_spills_mb) AS avg_spills_mb,
+                    AVG(qa.avg_used_memory_mb) AS avg_used_memory_mb,
+                    AVG(qa.avg_granted_memory_mb) AS avg_granted_memory_mb,
+                    AVG(qa.avg_rows) AS avg_rows
+             INTO #query_agg
+             FROM query_agg AS qa
+             GROUP BY qa.query_plan_hash_signed,
+                      qa.query_hash_signed,
+                      qa.plan_handle;
+
+             IF @debug = 1 BEGIN SELECT N'#query_agg' AS table_name, * FROM #query_agg AS qa OPTION (RECOMPILE); END;
 
          WITH queries AS 
              (
@@ -1339,36 +1476,31 @@ BEGIN;
                         q.plan_handle,
                         qq.executions,
                         /*totals*/
-                        SUM(ISNULL(q.cpu_ms, 0.)) / qq.executions AS total_cpu_ms,
-                        SUM(ISNULL(q.logical_reads, 0.)) / qq.executions AS total_logical_reads,
-                        SUM(ISNULL(q.physical_reads, 0.)) / qq.executions AS total_physical_reads,
-                        SUM(ISNULL(q.duration_ms, 0.)) / qq.executions AS total_duration_ms,
-                        SUM(ISNULL(q.writes, 0.)) / qq.executions AS total_writes,
-                        SUM(ISNULL(q.spills_mb, 0.)) / qq.executions AS total_spills_mb,
-                        SUM(ISNULL(q.used_memory_mb, 0.)) / qq.executions AS total_used_memory_mb,
-                        SUM(ISNULL(q.granted_memory_mb, 0.)) / qq.executions AS total_granted_memory_mb,
-                        SUM(ISNULL(q.row_count, 0.)) / qq.executions AS total_rows,
+                        q.total_cpu_ms,
+                        q.total_logical_reads_mb,
+                        q.total_physical_reads_mb,
+                        q.total_duration_ms,
+                        q.total_writes_mb,
+                        q.total_spills_mb,
+                        q.total_used_memory_mb,
+                        q.total_granted_memory_mb,
+                        q.total_rows,
                         /*averages*/
-                        AVG(ISNULL(q.cpu_ms, 0.)) AS avg_cpu_ms,
-                        AVG(ISNULL(q.logical_reads, 0.)) AS avg_logical_reads,
-                        AVG(ISNULL(q.physical_reads, 0.)) AS avg_physical_reads,
-                        AVG(ISNULL(q.duration_ms, 0.)) AS avg_duration_ms,
-                        AVG(ISNULL(q.writes, 0.)) AS avg_writes,
-                        AVG(ISNULL(q.spills_mb, 0.)) AS avg_spills_mb,
-                        AVG(ISNULL(q.used_memory_mb, 0.)) AS avg_used_memory_mb,
-                        AVG(ISNULL(q.granted_memory_mb, 0.)) AS avg_granted_memory_mb,
-                        AVG(ISNULL(q.row_count, 0)) AS avg_rows                    
+                        q.avg_cpu_ms,
+                        q.avg_logical_reads_mb,
+                        q.avg_physical_reads_mb,
+                        q.avg_duration_ms,
+                        q.avg_writes_mb,
+                        q.avg_spills_mb,
+                        q.avg_used_memory_mb,
+                        q.avg_granted_memory_mb,
+                        q.avg_rows AS avg_rows                    
                  INTO #totals                 
                  FROM queries AS qq
-                 JOIN #queries AS q
+                 JOIN #query_agg AS q
                      ON    qq.query_plan_hash_signed = q.query_plan_hash_signed
                      AND   qq.query_hash_signed = q.query_hash_signed
-                     AND   qq.plan_handle = q.plan_handle
-                 WHERE q.event_type <> N'query_post_execution_showplan'
-                 GROUP BY q.query_plan_hash_signed,
-                          q.query_hash_signed,
-                          q.plan_handle,
-                          qq.executions
+                     AND   qq.plan_handle = q.plan_handle                 
                  OPTION (RECOMPILE);
 
          
@@ -1385,14 +1517,14 @@ BEGIN;
                         t.executions,
                         t.total_cpu_ms,
                         t.avg_cpu_ms,
-                        t.total_logical_reads,
-                        t.avg_logical_reads,
-                        t.total_physical_reads,
-                        t.avg_physical_reads,
+                        t.total_logical_reads_mb,
+                        t.avg_logical_reads_mb,
+                        t.total_physical_reads_mb,
+                        t.avg_physical_reads_mb,
                         t.total_duration_ms,
                         t.avg_duration_ms,
-                        t.total_writes,
-                        t.avg_writes,
+                        t.total_writes_mb,
+                        t.avg_writes_mb,
                         t.total_spills_mb,
                         t.avg_spills_mb,
                         t.total_used_memory_mb,
@@ -1437,14 +1569,14 @@ BEGIN;
                         q.executions,
                         q.total_cpu_ms,
                         q.avg_cpu_ms,
-                        q.total_logical_reads,
-                        q.avg_logical_reads,
-                        q.total_physical_reads,
-                        q.avg_physical_reads,
+                        q.total_logical_reads_mb,
+                        q.avg_logical_reads_mb,
+                        q.total_physical_reads_mb,
+                        q.avg_physical_reads_mb,
                         q.total_duration_ms,
                         q.avg_duration_ms,
-                        q.total_writes,
-                        q.avg_writes,
+                        q.total_writes_mb,
+                        q.avg_writes_mb,
                         q.total_spills_mb,
                         q.avg_spills_mb,
                         q.total_used_memory_mb,
@@ -1465,14 +1597,14 @@ BEGIN;
                  WHERE q.n = 1
                  ORDER BY CASE @query_sort_order
                                WHEN N'cpu' THEN q.total_cpu_ms
-                               WHEN N'reads' THEN q.total_logical_reads + q.total_physical_reads
-                               WHEN N'writes' THEN q.total_writes
+                               WHEN N'reads' THEN q.total_logical_reads_mb + q.total_physical_reads_mb
+                               WHEN N'writes' THEN q.total_writes_mb
                                WHEN N'duration' THEN q.total_duration_ms
                                WHEN N'spills' THEN q.total_spills_mb
                                WHEN N'memory' THEN q.total_granted_memory_mb
                                WHEN N'avg cpu' THEN q.avg_cpu_ms
-                               WHEN N'avg reads' THEN q.avg_logical_reads + q.avg_physical_reads
-                               WHEN N'avg writes' THEN q.avg_writes
+                               WHEN N'avg reads' THEN q.avg_logical_reads_mb + q.avg_physical_reads_mb
+                               WHEN N'avg writes' THEN q.avg_writes_mb
                                WHEN N'avg duration' THEN q.avg_duration_ms
                                WHEN N'avg spills' THEN q.avg_spills_mb
                                WHEN N'avg memory' THEN q.avg_granted_memory_mb
@@ -1657,8 +1789,8 @@ IF @compile_events = 1
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
                    c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
-                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') AS compile_cpu_ms,
-                   c.value('(data[@name="duration"]/value)[1]', 'INT') AS compile_duration_ms
+                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') AS recompile_cpu_ms,
+                   c.value('(data[@name="duration"]/value)[1]', 'INT') AS recompile_duration_ms
             INTO #recompiles_1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
@@ -1673,26 +1805,26 @@ IF @compile_events = 1
             WITH cbq
               AS (
                  SELECT statement_text_checksum,
-                        COUNT_BIG(*) AS total_compiles,
-                        SUM(compile_cpu_ms) AS total_compile_cpu,
-                        AVG(compile_cpu_ms) AS avg_compile_cpu,
-                        MAX(compile_cpu_ms) AS max_compile_cpu,
-                        SUM(compile_duration_ms) AS total_compile_duration,
-                        AVG(compile_duration_ms) AS avg_compile_duration,
-                        MAX(compile_duration_ms) AS max_compile_duration
+                        COUNT_BIG(*) AS total_recompiles,
+                        SUM(recompile_cpu_ms) AS total_recompile_cpu,
+                        AVG(recompile_cpu_ms) AS avg_recompile_cpu,
+                        MAX(recompile_cpu_ms) AS max_recompile_cpu,
+                        SUM(recompile_duration_ms) AS total_recompile_duration,
+                        AVG(recompile_duration_ms) AS avg_recompile_duration,
+                        MAX(recompile_duration_ms) AS max_recompile_duration
                  FROM #recompiles_1
                  GROUP BY statement_text_checksum )
             SELECT N'total recompiles' AS pattern,
                    k.recompile_cause,
                    k.object_name,
                    k.statement_text,
-                   c.total_compiles,
-                   c.total_compile_cpu,
-                   c.avg_compile_cpu,
-                   c.max_compile_cpu,
-                   c.total_compile_duration,
-                   c.avg_compile_duration,
-                   c.max_compile_duration
+                   c.total_recompiles,
+                   c.total_recompile_cpu,
+                   c.avg_recompile_cpu,
+                   c.max_recompile_cpu,
+                   c.total_recompile_duration,
+                   c.avg_recompile_duration,
+                   c.max_recompile_duration
             FROM cbq AS c
             CROSS APPLY
                 (
@@ -1701,7 +1833,7 @@ IF @compile_events = 1
                     WHERE c.statement_text_checksum = k.statement_text_checksum
                     ORDER BY k.event_time DESC
                 ) AS k
-            ORDER BY c.total_compiles DESC
+            ORDER BY c.total_recompiles DESC
             OPTION(RECOMPILE);
 
     END;
@@ -1737,7 +1869,6 @@ END;
 
 IF LOWER(@event_type) LIKE N'%wait%'
 BEGIN;
-
          WITH waits AS 
              (
                  SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
@@ -1750,10 +1881,13 @@ BEGIN;
                         CONVERT(BINARY(8), c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'BIGINT')) AS query_plan_hash_signed,
                         CONVERT(BINARY(8), c.value('(action[@name="query_hash_signed"]/value)[1]', 'BIGINT')) AS query_hash_signed,
                         c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'VARBINARY(64)') AS plan_handle
-                 FROM #human_events_xml AS xet
-                 OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-                 WHERE ( c.exist('(data[@name="duration"]/value/text()[. > 0])') = 1 
-                             OR @gimme_danger = 1 )
+                 FROM (
+                           SELECT TOP (2147483647) xet.human_events_xml
+                           FROM #human_events_xml AS xet
+                           WHERE ( xet.human_events_xml.exist('(//event/data[@name="duration"]/value[. > 0])') = 1 
+                                       OR @gimme_danger = 1 )
+                      )AS c
+                 OUTER APPLY c.human_events_xml.nodes('//event') AS oa(c)
              )
                  SELECT *
                  INTO #waits_agg
@@ -1799,16 +1933,12 @@ BEGIN;
                             wa.wait_type,
                             COUNT_BIG(*) AS total_waits,
                             wa.plan_handle,
-                            wa.query_plan_hash_signed,
-                            wa.query_hash_signed,
                             SUM(wa.duration_ms) AS sum_duration_ms,
                             SUM(wa.signal_duration_ms) AS sum_signal_duration_ms,
                             SUM(wa.duration_ms) / COUNT_BIG(*) AS avg_ms_per_wait
                      FROM #waits_agg AS wa
                      GROUP BY wa.database_name,
                               wa.wait_type, 
-                              wa.query_hash_signed, 
-                              wa.query_plan_hash_signed, 
                               wa.plan_handle
                      
                 )
@@ -2010,27 +2140,30 @@ BEGIN
 
 END;
 
+/*
+End magic happening
+*/
 
 IF @keep_alive = 0
 BEGIN
     IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
+    RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
     EXEC (@stop_sql);
     
     IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
-    EXEC (@drop_sql);
+   RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
+   EXEC (@drop_sql);
 END;
 RETURN;
 
+
 /*This section handles outputting data to tables*/
 output_results:
+RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
 WHILE 1 = 1
-
     BEGIN
     
-    RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
-    RAISERROR(N'See? I told you.', 0, 1) WITH NOWAIT;
-    
-    /*If we don't find any sessions to poll from, bail out*/
+    /*If we don't find any sessions to poll from, wait 5 seconds and restart loop*/
     IF NOT EXISTS
     (
         SELECT 1/0
@@ -2073,6 +2206,7 @@ WHILE 1 = 1
 
     END;
 
+
     /*Create a table to hold loop info*/
     IF OBJECT_ID(N'tempdb..#human_events_worker') IS NULL
     BEGIN
@@ -2090,10 +2224,12 @@ WHILE 1 = 1
             output_table NVARCHAR(400) NOT NULL
         );
 
-		CREATE UNIQUE NONCLUSTERED INDEX no_dupes 
-		    ON #human_events_worker (output_table) 
-			    WITH (IGNORE_DUP_KEY = ON);
+        --don't want to fail on, or process duplicates
+        CREATE UNIQUE NONCLUSTERED INDEX no_dupes 
+            ON #human_events_worker (output_table) 
+                WITH (IGNORE_DUP_KEY = ON);
 
+        
         /*Insert any sessions we find*/
         INSERT #human_events_worker
             ( event_type, event_type_short, is_table_created, is_view_created, last_checked, 
@@ -2126,27 +2262,28 @@ WHILE 1 = 1
 
         /*Update this column for when we see if we need to create views.*/
         UPDATE hew
-            SET event_type_short = CASE WHEN event_type LIKE N'%block%' 
+            SET hew.event_type_short = CASE WHEN hew.event_type LIKE N'%block%' 
                                         THEN N'[_]Blocking'
-                                        WHEN ( event_type LIKE N'%comp%' 
-                                                 AND event_type NOT LIKE N'%re%' )
+                                        WHEN ( hew.event_type LIKE N'%comp%' 
+                                                 AND hew.event_type NOT LIKE N'%re%' )
                                         THEN N'[_]Compiles'
-                                        WHEN event_type LIKE N'%quer%'
+                                        WHEN hew.event_type LIKE N'%quer%'
                                         THEN N'[_]Queries'
-                                        WHEN event_type LIKE N'%recomp%'
+                                        WHEN hew.event_type LIKE N'%recomp%'
                                         THEN N'[_]Recompiles'
-                                        WHEN event_type LIKE N'%wait%'
+                                        WHEN hew.event_type LIKE N'%wait%'
                                         THEN N'[_]Waits'
                                         ELSE N'?'
                                    END    
         FROM #human_events_worker AS hew
-        WHERE hew.event_type_short = N'';
+        WHERE hew.event_type_short = N''
+        OPTION(RECOMPILE);
 
         IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker OPTION (RECOMPILE); END;
 
     END;
 
-    /*This sesion is where tables that need it get created*/
+    /*This section is where tables that need tables get created*/
     IF EXISTS
     (
         SELECT 1/0
@@ -2161,7 +2298,8 @@ WHILE 1 = 1
                 @object_name_check NVARCHAR(1000) = N'',
                 @table_sql NVARCHAR(MAX) = N'';
         
-        SELECT @min_id = MIN(hew.id), @max_id = MAX(hew.id)
+        SELECT @min_id = MIN(hew.id), 
+               @max_id = MAX(hew.id)
         FROM #human_events_worker AS hew
         WHERE hew.is_table_created = 0
         OPTION (RECOMPILE);
@@ -2177,21 +2315,21 @@ WHILE 1 = 1
                                       + hew.output_table
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
-            AND hew.is_table_created = 0
+            AND   hew.is_table_created = 0
             OPTION (RECOMPILE);
         
             IF OBJECT_ID(@object_name_check) IS NULL
             BEGIN
-            RAISERROR(N'Generating create table statement', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Generating create table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;
                 SELECT @table_sql =  
                   CASE WHEN @event_type_check LIKE N'%wait%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, event_type sysname NULL,  ' + NCHAR(10) +
+                            N'( id BIGINT PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, event_type sysname NULL,  ' + NCHAR(10) +
                             N'  database_name sysname NULL, wait_type NVARCHAR(60) NULL, duration_ms BIGINT NULL, signal_duration_ms BIGINT NULL, ' + NCHAR(10) +
                             N'  wait_resource NVARCHAR(256) NULL,  query_plan_hash_signed BINARY(8) NULL, query_hash_signed BINARY(8) NULL, plan_handle VARBINARY(64) NULL );'
                        WHEN @event_type_check LIKE N'%lock%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, ' + NCHAR(10) +
+                            N'( id BIGINT PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, ' + NCHAR(10) +
                             N'  activity NVARCHAR(20) NULL, database_name sysname NULL, database_id INT NULL, object_id INT NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + NCHAR(10) +
                             N'  transaction_id INT NULL, resource_owner_type NVARCHAR(256) NULL, monitor_loop INT NULL, spid INT NULL, ecid INT NULL, query_text NVARCHAR(MAX) NULL, ' + 
                             N'  wait_time BIGINT NULL, transaction_name NVARCHAR(256) NULL,  last_transaction_started NVARCHAR(30) NULL, ' + NCHAR(10) +
@@ -2199,7 +2337,7 @@ WHILE 1 = 1
                             N'  client_app sysname NULL, host_name sysname NULL, login_name sysname NULL, isolation_level NVARCHAR(30) NULL, sql_handle VARBINARY(64) NULL, blocked_process_report XML NULL );'
                        WHEN @event_type_check LIKE N'%quer%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, event_type sysname NULL, ' + NCHAR(10) +
+                            N'( id BIGINT PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, event_type sysname NULL, ' + NCHAR(10) +
                             N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, sql_text NVARCHAR(MAX) NULL, statement NVARCHAR(MAX) NULL, ' + NCHAR(10) +
                             N'  showplan_xml XML NULL, cpu_ms DECIMAL(18,2) NULL, logical_reads DECIMAL(18,2) NULL, ' + NCHAR(10) +
                             N'  physical_reads DECIMAL(18,2) NULL,  duration_ms DECIMAL(18,2) NULL, writes_mb DECIMAL(18,2) NULL,' + NCHAR(10) +
@@ -2208,19 +2346,19 @@ WHILE 1 = 1
                             N'  granted_memory_mb DECIMAL(18,2) NULL, query_plan_hash_signed BINARY(8) NULL, query_hash_signed BINARY(8) NULL, plan_handle VARBINARY(64) NULL );'
                        WHEN @event_type_check LIKE N'%recomp%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
+                            N'( id BIGINT PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
                             N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, recompile_cause NVARCHAR(256) NULL, statement_text NVARCHAR(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
                             + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms BIGINT NULL, compile_duration_ms BIGINT NULL );' ELSE N' );' END
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
+                            N'( id BIGINT PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
                             N'  database_name sysname NULL, object_name NVARCHAR(512) NULL, statement_text NVARCHAR(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
                             + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms BIGINT NULL, compile_duration_ms BIGINT NULL );' ELSE N' );' END
                             + CASE WHEN @parameterization_events = 1 
                                    THEN 
                             NCHAR(10) + 
                             N'CREATE TABLE ' + @object_name_check + N'_parameterization' + NCHAR(10) +
-                            N'( id BIGINT NOT NULL PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
+                            N'( id BIGINT PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL,  event_type sysname NULL,  ' + NCHAR(10) +
                             N'  database_name sysname NULL, sql_text NVARCHAR(MAX) NULL, compile_cpu_time_ms BIGINT NULL, compile_duration_ms BIGINT NULL, query_param_type INT NULL,  ' + NCHAR(10) +
                             N'  is_cached BIT NULL, is_recompiled BIT NULL, compile_code NVARCHAR(256) NULL, has_literals BIT NULL, is_parameterizable BIT NULL, parameterized_values_count BIGINT NULL, ' + NCHAR(10) +
                             N'  query_plan_hash BINARY(8) NULL, query_hash BINARY(8) NULL, plan_handle VARBINARY(64) NULL, statement_sql_hash VARBINARY(64) NULL );'
@@ -2238,11 +2376,11 @@ WHILE 1 = 1
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
-            RAISERROR(N'Setting next id', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
             
             SET @min_id = 
             (
-                SELECT TOP (1) id
+                SELECT TOP (1) hew.id
                 FROM #human_events_worker AS hew
                 WHERE hew.id > @min_id
                 AND   hew.is_table_created = 0
@@ -2307,7 +2445,7 @@ WHILE 1 = 1
             SELECT N'HumanEvents_Parameterization', 0x0D000A000D000A00430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F0050006100720061006D00650074006500720069007A006100740069006F006E000D000A00410053000D000A002000200020002000570049005400480020006300700071000D000A0020002000200020002000200041005300200028000D000A00200020002000200020002000200020002000530045004C004500430054002000640061007400610062006100730065005F006E0061006D0065002C000D000A002000200020002000200020002000200020002000200020002000200020002000710075006500720079005F0068006100730068002C000D000A00200020002000200020002000200020002000200020002000200020002000200043004F0055004E0054005F0042004900470028002A002900200041005300200074006F00740061006C005F0063006F006D00700069006C00650073002C000D000A00200020002000200020002000200020002000200020002000200020002000200043004F0055004E0054002800440049005300540049004E00430054002000710075006500720079005F0070006C0061006E005F0068006100730068002900200041005300200070006C0061006E005F0063006F0075006E0074002C000D000A002000200020002000200020002000200020002000200020002000200020002000530055004D00280063006F006D00700069006C0065005F006300700075005F00740069006D0065005F006D0073002900200041005300200074006F00740061006C005F0063006F006D00700069006C0065005F006300700075002C000D000A002000200020002000200020002000200020002000200020002000200020002000410056004700280063006F006D00700069006C0065005F006300700075005F00740069006D0065005F006D007300290020004100530020006100760067005F0063006F006D00700069006C0065005F006300700075002C000D000A0020002000200020002000200020002000200020002000200020002000200020004D0041005800280063006F006D00700069006C0065005F006300700075005F00740069006D0065005F006D007300290020004100530020006D00610078005F0063006F006D00700069006C0065005F006300700075002C000D000A002000200020002000200020002000200020002000200020002000200020002000530055004D00280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D0073002900200041005300200074006F00740061006C005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A002000200020002000200020002000200020002000200020002000200020002000410056004700280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D007300290020004100530020006100760067005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A0020002000200020002000200020002000200020002000200020002000200020004D0041005800280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D007300290020004100530020006D00610078005F0063006F006D00700069006C0065005F006400750072006100740069006F006E000D000A00200020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D000D000A00200020002000200020002000200020002000470052004F00550050002000420059002000640061007400610062006100730065005F006E0061006D0065002C002000710075006500720079005F006800610073006800200029000D000A002000200020002000530045004C00450043005400200054004F005000280020003200310034003700340038003300360034003800200029000D000A002000200020002000200020002000200020002000200063002E00640061007400610062006100730065005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020006B002E00730071006C005F0074006500780074002C000D000A00200020002000200020002000200020002000200020006B002E00690073005F0070006100720061006D00650074006500720069007A00610062006C0065002C000D000A002000200020002000200020002000200020002000200063002E0074006F00740061006C005F0063006F006D00700069006C00650073002C000D000A002000200020002000200020002000200020002000200063002E0070006C0061006E005F0063006F0075006E0074002C000D000A002000200020002000200020002000200020002000200063002E0074006F00740061006C005F0063006F006D00700069006C0065005F006300700075002C000D000A002000200020002000200020002000200020002000200063002E006100760067005F0063006F006D00700069006C0065005F006300700075002C000D000A002000200020002000200020002000200020002000200063002E006D00610078005F0063006F006D00700069006C0065005F006300700075002C000D000A002000200020002000200020002000200020002000200063002E0074006F00740061006C005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A002000200020002000200020002000200020002000200063002E006100760067005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A002000200020002000200020002000200020002000200063002E006D00610078005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A00200020002000200020002000200020002000200020006B002E00710075006500720079005F0070006100720061006D005F0074007900700065002C000D000A00200020002000200020002000200020002000200020006B002E00690073005F006300610063006800650064002C000D000A00200020002000200020002000200020002000200020006B002E00690073005F007200650063006F006D00700069006C00650064002C000D000A00200020002000200020002000200020002000200020006B002E0063006F006D00700069006C0065005F0063006F00640065002C000D000A00200020002000200020002000200020002000200020006B002E006800610073005F006C00690074006500720061006C0073002C000D000A00200020002000200020002000200020002000200020006B002E0070006100720061006D00650074006500720069007A00650064005F00760061006C007500650073005F0063006F0075006E0074000D000A002000200020002000460052004F004D002000630070007100200041005300200063000D000A002000200020002000430052004F005300530020004100500050004C0059000D000A002000200020002000200020002000200028000D000A00200020002000200020002000200020002000200020002000530045004C00450043005400200054004F005000280020003100200029000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002A000D000A00200020002000200020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D0020004100530020006B000D000A002000200020002000200020002000200020002000200020005700480045005200450020006B002E00710075006500720079005F00680061007300680020003D00200063002E00710075006500720079005F0068006100730068000D000A002000200020002000200020002000200020002000200020004F00520044004500520020004200590020006B002E0069006400200044004500530043000D000A0020002000200020002000200020002000290020004100530020006B000D000A0020002000200020004F005200440045005200200042005900200063002E0074006F00740061006C005F0063006F006D00700069006C0065007300200044004500530043003B000D000A00
             WHERE @parameterization_events = 1;
             INSERT #view_check (view_name, view_definition)
-            SELECT N'HumanEvents_Queries', 0x0D000A000D000A00430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F0051007500650072006900650073000D000A00410053000D000A0020002000200020005700490054004800200071007500650072006900650073000D000A0020002000200020002000200041005300200028000D000A00200020002000200020002000200020002000530045004C00450043005400200043004F0055004E0054005F0042004900470028002A00290020004F0056004500520020002800200050004100520054004900540049004F004E00200042005900200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002900200041005300200065007800650063007500740069006F006E0073002C000D000A00200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A00200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A00200020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200020002000200020002000470052004F0055005000200042005900200071002E006500760065006E0074005F00740069006D0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C006500200029002C000D000A0020002000200020002000200020002000200074006F00740061006C0073000D000A0020002000200020002000200041005300200028002000530045004C00450043005400200054004F005000280020003200310034003700340038003300360034003800200029000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000710071002E0065007800650063007500740069006F006E0073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002F002A0074006F00740061006C0073002A002F000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E002900290020002F002000710071002E0065007800650063007500740069006F006E007300200041005300200074006F00740061006C005F006300700075005F006D0073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E002900290020002F002000710071002E0065007800650063007500740069006F006E007300200041005300200074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E002900290020002F002000710071002E0065007800650063007500740069006F006E007300200041005300200074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E002900290020002F002000710071002E0065007800650063007500740069006F006E007300200041005300200074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E002900290020002F002000710071002E0065007800650063007500740069006F006E007300200041005300200074006F00740061006C005F007700720069007400650073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E002900290020002F002000710071002E0065007800650063007500740069006F006E007300200041005300200074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E002900290020002F002000710071002E0065007800650063007500740069006F006E007300200041005300200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E002900290020002F002000710071002E0065007800650063007500740069006F006E007300200041005300200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C00200030002E002900290020002F002000710071002E0065007800650063007500740069006F006E007300200041005300200074006F00740061006C005F0072006F00770073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002F002A00610076006500720061006700650073002A002F000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E002900290020004100530020006100760067005F006300700075005F006D0073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E002900290020004100530020006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E002900290020004100530020006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E002900290020004100530020006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E002900290020004100530020006100760067005F007700720069007400650073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E002900290020004100530020006100760067005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E002900290020004100530020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E002900290020004100530020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C00200030002900290020004100530020006100760067005F0072006F00770073000D000A0020002000200020002000200020002000200020002000460052004F004D00200071007500650072006900650073002000410053002000710071000D000A00200020002000200020002000200020002000200020004A004F0049004E0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A002000200020002000200020002000200020002000200020002000200020004F004E0020002000710071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D00200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A0020002000200020002000200020002000200020002000200020002000200041004E0044002000710071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D00200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A0020002000200020002000200020002000200020002000200020002000200041004E0044002000710071002E0070006C0061006E005F00680061006E0064006C00650020003D00200071002E0070006C0061006E005F00680061006E0064006C0065000D000A002000200020002000200020002000200020002000200057004800450052004500200071002E006500760065006E0074005F00740079007000650020003C003E0020004E002700710075006500720079005F0070006F00730074005F0065007800650063007500740069006F006E005F00730068006F00770070006C0061006E0027000D000A0020002000200020002000200020002000200020002000470052004F0055005000200042005900200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000710071002E0065007800650063007500740069006F006E007300200029002C000D000A00200020002000200020002000200020002000710075006500720079005F0072006500730075006C00740073000D000A0020002000200020002000200041005300200028002000530045004C00450043005400200054004F005000280020003200310034003700340038003300360034003800200029000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000710032002E00730074006100740065006D0065006E0074005F0074006500780074002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00730071006C005F0074006500780074002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0065007800650063007500740069006F006E0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F006300700075005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F006300700075005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F007700720069007400650073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F007700720069007400650073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F0072006F00770073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F0072006F00770073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0064006F0070002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200052004F0057005F004E0055004D004200450052002800290020004F0056004500520020002800200050004100520054004900540049004F004E00200042005900200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004F005200440045005200200042005900200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000290020004100530020006E000D000A0020002000200020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200020002000200020002000200020004A004F0049004E00200074006F00740061006C007300200041005300200074000D000A002000200020002000200020002000200020002000200020002000200020004F004E002000200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A0020002000200020002000200020002000200020002000200020002000200041004E004400200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A0020002000200020002000200020002000200020002000200020002000200041004E004400200071002E0070006C0061006E005F00680061006E0064006C00650020003D00200074002E0070006C0061006E005F00680061006E0064006C0065000D000A0020002000200020002000200020002000200020002000430052004F005300530020004100500050004C0059000D000A0020002000200020002000200020002000200020002000200020002000200028000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000530045004C00450043005400200054004F005000280020003100200029000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000710032002E00730074006100740065006D0065006E0074002000410053002000730074006100740065006D0065006E0074005F0074006500780074000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D002000410053002000710032000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200057004800450052004500200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200041004E00440020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200041004E00440020002000200071002E0070006C0061006E005F00680061006E0064006C00650020003D002000710032002E0070006C0061006E005F00680061006E0064006C0065000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200041004E004400200020002000710032002E00730074006100740065006D0065006E00740020004900530020004E004F00540020004E0055004C004C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020004F0052004400450052002000420059002000710032002E006500760065006E0074005F00740069006D006500200044004500530043000D000A0020002000200020002000200020002000200020002000200020002000200029002000410053002000710032000D000A002000200020002000200020002000200020002000200057004800450052004500200071002E00730068006F00770070006C0061006E005F0078006D006C002E0065007800690073007400280027002A002700290020003D0020003100200029000D000A002000200020002000530045004C00450043005400200054004F005000280020003200310034003700340038003300360034003800200029000D000A002000200020002000200020002000200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A002000200020002000200020002000200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A002000200020002000200020002000200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A002000200020002000200020002000200020002000200071002E00730074006100740065006D0065006E0074005F0074006500780074002C000D000A002000200020002000200020002000200020002000200071002E00730071006C005F0074006500780074002C000D000A002000200020002000200020002000200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A002000200020002000200020002000200020002000200071002E0065007800650063007500740069006F006E0073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F006300700075005F006D0073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F006300700075005F006D0073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F007700720069007400650073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F007700720069007400650073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F0072006F00770073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F0072006F00770073002C000D000A002000200020002000200020002000200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A002000200020002000200020002000200020002000200071002E0064006F0070002C000D000A002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A002000200020002000460052004F004D002000710075006500720079005F0072006500730075006C0074007300200041005300200071000D000A00200020002000200057004800450052004500200071002E006E0020003D00200031003B000D000A00;
+            SELECT N'HumanEvents_Queries', 0x4300520045004100540045002000560049004500570020005B00640062006F005D002E005B00480075006D0061006E004500760065006E00740073005F0051007500650072006900650073005D000D000A00410053000D000A00200020002000200057004900540048002000710075006500720079005F0061006700670020004100530020000D000A00200020002000200020002000200020002000200020002000200028000D000A002000200020002000200020002000200020002000200020002000200020002000530045004C00450043005400200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E002900200041005300200074006F00740061006C005F006300700075005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E002900200041005300200074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E002900200041005300200074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E002900200041005300200074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E002900200041005300200074006F00740061006C005F007700720069007400650073005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E002900200041005300200074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C00200041005300200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C00200041005300200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C00200030002E002900200041005300200074006F00740061006C005F0072006F00770073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E006300700075005F006D0073002C00200030002E00290020004100530020006100760067005F006300700075005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E006C006F0067006900630061006C005F00720065006100640073002C00200030002E00290020004100530020006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E0070006800790073006900630061006C005F00720065006100640073002C00200030002E00290020004100530020006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E006400750072006100740069006F006E005F006D0073002C00200030002E00290020004100530020006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E007700720069007400650073005F006D0062002C00200030002E00290020004100530020006100760067005F007700720069007400650073005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E007300700069006C006C0073005F006D0062002C00200030002E00290020004100530020006100760067005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C0020004100530020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C0020004100530020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E0072006F0077005F0063006F0075006E0074002C0020003000290020004100530020006100760067005F0072006F0077007300200020002000200020002000200020002000200020002000200020002000200020002000200020000D000A002000200020002000200020002000200020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200020002000200020002000200020002000200020002000200057004800450052004500200071002E006500760065006E0074005F00740079007000650020003C003E0020004E002700710075006500720079005F0070006F00730074005F0065007800650063007500740069006F006E005F00730068006F00770070006C0061006E0027000D000A0020002000200020002000200020002000200020002000200020002000200020000D000A00200020002000200020002000200020002000200020002000200020002000200055004E0049004F004E00200041004C004C0020000D000A0020002000200020002000200020002000200020002000200020002000200020000D000A002000200020002000200020002000200020002000200020002000200020002000530045004C00450043005400200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002F002A0074006F00740061006C0073002A002F000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C00200041005300200074006F00740061006C005F006300700075005F006D0073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C00200041005300200074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C00200041005300200074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C00200041005300200074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C00200041005300200074006F00740061006C005F007700720069007400650073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C00200041005300200074006F00740061006C005F007300700069006C006C0073005F006D0062002C002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E002900200041005300200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C0028006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E002900200041005300200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C00200041005300200074006F00740061006C005F0072006F00770073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002F002A00610076006500720061006700650073002A002F000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C0020004100530020006100760067005F006300700075005F006D0073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C0020004100530020006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C0020004100530020006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C0020004100530020006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C0020004100530020006100760067005F007700720069007400650073005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C0020004100530020006100760067005F007300700069006C006C0073005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290020004100530020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000490053004E0055004C004C00280071002E006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E00290020004100530020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004E0055004C004C0020004100530020006100760067005F0072006F0077007300200020002000200020002000200020002000200020002000200020002000200020002000200020000D000A002000200020002000200020002000200020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200020002000200020002000200020002000200020002000200057004800450052004500200071002E006500760065006E0074005F00740079007000650020003D0020004E002700710075006500720079005F0070006F00730074005F0065007800650063007500740069006F006E005F00730068006F00770070006C0061006E002700200020002000200020002000200020000D000A00200020002000200020002000200020002000200020002000200029002C002000200020002000200020002000200020002000200020002000200020002000200020000D000A0020002000200020002000200020002000200074006F00740061006C0073000D000A0020002000200020002000200041005300200028002000530045004C00450043005400200054004F005000280020003200310034003700340038003300360034003800200029000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200043004F0055004E0054005F0042004900470028002A00290020004F0056004500520020002800200050004100520054004900540049004F004E00200042005900200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002900200041005300200065007800650063007500740069006F006E0073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002F002A0074006F00740061006C0073002A002F000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006300700075005F006D0073002C00200030002E0029002900200041005300200074006F00740061006C005F006300700075005F006D0073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C00200030002E0029002900200041005300200074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C00200030002E0029002900200041005300200074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C00200030002E0029002900200041005300200074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007700720069007400650073005F006D0062002C00200030002E0029002900200041005300200074006F00740061006C005F007700720069007400650073002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C00200030002E0029002900200041005300200074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002900200041005300200074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E0029002900200041005300200074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000530055004D002800490053004E0055004C004C00280071002E0074006F00740061006C005F0072006F00770073002C00200030002E0029002900200041005300200074006F00740061006C005F0072006F00770073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002F002A00610076006500720061006700650073002A002F000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006100760067005F006300700075005F006D0073002C00200030002E002900290020004100530020006100760067005F006300700075005F006D0073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C00200030002E002900290020004100530020006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C00200030002E002900290020004100530020006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006100760067005F006400750072006100740069006F006E005F006D0073002C00200030002E002900290020004100530020006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006100760067005F007700720069007400650073005F006D0062002C00200030002E002900290020004100530020006100760067005F007700720069007400650073002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006100760067005F007300700069006C006C0073005F006D0062002C00200030002E002900290020004100530020006100760067005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C00200030002E002900290020004100530020006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C00200030002E002900290020004100530020006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020004100560047002800490053004E0055004C004C00280071002E006100760067005F0072006F00770073002C00200030002900290020004100530020006100760067005F0072006F00770073000D000A0020002000200020002000200020002000200020002000460052004F004D002000710075006500720079005F00610067006700200041005300200071000D000A0020002000200020002000200020002000200020002000470052004F0055005000200042005900200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C006500200029002C000D000A00200020002000200020002000200020002000710075006500720079005F0072006500730075006C00740073000D000A0020002000200020002000200041005300200028002000530045004C00450043005400200054004F005000280020003200310034003700340038003300360034003800200029000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020002000200020002000200020002000710032002E00730074006100740065006D0065006E0074005F0074006500780074002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00730071006C005F0074006500780074002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0065007800650063007500740069006F006E0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F006300700075005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F006300700075005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F007700720069007400650073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F007700720069007400650073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E0074006F00740061006C005F0072006F00770073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200074002E006100760067005F0072006F00770073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0064006F0070002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200052004F0057005F004E0055004D004200450052002800290020004F0056004500520020002800200050004100520054004900540049004F004E00200042005900200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020004F005200440045005200200042005900200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000200020002000290020004100530020006E000D000A0020002000200020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D00200041005300200071000D000A00200020002000200020002000200020002000200020004A004F0049004E00200074006F00740061006C007300200041005300200074000D000A002000200020002000200020002000200020002000200020002000200020004F004E002000200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A0020002000200020002000200020002000200020002000200020002000200041004E004400200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D00200074002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A0020002000200020002000200020002000200020002000200020002000200041004E004400200071002E0070006C0061006E005F00680061006E0064006C00650020003D00200074002E0070006C0061006E005F00680061006E0064006C0065000D000A0020002000200020002000200020002000200020002000430052004F005300530020004100500050004C0059000D000A0020002000200020002000200020002000200020002000200020002000200028000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000530045004C00450043005400200054004F005000280020003100200029002000710032002E00730074006100740065006D0065006E0074002000410053002000730074006100740065006D0065006E0074005F0074006500780074000D000A002000200020002000200020002000200020002000200020002000200020002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D002000410053002000710032000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200057004800450052004500200071002E00710075006500720079005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0068006100730068005F007300690067006E00650064000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200041004E00440020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E006500640020003D002000710032002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200041004E00440020002000200071002E0070006C0061006E005F00680061006E0064006C00650020003D002000710032002E0070006C0061006E005F00680061006E0064006C0065000D000A00200020002000200020002000200020002000200020002000200020002000200020002000200041004E004400200020002000710032002E00730074006100740065006D0065006E00740020004900530020004E004F00540020004E0055004C004C000D000A0020002000200020002000200020002000200020002000200020002000200020002000200020004F0052004400450052002000420059002000710032002E006500760065006E0074005F00740069006D006500200044004500530043000D000A0020002000200020002000200020002000200020002000200020002000200029002000410053002000710032000D000A002000200020002000200020002000200020002000200057004800450052004500200071002E00730068006F00770070006C0061006E005F0078006D006C002E0065007800690073007400280027002A002700290020003D0020003100200029000D000A002000200020002000530045004C00450043005400200054004F005000280020003200310034003700340038003300360034003800200029000D000A002000200020002000200020002000200020002000200071002E006500760065006E0074005F00740069006D0065002C000D000A002000200020002000200020002000200020002000200071002E00640061007400610062006100730065005F006E0061006D0065002C000D000A002000200020002000200020002000200020002000200071002E006F0062006A006500630074005F006E0061006D0065002C000D000A002000200020002000200020002000200020002000200071002E00730074006100740065006D0065006E0074005F0074006500780074002C000D000A002000200020002000200020002000200020002000200071002E00730071006C005F0074006500780074002C000D000A002000200020002000200020002000200020002000200071002E00730068006F00770070006C0061006E005F0078006D006C002C000D000A002000200020002000200020002000200020002000200071002E0065007800650063007500740069006F006E0073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F006300700075005F006D0073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F006300700075005F006D0073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F006C006F0067006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F0070006800790073006900630061006C005F00720065006100640073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F006400750072006100740069006F006E005F006D0073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F007700720069007400650073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F007700720069007400650073002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F007300700069006C006C0073005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F0075007300650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F006700720061006E007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0074006F00740061006C005F0072006F00770073002C000D000A002000200020002000200020002000200020002000200071002E006100760067005F0072006F00770073002C000D000A002000200020002000200020002000200020002000200071002E00730065007200690061006C005F0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E007200650071007500650073007400650064005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0069006400650061006C005F006D0065006D006F00720079005F006D0062002C000D000A002000200020002000200020002000200020002000200071002E0065007300740069006D0061007400650064005F0072006F00770073002C000D000A002000200020002000200020002000200020002000200071002E0064006F0070002C000D000A002000200020002000200020002000200020002000200071002E00710075006500720079005F0070006C0061006E005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200071002E00710075006500720079005F0068006100730068005F007300690067006E00650064002C000D000A002000200020002000200020002000200020002000200071002E0070006C0061006E005F00680061006E0064006C0065000D000A002000200020002000460052004F004D002000710075006500720079005F0072006500730075006C0074007300200041005300200071000D000A00200020002000200057004800450052004500200071002E006E0020003D00200031003B00;
             INSERT #view_check (view_name, view_definition)
             SELECT N'HumanEvents_RecompilesByDatabaseAndObject', 0x0D000A000D000A00430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F005200650063006F006D00700069006C0065007300420079004400610074006100620061007300650041006E0064004F0062006A006500630074000D000A00410053000D000A002000200020002000530045004C00450043005400200054004F005000280020003200310034003700340038003300360034003800200029000D000A00200020002000200020002000200020002000200020004D0049004E0028006500760065006E0074005F00740069006D006500290020004100530020006D0069006E005F006500760065006E0074005F00740069006D0065002C000D000A00200020002000200020002000200020002000200020004D004100580028006500760065006E0074005F00740069006D006500290020004100530020006D00610078005F006500760065006E0074005F00740069006D0065002C000D000A0020002000200020002000200020002000200020002000640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020002000200020002000200020002000430041005300450020005700480045004E0020006F0062006A006500630074005F006E0061006D00650020003D0020004E00270027000D000A0020002000200020002000200020002000200020002000200020002000200020005400480045004E0020004E0027004E002F00410027000D000A0020002000200020002000200020002000200020002000200020002000200045004C005300450020006F0062006A006500630074005F006E0061006D0065000D000A002000200020002000200020002000200020002000200045004E00440020004100530020006F0062006A006500630074005F006E0061006D0065002C000D000A002000200020002000200020002000200020002000200043004F0055004E0054005F0042004900470028002A002900200041005300200074006F00740061006C005F0063006F006D00700069006C00650073002C000D000A0020002000200020002000200020002000200020002000530055004D00280063006F006D00700069006C0065005F006300700075005F006D0073002900200041005300200074006F00740061006C005F0063006F006D00700069006C0065005F006300700075002C000D000A0020002000200020002000200020002000200020002000410056004700280063006F006D00700069006C0065005F006300700075005F006D007300290020004100530020006100760067005F0063006F006D00700069006C0065005F006300700075002C000D000A00200020002000200020002000200020002000200020004D0041005800280063006F006D00700069006C0065005F006300700075005F006D007300290020004100530020006D00610078005F0063006F006D00700069006C0065005F006300700075002C000D000A0020002000200020002000200020002000200020002000530055004D00280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D0073002900200041005300200074006F00740061006C005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A0020002000200020002000200020002000200020002000410056004700280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D007300290020004100530020006100760067005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A00200020002000200020002000200020002000200020004D0041005800280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D007300290020004100530020006D00610078005F0063006F006D00700069006C0065005F006400750072006100740069006F006E000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D000D000A002000200020002000470052004F00550050002000420059002000640061007400610062006100730065005F006E0061006D0065002C0020006F0062006A006500630074005F006E0061006D0065000D000A0020002000200020004F005200440045005200200042005900200074006F00740061006C005F0063006F006D00700069006C0065007300200044004500530043003B000D000A00
             WHERE @compile_events = 1;
@@ -2330,7 +2468,7 @@ WHILE 1 = 1
             SELECT N'HumanEvents_Recompiles_Legacy', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F005200650063006F006D00700069006C00650073005F004C00650067006100630079000D000A00410053000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A0020002000200020002000200020006500760065006E0074005F00740069006D0065002C000D000A0020002000200020002000200020006500760065006E0074005F0074007900700065002C000D000A002000200020002000200020002000640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020002000200020006F0062006A006500630074005F006E0061006D0065002C000D000A0020002000200020002000200020007200650063006F006D00700069006C0065005F00630061007500730065002C000D000A002000200020002000200020002000730074006100740065006D0065006E0074005F0074006500780074000D000A00460052004F004D0020005B007200650070006C006100630065005F006D0065005D000D000A004F00520044004500520020004200590020006500760065006E0074005F00740069006D0065003B00
             WHERE @compile_events = 0;
 
-            RAISERROR(N'Updating #view_check with output database and schema', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Updating #view_check with output database (%s) and schema (%s)', 0, 1, @output_database_name, @output_schema_name) WITH NOWAIT;
             UPDATE #view_check SET output_database = @output_database_name, output_schema = @output_schema_name OPTION(RECOMPILE);
             
             RAISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT;
@@ -2360,12 +2498,14 @@ WHILE 1 = 1
         IF (@view_tracker IS NULL
                 OR @view_tracker = 0 )
         BEGIN 
-        
+            RAISERROR(N'Starting view creation loop', 0, 1) WITH NOWAIT;
+
             DECLARE @spe NVARCHAR(MAX) = N'.sys.sp_executesql ';
             DECLARE @view_sql NVARCHAR(MAX) = N'';
             DECLARE @view_database sysname = N'';
             
-            SELECT @min_id = MIN(vc.id), @max_id = MAX(vc.id)
+            SELECT @min_id = MIN(vc.id), 
+                   @max_id = MAX(vc.id)
             FROM #view_check AS vc
             WHERE EXISTS
             (
@@ -2379,9 +2519,7 @@ WHILE 1 = 1
             
                 WHILE @min_id <= @max_id
                 BEGIN
-                    
-                    RAISERROR(N'Starting view creation loop', 0, 1) WITH NOWAIT;
-            
+                                
                     SELECT @event_type_check  = LOWER(vc.view_name),
                            @object_name_check = QUOTENAME(vc.output_database)
                                               + N'.'
@@ -2425,11 +2563,12 @@ WHILE 1 = 1
                         PRINT SUBSTRING(@view_sql, 36000, 40000);           
                     END;
                     
+                    RAISERROR(N'creating view %s', 0, 1, @event_type_check) WITH NOWAIT;
                     EXEC @spe @view_sql;
             
                     IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
             
-                    RAISERROR(N'Setting next id', 0, 1) WITH NOWAIT;
+                    RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
                     
                     SET @min_id = 
                     (
@@ -2464,7 +2603,8 @@ WHILE 1 = 1
     
         RAISERROR(N'Sessions that need data found, starting loop.', 0, 1) WITH NOWAIT;
         
-        SELECT @min_id = MIN(hew.id), @max_id = MAX(hew.id)
+        SELECT @min_id = MIN(hew.id), 
+               @max_id = MAX(hew.id)
         FROM #human_events_worker AS hew
         WHERE hew.is_table_created = 1
         OPTION (RECOMPILE);
@@ -2488,7 +2628,7 @@ WHILE 1 = 1
         
             IF OBJECT_ID(@object_name_check) IS NOT NULL
             BEGIN
-            RAISERROR(N'Generating insert table statement', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Generating insert table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;
                 SELECT @table_sql =  
                   CASE WHEN @event_type_check LIKE N'%wait%' /*Wait stats!*/
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
@@ -2677,6 +2817,7 @@ OPTION (RECOMPILE);
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
+AND   c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1
 OPTION(RECOMPILE); '
                        WHEN @event_type_check LIKE N'%recomp%' /*Recompiles!*/
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + NCHAR(10) + 
@@ -2777,6 +2918,7 @@ OPTION (RECOMPILE);'
                        ELSE N''
                   END;
             
+            --this table is only used for the inserts, hence the "internal" in the name
             INSERT #human_events_xml_internal WITH (TABLOCK)
                    (human_events_xml)
             SELECT CONVERT(XML, human_events_xml.human_events_xml) AS human_events_xml
@@ -2802,6 +2944,7 @@ OPTION (RECOMPILE);'
                 PRINT SUBSTRING(@table_sql, 36000, 40000);           
             END;
             
+            --this executes the insert
             EXEC sys.sp_executesql @table_sql, N'@date_filter DATETIME', @date_filter;
             
             /*Update the worker table's last checked, and conditionally, updated dates*/
@@ -2823,11 +2966,11 @@ OPTION (RECOMPILE);'
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
-            RAISERROR(N'Setting next id', 0, 1) WITH NOWAIT;
+            RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
             
             SET @min_id = 
             (
-                SELECT TOP (1) id
+                SELECT TOP (1) hew.id
                 FROM #human_events_worker AS hew
                 WHERE hew.id > @min_id
                 AND   hew.is_table_created = 1
@@ -2843,7 +2986,9 @@ OPTION (RECOMPILE);'
     
     END;
 
-/*This sesion handles deleting data older than the retention period*/
+
+/*This sesion handles deleting data from tables older than the retention period*/
+/*The idea is to only check once an hour so we're not constantly purging*/
 DECLARE @Time TIME = SYSDATETIME();
 IF ( DATEPART(MINUTE, @Time) <= 5 )
 BEGIN     
@@ -2865,8 +3010,10 @@ BEGIN
         
         IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;
         
+        --execute the delete
         EXEC sys.sp_executesql @the_deleter_must_awaken, N'@delete_retention_days INT', @delete_retention_days;
         
+        --set this to the hour it was last checked
         SET @delete_tracker = DATEPART(HOUR, SYSDATETIME());    
     END;
 END;
@@ -2910,14 +3057,14 @@ BEGIN
            + ''; ''
            + NCHAR(10)
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
-    WHERE s.name LIKE ''' + '%HumanEvents%' + N''';'
+    WHERE s.name LIKE ''' + '%HumanEvents%' + N''' OPTION(RECOMPILE);';
     
     EXEC sys.sp_executesql @cleanup_tables, N'@i_cleanup_tables NVARCHAR(MAX) OUTPUT', @i_cleanup_tables = @drop_holder OUTPUT;  
     IF @debug = 1 
     BEGIN
         RAISERROR(@executer, 0, 1) WITH NOWAIT;
         RAISERROR(@drop_holder, 0, 1) WITH NOWAIT;
-    END
+    END;
     
     EXEC @executer @drop_holder;
   
@@ -2935,19 +3082,19 @@ BEGIN
            + ''; ''
            + NCHAR(10)
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
-    WHERE v.name LIKE ''' + '%HumanEvents%' + N''';'
+    WHERE v.name LIKE ''' + '%HumanEvents%' + N''' OPTION(RECOMPILE);';
     
     EXEC sys.sp_executesql @cleanup_views, N'@i_cleanup_views NVARCHAR(MAX) OUTPUT', @i_cleanup_views = @drop_holder OUTPUT;  
     IF @debug = 1 
     BEGIN
         RAISERROR(@executer, 0, 1) WITH NOWAIT;
         RAISERROR(@drop_holder, 0, 1) WITH NOWAIT;
-    END
+    END;
 
     EXEC @executer @drop_holder;
 
     RETURN;
-END 
+END; 
 
 
 END TRY
@@ -2978,9 +3125,11 @@ BEGIN CATCH
               AND @output_schema_name = N'' )
         BEGIN
             IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
+            RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
             EXEC (@stop_sql);
             
             IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
+            RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
             EXEC (@drop_sql);
         END;
 
