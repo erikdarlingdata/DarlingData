@@ -1466,8 +1466,7 @@ BEGIN;
                         q.query_hash_signed,
                         q.plan_handle
                  FROM #queries AS q
-                 GROUP BY q.event_time,
-                          q.query_plan_hash_signed,
+                 GROUP BY q.query_plan_hash_signed,
                           q.query_hash_signed,
                           q.plan_handle
              )
