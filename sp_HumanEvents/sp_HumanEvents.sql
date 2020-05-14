@@ -447,6 +447,10 @@ BEGIN
 END;
 
 
+--A new thing suggested by Mikael Eriksson
+DECLARE @x XML;
+
+
 /*
 You know what I don't wanna deal with? NULLs.
 */
@@ -1314,15 +1318,20 @@ WAITFOR DELAY @waitfor;
 
 
 --Dump whatever we got into a temp table
-SELECT CONVERT(XML, human_events_xml.human_events_xml) AS human_events_xml
-INTO #human_events_xml
-FROM ( SELECT CONVERT(XML, t.target_data) AS human_events_xml
-       FROM sys.dm_xe_session_targets AS t
-       JOIN sys.dm_xe_sessions AS s
-           ON s.address = t.event_session_address
-       WHERE s.name = @session_name 
-       AND   t.target_name = N'ring_buffer' ) AS human_events_xml
-OPTION(RECOMPILE);
+SELECT @x = CONVERT(XML, t.target_data)
+FROM   sys.dm_xe_session_targets AS t
+JOIN   sys.dm_xe_sessions AS s
+    ON s.address = t.event_session_address
+WHERE  s.name = @session_name
+AND    t.target_name = N'ring_buffer'
+OPTION (RECOMPILE);
+
+
+SELECT e.x.query('.') AS human_events_xml
+INTO   #human_events_xml
+FROM   @x.nodes('/RingBufferTarget/event') AS e(x)
+OPTION (RECOMPILE);
+
 
 IF @debug = 1
 BEGIN
@@ -1466,8 +1475,7 @@ BEGIN;
                         q.query_hash_signed,
                         q.plan_handle
                  FROM #queries AS q
-                 GROUP BY q.event_time,
-                          q.query_plan_hash_signed,
+                 GROUP BY q.query_plan_hash_signed,
                           q.query_hash_signed,
                           q.plan_handle
              )
@@ -2919,16 +2927,19 @@ OPTION (RECOMPILE);'
                   END;
             
             --this table is only used for the inserts, hence the "internal" in the name
+            SELECT @x = CONVERT(XML, t.target_data)
+            FROM   sys.dm_xe_session_targets AS t
+            JOIN   sys.dm_xe_sessions AS s
+                ON s.address = t.event_session_address
+            WHERE  s.name = @event_type_check
+            AND    t.target_name = N'ring_buffer'
+            OPTION (RECOMPILE);
+            
             INSERT #human_events_xml_internal WITH (TABLOCK)
-                   (human_events_xml)
-            SELECT CONVERT(XML, human_events_xml.human_events_xml) AS human_events_xml
-            FROM ( SELECT CONVERT(XML, t.target_data) AS human_events_xml
-                   FROM sys.dm_xe_session_targets AS t
-                   JOIN sys.dm_xe_sessions AS s
-                       ON s.address = t.event_session_address
-                   WHERE s.name = @event_type_check 
-                   AND   t.target_name = N'ring_buffer' ) AS human_events_xml
-            OPTION(RECOMPILE);           
+                   (human_events_xml)            
+            SELECT e.x.query('.') AS human_events_xml
+            FROM   @x.nodes('/RingBufferTarget/event') AS e(x)
+            OPTION (RECOMPILE);
             
             IF @debug = 1
             BEGIN 
