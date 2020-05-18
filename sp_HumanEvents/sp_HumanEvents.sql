@@ -1385,7 +1385,7 @@ BEGIN;
              (
                 SELECT q.query_plan_hash_signed,
                        q.query_hash_signed,
-                       q.plan_handle,
+                       CONVERT(VARBINARY(64), NULL) AS plan_handle,
                        /*totals*/
                        ISNULL(q.cpu_ms, 0.) AS total_cpu_ms,
                        ISNULL(q.logical_reads, 0.) AS total_logical_reads,
@@ -1439,7 +1439,7 @@ BEGIN;
              )
              SELECT qa.query_plan_hash_signed,
                     qa.query_hash_signed,
-                    qa.plan_handle,
+                    MAX(qa.plan_handle) AS plan_handle,
                     SUM(qa.total_cpu_ms) AS total_cpu_ms,
                     SUM(qa.total_logical_reads) AS total_logical_reads_mb,
                     SUM(qa.total_physical_reads) AS total_physical_reads_mb,
@@ -1461,16 +1461,13 @@ BEGIN;
              INTO #query_agg
              FROM query_agg AS qa
              GROUP BY qa.query_plan_hash_signed,
-                      qa.query_hash_signed,
-                      qa.plan_handle;
+                      qa.query_hash_signed;
 
              IF @debug = 1 BEGIN SELECT N'#query_agg' AS table_name, * FROM #query_agg AS qa OPTION (RECOMPILE); END;
 
          WITH queries AS 
              (
-                 SELECT COUNT_BIG(*) OVER ( PARTITION BY q.query_plan_hash_signed,
-                                                         q.query_hash_signed,
-                                                         q.plan_handle ) AS executions,
+                 SELECT COUNT_BIG(*) AS executions,
                         q.query_plan_hash_signed,
                         q.query_hash_signed,
                         q.plan_handle
@@ -1562,7 +1559,6 @@ BEGIN;
                      FROM #queries AS q2
                      WHERE q.query_hash_signed = q2.query_hash_signed
                      AND   q.query_plan_hash_signed = q2.query_plan_hash_signed
-                     AND   q.plan_handle = q2.plan_handle
                      AND   q2.statement IS NOT NULL
                      ORDER BY q2.event_time DESC
                  ) AS q2
