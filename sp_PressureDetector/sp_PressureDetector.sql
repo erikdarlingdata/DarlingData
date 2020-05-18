@@ -8,11 +8,11 @@ SET STATISTICS IO OFF;
 SET STATISTICS TIME OFF;
 GO
 
-IF OBJECT_ID('dbo.sp_pressure_detector') IS  NULL
-    EXEC ('CREATE PROCEDURE dbo.sp_pressure_detector AS RETURN 138;');
+IF OBJECT_ID('dbo.sp_PressureDetector') IS  NULL
+    EXEC ('CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
 GO
 
-ALTER PROCEDURE dbo.sp_pressure_detector ( @what_to_check NVARCHAR(6) = N'both',     
+ALTER PROCEDURE dbo.sp_PressureDetector (  @what_to_check NVARCHAR(6) = N'both',     
                                            @version VARCHAR(5) = NULL OUTPUT,
                                            @versiondate DATETIME = NULL OUTPUT )
 WITH RECOMPILE
