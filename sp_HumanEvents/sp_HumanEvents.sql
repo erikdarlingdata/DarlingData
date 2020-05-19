@@ -554,6 +554,7 @@ END;
 
 
 RAISERROR(N'Parsing any supplied waits', 0, 1) WITH NOWAIT;
+SET @wait_type = UPPER(@wait_type);
 --This will hold the CSV list of wait types someone passes in
 CREATE TABLE #user_waits(wait_type NVARCHAR(60));
 INSERT #user_waits
@@ -569,7 +570,7 @@ FROM
     ) AS w 
         CROSS APPLY wait_type.nodes('x') AS x(x)
 ) AS waits
-WHERE @wait_type <> N'all'
+WHERE @wait_type <> N'ALL'
 OPTION(RECOMPILE);
 
 
@@ -577,7 +578,7 @@ OPTION(RECOMPILE);
 If someone is passing in specific waits, let's make sure that
 they're valid waits by checking them against what's available.
 */
-IF @wait_type <> N'all'
+IF @wait_type <> N'ALL'
 BEGIN
 RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT;
 
