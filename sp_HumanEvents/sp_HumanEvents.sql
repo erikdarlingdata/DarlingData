@@ -18,7 +18,7 @@ ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
                                     @query_duration_ms INTEGER = 500,
                                     @query_sort_order NVARCHAR(10) = N'cpu',
                                     @blocking_duration_ms INTEGER = 500,
-                                    @wait_type NVARCHAR(4000) = N'all',
+                                    @wait_type NVARCHAR(4000) = N'ALL',
                                     @wait_duration_ms INTEGER = 10,
                                     @client_app_name sysname = N'',
                                     @client_hostname sysname = N'',
@@ -680,7 +680,7 @@ END;
 I just don't want anyone to be disappointed
 */
 RAISERROR(N'Avoiding disappointment', 0, 1) WITH NOWAIT;
-IF ( @wait_type <> N'' AND @wait_type <> N'all' AND LOWER(@event_type) NOT LIKE N'%wait%' )
+IF ( @wait_type <> N'' AND @wait_type <> N'ALL' AND LOWER(@event_type) NOT LIKE N'%wait%' )
 BEGIN
     RAISERROR(N'You can''t filter on wait stats unless you use the wait stats event.', 16, 1) WITH NOWAIT;
     RETURN;
