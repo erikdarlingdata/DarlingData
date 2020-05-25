@@ -1458,57 +1458,42 @@ BEGIN;
                     AVG(qa.avg_spills_mb) AS avg_spills_mb,
                     AVG(qa.avg_used_memory_mb) AS avg_used_memory_mb,
                     AVG(qa.avg_granted_memory_mb) AS avg_granted_memory_mb,
-                    AVG(qa.avg_rows) AS avg_rows
+                    AVG(qa.avg_rows) AS avg_rows,
+                    COUNT(qa.plan_handle) AS executions
              INTO #query_agg
              FROM query_agg AS qa
              GROUP BY qa.query_plan_hash_signed,
                       qa.query_hash_signed;
 
-             IF @debug = 1 BEGIN SELECT N'#query_agg' AS table_name, * FROM #query_agg AS qa OPTION (RECOMPILE); END;
+         IF @debug = 1 BEGIN SELECT N'#query_agg' AS table_name, * FROM #query_agg AS qa OPTION (RECOMPILE); END;
 
-         WITH queries AS 
-             (
-                 SELECT COUNT_BIG(*) AS executions,
-                        q.query_plan_hash_signed,
-                        q.query_hash_signed,
-                        q.plan_handle
-                 FROM #queries AS q
-                 GROUP BY q.query_plan_hash_signed,
-                          q.query_hash_signed,
-                          q.plan_handle
-             )
-                 SELECT q.query_plan_hash_signed,
-                        q.query_hash_signed,
-                        q.plan_handle,
-                        qq.executions,
-                        /*totals*/
-                        q.total_cpu_ms,
-                        q.total_logical_reads_mb,
-                        q.total_physical_reads_mb,
-                        q.total_duration_ms,
-                        q.total_writes_mb,
-                        q.total_spills_mb,
-                        q.total_used_memory_mb,
-                        q.total_granted_memory_mb,
-                        q.total_rows,
-                        /*averages*/
-                        q.avg_cpu_ms,
-                        q.avg_logical_reads_mb,
-                        q.avg_physical_reads_mb,
-                        q.avg_duration_ms,
-                        q.avg_writes_mb,
-                        q.avg_spills_mb,
-                        q.avg_used_memory_mb,
-                        q.avg_granted_memory_mb,
-                        q.avg_rows AS avg_rows                    
-                 INTO #totals                 
-                 FROM queries AS qq
-                 JOIN #query_agg AS q
-                     ON    qq.query_plan_hash_signed = q.query_plan_hash_signed
-                     AND   qq.query_hash_signed = q.query_hash_signed
-                     AND   qq.plan_handle = q.plan_handle                 
-                 OPTION (RECOMPILE);
-
+         SELECT q.query_plan_hash_signed,
+                q.query_hash_signed,
+                q.plan_handle,
+                q.executions,
+                /*totals*/
+                q.total_cpu_ms,
+                q.total_logical_reads_mb,
+                q.total_physical_reads_mb,
+                q.total_duration_ms,
+                q.total_writes_mb,
+                q.total_spills_mb,
+                q.total_used_memory_mb,
+                q.total_granted_memory_mb,
+                q.total_rows,
+                /*averages*/
+                q.avg_cpu_ms,
+                q.avg_logical_reads_mb,
+                q.avg_physical_reads_mb,
+                q.avg_duration_ms,
+                q.avg_writes_mb,
+                q.avg_spills_mb,
+                q.avg_used_memory_mb,
+                q.avg_granted_memory_mb,
+                q.avg_rows AS avg_rows                    
+         INTO #totals                 
+         FROM #query_agg AS q
+         OPTION (RECOMPILE);
          
          IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION (RECOMPILE); END;
 
