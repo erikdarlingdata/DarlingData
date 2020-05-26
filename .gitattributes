@@ -3,5 +3,3 @@
 
 # linguist overrides
 *.sql linguist-language=TSQL
-*.R linguist-language=R
-*.ps1 linguist-language=Powershell
