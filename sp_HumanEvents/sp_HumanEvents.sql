@@ -1354,14 +1354,14 @@ BEGIN;
                    c.value('(action[@name="sql_text"]/value)[1]', 'NVARCHAR(MAX)') AS sql_text,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement,
                    c.query('(data[@name="showplan_xml"]/value/*)[1]') AS [showplan_xml],
-                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') / 1000. AS cpu_ms,
-                  (c.value('(data[@name="logical_reads"]/value)[1]', 'INT') * 8) / 1024. AS logical_reads,
-                  (c.value('(data[@name="physical_reads"]/value)[1]', 'INT') * 8) / 1024. AS physical_reads,
-                   c.value('(data[@name="duration"]/value)[1]', 'INT') / 1000. AS duration_ms,
-                  (c.value('(data[@name="writes"]/value)[1]', 'INT') * 8) / 1024. AS writes,
-                  (c.value('(data[@name="spills"]/value)[1]', 'INT') * 8) / 1024. AS spills_mb,
-                   c.value('(data[@name="row_count"]/value)[1]', 'INT') AS row_count,
-                   c.value('(data[@name="estimated_rows"]/value)[1]', 'INT') AS estimated_rows,
+                   c.value('(data[@name="cpu_time"]/value)[1]', 'BIGINT') / 1000. AS cpu_ms,
+                  (c.value('(data[@name="logical_reads"]/value)[1]', 'BIGINT') * 8) / 1024. AS logical_reads,
+                  (c.value('(data[@name="physical_reads"]/value)[1]', 'BIGINT') * 8) / 1024. AS physical_reads,
+                   c.value('(data[@name="duration"]/value)[1]', 'BIGINT') / 1000. AS duration_ms,
+                  (c.value('(data[@name="writes"]/value)[1]', 'BIGINT') * 8) / 1024. AS writes,
+                  (c.value('(data[@name="spills"]/value)[1]', 'BIGINT') * 8) / 1024. AS spills_mb,
+                   c.value('(data[@name="row_count"]/value)[1]', 'BIGINT') AS row_count,
+                   c.value('(data[@name="estimated_rows"]/value)[1]', 'BIGINT') AS estimated_rows,
                    c.value('(data[@name="dop"]/value)[1]', 'INT') AS dop,
                    c.value('(data[@name="serial_ideal_memory_kb"]/value)[1]', 'BIGINT') / 1024. AS serial_ideal_memory_mb,
                    c.value('(data[@name="requested_memory_kb"]/value)[1]', 'BIGINT') / 1024. AS requested_memory_mb,
@@ -1585,8 +1585,8 @@ IF @compile_events = 1
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
-                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') compile_cpu_ms,
-                   c.value('(data[@name="duration"]/value)[1]', 'INT') compile_duration_ms
+                   c.value('(data[@name="cpu_time"]/value)[1]', 'BIGINT') compile_cpu_ms,
+                   c.value('(data[@name="duration"]/value)[1]', 'BIGINT') compile_duration_ms
             INTO #compiles_1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
@@ -1749,8 +1749,8 @@ IF @compile_events = 1
                    c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
                    c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
-                   c.value('(data[@name="cpu_time"]/value)[1]', 'INT') AS recompile_cpu_ms,
-                   c.value('(data[@name="duration"]/value)[1]', 'INT') AS recompile_duration_ms
+                   c.value('(data[@name="cpu_time"]/value)[1]', 'BIGINT') AS recompile_cpu_ms,
+                   c.value('(data[@name="duration"]/value)[1]', 'BIGINT') AS recompile_duration_ms
             INTO #recompiles_1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
@@ -1977,6 +1977,7 @@ BEGIN
                    bg.value('(process/@hostname)[1]', 'NVARCHAR(256)') AS host_name,
                    bg.value('(process/@loginname)[1]', 'NVARCHAR(256)') AS login_name,
                    bg.value('(process/@isolationlevel)[1]', 'NVARCHAR(50)') AS isolation_level,
+                   CONVERT(NVARCHAR(100), NULL) AS sqlhandle,
                    'blocking' AS activity,
                    c.query('.') AS blocked_process_report
             INTO #blocking
@@ -2212,7 +2213,7 @@ WHILE 1 = 1
                        WHEN @event_type_check LIKE N'%lock%'
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
                             N'( id BIGINT PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, ' + NCHAR(10) +
-                            N'  activity NVARCHAR(20) NULL, database_name sysname NULL, database_id INT NULL, object_id INT NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + NCHAR(10) +
+                            N'  activity NVARCHAR(20) NULL, database_name sysname NULL, database_id INT NULL, object_id BIGINT NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + NCHAR(10) +
                             N'  transaction_id INT NULL, resource_owner_type NVARCHAR(256) NULL, monitor_loop INT NULL, spid INT NULL, ecid INT NULL, query_text NVARCHAR(MAX) NULL, ' + 
                             N'  wait_time BIGINT NULL, transaction_name NVARCHAR(256) NULL,  last_transaction_started NVARCHAR(30) NULL, ' + NCHAR(10) +
                             N'  lock_mode NVARCHAR(10) NULL, status NVARCHAR(10) NULL, priority INT NULL, transaction_count INT NULL, ' + NCHAR(10) +
@@ -2677,14 +2678,14 @@ OPTION (RECOMPILE);
        c.value(''(action[@name="sql_text"]/value)[1]'', ''NVARCHAR(MAX)'') AS sql_text,
        c.value(''(data[@name="statement"]/value)[1]'', ''NVARCHAR(MAX)'') AS statement,
        c.query(''(data[@name="showplan_xml"]/value/*)[1]'') AS [showplan_xml],
-       c.value(''(data[@name="cpu_time"]/value)[1]'', ''INT'') / 1000. AS cpu_ms,
-      (c.value(''(data[@name="logical_reads"]/value)[1]'', ''INT'') * 8) / 1024. AS logical_reads,
-      (c.value(''(data[@name="physical_reads"]/value)[1]'', ''INT'') * 8) / 1024. AS physical_reads,
-       c.value(''(data[@name="duration"]/value)[1]'', ''INT'') / 1000. AS duration_ms,
-      (c.value(''(data[@name="writes"]/value)[1]'', ''INT'') * 8) / 1024. AS writes_mb,
-      (c.value(''(data[@name="spills"]/value)[1]'', ''INT'') * 8) / 1024. AS spills_mb,
-       c.value(''(data[@name="row_count"]/value)[1]'', ''INT'') AS row_count,
-       c.value(''(data[@name="estimated_rows"]/value)[1]'', ''INT'') AS estimated_rows,
+       c.value(''(data[@name="cpu_time"]/value)[1]'', ''BIGINT'') / 1000. AS cpu_ms,
+      (c.value(''(data[@name="logical_reads"]/value)[1]'', ''BIGINT'') * 8) / 1024. AS logical_reads,
+      (c.value(''(data[@name="physical_reads"]/value)[1]'', ''BIGINT'') * 8) / 1024. AS physical_reads,
+       c.value(''(data[@name="duration"]/value)[1]'', ''BIGINT'') / 1000. AS duration_ms,
+      (c.value(''(data[@name="writes"]/value)[1]'', ''BIGINT'') * 8) / 1024. AS writes_mb,
+      (c.value(''(data[@name="spills"]/value)[1]'', ''BIGINT'') * 8) / 1024. AS spills_mb,
+       c.value(''(data[@name="row_count"]/value)[1]'', ''BIGINT'') AS row_count,
+       c.value(''(data[@name="estimated_rows"]/value)[1]'', ''BIGINT'') AS estimated_rows,
        c.value(''(data[@name="dop"]/value)[1]'', ''INT'') AS dop,
        c.value(''(data[@name="serial_ideal_memory_kb"]/value)[1]'', ''BIGINT'') / 1024. AS serial_ideal_memory_mb,
        c.value(''(data[@name="requested_memory_kb"]/value)[1]'', ''BIGINT'') / 1024. AS requested_memory_mb,
@@ -2714,8 +2715,8 @@ OPTION(RECOMPILE); '
    + CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/
           THEN 
    N'  , 
-       c.value(''(data[@name="cpu_time"]/value)[1]'', ''INT'') AS compile_cpu_ms,
-       c.value(''(data[@name="duration"]/value)[1]'', ''INT'') AS compile_duration_ms'
+       c.value(''(data[@name="cpu_time"]/value)[1]'', ''BIGINT'') AS compile_cpu_ms,
+       c.value(''(data[@name="duration"]/value)[1]'', ''BIGINT'') AS compile_duration_ms'
           ELSE N''
      END + N'
 FROM #human_events_xml_internal AS xet
@@ -2744,8 +2745,8 @@ OPTION (RECOMPILE);'
    + CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/
           THEN 
    N'  , 
-       c.value(''(data[@name="cpu_time"]/value)[1]'', ''INT'') AS compile_cpu_ms,
-       c.value(''(data[@name="duration"]/value)[1]'', ''INT'') AS compile_duration_ms'
+       c.value(''(data[@name="cpu_time"]/value)[1]'', ''BIGINT'') AS compile_cpu_ms,
+       c.value(''(data[@name="duration"]/value)[1]'', ''BIGINT'') AS compile_duration_ms'
           ELSE N''
      END + N'
 FROM #human_events_xml_internal AS xet
