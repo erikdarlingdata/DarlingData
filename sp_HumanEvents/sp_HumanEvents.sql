@@ -295,6 +295,13 @@ IF @v < 11
         RETURN;
     END;
 
+/*Checking to see where we're running this thing*/
+RAISERROR('Checking for Azure Cloud Nonsense™', 0, 1) WITH NOWAIT;
+DECLARE @Azure BIT;
+SELECT  @Azure = CASE WHEN CONVERT(NVARCHAR(128), SERVERPROPERTY('Edition')) = N'SQL Azure'
+                      THEN 1
+                      ELSE 0
+                 END;
 
 /*clean up any old/dormant sessions*/
 IF EXISTS
@@ -375,10 +382,15 @@ WITH
         );' + NCHAR(10);
 
 --I guess we need to do this, too
-DECLARE @session_sql NVARCHAR(MAX) = N'
+DECLARE @session_sql NVARCHAR(MAX) = N'';
+SELECT  @session_sql = CASE WHEN @Azure = 0
+                            THEN N'
 CREATE EVENT SESSION ' + @session_name + N'
-    ON SERVER ';
-
+    ON SERVER '
+                            ELSE N'
+CREATE EVENT SESSION ' + @session_name + N'
+    ON DATABASE '
+                       END;
 
 -- STOP. DROP. SHUT'EM DOWN OPEN UP SHOP.
 DECLARE @start_sql NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON SERVER STATE = START;' + NCHAR(10);
