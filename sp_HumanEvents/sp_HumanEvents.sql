@@ -480,7 +480,7 @@ Some sanity checking
 */
 RAISERROR(N'Sanity checking event types', 0, 1) WITH NOWAIT;
 --You can only do this right now.
-IF @event_type NOT IN 
+IF LOWER(@event_type) NOT IN 
         ( N'waits',
           N'blocking',
           N'locking',
