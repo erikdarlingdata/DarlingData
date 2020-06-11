@@ -759,23 +759,6 @@ BEGIN
 END;
 
 
---i'll probably regret this check someday.
-RAISERROR(N'If there''s a user name filter, does the name exist?', 0, 1) WITH NOWAIT;
-IF @username NOT IN 
-(
-    SELECT sp.name
-    FROM sys.server_principals AS sp
-    LEFT JOIN sys.sql_logins AS sl
-        ON sp.principal_id = sl.principal_id
-    WHERE sp.type NOT IN ( N'G', N'R' ) 
-    AND   sp.is_disabled = 0
-) AND @username <> N''
-BEGIN
-    RAISERROR(N'That username (%s) doesn''t exist in sys.server_principals', 16, 1, @username) WITH NOWAIT;
-    RETURN;
-END;
-
-
 /*
 We need to do some seconds math here, because WAITFOR is very stupid
 */
