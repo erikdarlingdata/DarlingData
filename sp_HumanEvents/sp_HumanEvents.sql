@@ -4,9 +4,9 @@ SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
-SET STATISTICS IO OFF;
-SET STATISTICS TIME OFF;
+SET STATISTICS TIME, IO OFF;
 GO
+
 
 IF OBJECT_ID('dbo.sp_HumanEvents') IS  NULL
    BEGIN
@@ -37,6 +37,7 @@ ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
                                     @output_schema_name sysname = N'dbo',
                                     @delete_retention_days INT = 3,
                                     @cleanup BIT = 0,
+                                    @max_memory_kb BIGINT = 102400,
                                     @version VARCHAR(30) = NULL OUTPUT,
                                     @version_date DATETIME = NULL OUTPUT,
                                     @debug BIT = 0,
@@ -111,6 +112,7 @@ BEGIN
                         WHEN N'@output_schema_name' THEN N'the schema you want to log data to'
                         WHEN N'@delete_retention_days' THEN N'how many days of logged data you want to keep'
                         WHEN N'@cleanup' THEN N'deletes all sessions, tables, and views. requires output database and schema.'
+                        WHEN N'@max_memory_kb' THEN N'set a max ring buffer size to log data to'
                         WHEN N'@help' THEN N'well you''re here so you figured this one out'
                         WHEN N'@version' THEN N'to make sure you have the most recent bits'
                         WHEN N'@version_date' THEN N'to make sure you have the most recent bits'
@@ -140,6 +142,7 @@ BEGIN
                         WHEN N'@output_schema_name' THEN N'a valid schema'
                         WHEN N'@delete_retention_days' THEN N'a POSITIVE integer'
                         WHEN N'@cleanup' THEN N'1 or 0'
+                        WHEN N'@max_memory_kb' THEN N'an integer'
                         WHEN N'@help' THEN N'1 or 0'
                         WHEN N'@version' THEN N'none, output'
                         WHEN N'@version_date' THEN N'none, output'
@@ -169,6 +172,7 @@ BEGIN
                         WHEN N'@delete_retention_days' THEN N'3 (days)'
                         WHEN N'@debug' THEN N'0'
                         WHEN N'@cleanup' THEN N'0'
+                        WHEN N'@max_memory_kb' THEN N'102400'
                         WHEN N'@help' THEN N'0'
                         WHEN N'@version' THEN N'none, output'
                         WHEN N'@version_date' THEN N'none, output'
@@ -285,43 +289,45 @@ BEGIN TRY
 I mean really stop it with the unsupported versions
 */
 DECLARE @v DECIMAL(5,0);
-SELECT  @v = SUBSTRING( CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion')), 
-                        1,
-                        CHARINDEX('.', CONVERT(NVARCHAR(128), 
-                            SERVERPROPERTY('ProductVersion'))) + 1 );
-IF @v < 11
+DECLARE @mv INT;
+
+SELECT @v = PARSENAME(CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion')), 4 ),
+       @mv = PARSENAME(CONVERT(NVARCHAR(128), SERVERPROPERTY('ProductVersion')), 2 );
+
+IF ( (@v < 11) 
+       OR (@v = 11 AND @mv < 7001) )
     BEGIN
-        RAISERROR(N'This darn thing doesn''t seem to work on versions older than 2012.', 16, 1) WITH NOWAIT;
+        RAISERROR(N'This darn thing doesn''t seem to work on versions older than 2012 SP4.', 16, 1) WITH NOWAIT;
         RETURN;
     END;
 
+
 /*Checking to see where we're running this thing*/
 RAISERROR('Checking for Azure Cloud Nonsense™', 0, 1) WITH NOWAIT;
+
+/** 
+Engine Edition - https://docs.microsoft.com/en-us/sql/t-sql/functions/serverproperty-transact-sql?view=sql-server-ver15
+    5 = SQL Database (Azure)
+    8 = Managed Instance (Azure)
+    1-4 = SQL Engine (personal, standard, enterprise, express, in that order)
+**/
+DECLARE @EngineEdition INT; 
+SELECT  @EngineEdition = CONVERT(INT, SERVERPROPERTY('EngineEdition'));
+
 DECLARE @Azure BIT;
-SELECT  @Azure = CASE WHEN CONVERT(NVARCHAR(128), SERVERPROPERTY('Edition')) = N'SQL Azure'
+
+SELECT  @Azure = CASE WHEN @EngineEdition = 5
                       THEN 1
                       ELSE 0
                  END;
 
 /*clean up any old/dormant sessions*/
-IF EXISTS
-(    
-    SELECT 1/0
-    FROM sys.server_event_sessions AS ses
-    LEFT JOIN sys.dm_xe_sessions AS dxe
-        ON dxe.name = ses.name
-    WHERE ses.name LIKE N'HumanEvents%'
-    AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR      dxe.create_time IS NULL ) 
-)
-BEGIN 
-    RAISERROR(N'Found old sessions, dropping those.', 0, 1) WITH NOWAIT;
     
-    DECLARE @drop_old_sql  NVARCHAR(1000) = N'';
+CREATE TABLE #drop_commands ( id INT IDENTITY PRIMARY KEY, 
+                                drop_command NVARCHAR(1000) );
     
-    CREATE TABLE #drop_commands ( id INT IDENTITY PRIMARY KEY, 
-                                  drop_command NVARCHAR(1000) );
-    
+IF @Azure = 0
+BEGIN
     INSERT #drop_commands WITH (TABLOCK) (drop_command)
     SELECT N'DROP EVENT SESSION '  + ses.name + N' ON SERVER;'
     FROM sys.server_event_sessions AS ses
@@ -331,6 +337,29 @@ BEGIN
     AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
     OR      dxe.create_time IS NULL ) 
     OPTION(RECOMPILE);
+END;
+IF @Azure = 1
+BEGIN
+    INSERT #drop_commands WITH (TABLOCK) (drop_command)
+    SELECT N'DROP EVENT SESSION '  + ses.name + N' ON DATABASE;'
+    FROM sys.database_event_sessions AS ses
+    LEFT JOIN sys.dm_xe_database_sessions AS dxe
+        ON dxe.name = ses.name
+    WHERE ses.name LIKE N'HumanEvents%'
+    AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+    OR      dxe.create_time IS NULL ) 
+    OPTION(RECOMPILE);
+END;
+
+IF EXISTS
+(    
+    SELECT 1/0
+    FROM #drop_commands AS dc
+)
+BEGIN 
+    RAISERROR(N'Found old sessions, dropping those.', 0, 1) WITH NOWAIT;
+    
+    DECLARE @drop_old_sql  NVARCHAR(1000) = N'';
 
     DECLARE drop_cursor CURSOR LOCAL STATIC FOR
     SELECT  drop_command FROM #drop_commands;
@@ -366,13 +395,25 @@ BEGIN
     SET @session_name += N'keeper_HumanEvents_'  + @event_type + CASE WHEN @custom_name <> N'' THEN N'_' + @custom_name ELSE N'' END;
 END;
 
+
+
+IF @Azure = 1
+BEGIN
+    RAISERROR(N'Setting lower max memory for ringbuffer due to Azure, setting to %m kb',  0, 1, @max_memory_kb) WITH NOWAIT;
+    
+    SELECT TOP (1) @max_memory_kb = CONVERT(BIGINT, (max_memory * .10) * 1024)
+    FROM sys.dm_user_db_resource_governance
+    WHERE UPPER(database_name) = UPPER(@database_name)
+    OR    NULLIF(@database_name, '') IS NULL;
+END;
+
 --Universal, yo
 DECLARE @session_with NVARCHAR(MAX) = N'    
 ADD TARGET package0.ring_buffer
-        ( SET max_memory = 102400 )
+        ( SET max_memory = ' + RTRIM(@max_memory_kb) + N' )
 WITH
         (
-            MAX_MEMORY = 102400KB,
+            MAX_MEMORY = ' + RTRIM(@max_memory_kb) + N'KB,
             EVENT_RETENTION_MODE = ALLOW_SINGLE_EVENT_LOSS,
             MAX_DISPATCH_LATENCY = 5 SECONDS,
             MAX_EVENT_SIZE = 0KB,
@@ -393,9 +434,9 @@ CREATE EVENT SESSION ' + @session_name + N'
                        END;
 
 -- STOP. DROP. SHUT'EM DOWN OPEN UP SHOP.
-DECLARE @start_sql NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON SERVER STATE = START;' + NCHAR(10);
-DECLARE @stop_sql  NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON SERVER STATE = STOP;' + NCHAR(10);
-DECLARE @drop_sql  NVARCHAR(MAX) = N'DROP EVENT SESSION '  + @session_name + N' ON SERVER;' + NCHAR(10);
+DECLARE @start_sql NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = START;' + NCHAR(10);
+DECLARE @stop_sql  NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = STOP;' + NCHAR(10);
+DECLARE @drop_sql  NVARCHAR(MAX) = N'DROP EVENT SESSION '  + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ';' + NCHAR(10);
 
 
 /*Some sessions can use all general filters*/
@@ -823,19 +864,37 @@ CH-CH-CH-CHECK-IT-OUT
 */
 --check for existing session with the same name
 RAISERROR(N'Make sure the session doesn''t exist already', 0, 1) WITH NOWAIT;
-IF EXISTS
-(
-    SELECT 1/0
-    FROM sys.server_event_sessions AS ses
-    LEFT JOIN sys.dm_xe_sessions AS dxs 
-        ON dxs.name = ses.name
-    WHERE ses.name = @session_name
-)
-BEGIN
-    RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
-    EXEC sys.sp_executesql @drop_sql;
-END;
 
+IF @Azure = 0
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1/0
+        FROM sys.server_event_sessions AS ses
+        LEFT JOIN sys.dm_xe_sessions AS dxs 
+            ON dxs.name = ses.name
+        WHERE ses.name = @session_name
+    )
+    BEGIN
+        RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
+        EXEC sys.sp_executesql @drop_sql;
+    END;
+END;
+ELSE
+BEGIN
+    IF EXISTS
+    (
+        SELECT 1/0
+        FROM sys.database_event_sessions AS ses
+        LEFT JOIN sys.dm_xe_database_sessions AS dxs 
+            ON dxs.name = ses.name
+        WHERE ses.name = @session_name
+    )
+    BEGIN
+        RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
+        EXEC sys.sp_executesql @drop_sql;
+    END;
+END;
 
 --check that the output database exists
 RAISERROR(N'Does the output database exist?', 0, 1) WITH NOWAIT;
@@ -1314,13 +1373,27 @@ WAITFOR DELAY @waitfor;
 
 
 --Dump whatever we got into a temp table
-SELECT @x = CONVERT(XML, t.target_data)
-FROM   sys.dm_xe_session_targets AS t
-JOIN   sys.dm_xe_sessions AS s
-    ON s.address = t.event_session_address
-WHERE  s.name = @session_name
-AND    t.target_name = N'ring_buffer'
-OPTION (RECOMPILE);
+IF @Azure = 0
+BEGIN
+    SELECT @x = CONVERT(XML, t.target_data)
+    FROM   sys.dm_xe_session_targets AS t
+    JOIN   sys.dm_xe_sessions AS s
+        ON s.address = t.event_session_address
+    WHERE  s.name = @session_name
+    AND    t.target_name = N'ring_buffer'
+    OPTION (RECOMPILE);
+END;
+ELSE
+BEGIN
+    SELECT @x = CONVERT(XML, t.target_data)
+    FROM   sys.dm_xe_database_session_targets AS t
+    JOIN   sys.dm_xe_database_sessions AS s
+        ON s.address = t.event_session_address
+    WHERE  s.name = @session_name
+    AND    t.target_name = N'ring_buffer'
+    OPTION (RECOMPILE);
+
+END;
 
 
 SELECT e.x.query('.') AS human_events_xml
@@ -1345,10 +1418,10 @@ BEGIN;
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
-                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
+                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS object_name,
                    c.value('(action[@name="sql_text"]/value)[1]', 'NVARCHAR(MAX)') AS sql_text,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement,
-                   c.query('(data[@name="showplan_xml"]/value/*)[1]') AS [showplan_xml],
+                   c.query('(data[@name="showplan_xml"]/value/*)[1]') AS showplan_xml,
                    c.value('(data[@name="cpu_time"]/value)[1]', 'BIGINT') / 1000. AS cpu_ms,
                   (c.value('(data[@name="logical_reads"]/value)[1]', 'BIGINT') * 8) / 1024. AS logical_reads,
                   (c.value('(data[@name="physical_reads"]/value)[1]', 'BIGINT') * 8) / 1024. AS physical_reads,
@@ -1376,6 +1449,44 @@ BEGIN;
          OPTION (RECOMPILE);
          
          IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
+
+         /* Add attribute StatementId to query plan if it is missing (versions before 2019) */
+         WITH XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
+         UPDATE q1
+         SET showplan_xml.modify('insert attribute StatementId {"1"} 
+                                      into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
+         FROM #queries AS q1
+           CROSS APPLY (
+                        SELECT TOP (1)
+                               q2.statement AS statement_text
+                        FROM #queries AS q2
+                        WHERE q1.query_hash_signed = q2.query_hash_signed
+                              AND q1.query_plan_hash_signed = q2.query_plan_hash_signed
+                              AND q2.statement IS NOT NULL
+                        ORDER BY q2.event_time DESC
+                       ) AS q2
+         WHERE q1.showplan_xml IS NOT NULL
+               AND q1.showplan_xml.exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementId') = 0
+         OPTION (RECOMPILE);
+         
+         /* Add attribute StatementText to query plan if it is missing (all versions) */
+         WITH XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
+         UPDATE q1
+         SET showplan_xml.modify('insert attribute StatementText {sql:column("q2.statement_text")} 
+                                      into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
+         FROM #queries AS q1
+           CROSS APPLY (
+                       SELECT TOP (1)
+                              q2.statement AS statement_text
+                       FROM #queries AS q2
+                       WHERE q1.query_hash_signed = q2.query_hash_signed
+                             AND q1.query_plan_hash_signed = q2.query_plan_hash_signed
+                             AND q2.statement IS NOT NULL
+                       ORDER BY q2.event_time DESC
+                       ) AS q2
+         WHERE q1.showplan_xml IS NOT NULL 
+               AND q1.showplan_xml.exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementText') = 0
+         OPTION (RECOMPILE);
 
          WITH query_agg AS 
              (
@@ -1417,8 +1528,8 @@ BEGIN;
                        NULL AS total_duration_ms,
                        NULL AS total_writes,
                        NULL AS total_spills_mb,                        
-                       ISNULL(used_memory_mb, 0.) AS total_used_memory_mb,
-                       ISNULL(granted_memory_mb, 0.) AS total_granted_memory_mb,
+                       ISNULL(q.used_memory_mb, 0.) AS total_used_memory_mb,
+                       ISNULL(q.granted_memory_mb, 0.) AS total_granted_memory_mb,
                        NULL AS total_rows,
                        /*averages*/
                        NULL AS avg_cpu_ms,
@@ -1453,57 +1564,12 @@ BEGIN;
                     AVG(qa.avg_spills_mb) AS avg_spills_mb,
                     AVG(qa.avg_used_memory_mb) AS avg_used_memory_mb,
                     AVG(qa.avg_granted_memory_mb) AS avg_granted_memory_mb,
-                    AVG(qa.avg_rows) AS avg_rows
-             INTO #query_agg
+                    AVG(qa.avg_rows) AS avg_rows,
+                    COUNT(qa.plan_handle) AS executions
+             INTO #totals
              FROM query_agg AS qa
              GROUP BY qa.query_plan_hash_signed,
                       qa.query_hash_signed;
-
-             IF @debug = 1 BEGIN SELECT N'#query_agg' AS table_name, * FROM #query_agg AS qa OPTION (RECOMPILE); END;
-
-         WITH queries AS 
-             (
-                 SELECT COUNT_BIG(*) AS executions,
-                        q.query_plan_hash_signed,
-                        q.query_hash_signed,
-                        q.plan_handle
-                 FROM #queries AS q
-                 GROUP BY q.query_plan_hash_signed,
-                          q.query_hash_signed,
-                          q.plan_handle
-             )
-                 SELECT q.query_plan_hash_signed,
-                        q.query_hash_signed,
-                        q.plan_handle,
-                        qq.executions,
-                        /*totals*/
-                        q.total_cpu_ms,
-                        q.total_logical_reads_mb,
-                        q.total_physical_reads_mb,
-                        q.total_duration_ms,
-                        q.total_writes_mb,
-                        q.total_spills_mb,
-                        q.total_used_memory_mb,
-                        q.total_granted_memory_mb,
-                        q.total_rows,
-                        /*averages*/
-                        q.avg_cpu_ms,
-                        q.avg_logical_reads_mb,
-                        q.avg_physical_reads_mb,
-                        q.avg_duration_ms,
-                        q.avg_writes_mb,
-                        q.avg_spills_mb,
-                        q.avg_used_memory_mb,
-                        q.avg_granted_memory_mb,
-                        q.avg_rows AS avg_rows                    
-                 INTO #totals                 
-                 FROM queries AS qq
-                 JOIN #query_agg AS q
-                     ON    qq.query_plan_hash_signed = q.query_plan_hash_signed
-                     AND   qq.query_hash_signed = q.query_hash_signed
-                     AND   qq.plan_handle = q.plan_handle                 
-                 OPTION (RECOMPILE);
-
          
          IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION (RECOMPILE); END;
 
@@ -1623,7 +1689,7 @@ IF @compile_events = 1
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
-                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
+                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS object_name,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
                    c.value('(data[@name="cpu_time"]/value)[1]', 'BIGINT') compile_cpu_ms,
                    c.value('(data[@name="duration"]/value)[1]', 'BIGINT') compile_duration_ms
@@ -1679,7 +1745,7 @@ IF @compile_events = 0
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
-                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
+                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS object_name,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text
             INTO #compiles_0
             FROM #human_events_xml AS xet
@@ -1786,7 +1852,7 @@ IF @compile_events = 1
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
-                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
+                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS object_name,
                    c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text,
                    c.value('(data[@name="cpu_time"]/value)[1]', 'BIGINT') AS recompile_cpu_ms,
@@ -1843,7 +1909,7 @@ IF @compile_events = 0
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
                    c.value('(action[@name="database_name"]/value)[1]', 'NVARCHAR(256)') AS database_name,                
-                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS [object_name],
+                   c.value('(data[@name="object_name"]/value)[1]', 'NVARCHAR(256)') AS object_name,
                    c.value('(data[@name="recompile_cause"]/text)[1]', 'NVARCHAR(256)') AS recompile_cause,
                    c.value('(data[@name="statement"]/value)[1]', 'NVARCHAR(MAX)') AS statement_text
             INTO #recompiles_0
@@ -2115,7 +2181,7 @@ WHILE 1 = 1
      DECLARE @the_sleeper_must_awaken NVARCHAR(MAX) = N'';    
      
      SELECT @the_sleeper_must_awaken += 
-     N'ALTER EVENT SESSION ' + ses.name + N' ON SERVER STATE = START;' + NCHAR(10)
+     N'ALTER EVENT SESSION ' + ses.name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = START;' + NCHAR(10)
      FROM sys.server_event_sessions AS ses
      LEFT JOIN sys.dm_xe_sessions AS dxs
          ON dxs.name = ses.name
