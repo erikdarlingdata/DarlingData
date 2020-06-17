@@ -1443,6 +1443,44 @@ BEGIN;
          
          IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
 
+         /* Add attribute StatementId to query plan if it is missing (versions before 2019) */
+         WITH XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
+         UPDATE q1
+         SET [showplan_xml].modify('insert attribute StatementId {"1"} 
+                                      into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
+         FROM #queries AS q1
+           CROSS APPLY (
+                        SELECT TOP (1)
+                               q2.statement AS statement_text
+                        FROM #queries AS q2
+                        WHERE q1.query_hash_signed = q2.query_hash_signed
+                              AND q1.query_plan_hash_signed = q2.query_plan_hash_signed
+                              AND q2.statement IS NOT NULL
+                        ORDER BY q2.event_time DESC
+                       ) AS q2
+         WHERE q1.[showplan_xml] IS NOT NULL
+               AND q1.[showplan_xml].exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementId') = 0
+         OPTION (RECOMPILE);
+         
+         /* Add attribute StatementText to query plan if it is missing (all versions) */
+         WITH XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
+         UPDATE q1
+         SET [showplan_xml].modify('insert attribute StatementText {sql:column("q2.statement_text")} 
+                                      into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
+         FROM #queries AS q1
+           CROSS APPLY (
+                       SELECT TOP (1)
+                              q2.statement AS statement_text
+                       FROM #queries AS q2
+                       WHERE q1.query_hash_signed = q2.query_hash_signed
+                             AND q1.query_plan_hash_signed = q2.query_plan_hash_signed
+                             AND q2.statement IS NOT NULL
+                       ORDER BY q2.event_time DESC
+                       ) AS q2
+         WHERE q1.[showplan_xml] IS NOT NULL 
+               AND q1.[showplan_xml].exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementText') = 0
+         OPTION (RECOMPILE);
+
          WITH query_agg AS 
              (
                 SELECT q.query_plan_hash_signed,
