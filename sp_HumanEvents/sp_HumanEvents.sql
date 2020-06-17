@@ -8,6 +8,7 @@ SET STATISTICS IO OFF;
 SET STATISTICS TIME OFF;
 GO
 
+
 IF OBJECT_ID('dbo.sp_HumanEvents') IS  NULL
    BEGIN
        EXEC ('CREATE PROCEDURE dbo.sp_HumanEvents AS RETURN 138;');
@@ -295,42 +296,62 @@ IF @v < 11
         RETURN;
     END;
 
+
 /*Checking to see where we're running this thing*/
 RAISERROR('Checking for Azure Cloud Nonsense™', 0, 1) WITH NOWAIT;
+
+/** Engine Edition - https://docs.microsoft.com/en-us/sql/t-sql/functions/serverproperty-transact-sql?view=sql-server-ver15
+	5 = SQL Database (Azure)
+	8 = Managed Instance (Azure)
+	1-4 = SQL Engine (personal, standard, enterprise, express, in that order)
+	**/
+DECLARE @EngineEdition INT; 
+SELECT @EngineEdition = CONVERT(INT, SERVERPROPERTY('EngineEdition'));
 DECLARE @Azure BIT;
-SELECT  @Azure = CASE WHEN CONVERT(NVARCHAR(128), SERVERPROPERTY('Edition')) = N'SQL Azure'
+
+SELECT  @Azure = CASE WHEN @EngineEdition = 5
                       THEN 1
                       ELSE 0
                  END;
 
 /*clean up any old/dormant sessions*/
+    
+CREATE TABLE #drop_commands ( id INT IDENTITY PRIMARY KEY, 
+                                drop_command NVARCHAR(1000) );
+    
+IF @Azure = 0
+BEGIN
+	INSERT #drop_commands WITH (TABLOCK) (drop_command)
+	SELECT N'DROP EVENT SESSION '  + ses.name + N' ON SERVER;'
+	FROM sys.server_event_sessions AS ses
+	LEFT JOIN sys.dm_xe_sessions AS dxe
+		ON dxe.name = ses.name
+	WHERE ses.name LIKE N'HumanEvents%'
+	AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+	OR      dxe.create_time IS NULL ) 
+	OPTION(RECOMPILE);
+END
+ELSE
+BEGIN
+	INSERT #drop_commands WITH (TABLOCK) (drop_command)
+	SELECT N'DROP EVENT SESSION '  + ses.name + N' ON DATABASE;'
+	FROM sys.database_event_sessions AS ses
+	LEFT JOIN sys.dm_xe_database_sessions AS dxe
+		ON dxe.name = ses.name
+	WHERE ses.name LIKE N'HumanEvents%'
+	AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+	OR      dxe.create_time IS NULL ) 
+	OPTION(RECOMPILE);
+END
+
 IF EXISTS
 (    
-    SELECT 1/0
-    FROM sys.server_event_sessions AS ses
-    LEFT JOIN sys.dm_xe_sessions AS dxe
-        ON dxe.name = ses.name
-    WHERE ses.name LIKE N'HumanEvents%'
-    AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR      dxe.create_time IS NULL ) 
+    SELECT TOP (1) 1 FROM #drop_commands
 )
 BEGIN 
     RAISERROR(N'Found old sessions, dropping those.', 0, 1) WITH NOWAIT;
     
     DECLARE @drop_old_sql  NVARCHAR(1000) = N'';
-    
-    CREATE TABLE #drop_commands ( id INT IDENTITY PRIMARY KEY, 
-                                  drop_command NVARCHAR(1000) );
-    
-    INSERT #drop_commands WITH (TABLOCK) (drop_command)
-    SELECT N'DROP EVENT SESSION '  + ses.name + N' ON SERVER;'
-    FROM sys.server_event_sessions AS ses
-    LEFT JOIN sys.dm_xe_sessions AS dxe
-        ON dxe.name = ses.name
-    WHERE ses.name LIKE N'HumanEvents%'
-    AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR      dxe.create_time IS NULL ) 
-    OPTION(RECOMPILE);
 
     DECLARE drop_cursor CURSOR LOCAL STATIC FOR
     SELECT  drop_command FROM #drop_commands;
@@ -366,13 +387,26 @@ BEGIN
     SET @session_name += N'keeper_HumanEvents_'  + @event_type + CASE WHEN @custom_name <> N'' THEN N'_' + @custom_name ELSE N'' END;
 END;
 
+DECLARE @MaxMemoryKB NVARCHAR(10);
+SELECT @MaxMemoryKB = N'102400';
+
+IF @Azure = 1
+BEGIN
+	SELECT TOP (1) @MaxMemoryKB = CONVERT(NVARCHAR(10), CONVERT(INT, (max_memory * .10) * 1024))
+	FROM sys.dm_user_db_resource_governance
+	WHERE UPPER(database_name) = UPPER(@database_name)
+		OR NULLIF(@database_name, '') IS NULL;
+
+	RAISERROR(N'Setting lower max memory for ringbuffer due to Azure, setting to %m kb',  0, 1, @MaxMemoryKB) WITH NOWAIT;
+END
+
 --Universal, yo
 DECLARE @session_with NVARCHAR(MAX) = N'    
 ADD TARGET package0.ring_buffer
-        ( SET max_memory = 102400 )
+        ( SET max_memory = ' + @MaxMemoryKB + ' )
 WITH
         (
-            MAX_MEMORY = 102400KB,
+            MAX_MEMORY = ' + @MaxMemoryKB + 'KB,
             EVENT_RETENTION_MODE = ALLOW_SINGLE_EVENT_LOSS,
             MAX_DISPATCH_LATENCY = 5 SECONDS,
             MAX_EVENT_SIZE = 0KB,
@@ -393,9 +427,9 @@ CREATE EVENT SESSION ' + @session_name + N'
                        END;
 
 -- STOP. DROP. SHUT'EM DOWN OPEN UP SHOP.
-DECLARE @start_sql NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON SERVER STATE = START;' + NCHAR(10);
-DECLARE @stop_sql  NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON SERVER STATE = STOP;' + NCHAR(10);
-DECLARE @drop_sql  NVARCHAR(MAX) = N'DROP EVENT SESSION '  + @session_name + N' ON SERVER;' + NCHAR(10);
+DECLARE @start_sql NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = START;' + NCHAR(10);
+DECLARE @stop_sql  NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = STOP;' + NCHAR(10);
+DECLARE @drop_sql  NVARCHAR(MAX) = N'DROP EVENT SESSION '  + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ';' + NCHAR(10);
 
 
 /*Some sessions can use all general filters*/
@@ -823,19 +857,37 @@ CH-CH-CH-CHECK-IT-OUT
 */
 --check for existing session with the same name
 RAISERROR(N'Make sure the session doesn''t exist already', 0, 1) WITH NOWAIT;
-IF EXISTS
-(
-    SELECT 1/0
-    FROM sys.server_event_sessions AS ses
-    LEFT JOIN sys.dm_xe_sessions AS dxs 
-        ON dxs.name = ses.name
-    WHERE ses.name = @session_name
-)
-BEGIN
-    RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
-    EXEC sys.sp_executesql @drop_sql;
-END;
 
+IF @Azure = 0
+BEGIN
+	IF EXISTS
+	(
+		SELECT 1/0
+		FROM sys.server_event_sessions AS ses
+		LEFT JOIN sys.dm_xe_sessions AS dxs 
+			ON dxs.name = ses.name
+		WHERE ses.name = @session_name
+	)
+	BEGIN
+		RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
+		EXEC sys.sp_executesql @drop_sql;
+	END;
+END
+ELSE
+BEGIN
+	IF EXISTS
+	(
+		SELECT 1/0
+		FROM sys.database_event_sessions AS ses
+		LEFT JOIN sys.dm_xe_database_sessions AS dxs 
+			ON dxs.name = ses.name
+		WHERE ses.name = @session_name
+	)
+	BEGIN
+		RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
+		EXEC sys.sp_executesql @drop_sql;
+	END;
+END
 
 --check that the output database exists
 RAISERROR(N'Does the output database exist?', 0, 1) WITH NOWAIT;
@@ -1314,13 +1366,27 @@ WAITFOR DELAY @waitfor;
 
 
 --Dump whatever we got into a temp table
-SELECT @x = CONVERT(XML, t.target_data)
-FROM   sys.dm_xe_session_targets AS t
-JOIN   sys.dm_xe_sessions AS s
-    ON s.address = t.event_session_address
-WHERE  s.name = @session_name
-AND    t.target_name = N'ring_buffer'
-OPTION (RECOMPILE);
+IF @Azure = 0
+BEGIN
+	SELECT @x = CONVERT(XML, t.target_data)
+	FROM   sys.dm_xe_session_targets AS t
+	JOIN   sys.dm_xe_sessions AS s
+		ON s.address = t.event_session_address
+	WHERE  s.name = @session_name
+	AND    t.target_name = N'ring_buffer'
+	OPTION (RECOMPILE);
+END
+ELSE
+BEGIN
+	SELECT @x = CONVERT(XML, t.target_data)
+	FROM   sys.dm_xe_database_session_targets AS t
+	JOIN   sys.dm_xe_database_sessions AS s
+		ON s.address = t.event_session_address
+	WHERE  s.name = @session_name
+	AND    t.target_name = N'ring_buffer'
+	OPTION (RECOMPILE);
+
+END
 
 
 SELECT e.x.query('.') AS human_events_xml
@@ -2070,7 +2136,7 @@ WHILE 1 = 1
      DECLARE @the_sleeper_must_awaken NVARCHAR(MAX) = N'';    
      
      SELECT @the_sleeper_must_awaken += 
-     N'ALTER EVENT SESSION ' + ses.name + N' ON SERVER STATE = START;' + NCHAR(10)
+     N'ALTER EVENT SESSION ' + ses.name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = START;' + NCHAR(10)
      FROM sys.server_event_sessions AS ses
      LEFT JOIN sys.dm_xe_sessions AS dxs
          ON dxs.name = ses.name
