@@ -46,11 +46,12 @@ SELECT dtl.request_mode,
        END AS locked_object,
        ISNULL(i.name, N'OBJECT') AS index_name,
        dtl.resource_type,
+       dtl.request_status,
        COUNT_BIG(*) AS total_locks
-FROM sys.dm_tran_locks AS dtl
-LEFT JOIN sys.partitions AS p
+FROM sys.dm_tran_locks AS dtl WITH(NOLOCK)
+LEFT JOIN sys.partitions AS p WITH(NOLOCK)
     ON p.hobt_id = dtl.resource_associated_entity_id
-LEFT JOIN sys.indexes AS i
+LEFT JOIN sys.indexes AS i WITH(NOLOCK)
     ON  p.object_id = i.object_id
     AND p.index_id = i.index_id
 WHERE (dtl.request_session_id = @SPID OR @SPID IS NULL)
@@ -62,7 +63,8 @@ GROUP BY CASE dtl.resource_type
          END,
          ISNULL(i.name, N'OBJECT'),
          dtl.resource_type,
-         dtl.request_mode;
+         dtl.request_mode,
+         dtl.request_status;
 GO
 
 
