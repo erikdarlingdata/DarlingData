@@ -1229,8 +1229,7 @@ SET @session_filter_query_plans += ( ISNULL(@query_duration_filter, N'') +
                                      ISNULL(@database_name_filter, N'') +
                                      ISNULL(@session_id_filter, N'') +
                                      ISNULL(@username_filter, N'') +
-                                     ISNULL(@object_name_filter, N'') +
-                                     ISNULL(@requested_memory_mb_filter, N'') );
+                                     ISNULL(@object_name_filter, N'') );
 
 /*Recompile can have almost everything except... duration.*/
 SET @session_filter_recompile += ( ISNULL(@client_app_name_filter, N'') +
