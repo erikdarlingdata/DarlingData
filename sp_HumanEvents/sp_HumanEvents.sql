@@ -2513,14 +2513,17 @@ WHILE 1 = 1
                                               + N'.'
                                               + QUOTENAME(vc.output_schema)
                                               + N'.'
-                                              + vc.view_name,
+                                              + QUOTENAME(vc.view_name),
                            @view_database     = QUOTENAME(vc.output_database),
                            @view_sql          = REPLACE(
-                                                    REPLACE( vc.view_converted, 
-                                                             N'[replace_me]', 
-                                                             QUOTENAME(vc.output_schema) 
-                                                             + N'.' 
-                                                             + vc.output_table ), 
+                                                    REPLACE(
+                                                        REPLACE( vc.view_converted, 
+                                                                 N'[replace_me]', 
+                                                                 QUOTENAME(vc.output_schema) 
+                                                                 + N'.' 
+                                                                 + vc.output_table ),
+                                                    N'[dbo]' + '.' + QUOTENAME(vc.view_name),
+                                                    QUOTENAME(vc.output_schema)+ '.' + QUOTENAME(vc.view_name) ),
                                                 N'', 
                                                 N'''' )
                     FROM #view_check AS vc
