@@ -7,7 +7,7 @@ Navigatory
  - [Support](#support)
  
  - Scripts:
-    - [sp_pressure_detector](#pressure-detector)
+    - [sp_PressureDetector](#pressure-detector)
    - [sp_HumanEvents](#human-events)
 
 ## Who are these scripts for?
@@ -39,7 +39,7 @@ All you need to do is hit F5 to get information about which queries are currentl
 
 You also get overall server CPU thread, and query memory utilization.
 
-For a video walkthrough of the script and the results, [head over here](https://www.erikdarlingdata.com/sp_pressure_detector/).
+For a video walkthrough of the script and the results, [head over here](https://www.erikdarlingdata.com/sp_pressuredetector/).
 
 There's only one parameter for this procedure: `@what_to_check`, so if you only want CPU or memory information, you can choose one or the other. 
 
