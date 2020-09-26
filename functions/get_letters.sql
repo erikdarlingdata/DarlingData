@@ -1,3 +1,10 @@
+/* This version relies on a Numbers table */
+/* https://www.mssqltips.com/sqlservertip/4176/the-sql-server-numbers-table-explained--part-1/ */
+
+CREATE FUNCTION dbo.get_letters(@string NVARCHAR(4000))
+RETURNS TABLE
+WITH SCHEMABINDING
+AS
 /*
 Copyright (c) 2020 Darling Data, LLC
 
@@ -7,16 +14,7 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
-
-/* This version relies on a Numbers table */
-/* https://www.mssqltips.com/sqlservertip/4176/the-sql-server-numbers-table-explained--part-1/ */
-
-CREATE FUNCTION dbo.get_letters(@string NVARCHAR(4000))
-RETURNS TABLE
-WITH SCHEMABINDING
-AS
 RETURN 
-
 WITH x
   AS ( SELECT TOP (LEN(ISNULL(@string, N'')))
                   ROW_NUMBER() OVER (ORDER BY n.n) AS x
@@ -39,6 +37,15 @@ CREATE FUNCTION dbo.get_letters_cte(@string NVARCHAR(4000))
 RETURNS TABLE
 WITH SCHEMABINDING
 AS
+/*
+Copyright (c) 2020 Darling Data, LLC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*/
 RETURN 
 WITH e1 (n) AS (SELECT 1 FROM (VALUES (1), (1), (1), (1), (1), (1), (1), (1), (1), (1)) AS x (n)),
      e2 (n) AS (SELECT 1 FROM e1 AS a CROSS JOIN e1 AS b),
