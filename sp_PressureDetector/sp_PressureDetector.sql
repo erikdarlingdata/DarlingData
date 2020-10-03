@@ -21,14 +21,14 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
-SELECT @version = '1.0', @versiondate = '20200301';
+SELECT @version = '1.10', @versiondate = '20201001';
 
 /*
-        Copyright (c) 2020 Darling Data, LLC 
+    Copyright (c) 2020 Darling Data, LLC 
   
-        https://erikdarlingdata.com/
+    https://erikdarlingdata.com/
   
-        MIT License
+    MIT License
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal
@@ -161,7 +161,7 @@ SELECT @version = '1.0', @versiondate = '20200301';
             deqrs.pool_id
     FROM sys.dm_exec_query_resource_semaphores AS deqrs
     WHERE deqrs.resource_semaphore_id = 0
-    AND   deqrs.pool_id = 2
+    AND   deqrs.pool_id > 1
     OPTION(MAXDOP 1);
     END;
 
