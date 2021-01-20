@@ -53,5 +53,5 @@ WITH e1 (n) AS (SELECT 1 FROM (VALUES (1), (1), (1), (1), (1), (1), (1), (1), (1
       FROM x AS x
       WHERE SUBSTRING(@string COLLATE Latin1_General_100_BIN2, x.x, 1) LIKE '[0-9]'
       ORDER BY x.x
-      FOR XML PATH('')) ) AS letters_only;
+      FOR XML PATH('')) ) AS numbers_only;
 GO 
