@@ -173,9 +173,42 @@ SELECT @version = '1.10', @versiondate = '20201001';
                MAX(osi.max_workers_count) - SUM(dos.active_workers_count) AS available_threads,
                SUM(dos.runnable_tasks_count) AS threads_waiting_for_cpu,
                SUM(dos.work_queue_count) AS requests_waiting_for_threads,
-               SUM(dos.current_workers_count) AS current_workers
+               SUM(dos.current_workers_count) AS current_workers,
+               MAX(r.high_runnable_percent) AS high_runnable_percent
     FROM       sys.dm_os_schedulers AS dos
     CROSS JOIN sys.dm_os_sys_info AS osi
+    CROSS JOIN 
+    (
+        SELECT
+        	  ''
+        	+ RTRIM(y.runnable_pct)
+        	+ '% of your queries are waiting to get on a CPU. ' AS high_runnable_percent
+        FROM
+        (
+            SELECT 
+                1 AS pass,
+                x.total, 
+            	x.runnable,
+                CONVERT(decimal(5,2),
+                    (
+                        x.runnable / 
+                            (1. * NULLIF(x.total, 0))
+                    )
+                ) * 100. AS runnable_pct
+            FROM 
+            (
+                SELECT 
+                    COUNT_BIG(*) AS total, 
+                    SUM(CASE WHEN status = 'runnable' 
+            		         THEN 1 
+            				 ELSE 0 
+            		    END) AS runnable
+                FROM sys.dm_exec_requests
+                WHERE session_id > 50
+            ) AS x
+        ) AS y
+        WHERE y.runnable_pct > 20.     
+    ) AS r
     WHERE      dos.status = N'VISIBLE ONLINE'
     OPTION(MAXDOP 1);
 
