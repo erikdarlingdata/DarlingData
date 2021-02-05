@@ -21,7 +21,7 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
-SELECT @version = '1.10', @versiondate = '20201001';
+SELECT @version = '1.20', @versiondate = '20210203';
 
 /*
     Copyright (c) 2020 Darling Data, LLC 
