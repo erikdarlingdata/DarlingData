@@ -174,10 +174,10 @@ SELECT @version = '1.20', @versiondate = '20210203';
                SUM(dos.runnable_tasks_count) AS threads_waiting_for_cpu,
                SUM(dos.work_queue_count) AS requests_waiting_for_threads,
                SUM(dos.current_workers_count) AS current_workers,
-               MAX(r.high_runnable_percent) AS high_runnable_percent
+               MAX(ISNULL(r.high_runnable_percent, 0)) AS high_runnable_percent
     FROM       sys.dm_os_schedulers AS dos
     CROSS JOIN sys.dm_os_sys_info AS osi
-    CROSS JOIN 
+    OUTER APPLY 
     (
         SELECT
         	  ''
