@@ -29,17 +29,14 @@ SELECT @version = '1.20', @versiondate = '20210203';
     https://erikdarlingdata.com/
   
     MIT License
-
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal
     in the Software without restriction, including without limitation the rights
     to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
     copies of the Software, and to permit persons to whom the Software is
     furnished to do so, subject to the following conditions:
-
     The above copyright notice and this permission notice shall be included in all
     copies or substantial portions of the Software.
-
     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
     IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
     FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -245,7 +242,14 @@ SELECT @version = '1.20', @versiondate = '20210203';
                     dest.text, ( der.statement_start_offset / 2 ) + 1,
                     (( CASE der.statement_end_offset WHEN -1 THEN DATALENGTH(dest.text) ELSE der.statement_end_offset END
                        - der.statement_start_offset ) / 2 ) + 1) AS query_text,
-           deqp.query_plan,
+           ( der.statement_start_offset / 2 ) + 1 AS statement_start_offset,
+		   (( CASE der.statement_end_offset 
+		          WHEN -1 
+			      THEN DATALENGTH(dest.text) 
+				  ELSE der.statement_end_offset 
+			   END - der.statement_start_offset ) 
+			   / 2 ) + 1 AS statement_end_offset,
+		   deqp.query_plan,
            der.plan_handle,
            der.status,
            der.blocking_session_id,
