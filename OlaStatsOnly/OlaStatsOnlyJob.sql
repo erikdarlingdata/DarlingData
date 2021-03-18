@@ -6,6 +6,7 @@ Things you may need to change:
  * Targets the master database
  * Job is owned by sa
  * Scheduled for every night at midnight
+ * You need to do your own setup for failure emails and alerting
 
 To use it, you do need the most up to date version: 
  * https://ola.hallengren.com/downloads.html
