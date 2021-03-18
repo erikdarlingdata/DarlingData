@@ -6,10 +6,12 @@ Things you may need to change:
  * Targets the master database
  * Job is owned by sa
  * Scheduled for every night at midnight
+ * You need to do your own setup for failure emails and alerting
 
 To use it, you do need the most up to date version: 
  * https://ola.hallengren.com/downloads.html
  * This script utilizes the @StatisticsModificationLevel parameter, added 2018-06-16
+ * This parameter is currently set to 5, and you may need to change that based on your environment
 
 If you're using a version older than that, I feel sorry for your mother.
 
