@@ -818,46 +818,16 @@ We need to do some seconds math here, because WAITFOR is very stupid
 RAISERROR(N'Wait For It! Wait For it!', 0, 1) WITH NOWAIT;
 IF @seconds_sample > 1
 BEGIN
-DECLARE @math INT = 0;
-SET @math = @seconds_sample / 60;
-    
     --I really don't want this running for more than 10 minutes right now.
-    IF ( @math > 9 AND @gimme_danger = 0 )
+    IF ( @seconds_sample > 600 AND @gimme_danger = 0 )
     BEGIN
         RAISERROR(N'Yeah nah not more than 10 minutes', 16, 1) WITH NOWAIT;
         RAISERROR(N'(unless you set @gimme_danger = 1)', 16, 1) WITH NOWAIT;
         RETURN;
     END;
     
-    -- Fun fact: running WAITFOR DELAY '00:00:60.000' throws an error
-    -- If we have over 60 seconds, we need to populate the minutes section
-    IF ( @math < 10 AND @math >= 1 )
-    BEGIN
-        DECLARE @minutes INT;
-        DECLARE @seconds INT;
-        
-        SET @minutes = @seconds_sample / 60;
-        SET @seconds = @seconds_sample % 60;
-        SET @waitfor = N'00:' 
-                     + CONVERT(NVARCHAR(11), RIGHT(N'00' + RTRIM(@minutes), 2))
-                     + N':'
-                     + CONVERT(NVARCHAR(11), RIGHT(N'00' + RTRIM(@seconds), 2))
-                     + N'.000';
-    END;
-    
-    --Only if we have 59 seconds or less can we use seconds only
-    IF ( @math = 0 )
-    BEGIN
-        DECLARE @seconds_ INT;        
-        SET @seconds_ = @seconds_sample % 60;        
-        SET @waitfor  = N'00:' 
-                      + N'00'
-                      + N':'
-                      + CONVERT(NVARCHAR(11), RIGHT(N'00' + RTRIM(@seconds_), 2))
-                      + N'.000';        
-    END;
+    SELECT @waitfor = CONVERT(NVARCHAR(20), DATEADD(s, @seconds_sample, 0), 114)
 END;
-
 
 /*
 CH-CH-CH-CHECK-IT-OUT
