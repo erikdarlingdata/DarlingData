@@ -14,7 +14,7 @@ IF OBJECT_ID('dbo.sp_HumanEvents') IS  NULL
    END;
 GO
 
-ALTER PROCEDURE dbo.sp_HumanEvents( @event_type sysname = N'query',
+ALTER PROCEDURE [dbo].[sp_HumanEvents]( @event_type sysname = N'query',
                                     @query_duration_ms INTEGER = 500,
                                     @query_sort_order NVARCHAR(10) = N'cpu',
                                     @blocking_duration_ms INTEGER = 500,
@@ -818,46 +818,16 @@ We need to do some seconds math here, because WAITFOR is very stupid
 RAISERROR(N'Wait For It! Wait For it!', 0, 1) WITH NOWAIT;
 IF @seconds_sample > 1
 BEGIN
-DECLARE @math INT = 0;
-SET @math = @seconds_sample / 60;
-    
     --I really don't want this running for more than 10 minutes right now.
-    IF ( @math > 9 AND @gimme_danger = 0 )
+    IF ( @seconds_sample > 600 AND @gimme_danger = 0 )
     BEGIN
         RAISERROR(N'Yeah nah not more than 10 minutes', 16, 1) WITH NOWAIT;
         RAISERROR(N'(unless you set @gimme_danger = 1)', 16, 1) WITH NOWAIT;
         RETURN;
     END;
     
-    -- Fun fact: running WAITFOR DELAY '00:00:60.000' throws an error
-    -- If we have over 60 seconds, we need to populate the minutes section
-    IF ( @math < 10 AND @math >= 1 )
-    BEGIN
-        DECLARE @minutes INT;
-        DECLARE @seconds INT;
-        
-        SET @minutes = @seconds_sample / 60;
-        SET @seconds = @seconds_sample % 60;
-        SET @waitfor = N'00:' 
-                     + CONVERT(NVARCHAR(11), RIGHT(N'00' + RTRIM(@minutes), 2))
-                     + N':'
-                     + CONVERT(NVARCHAR(11), RIGHT(N'00' + RTRIM(@seconds), 2))
-                     + N'.000';
-    END;
-    
-    --Only if we have 59 seconds or less can we use seconds only
-    IF ( @math = 0 )
-    BEGIN
-        DECLARE @seconds_ INT;        
-        SET @seconds_ = @seconds_sample % 60;        
-        SET @waitfor  = N'00:' 
-                      + N'00'
-                      + N':'
-                      + CONVERT(NVARCHAR(11), RIGHT(N'00' + RTRIM(@seconds_), 2))
-                      + N'.000';        
-    END;
+    SELECT @waitfor = CONVERT(NVARCHAR(20), DATEADD(s, @seconds_sample, 0), 114)
 END;
-
 
 /*
 CH-CH-CH-CHECK-IT-OUT
@@ -2148,52 +2118,71 @@ RETURN;
 /*This section handles outputting data to tables*/
 output_results:
 RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
+
 WHILE 1 = 1
     BEGIN
     
-    /*If we don't find any sessions to poll from, wait 5 seconds and restart loop*/
-    IF NOT EXISTS
-    (
-        SELECT 1/0
-        FROM sys.server_event_sessions AS ses
-        LEFT JOIN sys.dm_xe_sessions AS dxs
-            ON dxs.name = ses.name
-        WHERE ses.name LIKE N'keeper_HumanEvents_%'
-        AND   dxs.create_time IS NOT NULL
-    )
-    BEGIN
-        RAISERROR(N'No matching active session names found starting with keeper_HumanEvents ', 0, 1) WITH NOWAIT;
-    END;
+    DECLARE @the_sleeper_must_awaken NVARCHAR(MAX) = N'';   
 
-    /*If we find any stopped sessions, turn them back on*/
-    IF EXISTS
-    (
-        SELECT 1/0
+    IF @Azure = 0
+    BEGIN
+        IF NOT EXISTS
+        (
+            /*If we don't find any sessions to poll from, wait 5 seconds and restart loop*/
+            SELECT 1/0
+            FROM sys.server_event_sessions AS ses
+            LEFT JOIN sys.dm_xe_sessions AS dxs
+                ON dxs.name = ses.name
+            WHERE ses.name LIKE N'keeper_HumanEvents_%'
+            AND   dxs.create_time IS NOT NULL
+        )
+        BEGIN
+            RAISERROR(N'No matching active session names found starting with keeper_HumanEvents', 0, 1) WITH NOWAIT;
+        END;
+        
+        /*If we find any stopped sessions, turn them back on*/
+        SELECT @the_sleeper_must_awaken += 
+        N'ALTER EVENT SESSION ' + ses.name + N' ON SERVER STATE = START;' + NCHAR(10)
         FROM sys.server_event_sessions AS ses
         LEFT JOIN sys.dm_xe_sessions AS dxs
             ON dxs.name = ses.name
         WHERE ses.name LIKE N'keeper_HumanEvents_%'
         AND   dxs.create_time IS NULL
-    )
+        OPTION (RECOMPILE);
+    END;
+    ELSE
     BEGIN
+        /*If we don't find any sessions to poll from, wait 5 seconds and restart loop*/
+        IF NOT EXISTS
+        (
+            SELECT 1/0
+            FROM sys.database_event_sessions AS ses
+            LEFT JOIN sys.dm_xe_database_sessions AS dxs
+                ON dxs.name = ses.name
+            WHERE ses.name LIKE N'keeper_HumanEvents_%'
+            AND   dxs.create_time IS NOT NULL
+        )
+        BEGIN
+            RAISERROR(N'No matching active session names found starting with keeper_HumanEvents', 0, 1) WITH NOWAIT;
+        END;
         
-     DECLARE @the_sleeper_must_awaken NVARCHAR(MAX) = N'';    
-     
-     SELECT @the_sleeper_must_awaken += 
-     N'ALTER EVENT SESSION ' + ses.name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = START;' + NCHAR(10)
-     FROM sys.server_event_sessions AS ses
-     LEFT JOIN sys.dm_xe_sessions AS dxs
-         ON dxs.name = ses.name
-     WHERE ses.name LIKE N'keeper_HumanEvents_%'
-     AND   dxs.create_time IS NULL
-     OPTION (RECOMPILE);
-     
-     IF @debug = 1 BEGIN RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT; END;
-     
-     EXEC sys.sp_executesql @the_sleeper_must_awaken;
-
+        /*If we find any stopped sessions, turn them back on*/
+        SELECT @the_sleeper_must_awaken += 
+        N'ALTER EVENT SESSION ' + ses.name + N' ON DATABASE STATE = START;' + NCHAR(10)
+        FROM sys.database_event_sessions AS ses
+        LEFT JOIN sys.dm_xe_database_sessions AS dxs
+            ON dxs.name = ses.name
+        WHERE ses.name LIKE N'keeper_HumanEvents_%'
+        AND   dxs.create_time IS NULL
+        OPTION (RECOMPILE);
     END;
 
+    IF LEN(@the_sleeper_must_awaken) > 0
+    BEGIN     
+     IF @debug = 1 BEGIN RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT; END;
+     RAISERROR(N'Starting keeper_HumanEvents... inactive sessions', 0, 1) WITH NOWAIT;
+     EXEC sys.sp_executesql @the_sleeper_must_awaken;
+    END;
 
     /*Create a table to hold loop info*/
     IF OBJECT_ID(N'tempdb..#human_events_worker') IS NULL
@@ -2219,17 +2208,34 @@ WHILE 1 = 1
 
         
         /*Insert any sessions we find*/
-        INSERT #human_events_worker
-            ( event_type, event_type_short, is_table_created, is_view_created, last_checked, 
-              last_updated, output_database, output_schema, output_table )        
-        SELECT s.name, N'', 0, 0, '19000101', '19000101', 
-               @output_database_name, @output_schema_name, s.name
-        FROM sys.server_event_sessions AS s
-        LEFT JOIN sys.dm_xe_sessions AS r 
-            ON r.name = s.name
-        WHERE s.name LIKE N'keeper_HumanEvents_%'
-        AND   r.create_time IS NOT NULL
-        OPTION (RECOMPILE);
+        IF @Azure = 0
+        BEGIN
+            INSERT #human_events_worker
+                ( event_type, event_type_short, is_table_created, is_view_created, last_checked, 
+                  last_updated, output_database, output_schema, output_table )        
+            SELECT s.name, N'', 0, 0, '19000101', '19000101', 
+                   @output_database_name, @output_schema_name, s.name
+            FROM sys.server_event_sessions AS s
+            LEFT JOIN sys.dm_xe_sessions AS r 
+                ON r.name = s.name
+            WHERE s.name LIKE N'keeper_HumanEvents_%'
+            AND   r.create_time IS NOT NULL
+            OPTION (RECOMPILE);
+        END
+        ELSE
+        BEGIN
+            INSERT #human_events_worker
+                ( event_type, event_type_short, is_table_created, is_view_created, last_checked, 
+                  last_updated, output_database, output_schema, output_table )        
+            SELECT s.name, N'', 0, 0, '19000101', '19000101', 
+                   @output_database_name, @output_schema_name, s.name
+            FROM sys.database_event_sessions AS s
+            LEFT JOIN sys.dm_xe_database_sessions AS r 
+                ON r.name = s.name
+            WHERE s.name LIKE N'keeper_HumanEvents_%'
+            AND   r.create_time IS NOT NULL
+            OPTION (RECOMPILE);
+        END
 
         /*If we're getting compiles, and the parameterization event is available*/
         /*Add a row to the table so we account for it*/
@@ -2513,14 +2519,17 @@ WHILE 1 = 1
                                               + N'.'
                                               + QUOTENAME(vc.output_schema)
                                               + N'.'
-                                              + vc.view_name,
+                                              + QUOTENAME(vc.view_name),
                            @view_database     = QUOTENAME(vc.output_database),
                            @view_sql          = REPLACE(
-                                                    REPLACE( vc.view_converted, 
-                                                             N'[replace_me]', 
-                                                             QUOTENAME(vc.output_schema) 
-                                                             + N'.' 
-                                                             + vc.output_table ), 
+                                                    REPLACE(
+                                                        REPLACE( vc.view_converted, 
+                                                                 N'[replace_me]', 
+                                                                 QUOTENAME(vc.output_schema) 
+                                                                 + N'.' 
+                                                                 + vc.output_table ),
+                                                    N'[dbo]' + '.' + QUOTENAME(vc.view_name),
+                                                    QUOTENAME(vc.output_schema)+ '.' + QUOTENAME(vc.view_name) ),
                                                 N'', 
                                                 N'''' )
                     FROM #view_check AS vc
@@ -2905,13 +2914,26 @@ OPTION (RECOMPILE);'
                   END;
             
             --this table is only used for the inserts, hence the "internal" in the name
-            SELECT @x = CONVERT(XML, t.target_data)
-            FROM   sys.dm_xe_session_targets AS t
-            JOIN   sys.dm_xe_sessions AS s
-                ON s.address = t.event_session_address
-            WHERE  s.name = @event_type_check
-            AND    t.target_name = N'ring_buffer'
-            OPTION (RECOMPILE);
+            IF @Azure = 0
+            BEGIN
+                SELECT @x = CONVERT(XML, t.target_data)
+                FROM   sys.dm_xe_session_targets AS t
+                JOIN   sys.dm_xe_sessions AS s
+                    ON s.address = t.event_session_address
+                WHERE  s.name = @event_type_check
+                AND    t.target_name = N'ring_buffer'
+                OPTION (RECOMPILE);
+            END
+            ELSE
+            BEGIN
+                SELECT @x = CONVERT(XML, t.target_data)
+                FROM   sys.dm_xe_database_session_targets AS t
+                JOIN   sys.dm_xe_database_sessions AS s
+                    ON s.address = t.event_session_address
+                WHERE  s.name = @event_type_check
+                AND    t.target_name = N'ring_buffer'
+                OPTION (RECOMPILE);
+            END
             
             INSERT #human_events_xml_internal WITH (TABLOCK)
                    (human_events_xml)            
