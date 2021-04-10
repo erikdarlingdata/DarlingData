@@ -522,6 +522,26 @@ CREATE TABLE
     is_contained varbinary(1) NULL
 );
 
+/*Try to be helpful*/
+IF (@database_name IS NULL
+      AND LOWER(DB_NAME()) 
+          NOT IN 
+          (
+              N'master', 
+              N'model', 
+              N'msdb', 
+              N'tempdb',
+              N'dbatools',
+              N'dbadmin',
+              N'rdsadmin'
+          )
+   )
+BEGIN
+    SELECT 
+        @database_name 
+            = DB_NAME();
+END;
+
 /* Some variable assignment, because why not? */
 SELECT 
     @azure = 
