@@ -321,8 +321,8 @@ SELECT  @Azure = CASE WHEN @EngineEdition = 5
                       ELSE 0
                  END;
 
-/*clean up any old/dormant sessions*/
-    
+/*clean up any old/dormant sessions*/  
+
 CREATE TABLE #drop_commands ( id INT IDENTITY PRIMARY KEY, 
                                 drop_command NVARCHAR(1000) );
     
@@ -359,7 +359,8 @@ IF EXISTS
 BEGIN 
     RAISERROR(N'Found old sessions, dropping those.', 0, 1) WITH NOWAIT;
     
-    DECLARE @drop_old_sql  NVARCHAR(1000) = N'';
+    DECLARE @drop_old_sql  NVARCHAR(1000);
+	 SET @drop_old_sql = N'';
 
     DECLARE drop_cursor CURSOR LOCAL STATIC FOR
     SELECT  drop_command FROM #drop_commands;
@@ -382,10 +383,14 @@ END;
 
 RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT;
 --How long we let the session run
-DECLARE @waitfor NVARCHAR(20) = N'';
+DECLARE @waitfor NVARCHAR(20);
+SET @waitfor = N'';
+
 
 --Give sessions super unique names in case more than one person uses it at a time
-DECLARE @session_name NVARCHAR(512) = N'';
+DECLARE @session_name NVARCHAR(512);
+SET @session_name = N'';
+
 IF @keep_alive = 0
 BEGIN
     SET @session_name += REPLACE(N'HumanEvents_' + @event_type + N'_' + CONVERT(NVARCHAR(36), NEWID()), N'-', N''); 
@@ -408,10 +413,11 @@ BEGIN
 END;
 
 --Universal, yo
-DECLARE @session_with NVARCHAR(MAX) = N'    
+DECLARE @session_with NVARCHAR(MAX);
+SET @session_with = N'
 ADD TARGET package0.ring_buffer
         ( SET max_memory = ' + RTRIM(@max_memory_kb) + N' )
-WITH
+		WITH
         (
             MAX_MEMORY = ' + RTRIM(@max_memory_kb) + N'KB,
             EVENT_RETENTION_MODE = ALLOW_SINGLE_EVENT_LOSS,
@@ -423,7 +429,9 @@ WITH
         );' + NCHAR(10);
 
 --I guess we need to do this, too
-DECLARE @session_sql NVARCHAR(MAX) = N'';
+DECLARE @session_sql NVARCHAR(MAX);
+SET @session_sql = N'';
+
 SELECT  @session_sql = CASE WHEN @Azure = 0
                             THEN N'
 CREATE EVENT SESSION ' + @session_name + N'
@@ -434,48 +442,90 @@ CREATE EVENT SESSION ' + @session_name + N'
                        END;
 
 -- STOP. DROP. SHUT'EM DOWN OPEN UP SHOP.
-DECLARE @start_sql NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = START;' + NCHAR(10);
-DECLARE @stop_sql  NVARCHAR(MAX) = N'ALTER EVENT SESSION ' + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = STOP;' + NCHAR(10);
-DECLARE @drop_sql  NVARCHAR(MAX) = N'DROP EVENT SESSION '  + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ';' + NCHAR(10);
+DECLARE @start_sql NVARCHAR(MAX);
+SET @start_sql = N'ALTER EVENT SESSION ' + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = START;' + NCHAR(10);
 
+DECLARE @stop_sql  NVARCHAR(MAX);
+SET @stop_sql = N'ALTER EVENT SESSION ' + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ' STATE = STOP;' + NCHAR(10);
+
+DECLARE @drop_sql  NVARCHAR(MAX);
+SET @drop_sql = N'DROP EVENT SESSION '  + @session_name + N' ON ' + CASE WHEN @Azure = 1 THEN 'DATABASE' ELSE 'SERVER' END + ';' + NCHAR(10);
 
 /*Some sessions can use all general filters*/
-DECLARE @session_filter NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+DECLARE @session_filter NVARCHAR(MAX);
+SET @session_filter = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+
 /*Others can't use all of them, like app and host name*/
-DECLARE @session_filter_limited NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+DECLARE @session_filter_limited NVARCHAR(MAX);
+SET @session_filter_limited = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+
 /*query plans can filter on requested memory, too, along with the limited filters*/
-DECLARE @session_filter_query_plans NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+DECLARE @session_filter_query_plans NVARCHAR(MAX);
+SET @session_filter_query_plans = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+
 /*only wait stats can filter on wait types, but can filter on everything else*/
-DECLARE @session_filter_waits NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+DECLARE @session_filter_waits NVARCHAR(MAX);
+SET @session_filter_waits = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+
 /*only wait stats can filter on wait types, but can filter on everything else*/
-DECLARE @session_filter_recompile NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+DECLARE @session_filter_recompile NVARCHAR(MAX);
+SET @session_filter_recompile = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+
 /*sql_statement_completed can do everything except object name*/
-DECLARE @session_filter_statement_completed NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+DECLARE @session_filter_statement_completed NVARCHAR(MAX);
+SET @session_filter_statement_completed = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+
 /*for blocking because blah blah*/
-DECLARE @session_filter_blocking NVARCHAR(MAX) = NCHAR(10) + N'         sqlserver.is_system = 1 ' + NCHAR(10);
+DECLARE @session_filter_blocking NVARCHAR(MAX);
+SET @session_filter_blocking = NCHAR(10) + N'         sqlserver.is_system = 1 ' + NCHAR(10);
+
 /*for parameterization because blah blah*/
-DECLARE @session_filter_parameterization NVARCHAR(MAX) = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
+DECLARE @session_filter_parameterization NVARCHAR(MAX);
+SET @session_filter_parameterization = NCHAR(10) + N'            sqlserver.is_system = 0 ' + NCHAR(10);
 
 
 /*
 Create one filter per possible input.
 This allows us to construct specific filters later.
 */
-DECLARE @query_duration_filter NVARCHAR(MAX) = N'';
-DECLARE @blocking_duration_ms_filter NVARCHAR(MAX) = N'';
-DECLARE @wait_type_filter NVARCHAR(MAX) = N'';
-DECLARE @wait_duration_filter NVARCHAR(MAX) = N'';
-DECLARE @client_app_name_filter NVARCHAR(MAX) = N'';
-DECLARE @client_hostname_filter NVARCHAR(MAX) = N'';
-DECLARE @database_name_filter NVARCHAR(MAX) = N'';
-DECLARE @session_id_filter NVARCHAR(MAX) = N'';
-DECLARE @username_filter NVARCHAR(MAX) = N'';
-DECLARE @object_name_filter NVARCHAR(MAX) = N'';
-DECLARE @requested_memory_mb_filter NVARCHAR(MAX) = N'';
+DECLARE @query_duration_filter NVARCHAR(MAX);
+SET @query_duration_filter = N'';
+
+DECLARE @blocking_duration_ms_filter NVARCHAR(MAX);
+SET @blocking_duration_ms_filter = N'';
+
+DECLARE @wait_type_filter NVARCHAR(MAX);
+SET @wait_type_filter = N'';
+
+DECLARE @wait_duration_filter NVARCHAR(MAX);
+SET @wait_duration_filter = N'';
+
+DECLARE @client_app_name_filter NVARCHAR(MAX);
+SET @client_app_name_filter = N'';
+
+DECLARE @client_hostname_filter NVARCHAR(MAX);
+SET @client_hostname_filter = N'';
+
+DECLARE @database_name_filter NVARCHAR(MAX);
+SET @database_name_filter = N'';
+
+DECLARE @session_id_filter NVARCHAR(MAX);
+SET @session_id_filter = N'';
+
+DECLARE @username_filter NVARCHAR(MAX);
+SET @username_filter = N'';
+
+DECLARE @object_name_filter NVARCHAR(MAX);
+SET @object_name_filter = N'';
+
+DECLARE @requested_memory_mb_filter NVARCHAR(MAX);
+SET @requested_memory_mb_filter = N'';
+
 
 RAISERROR(N'Checking for some event existence', 0, 1) WITH NOWAIT;
 --Determines if we use the new event or the old event(s) to track compiles
-DECLARE @compile_events BIT = 0;
+DECLARE @compile_events BIT;
+SET @compile_events = 0;
 IF EXISTS
 (
     SELECT 1/0 
@@ -483,12 +533,13 @@ IF EXISTS
     WHERE dxo.name = N'sql_statement_post_compile'
 )
 BEGIN 
-    SET @compile_events = 1; 
+    SET @compile_events = 1;
 END;
 
 
 --Or if we use this event at all!
-DECLARE @parameterization_events BIT = 0;
+DECLARE @parameterization_events BIT;
+SET @parameterization_events = 0;
 IF EXISTS
 (
     SELECT 1/0 
@@ -499,10 +550,8 @@ BEGIN
     SET @parameterization_events = 1; 
 END;
 
-
 --A new thing suggested by Mikael Eriksson
 DECLARE @x XML;
-
 
 /*
 You know what I don't wanna deal with? NULLs.
@@ -524,9 +573,10 @@ SET @output_schema_name    = ISNULL(@output_schema_name, N'');
 SET @database_name = RTRIM(LTRIM(@database_name));
 
 /*Assemble the full object name for easier wrangling*/
-DECLARE @fully_formed_babby NVARCHAR(1000) = QUOTENAME(@database_name) + N'.' + 
-                                             QUOTENAME(@object_schema) + N'.' + 
-                                             QUOTENAME(@object_name);
+DECLARE @fully_formed_babby NVARCHAR(1000);
+SET @fully_formed_babby = QUOTENAME(@database_name) + N'.' + 
+                          QUOTENAME(@object_schema) + N'.' + 
+                          QUOTENAME(@object_name);
 
 /*
 Some sanity checking
@@ -557,7 +607,6 @@ BEGIN
     RAISERROR(N'What on earth is %s?', 16, 1, @event_type) WITH NOWAIT;
     RETURN;
 END;
-
 
 RAISERROR(N'Checking query duration filter', 0, 1) WITH NOWAIT;
 --Set these durations to non-crazy numbers unless someone asks for @gimme_danger = 1
@@ -595,7 +644,6 @@ BEGIN
     RAISERROR(N'Setting @blocking_duration_ms to 500', 0, 1) WITH NOWAIT;
     SET @blocking_duration_ms = 500;
 END;
-
 
 RAISERROR(N'Checking query sort order', 0, 1) WITH NOWAIT;
 IF @query_sort_order NOT IN ( N'cpu', N'reads', N'writes', N'duration', N'memory', N'spills',
@@ -728,7 +776,6 @@ RAISERROR(N'Checking for unsanitary inputs', 0, 1) WITH NOWAIT;
 
 END;
 
-
 /*
 I just don't want anyone to be disappointed
 */
@@ -836,35 +883,35 @@ CH-CH-CH-CHECK-IT-OUT
 RAISERROR(N'Make sure the session doesn''t exist already', 0, 1) WITH NOWAIT;
 
 IF @Azure = 0
-BEGIN
-    IF EXISTS
-    (
-        SELECT 1/0
-        FROM sys.server_event_sessions AS ses
-        LEFT JOIN sys.dm_xe_sessions AS dxs 
-            ON dxs.name = ses.name
-        WHERE ses.name = @session_name
-    )
-    BEGIN
-        RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
-        EXEC sys.sp_executesql @drop_sql;
-    END;
-END;
+	BEGIN
+		IF EXISTS
+		(
+			SELECT 1/0
+			FROM sys.server_event_sessions AS ses
+			LEFT JOIN sys.dm_xe_sessions AS dxs 
+				ON dxs.name = ses.name
+			WHERE ses.name = @session_name
+		)
+		BEGIN
+			RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
+			EXEC sys.sp_executesql @drop_sql;
+		END;
+	END;
 ELSE
-BEGIN
-    IF EXISTS
-    (
-        SELECT 1/0
-        FROM sys.database_event_sessions AS ses
-        LEFT JOIN sys.dm_xe_database_sessions AS dxs 
-            ON dxs.name = ses.name
-        WHERE ses.name = @session_name
-    )
-    BEGIN
-        RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
-        EXEC sys.sp_executesql @drop_sql;
-    END;
-END;
+	BEGIN
+		IF EXISTS
+		(
+			SELECT 1/0
+			FROM sys.database_event_sessions AS ses
+			LEFT JOIN sys.dm_xe_database_sessions AS dxs 
+				ON dxs.name = ses.name
+			WHERE ses.name = @session_name
+		)
+		BEGIN
+			RAISERROR('A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
+			EXEC sys.sp_executesql @drop_sql;
+		END;
+	END;
 
 --check that the output database exists
 RAISERROR(N'Does the output database exist?', 0, 1) WITH NOWAIT;
@@ -884,12 +931,14 @@ IF @output_schema_name NOT IN (N'dbo', N'')
 BEGIN
     DECLARE @s_out INT,
             @schema_check BIT,
-            @s_sql NVARCHAR(MAX) = N'
-    SELECT @is_out = COUNT(*) 
-    FROM ' + QUOTENAME(@output_database_name) + N'.sys.schemas
-    WHERE name = ' + QUOTENAME(@output_schema_name, '''') + N' 
-    OPTION (RECOMPILE);',
-            @s_params NVARCHAR(MAX) = N'@is_out INT OUTPUT';
+            @s_sql NVARCHAR(MAX),
+			@s_params NVARCHAR(MAX);	
+	SET @s_sql = N'
+			SELECT @is_out = COUNT(*) 
+			FROM ' + QUOTENAME(@output_database_name) + N'.sys.schemas
+			WHERE name = ' + QUOTENAME(@output_schema_name, '''') + N' 
+			OPTION (RECOMPILE);';
+    SET @s_params = N'@is_out INT OUTPUT';
     
     EXEC sys.sp_executesql @s_sql, @s_params, @is_out = @s_out OUTPUT;
     
@@ -920,7 +969,6 @@ BEGIN
             RETURN;
         END;
 END;
-
 
 --no goofballing in custom names
 RAISERROR(N'Is custom name something stupid?', 0, 1) WITH NOWAIT;
@@ -1054,7 +1102,6 @@ BEGIN
     DECLARE @requested_memory_kb NVARCHAR(11) = @requested_memory_mb / 1024.;
     SET @requested_memory_mb_filter += N'     AND requested_memory_kb >= ' + @requested_memory_kb + NCHAR(10);
 END;
-
 
 --At this point we'll either put my list of interesting waits in a temp table, 
 --or a list of user defined waits
@@ -1232,8 +1279,7 @@ SET @session_filter_parameterization += ( ISNULL(@client_app_name_filter, N'') +
                                           ISNULL(@session_id_filter, N'') +
                                           ISNULL(@username_filter, N'') );
 
-
---This section sets up the event session definition
+										  --This section sets up the event session definition
 RAISERROR(N'Setting up the event session', 0, 1) WITH NOWAIT;
 SET @session_sql += 
     CASE WHEN LOWER(@event_type) LIKE N'%lock%'
@@ -1336,10 +1382,8 @@ BEGIN
     RETURN;
 END;
 
-
 --NOW WE WAIT, MR. BOND
 WAITFOR DELAY @waitfor;
-
 
 --Dump whatever we got into a temp table
 IF @Azure = 0
@@ -1364,7 +1408,6 @@ BEGIN
 
 END;
 
-
 SELECT e.x.query('.') AS human_events_xml
 INTO   #human_events_xml
 FROM   @x.nodes('/RingBufferTarget/event') AS e(x)
@@ -1376,13 +1419,9 @@ BEGIN
     SELECT N'#human_events_xml' AS table_name, * FROM #human_events_xml AS hex;
 END;
 
-
-/*
-This is where magic will happen
-*/
 IF LOWER(@event_type) LIKE N'%quer%'
-BEGIN;
-         WITH queries AS 
+BEGIN
+		WITH queries AS 
          (
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,
                    c.value('@name', 'NVARCHAR(256)') AS event_type,
@@ -1416,10 +1455,10 @@ BEGIN;
          INTO #queries
          FROM queries AS q
          OPTION (RECOMPILE);
-         
-         IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
 
-         /* Add attribute StatementId to query plan if it is missing (versions before 2019) */
+		 --IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
+
+		 /* Add attribute StatementId to query plan if it is missing (versions before 2019) */
          WITH XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
          UPDATE q1
          SET showplan_xml.modify('insert attribute StatementId {"1"} 
@@ -1457,7 +1496,7 @@ BEGIN;
                AND q1.showplan_xml.exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementText') = 0
          OPTION (RECOMPILE);
 
-         WITH query_agg AS 
+		 WITH query_agg AS 
              (
                 SELECT q.query_plan_hash_signed,
                        q.query_hash_signed,
@@ -1540,9 +1579,9 @@ BEGIN;
              GROUP BY qa.query_plan_hash_signed,
                       qa.query_hash_signed;
          
-         IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION (RECOMPILE); END;
+		    --IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION (RECOMPILE); END;
 
-         WITH query_results AS
+		WITH query_results AS
              (
                  SELECT q.event_time,
                         q.database_name,
@@ -1647,8 +1686,6 @@ BEGIN;
                           END DESC
                  OPTION (RECOMPILE);
 END
-;
-
 
 IF LOWER(@event_type) LIKE N'%comp%' AND LOWER(@event_type) NOT LIKE N'%re%'
 BEGIN
@@ -1672,7 +1709,7 @@ IF @compile_events = 1
 
             ALTER TABLE #compiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
 
-            IF @debug = 1 BEGIN SELECT N'#compiles_1' AS table_name, * FROM #compiles_1 AS c OPTION(RECOMPILE); END;
+            --IF @debug = 1 BEGIN SELECT N'#compiles_1' AS table_name, * FROM #compiles_1 AS c OPTION(RECOMPILE); END;
 
             WITH cbq
               AS (
@@ -1722,7 +1759,7 @@ IF @compile_events = 0
             ORDER BY event_time
             OPTION (RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#compiles_0' AS table_name, * FROM #compiles_0 AS c OPTION(RECOMPILE); END;
+            --IF @debug = 1 BEGIN SELECT N'#compiles_0' AS table_name, * FROM #compiles_0 AS c OPTION(RECOMPILE); END;
 
             SELECT c.event_time,
                    c.event_type,
@@ -1762,7 +1799,7 @@ IF @parameterization_events  = 1
             ORDER BY event_time
             OPTION (RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#parameterization' AS table_name, * FROM #parameterization AS p OPTION(RECOMPILE); END;
+            --IF @debug = 1 BEGIN SELECT N'#parameterization' AS table_name, * FROM #parameterization AS p OPTION(RECOMPILE); END;
 
             WITH cpq AS 
                (
@@ -1812,7 +1849,6 @@ IF @parameterization_events  = 1
 
 END;
 
-
 IF LOWER(@event_type) LIKE N'%recomp%'
 BEGIN
 
@@ -1835,7 +1871,7 @@ IF @compile_events = 1
 
             ALTER TABLE #recompiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
 
-            IF @debug = 1 BEGIN SELECT N'#recompiles_1' AS table_name, * FROM #recompiles_1 AS r OPTION(RECOMPILE); END;
+            --IF @debug = 1 BEGIN SELECT N'#recompiles_1' AS table_name, * FROM #recompiles_1 AS r OPTION(RECOMPILE); END;
 
             WITH cbq
               AS (
@@ -1887,7 +1923,7 @@ IF @compile_events = 0
             ORDER BY event_time
             OPTION (RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#recompiles_0' AS table_name, * FROM #recompiles_0 AS r OPTION(RECOMPILE); END;
+            --IF @debug = 1 BEGIN SELECT N'#recompiles_0' AS table_name, * FROM #recompiles_0 AS r OPTION(RECOMPILE); END;
 
             SELECT r.event_time,
                    r.event_type,
@@ -1929,7 +1965,7 @@ BEGIN;
                  FROM waits
                  OPTION(RECOMPILE);
             
-            IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa OPTION (RECOMPILE); END;
+            --IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa OPTION (RECOMPILE); END;
 
             SELECT N'total waits' AS wait_pattern,
                    MIN(wa.event_time) AS min_event_time,
@@ -2029,7 +2065,7 @@ BEGIN
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
             OPTION (RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa OPTION (RECOMPILE); END;
+            --IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa OPTION (RECOMPILE); END;
 
             SELECT DATEADD(MINUTE, DATEDIFF(MINUTE, GETUTCDATE(), SYSDATETIME()), c.value('@timestamp', 'DATETIME2')) AS event_time,        
                    DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'INT')) AS database_name,
@@ -2061,8 +2097,7 @@ BEGIN
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
             OPTION (RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa OPTION (RECOMPILE); END;
-
+            --IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa OPTION (RECOMPILE); END;
 
             SELECT TOP (2147483647)
                 kheb.event_time,
@@ -2122,7 +2157,8 @@ RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
 WHILE 1 = 1
     BEGIN
     
-    DECLARE @the_sleeper_must_awaken NVARCHAR(MAX) = N'';   
+    DECLARE @the_sleeper_must_awaken NVARCHAR(MAX);
+	SET @the_sleeper_must_awaken = N'';   
 
     IF @Azure = 0
     BEGIN
@@ -2289,8 +2325,11 @@ WHILE 1 = 1
         DECLARE @min_id INT,
                 @max_id INT,
                 @event_type_check sysname,
-                @object_name_check NVARCHAR(1000) = N'',
-                @table_sql NVARCHAR(MAX) = N'';
+                @object_name_check NVARCHAR(1000),
+                @table_sql NVARCHAR(MAX);
+		
+		SET @object_name_check = N'';
+		SET @table_sql = N'';
         
         SELECT @min_id = MIN(hew.id), 
                @max_id = MAX(hew.id)
@@ -2494,9 +2533,12 @@ WHILE 1 = 1
         BEGIN 
             RAISERROR(N'Starting view creation loop', 0, 1) WITH NOWAIT;
 
-            DECLARE @spe NVARCHAR(MAX) = N'.sys.sp_executesql ';
-            DECLARE @view_sql NVARCHAR(MAX) = N'';
-            DECLARE @view_database sysname = N'';
+            DECLARE @spe NVARCHAR(MAX); 
+			SET @spe = N'.sys.sp_executesql ';
+            DECLARE @view_sql NVARCHAR(MAX);
+			SET @view_sql = N'';
+            DECLARE @view_database sysname; 
+			SET @view_database = N'';
             
             SELECT @min_id = MIN(vc.id), 
                    @max_id = MAX(vc.id)
@@ -3000,15 +3042,17 @@ OPTION (RECOMPILE);'
 
 /*This sesion handles deleting data from tables older than the retention period*/
 /*The idea is to only check once an hour so we're not constantly purging*/
-DECLARE @Time TIME = SYSDATETIME();
+DECLARE @Time DATETIME;
+SET @Time = SYSDATETIME();
 IF ( DATEPART(MINUTE, @Time) <= 5 )
 BEGIN     
     DECLARE @delete_tracker INT;
     
     IF (@delete_tracker IS NULL
-            OR @delete_tracker <> DATEPART(HOUR, @Time) )
+        OR @delete_tracker <> DATEPART(HOUR, @Time) )
     BEGIN     
-        DECLARE @the_deleter_must_awaken NVARCHAR(MAX) = N'';    
+        DECLARE @the_deleter_must_awaken NVARCHAR(MAX);
+		SET @the_deleter_must_awaken = N'';    
         
         SELECT @the_deleter_must_awaken += 
           N' DELETE FROM ' + QUOTENAME(hew.output_database) + N'.' +
@@ -3042,7 +3086,8 @@ BEGIN
     DECLARE @executer NVARCHAR(MAX) = QUOTENAME(@output_database_name) + N'.sys.sp_executesql ';
 
     /*Clean up sessions, this isn't database-specific*/
-    DECLARE @cleanup_sessions NVARCHAR(MAX) = N'';             
+    DECLARE @cleanup_sessions NVARCHAR(MAX);   
+	SET @cleanup_sessions = N''; 
     SELECT @cleanup_sessions +=   
     N'DROP EVENT SESSION ' + ses.name + N' ON SERVER;' + NCHAR(10)  
     FROM sys.server_event_sessions AS ses  
@@ -3057,8 +3102,10 @@ BEGIN
     /*Clean up tables*/
     RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT;
 
-    DECLARE @cleanup_tables NVARCHAR(MAX) = N'';
-    DECLARE @drop_holder NVARCHAR(MAX) = N'';
+    DECLARE @cleanup_tables NVARCHAR(MAX);
+	SET @cleanup_tables = N'';
+    DECLARE @drop_holder NVARCHAR(MAX);
+	SET @drop_holder = N'';
   
     SELECT @cleanup_tables += N'
     SELECT @i_cleanup_tables += N''DROP TABLE ''  
@@ -3082,7 +3129,8 @@ BEGIN
     /*Cleanup views*/
     RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT;
 
-    DECLARE @cleanup_views NVARCHAR(MAX) = N'';
+    DECLARE @cleanup_views NVARCHAR(MAX);
+	SET @cleanup_views = N'';
     SET @drop_holder = N'';
   
     SELECT @cleanup_views += N'
@@ -3117,7 +3165,8 @@ BEGIN CATCH
     IF @@TRANCOUNT > 0 
         ROLLBACK TRANSACTION;
     
-    DECLARE @msg NVARCHAR(2048) = N'';
+    DECLARE @msg NVARCHAR(2048);
+	SET @msg = N'';
     SELECT  @msg += N'Error number '
                  +  RTRIM(ERROR_NUMBER()) 
                  +  N' with severity '
