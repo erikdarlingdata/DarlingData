@@ -39,13 +39,13 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 /* If this column doesn't exist, you're not on a good version of SQL Server */
 IF NOT EXISTS
-(
-    SELECT
-        1/0
-    FROM sys.all_columns AS ac
-    WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_stats', N'V')
-    AND   ac.name = N'total_spills'
-)
+  (
+      SELECT
+          1/0
+      FROM sys.all_columns AS ac
+      WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_stats', N'V')
+      AND   ac.name = N'total_spills'
+  )
 BEGIN
     RAISERROR('This procedure only runs on supported versions of SQL Server', 11, 1) WITH NOWAIT;
     RETURN;
@@ -521,23 +521,23 @@ CREATE TABLE
 
 /*Try to be helpful*/
 IF 
-(
-    @database_name IS NULL
-      AND LOWER
-          (
-              DB_NAME()
-          )
-          NOT IN 
-          (
-              N'master', 
-              N'model', 
-              N'msdb', 
-              N'tempdb',
-              N'dbatools',
-              N'dbadmin',
-              N'rdsadmin'
-          )
-)
+  (
+      @database_name IS NULL
+        AND LOWER
+            (
+                DB_NAME()
+            )
+            NOT IN 
+            (
+                N'master', 
+                N'model', 
+                N'msdb', 
+                N'tempdb',
+                N'dbatools',
+                N'dbadmin',
+                N'rdsadmin'
+            )
+  )
 BEGIN
     SELECT 
         @database_name 
@@ -598,16 +598,22 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
 /* Let's make sure things will work */
 
 /* Database are you there? */
-IF (@database_id IS NULL 
-      OR @collation IS NULL) 
+IF 
+  (
+      @database_id IS NULL 
+        OR @collation IS NULL
+  ) 
 BEGIN
     RAISERROR('Database %s does not exist', 11, 1, @database_name) WITH NOWAIT;
     RETURN;
 END;
 
 /* Database what are you? */        
-IF (@azure = 1 
-      AND @engine NOT IN (5, 8))
+IF 
+  (
+      @azure = 1 
+        AND @engine NOT IN (5, 8)
+  )
 BEGIN
     RAISERROR('Not all Azure offerings are supported, please try avoiding memes', 11, 1) WITH NOWAIT;
     RETURN;
@@ -615,17 +621,17 @@ END;
 
 /* Database are you compatible? */
 IF 
-(
-    @azure = 1
-      AND EXISTS
-      (
-          SELECT
-              1/0
-           FROM sys.databases AS d
-           WHERE d.database_id = @database_id
-           AND   d.compatibility_level < 130
-      )
-)
+  (
+      @azure = 1
+        AND EXISTS
+        (
+            SELECT
+                1/0
+             FROM sys.databases AS d
+             WHERE d.database_id = @database_id
+             AND   d.compatibility_level < 130
+        )
+  )
 BEGIN
     RAISERROR('Azure databases in compatiblity levels under 130 are not supported', 11, 1) WITH NOWAIT;
     RETURN;
@@ -633,17 +639,17 @@ END;
 
 /* Database are you storing queries? */
 IF 
-(
-    @azure = 0
-      AND EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM sys.databases AS d
-                  WHERE d.database_id = @database_id
-                  AND   d.is_query_store_on = 0
-              )   
-)
+  (
+      @azure = 0
+        AND EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM sys.databases AS d
+                    WHERE d.database_id = @database_id
+                    AND   d.is_query_store_on = 0
+                )   
+  )
 BEGIN
     RAISERROR('The database %s does not appear to have Query Store enabled', 11, 1, @database_name) WITH NOWAIT;
     RETURN;    
@@ -697,15 +703,27 @@ Normally, I'd check for object existence, but the documentation
 leads me to believe that certain things won't be back-ported, 
 like the wait stats DMV, and tempdb spills columns
 */
-IF (@product_version > 13
-      OR @azure = 1)
+IF 
+  (
+      @product_version > 13
+        OR @azure = 1
+  )
 BEGIN
    SELECT
        @new = 1;
 END;
 
 /*Validate Sort Order*/
-IF @sort_order NOT IN ('cpu', 'logical reads', 'physical reads', 'writes', 'duration', 'memory', 'tempdb', 'executions')
+IF @sort_order NOT IN 
+               (
+                   'cpu', 
+                   'logical reads', 
+                   'physical reads', 
+                   'writes', 'duration', 
+                   'memory', 
+                   'tempdb', 
+                   'executions'
+               )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
    SELECT 
@@ -713,8 +731,11 @@ BEGIN
 END;
 
 /* These columns are only available in 2017+ */
-IF (@sort_order = 'tempdb' 
-     AND @new = 0)
+IF 
+  (
+      @sort_order = 'tempdb' 
+        AND @new = 0
+  )
 BEGIN
    RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
    SELECT 
@@ -752,8 +773,11 @@ BEGIN
         @where_clause += N'AND   qsrs.count_executions >= @execution_count' + @nc10;
 END;
 
-IF (@procedure_name IS NOT NULL 
-      AND @procedure_exists = 1)
+IF 
+(
+    @procedure_name IS NOT NULL 
+      AND @procedure_exists = 1
+)
 BEGIN 
     SELECT 
         @where_clause += N'AND   EXISTS 
@@ -796,14 +820,31 @@ END;
 IF @query_text_search IS NOT NULL
 BEGIN
     
-    IF (LEFT(@query_text_search, 1) <> N'%')
+    IF 
+      (
+          LEFT
+          (
+              @query_text_search, 
+              1
+          ) <> N'%'
+      )
     BEGIN
         SELECT
             @query_text_search = 
                 N'%' + @query_text_search;
     END;
     
-    IF (LEFT(REVERSE(@query_text_search), 1) <> N'%')
+    IF 
+      (
+          LEFT
+          (
+              REVERSE
+              (
+                  @query_text_search
+              ), 
+              1
+          ) <> N'%'
+      )
     BEGIN
         SELECT
             @query_text_search = 
@@ -1655,8 +1696,11 @@ FROM
 (';
 
 /* Expert mode returns more columns from runtime stats */
-IF (@expert_mode = 1 
-      AND @format_output = 0)
+IF 
+  (
+      @expert_mode = 1 
+        AND @format_output = 0
+  )
 BEGIN
 
     SELECT 
@@ -1774,8 +1818,11 @@ END + N' DESC
 END;
 
 /*Do we want to format things?*/
-IF (@expert_mode = 1 
-      AND @format_output = 1)
+IF 
+  (
+      @expert_mode = 1 
+        AND @format_output = 1
+  )
 BEGIN
     SELECT 
         @sql += N'
@@ -1895,8 +1942,11 @@ END + N' DESC
 END;
 
 /* For non-experts only! */
-IF (@expert_mode = 0
-      AND @format_output = 0)
+IF 
+  (
+      @expert_mode = 0
+        AND @format_output = 0
+  )
 BEGIN
     SELECT 
         @sql += N'
@@ -1978,8 +2028,11 @@ END + N' DESC
 END; 
 
 /* Formatted output */
-IF (@expert_mode = 0
-      AND @format_output = 1)
+IF 
+  (
+      @expert_mode = 0
+        AND @format_output = 1
+  )
 BEGIN
     SELECT 
         @sql += N'
@@ -2105,8 +2158,11 @@ SELECT
     ) AS qsq';
 
 /*Get wait stats if we can*/
-IF (@new = 1
-      AND @format_output = 0)
+IF 
+  (
+      @new = 1
+        AND @format_output = 0
+  )
 BEGIN
 SELECT 
     @sql += N'
@@ -2147,8 +2203,11 @@ SELECT
     ) AS w';
 END;
 
-IF (@new = 1
-      AND @format_output = 1)
+IF 
+  (
+      @new = 1
+        AND @format_output = 1
+  )
 BEGIN
 SELECT 
     @sql += N'
@@ -2223,8 +2282,11 @@ BEGIN
 END
 
 /* Return special things, unformatted */
-IF (@expert_mode = 1
-      AND @format_output = 0)
+IF 
+  (
+      @expert_mode = 1
+        AND @format_output = 0
+  )
 BEGIN
 SELECT 
     @current_table = 'selecting compilation and resource stats';
@@ -2338,8 +2400,11 @@ END;
 
 
 /* Return special things, formatted */
-IF (@expert_mode = 1
-      AND @format_output = 1)
+IF 
+  (
+      @expert_mode = 1
+        AND @format_output = 1
+  )
 BEGIN
 SET 
     @sql = N'
