@@ -523,8 +523,13 @@ CREATE TABLE
 );
 
 /*Try to be helpful*/
-IF (@database_name IS NULL
-      AND LOWER(DB_NAME()) 
+IF 
+(
+    @database_name IS NULL
+      AND LOWER
+          (
+              DB_NAME()
+          )
           NOT IN 
           (
               N'master', 
@@ -535,7 +540,7 @@ IF (@database_name IS NULL
               N'dbadmin',
               N'rdsadmin'
           )
-   )
+)
 BEGIN
     SELECT 
         @database_name 
@@ -814,7 +819,8 @@ BEGIN
         @current_table = 'inserting #query_text_search',
         @sql = @isolation_level;
     
-    SELECT @sql += N'
+    SELECT 
+        @sql += N'
     SELECT DISTINCT
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -2530,7 +2536,7 @@ BEGIN
    
     SELECT 
         table_name = 
-            N'#distinct_plans ',
+            N'#query_text_search',
         qst.*
     FROM #query_text_search AS qst
     ORDER BY qst.plan_id
