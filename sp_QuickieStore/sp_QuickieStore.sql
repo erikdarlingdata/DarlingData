@@ -8,7 +8,6 @@ SET STATISTICS IO OFF;
 SET STATISTICS TIME OFF;
 GO
 
-
 CREATE OR ALTER PROCEDURE dbo.sp_QuickieStore
 (
     @database_name sysname = NULL,
@@ -52,12 +51,10 @@ BEGIN
     RETURN;
 END;
 
-
 /* These are for your outputs. */
 SELECT 
     @version = '-1', 
     @version_date = '20210410';
-
 
 /* Helpful section! For help. */
 IF @help = 1
@@ -344,7 +341,7 @@ CREATE TABLE
     last_compile_memory_mb bigint NULL,
     max_compile_memory_mb bigint NULL,
     is_clouddb_internal_query bit NULL,
-    database_id sysname
+    database_id sysname NULL
 );
 
 /* Query Text And Columns From sys.dm_exec_query_stats */
@@ -488,7 +485,7 @@ CREATE TABLE
     min_tempdb_space_used_mb bigint NULL,
     max_tempdb_space_used_mb bigint NULL,
     total_tempdb_space_used_mb AS avg_tempdb_space_used_mb * count_executions,
-    context_settings nvarchar(256)
+    context_settings nvarchar(256) NULL
 );
 
 /* Wait Stats, When Available*/
@@ -597,7 +594,6 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         N'',
     @current_table 
         = N'';
-        
 
 /* Let's make sure things will work */
 
@@ -613,7 +609,7 @@ END;
 IF (@azure = 1 
       AND @engine NOT IN (5, 8))
 BEGIN
-    RAISERROR('Not all Azure offerings are supported', 11, 1) WITH NOWAIT;
+    RAISERROR('Not all Azure offerings are supported, please try avoiding memes', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -694,7 +690,6 @@ IF @procedure_exists = 0
         RETURN;    
     END;
 END;
-
 
 /*
 Some things are version dependent.
@@ -861,7 +856,6 @@ BEGIN
        )' + @nc10; 
 
 END;
-
 
 /*This section screens out index create and alter statements*/
     SELECT 
@@ -1648,7 +1642,6 @@ INSERT
 EXEC sys.sp_executesql
    @sql;
 
-
 /*This is where we start returning results */
 SELECT 
     @sql = @isolation_level,
@@ -1901,7 +1894,6 @@ END + N' DESC
             )';
 END;
 
-
 /* For non-experts only! */
 IF (@expert_mode = 0
       AND @format_output = 0)
@@ -1984,7 +1976,6 @@ CASE @sort_order
 END + N' DESC 
             )';
 END; 
-
 
 /* Formatted output */
 IF (@expert_mode = 0
@@ -2114,7 +2105,8 @@ SELECT
     ) AS qsq';
 
 /*Get wait stats if we can*/
-IF @new = 1
+IF (@new = 1
+      AND @format_output = 0)
 BEGIN
 SELECT 
     @sql += N'
@@ -2140,6 +2132,47 @@ SELECT
                                             qsws.avg_query_wait_time_ms
                                         )
                                     )
+                                ) + 
+                                '' ms) ''
+                           FROM #query_store_wait_stats AS qsws
+                           WHERE qsws.plan_id = qsrs.plan_id
+                           GROUP BY qsws.wait_category_desc
+                           ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
+                           FOR XML PATH(''''), TYPE
+                        ).value(''.[1]'', ''varchar(MAX)''), 
+                        1, 
+                        2, 
+                        ''''
+                    )
+    ) AS w';
+END;
+
+IF (@new = 1
+      AND @format_output = 1)
+BEGIN
+SELECT 
+    @sql += N'
+    CROSS APPLY
+    (
+        SELECT TOP (1)
+            top_waits = 
+                STUFF
+                    (
+                        (
+                           SELECT TOP (5) 
+                                '', '' + 
+                                qsws.wait_category_desc + 
+                                '' ('' + 
+                                FORMAT
+                                (
+                                    SUM
+                                    (
+                                        CONVERT
+                                        (
+                                            bigint, 
+                                            qsws.avg_query_wait_time_ms
+                                        )
+                                    ), ''N0''
                                 ) + 
                                 '' ms) ''
                            FROM #query_store_wait_stats AS qsws
@@ -2183,7 +2216,6 @@ END;
 
 EXEC sys.sp_executesql
     @sql;
-
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -2238,8 +2270,7 @@ SELECT
     JOIN #query_store_query_text AS qsqt
         ON qsq.query_text_id = qsqt.query_text_id
     ORDER BY qsq.query_id
-    OPTION(RECOMPILE);
-    
+    OPTION(RECOMPILE);    
     
     SELECT
         source 
@@ -2352,8 +2383,7 @@ SET
     JOIN #query_store_query_text AS qsqt
         ON qsq.query_text_id = qsqt.query_text_id
     ORDER BY qsq.query_id
-    OPTION(RECOMPILE);
-    
+    OPTION(RECOMPILE);    
     
     SELECT
         source 
@@ -2400,17 +2430,25 @@ SET
         dqso.desired_state_desc,
         dqso.actual_state_desc,
         dqso.readonly_reason,
-        dqso.current_storage_size_mb,
-        dqso.flush_interval_seconds,
-        dqso.interval_length_minutes,
-        dqso.max_storage_size_mb,
-        dqso.stale_query_threshold_days,
-        dqso.max_plans_per_query,
+        current_storage_size_mb 
+            = FORMAT(dqso.current_storage_size_mb, 'N0'),
+        flush_interval_seconds 
+            = FORMAT(dqso.flush_interval_seconds, 'N0'),
+        interval_length_minutes 
+            = FORMAT(dqso.interval_length_minutes, 'N0'),
+        max_storage_size_mb 
+            = FORMAT(dqso.max_storage_size_mb, 'N0'),
+        stale_query_threshold_days = dqso.stale_query_threshold_days,
+        max_plans_per_query = dqso.max_plans_per_query,
         dqso.query_capture_mode_desc,
-        dqso.capture_policy_execution_count,
-        dqso.capture_policy_total_compile_cpu_time_ms,
-        dqso.capture_policy_total_execution_cpu_time_ms,
-        dqso.capture_policy_stale_threshold_hours,
+        capture_policy_execution_count 
+            = FORMAT(dqso.capture_policy_execution_count, 'N0'),
+        capture_policy_total_compile_cpu_time_ms 
+            = FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, 'N0'),
+        capture_policy_total_execution_cpu_time_ms 
+            = FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, 'N0'),
+        capture_policy_stale_threshold_hours 
+            = FORMAT(dqso.capture_policy_stale_threshold_hours, 'N0'),
         dqso.size_based_cleanup_mode_desc,
         dqso.wait_stats_capture_mode_desc
     FROM #database_query_store_options AS dqso
@@ -2429,7 +2467,6 @@ SELECT
         'if this runs slowly, use @troubleshoot_performance = to get query plans',
     thanks = 
         'thanks for using sp_QuickieStore!';
-
 
 END TRY
 BEGIN CATCH
