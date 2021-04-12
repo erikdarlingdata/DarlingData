@@ -302,7 +302,7 @@ CREATE TABLE
     last_execution_time datetimeoffset(7) NULL,
     avg_compile_duration_ms float NULL,
     last_compile_duration_ms bigint NULL,
-    plan_forcing_type int NOT NULL,
+    plan_forcing_type int NULL,
     plan_forcing_type_desc nvarchar(60) NULL
 );
 
