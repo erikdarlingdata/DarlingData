@@ -1,12 +1,31 @@
-SET ANSI_NULLS ON;
+﻿SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
+SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS IO OFF;
 SET STATISTICS TIME OFF;
 GO
+
+/*
+
+███████╗██████╗     ██████╗ ██╗   ██╗██╗ ██████╗██╗  ██╗██╗███████╗███████╗████████╗ ██████╗ ██████╗ ███████╗
+██╔════╝██╔══██╗   ██╔═══██╗██║   ██║██║██╔════╝██║ ██╔╝██║██╔════╝██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗██╔════╝
+███████╗██████╔╝   ██║   ██║██║   ██║██║██║     █████╔╝ ██║█████╗  ███████╗   ██║   ██║   ██║██████╔╝█████╗  
+╚════██║██╔═══╝    ██║▄▄ ██║██║   ██║██║██║     ██╔═██╗ ██║██╔══╝  ╚════██║   ██║   ██║   ██║██╔══██╗██╔══╝  
+███████║██║███████╗╚██████╔╝╚██████╔╝██║╚██████╗██║  ██╗██║███████╗███████║   ██║   ╚██████╔╝██║  ██║███████╗
+╚══════╝╚═╝╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝
+
+Copyright 2021 Darling Data, LLC 
+https://www.erikdarlingdata.com/
+
+For usage and licensing details, run:
+EXEC sp_QuickieStore
+    @help = 1;
+
+*/
 
 CREATE OR ALTER PROCEDURE dbo.sp_QuickieStore
 (
@@ -1348,7 +1367,7 @@ IF @new = 0
 BEGIN
 SELECT 
     @sql += N'
-    -1,
+    NULL,
     NULL';
 END;
 
@@ -2535,7 +2554,8 @@ SELECT
         ) AS x
         ORDER BY 
             qsws.plan_id,
-            qsws.total_query_wait_time_ms DESC;
+            qsws.total_query_wait_time_ms DESC
+        OPTION(RECOMPILE);
 
     END;
     
@@ -2660,7 +2680,7 @@ BEGIN
         ORDER BY qsq.query_id
         OPTION(RECOMPILE);
     
-    END
+    END;
 
     IF @new = 1
     BEGIN
@@ -2713,7 +2733,8 @@ BEGIN
         ) AS x
         ORDER BY 
             qsws.plan_id,
-            qsws.total_query_wait_time_ms DESC;
+            qsws.total_query_wait_time_ms DESC
+        OPTION(RECOMPILE);
 
     END;
            
@@ -2862,70 +2883,163 @@ BEGIN
         rc = 
             @rc;
     
-    SELECT 
-        table_name = 
-            N'#distinct_plans ',
-        dp.*
-    FROM #distinct_plans AS dp
-    ORDER BY dp.plan_id
-    OPTION(RECOMPILE);
-   
-    SELECT 
-        table_name = 
-            N'#query_text_search',
-        qst.*
-    FROM #query_text_search AS qst
-    ORDER BY qst.plan_id
-    OPTION(RECOMPILE);    
-    
-    SELECT 
-        table_name = 
-            N'#database_query_store_options',
-        dqso.*
-    FROM #database_query_store_options AS dqso
-    OPTION(RECOMPILE);
-    
-    SELECT
-        table_name = 
-            N'#query_store_runtime_stats',
-        qsrs.*
-    FROM #query_store_runtime_stats AS qsrs
-    ORDER BY qsrs.plan_id
-    OPTION(RECOMPILE);
+    IF EXISTS
+    (
+        SELECT
+            1/0
+        FROM #distinct_plans AS dp
+    )
+    BEGIN
+        SELECT 
+            table_name = 
+                N'#distinct_plans',
+            dp.*
+        FROM #distinct_plans AS dp
+        ORDER BY dp.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#distinct_plans is empty' AS result;
+    END;
 
-    SELECT
-        table_name = 
-            N'#query_store_plan',
-        qsp.*
-    FROM #query_store_plan AS qsp
-    ORDER BY qsp.plan_id, qsp.query_id
-    OPTION(RECOMPILE);
+    IF EXISTS
+    (
+       SELECT
+           1/0
+       FROM #query_text_search AS qst
+    )
+    BEGIN
+        SELECT 
+            table_name = 
+                N'#query_text_search',
+            qst.*
+        FROM #query_text_search AS qst
+        ORDER BY qst.plan_id
+        OPTION(RECOMPILE);    
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#query_text_search is empty' AS result;
+    END;
 
-    SELECT
-        table_name = 
-            N'#query_store_query',
-        qsq.*
-    FROM #query_store_query AS qsq
-    ORDER BY qsq.query_id, qsq.query_text_id
-    OPTION(RECOMPILE);
+    IF EXISTS
+    (
+       SELECT
+           1/0
+       FROM #query_store_runtime_stats AS qsrs
+    )
+    BEGIN
+        SELECT
+            table_name = 
+                N'#query_store_runtime_stats',
+            qsrs.*
+        FROM #query_store_runtime_stats AS qsrs
+        ORDER BY qsrs.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#query_store_runtime_stats is empty' AS result;
+    END;
 
-    SELECT
-        table_name = 
-            N'#query_store_query_text',
-        qsqt.*
-    FROM #query_store_query_text AS qsqt
-    ORDER BY qsqt.query_text_id
-    OPTION(RECOMPILE);
+    IF EXISTS
+    (
+       SELECT
+           1/0
+       FROM #query_store_plan AS qsp
+    )
+    BEGIN
+        SELECT
+            table_name = 
+                N'#query_store_plan',
+            qsp.*
+        FROM #query_store_plan AS qsp
+        ORDER BY qsp.plan_id, qsp.query_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#query_store_plan is empty' AS result;
+    END;
 
-    SELECT
-        table_name = 
-            N'#dm_exec_query_stats ',
-        deqs.*
-    FROM #dm_exec_query_stats AS deqs
-    ORDER BY deqs.statement_sql_handle
-    OPTION(RECOMPILE);
+    IF EXISTS
+    (
+       SELECT
+           1/0
+       FROM #query_store_query AS qsq
+    )
+    BEGIN
+        SELECT
+            table_name = 
+                N'#query_store_query',
+            qsq.*
+        FROM #query_store_query AS qsq
+        ORDER BY qsq.query_id, qsq.query_text_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#query_store_query is empty' AS result;
+    END;
 
-    IF @new = 1
+    IF EXISTS
+    (
+       SELECT
+           1/0
+       FROM #query_store_query_text AS qsqt
+    )
+    BEGIN
+        SELECT
+            table_name = 
+                N'#query_store_query_text',
+            qsqt.*
+        FROM #query_store_query_text AS qsqt
+        ORDER BY qsqt.query_text_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#query_store_query_text is empty' AS result;
+    END;
+
+    IF EXISTS
+    (
+       SELECT
+           1/0
+       FROM #dm_exec_query_stats AS deqs
+    )
+    BEGIN
+        SELECT
+            table_name = 
+                N'#dm_exec_query_stats ',
+            deqs.*
+        FROM #dm_exec_query_stats AS deqs
+        ORDER BY deqs.statement_sql_handle
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#dm_exec_query_stats is empty' AS result;
+    END;
+
+    IF 
+    (
+        @new = 1
+        AND EXISTS
+            (
+               SELECT
+                   1/0
+               FROM #query_store_wait_stats AS qsws
+            )
+    )
     BEGIN
         SELECT
             table_name = 
@@ -2934,6 +3048,31 @@ BEGIN
         FROM #query_store_wait_stats AS qsws
         ORDER BY qsws.plan_id
         OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#query_store_wait_stats is empty' AS result;
+    END;
+
+    IF EXISTS
+    (
+       SELECT
+           1/0
+       FROM #database_query_store_options AS qst
+    )
+    BEGIN
+        SELECT 
+            table_name = 
+                N'#database_query_store_options',
+            dqso.*
+        FROM #database_query_store_options AS dqso
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#database_query_store_options is empty' AS result;
     END;
     
     RETURN;
