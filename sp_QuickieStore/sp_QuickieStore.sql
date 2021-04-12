@@ -234,26 +234,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 END;
     
-/* Variables for the variable gods */
-DECLARE 
-    @azure bit,
-    @engine int,
-    @product_version int,
-    @database_id int,
-    @database_name_quoted sysname,
-    @procedure_name_quoted sysname,
-    @collation sysname,
-    @new bit = 0,
-    @sql nvarchar(MAX),
-    @isolation_level nvarchar(MAX),
-    @parameters nvarchar(MAX),
-    @plans_top bigint,
-    @nc10 nvarchar(2),
-    @where_clause nvarchar(MAX),
-    @procedure_exists bit = 0,
-    @current_table nvarchar(100),
-    @rc bigint;
-
 /*
 These are the tables that we'll use to grab data from query store
 It will be fun
@@ -337,9 +317,23 @@ CREATE TABLE
     object_name AS 
         ISNULL
         (
-            QUOTENAME(OBJECT_SCHEMA_NAME(object_id, database_id))
-            + N'.' +
-            QUOTENAME(OBJECT_NAME(object_id, database_id)), 
+            QUOTENAME
+            (
+                OBJECT_SCHEMA_NAME
+                (
+                    object_id, 
+                    database_id
+                )
+            ) +
+            N'.' +
+            QUOTENAME
+            (
+                OBJECT_NAME
+                (
+                    object_id, 
+                    database_id
+                )
+            ), 
             N'Adhoc'
         ),
     batch_sql_handle varbinary(44) NULL,
@@ -578,6 +572,26 @@ BEGIN
             = DB_NAME();
 END;
 
+/* Variables for the variable gods */
+DECLARE 
+    @azure bit,
+    @engine int,
+    @product_version int,
+    @database_id int,
+    @database_name_quoted sysname,
+    @procedure_name_quoted sysname,
+    @collation sysname,
+    @new bit = 0,
+    @sql nvarchar(MAX),
+    @isolation_level nvarchar(MAX),
+    @parameters nvarchar(MAX),
+    @plans_top bigint,
+    @nc10 nvarchar(2),
+    @where_clause nvarchar(MAX),
+    @procedure_exists bit = 0,
+    @current_table nvarchar(100),
+    @rc bigint;
+
 /* Some variable assignment, because why not? */
 SELECT 
     @azure = 
@@ -612,20 +626,11 @@ SELECT
             )
         ),
     @database_id = 
-        DB_ID
-        (
-            @database_name
-        ),
+        DB_ID(@database_name),
     @database_name_quoted = 
-        QUOTENAME
-        (
-            @database_name
-        ),
+        QUOTENAME(@database_name),
     @procedure_name_quoted = 
-         QUOTENAME
-         (
-             @database_name
-         ) +
+         QUOTENAME(@database_name) +
          N'.' +
          QUOTENAME
          (
@@ -647,8 +652,7 @@ SELECT
                 'Collation'
             )
         ),
-    @sql = 
-        N'',
+    @sql = N'',
     @isolation_level = 
         N'
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
@@ -667,12 +671,10 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             THEN 1
             ELSE 10
          END,
-    @nc10 
-        = NCHAR(10),
-    @where_clause = 
-        N'',
-    @current_table = 
-        N'',
+    @nc10 = 
+        NCHAR(10),
+    @where_clause = N'',
+    @current_table = N'',
     @rc = 0;
 
 /* Let's make sure things will work */
@@ -1309,7 +1311,7 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     ON qsp.query_id = qsq.query_id
 JOIN ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
-    ON qcs.context_settings_id = qsq.context_settings_id
+    ON qsq.context_settings_id = qcs.context_settings_id
 OPTION(RECOMPILE);
 ';
 
@@ -1335,9 +1337,7 @@ SELECT
                     SELECT DISTINCT 
                         '', '' + 
                         RTRIM
-                        (
-                            qsp_plans.plan_id
-                        )
+                            (qsp_plans.plan_id)
                     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
                     WHERE qsp.query_id = qsp_plans.query_id
                     FOR XML PATH(''''), TYPE
@@ -1707,7 +1707,8 @@ CROSS APPLY
 GROUP BY 
     qsws.plan_id, 
     qsws.wait_category_desc
-HAVING SUM(qsws.min_query_wait_time_ms) >= 0.
+HAVING 
+    SUM(qsws.min_query_wait_time_ms) >= 0.
 OPTION(RECOMPILE);
 ';
 
@@ -2917,7 +2918,7 @@ FROM
         thanks =
             'i hope you find it useful or whatever'
 ) AS x
-ORDER BY sort;
+ORDER BY x.sort;
 
 END TRY
 BEGIN CATCH
