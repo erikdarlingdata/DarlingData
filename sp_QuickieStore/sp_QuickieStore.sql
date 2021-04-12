@@ -2438,45 +2438,64 @@ SELECT
     @current_table = 'selecting compilation stats';
 
     SELECT
-        source =
-            'compilation_stats',
-        qsq.query_id,
-        qsq.object_name,
-        qsq.query_text_id,
-        qsq.query_parameterization_type_desc,
-        qsq.initial_compile_start_time,
-        qsq.last_compile_start_time,
-        qsq.last_execution_time,
-        qsq.count_compiles,
-        qsq.avg_compile_duration_ms,
-        qsq.total_compile_duration_ms,
-        qsq.last_compile_duration_ms,
-        qsq.avg_bind_duration_ms,
-        qsq.total_bind_duration_ms,
-        qsq.last_bind_duration_ms,
-        qsq.avg_bind_cpu_time_ms,
-        qsq.total_bind_cpu_time_ms,
-        qsq.last_bind_cpu_time_ms,
-        qsq.avg_optimize_duration_ms,
-        qsq.total_optimize_duration_ms,
-        qsq.last_optimize_duration_ms,
-        qsq.avg_optimize_cpu_time_ms,
-        qsq.total_optimize_cpu_time_ms,
-        qsq.last_optimize_cpu_time_ms,
-        qsq.avg_compile_memory_mb,
-        qsq.total_compile_memory_mb,
-        qsq.last_compile_memory_mb,
-        qsq.max_compile_memory_mb,
-        qsq.query_hash,
-        qsq.batch_sql_handle,
-        qsqt.statement_sql_handle,
-        qsq.last_compile_batch_sql_handle,
-        qsq.last_compile_batch_offset_start,
-        qsq.last_compile_batch_offset_end
-    FROM #query_store_query AS qsq
-    JOIN #query_store_query_text AS qsqt
-        ON qsq.query_text_id = qsqt.query_text_id
-    ORDER BY qsq.query_id
+        x.*
+    FROM
+    (
+        SELECT
+            source =
+                'compilation_stats',
+            qsq.query_id,
+            qsq.object_name,
+            qsq.query_text_id,
+            qsq.query_parameterization_type_desc,
+            qsq.initial_compile_start_time,
+            qsq.last_compile_start_time,
+            qsq.last_execution_time,
+            qsq.count_compiles,
+            qsq.avg_compile_duration_ms,
+            qsq.total_compile_duration_ms,
+            qsq.last_compile_duration_ms,
+            qsq.avg_bind_duration_ms,
+            qsq.total_bind_duration_ms,
+            qsq.last_bind_duration_ms,
+            qsq.avg_bind_cpu_time_ms,
+            qsq.total_bind_cpu_time_ms,
+            qsq.last_bind_cpu_time_ms,
+            qsq.avg_optimize_duration_ms,
+            qsq.total_optimize_duration_ms,
+            qsq.last_optimize_duration_ms,
+            qsq.avg_optimize_cpu_time_ms,
+            qsq.total_optimize_cpu_time_ms,
+            qsq.last_optimize_cpu_time_ms,
+            qsq.avg_compile_memory_mb,
+            qsq.total_compile_memory_mb,
+            qsq.last_compile_memory_mb,
+            qsq.max_compile_memory_mb,
+            qsq.query_hash,
+            qsq.batch_sql_handle,
+            qsqt.statement_sql_handle,
+            qsq.last_compile_batch_sql_handle,
+            qsq.last_compile_batch_offset_start,
+            qsq.last_compile_batch_offset_end,
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    qsq.query_id,
+                    qsq.query_text_id
+                ORDER BY
+                    qsq.query_id
+            ) AS n
+        FROM #query_store_query AS qsq
+        CROSS APPLY
+        (
+            SELECT TOP (1)
+                qsqt.*
+            FROM #query_store_query_text AS qsqt
+            WHERE qsqt.query_text_id = qsq.query_text_id
+        ) AS qsqt
+    ) AS x
+    WHERE x.n = 1
+    ORDER BY x.query_id
     OPTION(RECOMPILE);    
   
     IF @rc > 0  
@@ -2656,48 +2675,67 @@ BEGIN
 
     SELECT 
         @current_table = 'selecting compilation stats';
-
+    
     SELECT
-        source =
-            'compilation_stats',
-        qsq.query_id,
-        qsq.object_name,
-        qsq.query_text_id,
-        qsq.query_parameterization_type_desc,
-        qsq.initial_compile_start_time,
-        qsq.last_compile_start_time,
-        qsq.last_execution_time,
-        count_compiles = FORMAT(qsq.count_compiles, 'N0'),
-        avg_compile_duration_ms = FORMAT(qsq.avg_compile_duration_ms, 'N0'),
-        total_compile_duration_ms = FORMAT(qsq.total_compile_duration_ms, 'N0'),
-        last_compile_duration_ms = FORMAT(qsq.last_compile_duration_ms, 'N0'),
-        avg_bind_duration_ms = FORMAT(qsq.avg_bind_duration_ms, 'N0'),
-        total_bind_duration_ms = FORMAT(qsq.total_bind_duration_ms, 'N0'),
-        last_bind_duration_ms = FORMAT(qsq.last_bind_duration_ms, 'N0'),
-        avg_bind_cpu_time_ms = FORMAT(qsq.avg_bind_cpu_time_ms, 'N0'),
-        total_bind_cpu_time_ms = FORMAT(qsq.total_bind_cpu_time_ms, 'N0'),
-        last_bind_cpu_time_ms = FORMAT(qsq.last_bind_cpu_time_ms, 'N0'),
-        avg_optimize_duration_ms = FORMAT(qsq.avg_optimize_duration_ms, 'N0'),
-        total_optimize_duration_ms = FORMAT(qsq.total_optimize_duration_ms, 'N0'),
-        last_optimize_duration_ms = FORMAT(qsq.last_optimize_duration_ms, 'N0'),
-        avg_optimize_cpu_time_ms = FORMAT(qsq.avg_optimize_cpu_time_ms, 'N0'),
-        total_optimize_cpu_time_ms = FORMAT(qsq.total_optimize_cpu_time_ms, 'N0'),
-        last_optimize_cpu_time_ms = FORMAT(qsq.last_optimize_cpu_time_ms, 'N0'),
-        avg_compile_memory_mb = FORMAT(qsq.avg_compile_memory_mb, 'N0'),
-        total_compile_memory_mb = FORMAT(qsq.total_compile_memory_mb, 'N0'),
-        last_compile_memory_mb = FORMAT(qsq.last_compile_memory_mb, 'N0'),
-        max_compile_memory_mb = FORMAT(qsq.max_compile_memory_mb, 'N0'),
-        qsq.query_hash,
-        qsq.batch_sql_handle,
-        qsqt.statement_sql_handle,
-        qsq.last_compile_batch_sql_handle,
-        qsq.last_compile_batch_offset_start,
-        qsq.last_compile_batch_offset_end
-    FROM #query_store_query AS qsq
-    JOIN #query_store_query_text AS qsqt
-        ON qsq.query_text_id = qsqt.query_text_id
-    ORDER BY qsq.query_id
-    OPTION(RECOMPILE);    
+        x.*
+    FROM
+    (
+        SELECT
+            source =
+                'compilation_stats',
+            qsq.query_id,
+            qsq.object_name,
+            qsq.query_text_id,
+            qsq.query_parameterization_type_desc,
+            qsq.initial_compile_start_time,
+            qsq.last_compile_start_time,
+            qsq.last_execution_time,
+            count_compiles = FORMAT(qsq.count_compiles, 'N0'),
+            avg_compile_duration_ms = FORMAT(qsq.avg_compile_duration_ms, 'N0'),
+            total_compile_duration_ms = FORMAT(qsq.total_compile_duration_ms, 'N0'),
+            last_compile_duration_ms = FORMAT(qsq.last_compile_duration_ms, 'N0'),
+            avg_bind_duration_ms = FORMAT(qsq.avg_bind_duration_ms, 'N0'),
+            total_bind_duration_ms = FORMAT(qsq.total_bind_duration_ms, 'N0'),
+            last_bind_duration_ms = FORMAT(qsq.last_bind_duration_ms, 'N0'),
+            avg_bind_cpu_time_ms = FORMAT(qsq.avg_bind_cpu_time_ms, 'N0'),
+            total_bind_cpu_time_ms = FORMAT(qsq.total_bind_cpu_time_ms, 'N0'),
+            last_bind_cpu_time_ms = FORMAT(qsq.last_bind_cpu_time_ms, 'N0'),
+            avg_optimize_duration_ms = FORMAT(qsq.avg_optimize_duration_ms, 'N0'),
+            total_optimize_duration_ms = FORMAT(qsq.total_optimize_duration_ms, 'N0'),
+            last_optimize_duration_ms = FORMAT(qsq.last_optimize_duration_ms, 'N0'),
+            avg_optimize_cpu_time_ms = FORMAT(qsq.avg_optimize_cpu_time_ms, 'N0'),
+            total_optimize_cpu_time_ms = FORMAT(qsq.total_optimize_cpu_time_ms, 'N0'),
+            last_optimize_cpu_time_ms = FORMAT(qsq.last_optimize_cpu_time_ms, 'N0'),
+            avg_compile_memory_mb = FORMAT(qsq.avg_compile_memory_mb, 'N0'),
+            total_compile_memory_mb = FORMAT(qsq.total_compile_memory_mb, 'N0'),
+            last_compile_memory_mb = FORMAT(qsq.last_compile_memory_mb, 'N0'),
+            max_compile_memory_mb = FORMAT(qsq.max_compile_memory_mb, 'N0'),
+            qsq.query_hash,
+            qsq.batch_sql_handle,
+            qsqt.statement_sql_handle,
+            qsq.last_compile_batch_sql_handle,
+            qsq.last_compile_batch_offset_start,
+            qsq.last_compile_batch_offset_end,
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY
+                    qsq.query_id,
+                    qsq.query_text_id
+                ORDER BY
+                    qsq.query_id
+            ) AS n
+        FROM #query_store_query AS qsq
+        CROSS APPLY
+        (
+            SELECT TOP (1)
+                qsqt.*
+            FROM #query_store_query_text AS qsqt
+            WHERE qsqt.query_text_id = qsq.query_text_id
+        ) AS qsqt
+    ) AS x
+    WHERE x.n = 1
+    ORDER BY x.query_id
+    OPTION(RECOMPILE);     
     
     IF @rc > 0
     BEGIN
