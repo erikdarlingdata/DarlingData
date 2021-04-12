@@ -54,7 +54,7 @@ END;
 /* These are for your outputs. */
 SELECT 
     @version = '-1', 
-    @version_date = '20210411';
+    @version_date = '20210412';
 
 /* Helpful section! For help. */
 IF @help = 1
@@ -431,32 +431,32 @@ CREATE TABLE
     last_duration_ms bigint NOT NULL,
     min_duration_ms bigint NOT NULL,
     max_duration_ms bigint NOT NULL,
-    total_duration_ms AS avg_duration_ms * count_executions,
+    total_duration_ms AS (avg_duration_ms * count_executions),
     avg_cpu_time_ms float NULL,
     last_cpu_time_ms bigint NOT NULL,
     min_cpu_time_ms bigint NOT NULL,
     max_cpu_time_ms bigint NOT NULL,
-    total_cpu_time_ms AS avg_cpu_time_ms * count_executions,
+    total_cpu_time_ms AS (avg_cpu_time_ms * count_executions),
     avg_logical_io_reads_mb float NULL,
     last_logical_io_reads_mb bigint NOT NULL,
     min_logical_io_reads_mb bigint NOT NULL,
     max_logical_io_reads_mb bigint NOT NULL,
-    total_logical_io_reads_mb AS avg_logical_io_reads_mb * count_executions,
+    total_logical_io_reads_mb AS (avg_logical_io_reads_mb * count_executions),
     avg_logical_io_writes_mb float NULL,
     last_logical_io_writes_mb bigint NOT NULL,
     min_logical_io_writes_mb bigint NOT NULL,
     max_logical_io_writes_mb bigint NOT NULL,
-    total_logical_io_writes_mb AS avg_logical_io_writes_mb * count_executions,
+    total_logical_io_writes_mb AS (avg_logical_io_writes_mb * count_executions),
     avg_physical_io_reads_mb float NULL,
     last_physical_io_reads_mb bigint NOT NULL,
     min_physical_io_reads_mb bigint NOT NULL,
     max_physical_io_reads_mb bigint NOT NULL,
-    total_physical_io_reads_mb AS avg_physical_io_reads_mb * count_executions,
+    total_physical_io_reads_mb AS (avg_physical_io_reads_mb * count_executions),
     avg_clr_time_ms float NULL,
     last_clr_time_ms bigint NOT NULL,
     min_clr_time_ms bigint NOT NULL,
     max_clr_time_ms bigint NOT NULL,
-    total_clr_time_ms AS avg_clr_time_ms * count_executions,
+    total_clr_time_ms AS (avg_clr_time_ms * count_executions),
     last_dop bigint NOT NULL,
     min_dop bigint NOT NULL,
     max_dop bigint NOT NULL,
@@ -464,27 +464,27 @@ CREATE TABLE
     last_query_max_used_memory_mb bigint NOT NULL,
     min_query_max_used_memory_mb bigint NOT NULL,
     max_query_max_used_memory_mb bigint NOT NULL,
-    total_query_max_used_memory_mb AS avg_query_max_used_memory_mb * count_executions,
+    total_query_max_used_memory_mb AS (avg_query_max_used_memory_mb * count_executions),
     avg_rowcount float NULL,
     last_rowcount bigint NOT NULL,
     min_rowcount bigint NOT NULL,
     max_rowcount bigint NOT NULL,
-    total_rowcount AS avg_rowcount * count_executions,
+    total_rowcount AS (avg_rowcount * count_executions),
     avg_num_physical_io_reads_mb float NULL,
     last_num_physical_io_reads_mb bigint NULL,
     min_num_physical_io_reads_mb bigint NULL,
     max_num_physical_io_reads_mb bigint NULL,
-    total_num_physical_io_reads_mb AS avg_num_physical_io_reads_mb * count_executions,
+    total_num_physical_io_reads_mb AS (avg_num_physical_io_reads_mb * count_executions),
     avg_log_bytes_used_mb float NULL,
     last_log_bytes_used_mb bigint NULL,
     min_log_bytes_used_mb bigint NULL,
     max_log_bytes_used_mb bigint NULL,
-    total_log_bytes_used_mb AS avg_log_bytes_used_mb * count_executions,
+    total_log_bytes_used_mb AS (avg_log_bytes_used_mb * count_executions),
     avg_tempdb_space_used_mb float NULL,
     last_tempdb_space_used_mb bigint NULL,
     min_tempdb_space_used_mb bigint NULL,
     max_tempdb_space_used_mb bigint NULL,
-    total_tempdb_space_used_mb AS avg_tempdb_space_used_mb * count_executions,
+    total_tempdb_space_used_mb AS (avg_tempdb_space_used_mb * count_executions),
     context_settings nvarchar(256) NULL
 );
 
@@ -759,7 +759,8 @@ IF @sort_order NOT IN
                    'cpu', 
                    'logical reads', 
                    'physical reads', 
-                   'writes', 'duration', 
+                   'writes', 
+                   'duration', 
                    'memory', 
                    'tempdb', 
                    'executions'
@@ -2575,7 +2576,8 @@ SET
         max_storage_size_mb 
             = FORMAT(dqso.max_storage_size_mb, 'N0'),
         stale_query_threshold_days = dqso.stale_query_threshold_days,
-        max_plans_per_query = dqso.max_plans_per_query,
+        max_plans_per_query 
+            = FORMAT(dqso.max_plans_per_query, 'N0'),
         dqso.query_capture_mode_desc,
         capture_policy_execution_count 
             = FORMAT(dqso.capture_policy_execution_count, 'N0'),
@@ -2610,7 +2612,7 @@ BEGIN CATCH
     /*Where the error happened and the message*/
     RAISERROR ('error while %s', 11, 1, @current_table) WITH NOWAIT;
     
-    /*Query that cause the error*/
+    /*Query that caused the error*/
     RAISERROR ('offending query:', 11, 1, @current_table) WITH NOWAIT;
     RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
 
