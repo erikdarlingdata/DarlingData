@@ -174,7 +174,7 @@ BEGIN
         results = 
            'results returned at the end of the procedure:' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Runtime Stats (both modes): data from query_store_runtime_stats, along with query plan, query text, wait stats (2017+), and parent object' UNION ALL
+    SELECT 'Runtime Stats: data from query_store_runtime_stats, along with query plan, query text, wait stats (2017+), and parent object' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Compilation Stats (expert mode only): data from query_store_query about compilation metrics' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
@@ -182,8 +182,10 @@ BEGIN
     SELECT 'query store does not currently track some details about memory grants and thread usage' UNION ALL
     SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Waits (expert mode only): information about query duration and logged wait stats' UNION ALL
+    SELECT 'Query Store Waits By Query(expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Query Store Waits Total(expert mode only): total wait stats for the chosen date range only' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Options (expert mode only): details about current query store configuration';
 
@@ -258,6 +260,7 @@ CREATE TABLE
     plan_id bigint NOT NULL
 );
 
+/* Hold plan_ids for matching query text */
 CREATE TABLE
     #query_text_search
 (
@@ -542,7 +545,7 @@ CREATE TABLE
     is_contained varbinary(1) NULL
 );
 
-/*Try to be helpful*/
+/*Try to be helpful by subbing in a database name if null*/
 IF 
   (
       @database_name IS NULL
@@ -844,6 +847,12 @@ BEGIN
         @where_clause += N'AND   qsrs.count_executions >= @execution_count' + @nc10;
 END;
 
+IF @duration_ms IS NOT NULL
+BEGIN 
+    SELECT  
+        @where_clause += N'AND   qsrs.avg_duration >= (@duration_ms * 1000.)' + @nc10; 
+END; 
+
 IF 
 (
     @procedure_name IS NOT NULL 
@@ -862,12 +871,6 @@ BEGIN
            AND   qsp.plan_id = qsrs.plan_id
        )' + @nc10;
 END;
-
-IF @duration_ms IS NOT NULL
-BEGIN 
-    SELECT  
-        @where_clause += N'AND   qsrs.avg_duration >= (@duration_ms * 1000.)' + @nc10; 
-END; 
 
 IF @plan_id IS NOT NULL
 BEGIN 
@@ -972,7 +975,7 @@ BEGIN
 
 END;
 
-/*This section screens out index create and alter statements*/
+/* This section screens out index create and alter statements because who cares */
     SELECT 
         @where_clause += N'AND   NOT EXISTS
       (
@@ -1008,6 +1011,7 @@ SELECT
             ) - 1
         );
 
+/*Turn this on here if we're hitting perf issues*/
 IF @troubleshoot_performance = 1
 BEGIN
    SET STATISTICS XML ON;
@@ -1840,8 +1844,8 @@ BEGIN
     SELECT 
         @sql += N'
     SELECT    
-        source 
-            = ''runtime_stats'',
+        source =
+            ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
         qsp.all_plan_ids,
@@ -1961,8 +1965,8 @@ BEGIN
     SELECT 
         @sql += N'
     SELECT    
-        source 
-            = ''runtime_stats'',
+        source =
+            ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
         qsp.all_plan_ids,
@@ -2085,8 +2089,8 @@ BEGIN
     SELECT 
         @sql += N'
     SELECT
-        source 
-            = ''runtime_stats'',
+        source =
+            ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
         qsp.all_plan_ids,
@@ -2161,7 +2165,7 @@ END + N' DESC
             )';
 END; 
 
-/* Formatted output */
+/* Formatted but not still not expert output */
 IF 
   (
       @expert_mode = 0
@@ -2171,8 +2175,8 @@ BEGIN
     SELECT 
         @sql += N'
     SELECT
-        source 
-            = ''runtime_stats'',
+        source =
+            ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
         qsp.all_plan_ids,
@@ -2426,8 +2430,8 @@ SELECT
     @current_table = 'selecting compilation stats';
 
     SELECT
-        source 
-            = 'compilation_stats',
+        source =
+            'compilation_stats',
         qsq.query_id,
         qsq.object_name,
         qsq.query_text_id,
@@ -2474,8 +2478,8 @@ SELECT
             @current_table = 'selecting resource stats';
         
             SELECT
-                source 
-                    = 'resource_stats',
+                source =
+                    'resource_stats',
                 qsq.query_id,
                 qsq.object_name,
                 qsqt.total_grant_mb,
@@ -2512,11 +2516,11 @@ SELECT
     BEGIN
     
     SELECT 
-        @current_table = 'selecting wait stats';
+        @current_table = 'selecting wait stats by query';
 
         SELECT
-            source 
-                = 'query_store_wait_stats',
+            source =
+                'query_store_wait_stats_by_query',
             qsws.plan_id,
             x.object_name,
             qsws.wait_category_desc,
@@ -2557,14 +2561,62 @@ SELECT
             qsws.total_query_wait_time_ms DESC
         OPTION(RECOMPILE);
 
+        SELECT 
+            @current_table = 'selecting wait stats in total';
+
+        SELECT
+            source =
+                'query_store_wait_stats_total',
+            qsws.wait_category_desc,
+            total_query_wait_time_ms = 
+                SUM(qsws.total_query_wait_time_ms),
+            total_query_duration_ms = 
+                SUM(x.total_duration_ms),
+            avg_query_wait_time_ms = 
+                SUM(qsws.avg_query_wait_time_ms),
+            avg_query_duration_ms =
+                SUM(x.avg_duration_ms),
+            last_query_wait_time_ms = 
+                SUM(qsws.last_query_wait_time_ms),
+            last_query_duration_ms = 
+                SUM(x.last_duration_ms),
+            min_query_wait_time_ms = 
+                SUM(qsws.min_query_wait_time_ms),
+            min_query_duration_ms =
+                SUM(x.min_duration_ms),
+            max_query_wait_time_ms = 
+                SUM(qsws.max_query_wait_time_ms),
+            max_query_duration_ms = 
+                SUM(x.max_duration_ms)
+        FROM #query_store_wait_stats AS qsws
+        CROSS APPLY
+        (
+            SELECT
+                qsrs.avg_duration_ms,
+                qsrs.last_duration_ms,
+                qsrs.min_duration_ms,
+                qsrs.max_duration_ms,
+                qsrs.total_duration_ms,
+                qsq.object_name
+            FROM #query_store_runtime_stats AS qsrs
+            JOIN #query_store_plan AS qsp
+                ON qsrs.plan_id = qsp.plan_id
+            JOIN #query_store_query AS qsq
+                ON qsp.query_id = qsq.query_id
+            WHERE qsws.plan_id = qsrs.plan_id
+        ) AS x
+        GROUP BY qsws.wait_category_desc
+        ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+        OPTION(RECOMPILE);
+
     END;
     
     SELECT 
         @current_table = 'selecting query store options';
 
     SELECT
-        source 
-            = 'query_store_options',
+        source =
+            'query_store_options',
         dqso.desired_state_desc,
         dqso.actual_state_desc,
         dqso.readonly_reason,
@@ -2586,8 +2638,6 @@ SELECT
 
 END;
 
-
-
 /* Return special things, formatted */
 IF 
   (
@@ -2600,8 +2650,8 @@ BEGIN
         @current_table = 'selecting compilation stats';
 
     SELECT
-        source 
-            = 'compilation_stats',
+        source =
+            'compilation_stats',
         qsq.query_id,
         qsq.object_name,
         qsq.query_text_id,
@@ -2648,8 +2698,8 @@ BEGIN
             @current_table = 'selecting resource stats';
     
         SELECT
-            source 
-                = 'resource_stats',
+            source =
+                'resource_stats',
             qsq.query_id,
             qsq.object_name,
             total_grant_mb = FORMAT(qsqt.total_grant_mb, 'N0'),
@@ -2686,11 +2736,11 @@ BEGIN
     BEGIN
 
     SELECT 
-        @current_table = 'selecting wait stats';
+        @current_table = 'selecting wait stats by query';
 
         SELECT
-            source 
-                = 'query_store_wait_stats',
+            source =
+                'query_store_wait_stats_by_query',
             qsws.plan_id,
             x.object_name,
             qsws.wait_category_desc,
@@ -2736,14 +2786,62 @@ BEGIN
             qsws.total_query_wait_time_ms DESC
         OPTION(RECOMPILE);
 
+    SELECT 
+        @current_table = 'selecting wait stats in total';
+
+        SELECT
+            source =
+                'query_store_wait_stats_total',
+            qsws.wait_category_desc,
+            total_query_wait_time_ms = 
+                FORMAT(SUM(qsws.total_query_wait_time_ms), 'N0'),
+            total_query_duration_ms = 
+                FORMAT(SUM(x.total_duration_ms), 'N0'),
+            avg_query_wait_time_ms = 
+                FORMAT(SUM(qsws.avg_query_wait_time_ms), 'N0'),
+            avg_query_duration_ms = 
+                FORMAT(SUM(x.avg_duration_ms), 'N0'),
+            last_query_wait_time_ms = 
+                FORMAT(SUM(qsws.last_query_wait_time_ms), 'N0'),
+            last_query_duration_ms = 
+                FORMAT(SUM(x.last_duration_ms), 'N0'),
+            min_query_wait_time_ms = 
+                FORMAT(SUM(qsws.min_query_wait_time_ms), 'N0'),
+            min_query_duration_ms = 
+                FORMAT(SUM(x.min_duration_ms), 'N0'),
+            max_query_wait_time_ms = 
+                FORMAT(SUM(qsws.max_query_wait_time_ms), 'N0'),
+            max_query_duration_ms = 
+                FORMAT(SUM(x.max_duration_ms), 'N0')
+        FROM #query_store_wait_stats AS qsws
+        CROSS APPLY
+        (
+            SELECT
+                qsrs.avg_duration_ms,
+                qsrs.last_duration_ms,
+                qsrs.min_duration_ms,
+                qsrs.max_duration_ms,
+                qsrs.total_duration_ms,
+                qsq.object_name
+            FROM #query_store_runtime_stats AS qsrs
+            JOIN #query_store_plan AS qsp
+                ON qsrs.plan_id = qsp.plan_id
+            JOIN #query_store_query AS qsq
+                ON qsp.query_id = qsq.query_id
+            WHERE qsws.plan_id = qsrs.plan_id
+        ) AS x
+        GROUP BY qsws.wait_category_desc
+        ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+        OPTION(RECOMPILE);
+
     END;
            
     SELECT 
         @current_table = 'selecting query store options';
 
     SELECT
-        source 
-            = 'query_store_options',
+        source =
+            'query_store_options',
         dqso.desired_state_desc,
         dqso.actual_state_desc,
         dqso.readonly_reason,
@@ -2775,16 +2873,44 @@ BEGIN
 END;
 
 SELECT
-    all_done = 
-        'brought to you by https://www.erikdarlingdata.com/',
-    support = 
-        'for support, head over to https://github.com/erikdarlingdata/DarlingData',
-    help = 
-        'for local help, use @help = 1',
-    performance = 
-        'if this runs slowly, use @troubleshoot_performance = to get query plans',
-    thanks = 
-        'thanks for using sp_QuickieStore!';
+    x.all_done, 
+    x.support, 
+    x.help, 
+    x.performance, 
+    x.thanks
+FROM 
+(
+    SELECT
+        sort = 
+            1,
+        all_done = 
+            'brought to you by erik darling data!',
+        support = 
+            'for support, head over to github',
+        help = 
+            'for local help, use @help = 1',
+        performance = 
+            'if this runs slowly, use to get query plans',
+        thanks = 
+            'thanks for using sp_QuickieStore!'
+    
+    UNION ALL 
+    
+    SELECT
+        sort = 
+            2,
+        all_done = 
+            'https://www.erikdarlingdata.com/',
+        support = 
+            'https://github.com/erikdarlingdata/DarlingData',
+        help = 
+            'EXEC sp_QuickieStore @help = 1;',
+        performance = 
+            'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
+        thanks =
+            'i hope you find it useful or whatever'
+) AS x
+ORDER BY sort;
 
 END TRY
 BEGIN CATCH
@@ -2884,11 +3010,11 @@ BEGIN
             @rc;
     
     IF EXISTS
-    (
-        SELECT
-            1/0
-        FROM #distinct_plans AS dp
-    )
+       (
+           SELECT
+               1/0
+           FROM #distinct_plans AS dp
+       )
     BEGIN
         SELECT 
             table_name = 
@@ -2905,11 +3031,11 @@ BEGIN
     END;
 
     IF EXISTS
-    (
-       SELECT
-           1/0
-       FROM #query_text_search AS qst
-    )
+       (
+          SELECT
+              1/0
+          FROM #query_text_search AS qst
+       )
     BEGIN
         SELECT 
             table_name = 
@@ -2926,11 +3052,11 @@ BEGIN
     END;
 
     IF EXISTS
-    (
-       SELECT
-           1/0
-       FROM #query_store_runtime_stats AS qsrs
-    )
+       (
+          SELECT
+              1/0
+          FROM #query_store_runtime_stats AS qsrs
+       )
     BEGIN
         SELECT
             table_name = 
@@ -2947,11 +3073,11 @@ BEGIN
     END;
 
     IF EXISTS
-    (
-       SELECT
-           1/0
-       FROM #query_store_plan AS qsp
-    )
+       (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+       )
     BEGIN
         SELECT
             table_name = 
@@ -2968,11 +3094,11 @@ BEGIN
     END;
 
     IF EXISTS
-    (
-       SELECT
-           1/0
-       FROM #query_store_query AS qsq
-    )
+       (
+          SELECT
+              1/0
+          FROM #query_store_query AS qsq
+       )
     BEGIN
         SELECT
             table_name = 
@@ -2989,11 +3115,11 @@ BEGIN
     END;
 
     IF EXISTS
-    (
-       SELECT
-           1/0
-       FROM #query_store_query_text AS qsqt
-    )
+       (
+          SELECT
+              1/0
+          FROM #query_store_query_text AS qsqt
+       )
     BEGIN
         SELECT
             table_name = 
@@ -3010,11 +3136,11 @@ BEGIN
     END;
 
     IF EXISTS
-    (
-       SELECT
-           1/0
-       FROM #dm_exec_query_stats AS deqs
-    )
+       (
+          SELECT
+              1/0
+          FROM #dm_exec_query_stats AS deqs
+       )
     BEGIN
         SELECT
             table_name = 
@@ -3031,15 +3157,15 @@ BEGIN
     END;
 
     IF 
-    (
-        @new = 1
-        AND EXISTS
-            (
-               SELECT
-                   1/0
-               FROM #query_store_wait_stats AS qsws
-            )
-    )
+      (
+          @new = 1
+          AND EXISTS
+              (
+                 SELECT
+                     1/0
+                 FROM #query_store_wait_stats AS qsws
+              )
+      )
     BEGIN
         SELECT
             table_name = 
@@ -3056,11 +3182,11 @@ BEGIN
     END;
 
     IF EXISTS
-    (
-       SELECT
-           1/0
-       FROM #database_query_store_options AS qst
-    )
+       (
+          SELECT
+              1/0
+          FROM #database_query_store_options AS qst
+       )
     BEGIN
         SELECT 
             table_name = 
