@@ -39,13 +39,13 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 /* If this column doesn't exist, you're not on a good version of SQL Server */
 IF NOT EXISTS
-  (
-      SELECT
-          1/0
-      FROM sys.all_columns AS ac
-      WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_stats', N'V')
-      AND   ac.name = N'total_spills'
-  )
+   (
+       SELECT
+           1/0
+       FROM sys.all_columns AS ac
+       WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_stats', N'V')
+       AND   ac.name = N'total_spills'
+   )
 BEGIN
     RAISERROR('This procedure only runs on supported versions of SQL Server', 11, 1) WITH NOWAIT;
     RETURN;
@@ -548,26 +548,66 @@ END;
 SELECT 
     @azure = 
         CASE 
-            WHEN CONVERT(sysname, SERVERPROPERTY ('EDITION')) = N'SQL Azure'
+            WHEN CONVERT
+                 (
+                     sysname, 
+                     SERVERPROPERTY ('EDITION')
+                 ) = N'SQL Azure'
             THEN 1
             ELSE 0 
         END,
     @engine = 
-        CONVERT(int, SERVERPROPERTY ('ENGINEEDITION')),
+        CONVERT
+        (
+            int, 
+            SERVERPROPERTY ('ENGINEEDITION')
+        ),
     @product_version = 
-        CONVERT(int, PARSENAME(CONVERT(sysname, SERVERPROPERTY ('PRODUCTVERSION')), 4)),
+        CONVERT
+        (
+            int, 
+            PARSENAME
+            (
+                CONVERT
+                (
+                    sysname, 
+                    SERVERPROPERTY ('PRODUCTVERSION')
+                ), 4)
+            ),
     @database_id = 
-        DB_ID(@database_name),
+        DB_ID
+        (
+            @database_name
+        ),
     @database_name_quoted = 
-        QUOTENAME(@database_name),
+        QUOTENAME
+        (
+            @database_name
+        ),
     @procedure_name_quoted = 
-         QUOTENAME(@database_name) +
+         QUOTENAME
+         (
+             @database_name
+         ) +
          N'.' +
-         QUOTENAME(ISNULL(@procedure_schema, N'dbo')) +
+         QUOTENAME
+         (
+             ISNULL
+             (
+                 @procedure_schema, N'dbo'
+             )
+         ) +
          N'.' + 
          QUOTENAME(@procedure_name),
     @collation =
-        CONVERT(sysname, DATABASEPROPERTYEX(@database_name, 'Collation')),
+        CONVERT
+        (
+            sysname, 
+            DATABASEPROPERTYEX
+            (
+                @database_name, 'Collation'
+            )
+        ),
     @sql = 
         N'',
     @isolation_level = 
@@ -592,8 +632,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         = NCHAR(10),
     @where_clause = 
         N'',
-    @current_table 
-        = N'';
+    @current_table = 
+        N'';
 
 /* Let's make sure things will work */
 
@@ -624,13 +664,13 @@ IF
   (
       @azure = 1
         AND EXISTS
-        (
-            SELECT
-                1/0
-             FROM sys.databases AS d
-             WHERE d.database_id = @database_id
-             AND   d.compatibility_level < 130
-        )
+            (
+                SELECT
+                    1/0
+                 FROM sys.databases AS d
+                 WHERE d.database_id = @database_id
+                 AND   d.compatibility_level < 130
+            )
   )
 BEGIN
     RAISERROR('Azure databases in compatiblity levels under 130 are not supported', 11, 1) WITH NOWAIT;
@@ -642,13 +682,13 @@ IF
   (
       @azure = 0
         AND EXISTS
-                (
-                    SELECT
-                        1/0
-                    FROM sys.databases AS d
-                    WHERE d.database_id = @database_id
-                    AND   d.is_query_store_on = 0
-                )   
+            (
+                SELECT
+                    1/0
+                FROM sys.databases AS d
+                WHERE d.database_id = @database_id
+                AND   d.is_query_store_on = 0
+            )   
   )
 BEGIN
     RAISERROR('The database %s does not appear to have Query Store enabled', 11, 1, @database_name) WITH NOWAIT;
@@ -861,20 +901,20 @@ BEGIN
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE EXISTS
-    (
-        SELECT
-            1/0
-        FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-        WHERE qsp.query_id = qsq.query_id
-        AND EXISTS
-        (
-            SELECT
-                1/0
-            FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-            WHERE qsqt.query_text_id = qsq.query_text_id
-            AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 LIKE @query_text_search
-        )
-    )
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+              WHERE qsp.query_id = qsq.query_id
+              AND EXISTS
+                  (
+                      SELECT
+                          1/0
+                      FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                      WHERE qsqt.query_text_id = qsq.query_text_id
+                      AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 LIKE @query_text_search
+                  )
+          )
     OPTION(RECOMPILE);
     ';   
     
@@ -928,7 +968,10 @@ SELECT
         (
             @where_clause,
             1,
-            LEN(@where_clause) - 1
+            LEN
+            (
+                @where_clause
+            ) - 1
         );
 
 IF @troubleshoot_performance = 1
@@ -1143,37 +1186,65 @@ UPDATE qsrs
         SUBSTRING
         (
             CASE 
-                WHEN CONVERT(int, qcs.set_options) & 1 = 1
+                WHEN CONVERT
+                     (
+                         int, 
+                         qcs.set_options
+                     ) & 1 = 1
                 THEN '', ANSI_PADDING'' 
                 ELSE '''' 
             END +
             CASE 
-                WHEN CONVERT(int, qcs.set_options) & 8 = 8
+                WHEN CONVERT
+                     (
+                         int, 
+                         qcs.set_options
+                     ) & 8 = 8
                 THEN '', CONCAT_NULL_YIELDS_NULL'' 
                 ELSE '''' 
             END +
             CASE 
-                WHEN CONVERT(int, qcs.set_options) & 16 = 16
+                WHEN CONVERT
+                     (
+                         int, 
+                         qcs.set_options
+                     ) & 16 = 16
                 THEN '', ANSI_WARNINGS'' 
                 ELSE '''' 
             END +
             CASE 
-                WHEN CONVERT(int, qcs.set_options) & 32 = 32
+                WHEN CONVERT
+                     (
+                         int, 
+                         qcs.set_options
+                     ) & 32 = 32
                 THEN '', ANSI_NULLS'' 
                 ELSE '''' 
             END +
             CASE 
-                WHEN CONVERT(int, qcs.set_options) & 64 = 64
+                WHEN CONVERT
+                     (
+                         int, 
+                         qcs.set_options
+                     ) & 64 = 64
                 THEN '', QUOTED_IDENTIFIER'' 
                 ELSE ''''
             END +
             CASE 
-                WHEN CONVERT(int, qcs.set_options) & 4096 = 4096
+                WHEN CONVERT
+                     (
+                         int, 
+                         qcs.set_options
+                     ) & 4096 = 4096
                 THEN '', ARITH_ABORT'' 
                 ELSE '''' 
             END +
             CASE 
-                WHEN CONVERT(int, qcs.set_options) & 8192 = 8192
+                WHEN CONVERT
+                     (
+                         int, 
+                         qcs.set_options
+                     ) & 8192 = 8192
                 THEN '', NUMERIC_ROUNDABORT'' 
                 ELSE '''' 
             END, 
@@ -1499,12 +1570,12 @@ SELECT
     MAX(deqs.max_used_threads)
 FROM sys.dm_exec_query_stats AS deqs
 WHERE EXISTS
-(
-    SELECT
-        1/0
-    FROM #query_store_query_text AS qsqt
-    WHERE qsqt.statement_sql_handle = deqs.statement_sql_handle
-)
+      (
+          SELECT
+              1/0
+          FROM #query_store_query_text AS qsqt
+          WHERE qsqt.statement_sql_handle = deqs.statement_sql_handle
+      )
 GROUP BY deqs.statement_sql_handle
 OPTION(RECOMPILE);
 
