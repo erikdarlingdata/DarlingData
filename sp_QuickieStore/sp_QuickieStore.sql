@@ -930,9 +930,9 @@ BEGIN
     
     INSERT 
         #procedure_plans WITH(TABLOCK)
-            (
-                plan_id
-            )
+    (
+        plan_id
+    )
     EXEC sys.sp_executesql
         @sql,
       N'@procedure_name_quoted sysname',
@@ -971,10 +971,10 @@ BEGIN
            OPTION(RECOMPILE);' + @nc10;
            
     INSERT 
-        #query_id_plans
-            (
-                plan_id
-            )
+        #query_id_plans WITH(TABLOCK)
+    (
+        plan_id
+    )
     EXEC sys.sp_executesql
         @sql,
       N'@query_id BIGINT',
@@ -1057,9 +1057,9 @@ BEGIN
     
     INSERT
         #query_text_search WITH(TABLOCK)
-            (
-                plan_id
-            )
+    (
+        plan_id
+    )
     EXEC sys.sp_executesql
         @sql,
       N'@query_text_search nvarchar(MAX)',
@@ -1106,9 +1106,9 @@ IF @debug = 1 BEGIN PRINT @sql; END;
 
 INSERT 
     #maintenance_plans WITH(TABLOCK)
-    (
-        plan_id
-    )
+(
+    plan_id
+)
 EXEC sys.sp_executesql
     @sql;
 
@@ -1172,10 +1172,11 @@ OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
-INSERT #distinct_plans WITH(TABLOCK)
-    (
-        plan_id
-    )
+INSERT 
+    #distinct_plans WITH(TABLOCK)
+(
+    plan_id
+)
 EXEC sys.sp_executesql
     @sql,
     @parameters,
@@ -1820,15 +1821,15 @@ OPTION(RECOMPILE);' + @nc10;
     
     INSERT
         #query_store_wait_stats WITH(TABLOCK)
-        (
-            plan_id,
-            wait_category_desc,
-            total_query_wait_time_ms,
-            avg_query_wait_time_ms,
-            last_query_wait_time_ms,
-            min_query_wait_time_ms,
-            max_query_wait_time_ms
-        ) 
+    (
+        plan_id,
+        wait_category_desc,
+        total_query_wait_time_ms,
+        avg_query_wait_time_ms,
+        last_query_wait_time_ms,
+        min_query_wait_time_ms,
+        max_query_wait_time_ms
+    ) 
     EXEC sys.sp_executesql
         @sql;
 
@@ -1911,26 +1912,31 @@ IF @debug = 1 BEGIN PRINT @sql; END;
 
 INSERT 
     #database_query_store_options WITH(TABLOCK)
-    (
-        desired_state_desc,
-        actual_state_desc,
-        readonly_reason,
-        current_storage_size_mb,
-        flush_interval_seconds,
-        interval_length_minutes,
-        max_storage_size_mb,
-        stale_query_threshold_days,
-        max_plans_per_query,
-        query_capture_mode_desc,
-        capture_policy_execution_count,
-        capture_policy_total_compile_cpu_time_ms,
-        capture_policy_total_execution_cpu_time_ms,
-        capture_policy_stale_threshold_hours,
-        size_based_cleanup_mode_desc,
-        wait_stats_capture_mode_desc
-    )
+(
+    desired_state_desc,
+    actual_state_desc,
+    readonly_reason,
+    current_storage_size_mb,
+    flush_interval_seconds,
+    interval_length_minutes,
+    max_storage_size_mb,
+    stale_query_threshold_days,
+    max_plans_per_query,
+    query_capture_mode_desc,
+    capture_policy_execution_count,
+    capture_policy_total_compile_cpu_time_ms,
+    capture_policy_total_execution_cpu_time_ms,
+    capture_policy_stale_threshold_hours,
+    size_based_cleanup_mode_desc,
+    wait_stats_capture_mode_desc
+)
 EXEC sys.sp_executesql
    @sql;
+
+IF @troubleshoot_performance = 1
+BEGIN
+   SET STATISTICS XML OFF;
+END;
 
 /*This is where we start returning results */
 SELECT 
@@ -2523,11 +2529,6 @@ END;
 
 EXEC sys.sp_executesql
     @sql;
-
-IF @troubleshoot_performance = 1
-BEGIN
-   SET STATISTICS XML OFF;
-END;
 
 /* Return special things, unformatted */
 IF 
