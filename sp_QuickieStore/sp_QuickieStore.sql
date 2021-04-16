@@ -1088,18 +1088,18 @@ SELECT
           qsp.plan_id
        FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
        WHERE NOT EXISTS
-           (
-               SELECT
-                  1/0
-               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-               JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                   ON qsqt.query_text_id = qsq.query_text_id
-               WHERE qsq.query_id = qsp.query_id
-               AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''ALTER INDEX%''
-               AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE%INDEX%''
-               AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE STATISTICS%''
-               AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''UPDATE STATISTICS%''
-           )
+                 (
+                     SELECT
+                        1/0
+                     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                     JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                         ON qsqt.query_text_id = qsq.query_text_id
+                     WHERE qsq.query_id = qsp.query_id
+                     AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''ALTER INDEX%''
+                     AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE%INDEX%''
+                     AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE STATISTICS%''
+                     AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''UPDATE STATISTICS%''
+                 )
        OPTION(RECOMPILE);' + @nc10;
        
 IF @debug = 1 BEGIN PRINT @sql; END;
@@ -1441,20 +1441,20 @@ SELECT
     qsp.query_id,
     all_plan_ids = 
         STUFF
+        (
             (
-                (
-                    SELECT DISTINCT 
-                        '', '' + 
-                        RTRIM
-                            (qsp_plans.plan_id)
-                    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
-                    WHERE qsp.query_id = qsp_plans.query_id
-                    FOR XML PATH(''''), TYPE
-                ).value(''.[1]'', ''varchar(MAX)''), 
-                1, 
-                2, 
-                ''''
-            ),    
+                SELECT DISTINCT 
+                    '', '' + 
+                    RTRIM
+                        (qsp_plans.plan_id)
+                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
+                WHERE qsp.query_id = qsp_plans.query_id
+                FOR XML PATH(''''), TYPE
+            ).value(''.[1]'', ''varchar(MAX)''), 
+            1, 
+            2, 
+            ''''
+        ),    
     qsp.plan_group_id,
     qsp.engine_version,
     qsp.compatibility_level,
@@ -2426,35 +2426,35 @@ SELECT
         SELECT TOP (1)
             top_waits = 
                 STUFF
+                (
                     (
-                        (
-                           SELECT TOP (5) 
-                                '', '' + 
-                                qsws.wait_category_desc + 
-                                '' ('' + 
-                                CONVERT
+                       SELECT TOP (5) 
+                            '', '' + 
+                            qsws.wait_category_desc + 
+                            '' ('' + 
+                            CONVERT
+                            (
+                                varchar(20), 
+                                SUM
                                 (
-                                    varchar(20), 
-                                    SUM
+                                    CONVERT
                                     (
-                                        CONVERT
-                                        (
-                                            bigint, 
-                                            qsws.avg_query_wait_time_ms
-                                        )
+                                        bigint, 
+                                        qsws.avg_query_wait_time_ms
                                     )
-                                ) + 
-                                '' ms) ''
-                           FROM #query_store_wait_stats AS qsws
-                           WHERE qsws.plan_id = qsrs.plan_id
-                           GROUP BY qsws.wait_category_desc
-                           ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
-                           FOR XML PATH(''''), TYPE
-                        ).value(''.[1]'', ''varchar(MAX)''), 
-                        1, 
-                        2, 
-                        ''''
-                    )
+                                )
+                            ) + 
+                            '' ms) ''
+                       FROM #query_store_wait_stats AS qsws
+                       WHERE qsws.plan_id = qsrs.plan_id
+                       GROUP BY qsws.wait_category_desc
+                       ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
+                       FOR XML PATH(''''), TYPE
+                    ).value(''.[1]'', ''varchar(MAX)''), 
+                    1, 
+                    2, 
+                    ''''
+                )
     ) AS w';
 END;
 
@@ -2471,34 +2471,34 @@ SELECT
         SELECT TOP (1)
             top_waits = 
                 STUFF
+                (
                     (
-                        (
-                           SELECT TOP (5) 
-                                '', '' + 
-                                qsws.wait_category_desc + 
-                                '' ('' + 
-                                FORMAT
+                       SELECT TOP (5) 
+                            '', '' + 
+                            qsws.wait_category_desc + 
+                            '' ('' + 
+                            FORMAT
+                            (
+                                SUM
                                 (
-                                    SUM
+                                    CONVERT
                                     (
-                                        CONVERT
-                                        (
-                                            bigint, 
-                                            qsws.avg_query_wait_time_ms
-                                        )
-                                    ), ''N0''
-                                ) + 
-                                '' ms) ''
-                           FROM #query_store_wait_stats AS qsws
-                           WHERE qsws.plan_id = qsrs.plan_id
-                           GROUP BY qsws.wait_category_desc
-                           ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
-                           FOR XML PATH(''''), TYPE
-                        ).value(''.[1]'', ''varchar(MAX)''), 
-                        1, 
-                        2, 
-                        ''''
-                    )
+                                        bigint, 
+                                        qsws.avg_query_wait_time_ms
+                                    )
+                                ), ''N0''
+                            ) + 
+                            '' ms) ''
+                       FROM #query_store_wait_stats AS qsws
+                       WHERE qsws.plan_id = qsrs.plan_id
+                       GROUP BY qsws.wait_category_desc
+                       ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
+                       FOR XML PATH(''''), TYPE
+                    ).value(''.[1]'', ''varchar(MAX)''), 
+                    1, 
+                    2, 
+                    ''''
+                )
     ) AS w';
 END;
 
@@ -2793,26 +2793,46 @@ BEGIN
             qsq.initial_compile_start_time,
             qsq.last_compile_start_time,
             qsq.last_execution_time,
-            count_compiles = FORMAT(qsq.count_compiles, 'N0'),
-            avg_compile_duration_ms = FORMAT(qsq.avg_compile_duration_ms, 'N0'),
-            total_compile_duration_ms = FORMAT(qsq.total_compile_duration_ms, 'N0'),
-            last_compile_duration_ms = FORMAT(qsq.last_compile_duration_ms, 'N0'),
-            avg_bind_duration_ms = FORMAT(qsq.avg_bind_duration_ms, 'N0'),
-            total_bind_duration_ms = FORMAT(qsq.total_bind_duration_ms, 'N0'),
-            last_bind_duration_ms = FORMAT(qsq.last_bind_duration_ms, 'N0'),
-            avg_bind_cpu_time_ms = FORMAT(qsq.avg_bind_cpu_time_ms, 'N0'),
-            total_bind_cpu_time_ms = FORMAT(qsq.total_bind_cpu_time_ms, 'N0'),
-            last_bind_cpu_time_ms = FORMAT(qsq.last_bind_cpu_time_ms, 'N0'),
-            avg_optimize_duration_ms = FORMAT(qsq.avg_optimize_duration_ms, 'N0'),
-            total_optimize_duration_ms = FORMAT(qsq.total_optimize_duration_ms, 'N0'),
-            last_optimize_duration_ms = FORMAT(qsq.last_optimize_duration_ms, 'N0'),
-            avg_optimize_cpu_time_ms = FORMAT(qsq.avg_optimize_cpu_time_ms, 'N0'),
-            total_optimize_cpu_time_ms = FORMAT(qsq.total_optimize_cpu_time_ms, 'N0'),
-            last_optimize_cpu_time_ms = FORMAT(qsq.last_optimize_cpu_time_ms, 'N0'),
-            avg_compile_memory_mb = FORMAT(qsq.avg_compile_memory_mb, 'N0'),
-            total_compile_memory_mb = FORMAT(qsq.total_compile_memory_mb, 'N0'),
-            last_compile_memory_mb = FORMAT(qsq.last_compile_memory_mb, 'N0'),
-            max_compile_memory_mb = FORMAT(qsq.max_compile_memory_mb, 'N0'),
+            count_compiles = 
+                FORMAT(qsq.count_compiles, 'N0'),
+            avg_compile_duration_ms = 
+                FORMAT(qsq.avg_compile_duration_ms, 'N0'),
+            total_compile_duration_ms = 
+                FORMAT(qsq.total_compile_duration_ms, 'N0'),
+            last_compile_duration_ms = 
+                FORMAT(qsq.last_compile_duration_ms, 'N0'),
+            avg_bind_duration_ms = 
+                FORMAT(qsq.avg_bind_duration_ms, 'N0'),
+            total_bind_duration_ms = 
+                FORMAT(qsq.total_bind_duration_ms, 'N0'),
+            last_bind_duration_ms = 
+                FORMAT(qsq.last_bind_duration_ms, 'N0'),
+            avg_bind_cpu_time_ms = 
+                FORMAT(qsq.avg_bind_cpu_time_ms, 'N0'),
+            total_bind_cpu_time_ms = 
+                FORMAT(qsq.total_bind_cpu_time_ms, 'N0'),
+            last_bind_cpu_time_ms = 
+                FORMAT(qsq.last_bind_cpu_time_ms, 'N0'),
+            avg_optimize_duration_ms = 
+                FORMAT(qsq.avg_optimize_duration_ms, 'N0'),
+            total_optimize_duration_ms = 
+                FORMAT(qsq.total_optimize_duration_ms, 'N0'),
+            last_optimize_duration_ms = 
+                FORMAT(qsq.last_optimize_duration_ms, 'N0'),
+            avg_optimize_cpu_time_ms = 
+                FORMAT(qsq.avg_optimize_cpu_time_ms, 'N0'),
+            total_optimize_cpu_time_ms = 
+                FORMAT(qsq.total_optimize_cpu_time_ms, 'N0'),
+            last_optimize_cpu_time_ms = 
+                FORMAT(qsq.last_optimize_cpu_time_ms, 'N0'),
+            avg_compile_memory_mb = 
+                FORMAT(qsq.avg_compile_memory_mb, 'N0'),
+            total_compile_memory_mb = 
+                FORMAT(qsq.total_compile_memory_mb, 'N0'),
+            last_compile_memory_mb = 
+                FORMAT(qsq.last_compile_memory_mb, 'N0'),
+            max_compile_memory_mb = 
+                FORMAT(qsq.max_compile_memory_mb, 'N0'),
             qsq.query_hash,
             qsq.batch_sql_handle,
             qsqt.statement_sql_handle,
@@ -2851,18 +2871,30 @@ BEGIN
                 'resource_stats',
             qsq.query_id,
             qsq.object_name,
-            total_grant_mb = FORMAT(qsqt.total_grant_mb, 'N0'),
-            last_grant_mb = FORMAT(qsqt.last_grant_mb, 'N0'),
-            min_grant_mb = FORMAT(qsqt.min_grant_mb, 'N0'),
-            max_grant_mb = FORMAT(qsqt.max_grant_mb, 'N0'),
-            total_used_grant_mb = FORMAT(qsqt.total_used_grant_mb, 'N0'),
-            last_used_grant_mb = FORMAT(qsqt.last_used_grant_mb, 'N0'),
-            min_used_grant_mb = FORMAT(qsqt.min_used_grant_mb, 'N0'),
-            max_used_grant_mb = FORMAT(qsqt.max_used_grant_mb, 'N0'),
-            total_ideal_grant_mb = FORMAT(qsqt.total_ideal_grant_mb, 'N0'),
-            last_ideal_grant_mb = FORMAT(qsqt.last_ideal_grant_mb, 'N0'),
-            min_ideal_grant_mb = FORMAT(qsqt.min_ideal_grant_mb, 'N0'),
-            max_ideal_grant_mb = FORMAT(qsqt.max_ideal_grant_mb, 'N0'),
+            total_grant_mb = 
+                FORMAT(qsqt.total_grant_mb, 'N0'),
+            last_grant_mb = 
+                FORMAT(qsqt.last_grant_mb, 'N0'),
+            min_grant_mb = 
+                FORMAT(qsqt.min_grant_mb, 'N0'),
+            max_grant_mb = 
+                FORMAT(qsqt.max_grant_mb, 'N0'),
+            total_used_grant_mb = 
+                FORMAT(qsqt.total_used_grant_mb, 'N0'),
+            last_used_grant_mb = 
+                FORMAT(qsqt.last_used_grant_mb, 'N0'),
+            min_used_grant_mb = 
+                FORMAT(qsqt.min_used_grant_mb, 'N0'),
+            max_used_grant_mb = 
+                FORMAT(qsqt.max_used_grant_mb, 'N0'),
+            total_ideal_grant_mb = 
+                FORMAT(qsqt.total_ideal_grant_mb, 'N0'),
+            last_ideal_grant_mb = 
+                FORMAT(qsqt.last_ideal_grant_mb, 'N0'),
+            min_ideal_grant_mb = 
+                FORMAT(qsqt.min_ideal_grant_mb, 'N0'),
+            max_ideal_grant_mb = 
+                FORMAT(qsqt.max_ideal_grant_mb, 'N0'),
             qsqt.total_reserved_threads,
             qsqt.last_reserved_threads,
             qsqt.min_reserved_threads,
