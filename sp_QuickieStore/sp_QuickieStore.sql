@@ -588,7 +588,8 @@ DECLARE
     @plans_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(MAX),
-    @procedure_exists bit = 0,
+    @procedure_exists bit,
+    @query_store_exists bit,
     @current_table nvarchar(100),
     @rc bigint;
 
@@ -674,6 +675,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @nc10 = 
         NCHAR(10),
     @where_clause = N'',
+    @procedure_exists = 0,
+    @query_store_exists = 0,
     @current_table = N'',
     @rc = 0;
 
@@ -719,23 +722,46 @@ BEGIN
     RETURN;
 END;
 
-/* Database are you storing queries? */
-IF 
-  (
-      @azure = 0
-        AND EXISTS
-            (
-                SELECT
-                    1/0
-                FROM sys.databases AS d
-                WHERE d.database_id = @database_id
-                AND   d.is_query_store_on = 0
-            )   
-  )
-BEGIN
-    RAISERROR('The database %s does not appear to have Query Store enabled', 11, 1, @database_name) WITH NOWAIT;
-    RETURN;    
-END;
+/* Sometimes sys.databases will report Query Store being on, but it's really not */
+SELECT 
+    @sql = @isolation_level;
+SELECT 
+    @sql += N'
+SELECT
+    @query_store_exists = 
+        CASE 
+            WHEN EXISTS
+                 (
+                     SELECT
+                         1/0
+                     FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
+                     WHERE ( dqso.actual_state = 0
+                               OR dqso.actual_state IS NULL )
+                 )
+            OR   NOT EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
+                     )
+            THEN 0
+            ELSE 1
+        END
+OPTION(RECOMPILE);
+        ';
+
+IF @debug = 1 BEGIN PRINT @sql; END;
+
+EXEC sys.sp_executesql
+    @sql,
+  N'@query_store_exists bit OUTPUT',
+    @query_store_exists OUTPUT;
+
+IF @query_store_exists = 0
+    BEGIN
+        RAISERROR('Query Store doesn''t seem to be enabled for database: %s.', 11, 1, @database_name) WITH NOWAIT;
+        RETURN;    
+    END;
 
 /* If you specified a procedure name, we need to figure out if it's there */
 IF @procedure_name IS NOT NULL
@@ -758,7 +784,7 @@ BEGIN
                 THEN 1
                 ELSE 0
             END
-            OPTION(RECOMPILE);
+    OPTION(RECOMPILE);
             ';
 
 IF @debug = 1 BEGIN PRINT @sql; END;
@@ -773,7 +799,7 @@ EXEC sys.sp_executesql
 IF @procedure_exists = 0
     BEGIN
         RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s. 
-                   Check that you spelled everything correctly and you''re in the right database', 
+Check that you spelled everything correctly and you''re in the right database', 
                    11, 1, @procedure_name, @database_name) WITH NOWAIT;
         RETURN;    
     END;
@@ -3052,6 +3078,8 @@ BEGIN
             @where_clause, 
         procedure_exists = 
             @procedure_exists,
+        query_store_exists = 
+            @query_store_exists,
         rc = 
             @rc;
     
