@@ -45,8 +45,10 @@ CREATE OR ALTER PROCEDURE dbo.sp_QuickieStore
     @duration_ms bigint = NULL ,
     @procedure_schema sysname = NULL,
     @procedure_name sysname = NULL,
-    @plan_id bigint = NULL,
-    @query_id bigint = NULL,
+    @include_plan_ids nvarchar(4000) = NULL,
+    @include_query_ids nvarchar(4000) = NULL,
+    @ignore_plan_ids nvarchar(4000) = NULL,
+    @ignore_query_ids nvarchar(4000) = NULL,
     @query_text_search nvarchar(MAX) = NULL,
     @expert_mode bit = 0,
     @format_output bit = 0,
@@ -80,7 +82,7 @@ END;
 /* These are for your outputs. */
 SELECT 
     @version = '-1', 
-    @version_date = '20210412';
+    @version_date = '20210416';
 
 /* Helpful section! For help. */
 IF @help = 1
@@ -110,8 +112,10 @@ BEGIN
                 WHEN '@duration_ms' THEN 'the minimum duration a query must have'
                 WHEN '@procedure_schema' THEN 'the schema of the procedure you''re searching for'
                 WHEN '@procedure_name' THEN 'the name of the programmable object you''re searching for'
-                WHEN '@plan_id' THEN 'a specific plan id to search for'
-                WHEN '@query_id' THEN 'a specific query id to search for'
+                WHEN '@include_plan_ids' THEN 'a list of plan ids to search for'
+                WHEN '@include_query_ids' THEN 'a list of query ids to search for'
+                WHEN '@ignore_plan_ids' THEN 'a list of plan ids to ignore'
+                WHEN '@ignore_query_ids' THEN 'a list of query ids to ignore'
                 WHEN '@query_text_search' THEN 'query text to search for'
                 WHEN '@expert_mode' THEN 'returns additional columns and results'
                 WHEN '@format_output' THEN 'returns numbers formatted with commas'
@@ -133,8 +137,10 @@ BEGIN
                 WHEN '@duration_ms' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN '@procedure_schema' THEN 'a valid schema in your database'
                 WHEN '@procedure_name' THEN 'a valid programmable object in your database'
-                WHEN '@plan_id' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
-                WHEN '@query_id' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
+                WHEN '@include_plan_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN '@include_query_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN '@ignore_plan_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN '@ignore_query_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN '@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN '@expert_mode' THEN '0 or 1'
                 WHEN '@format_output' THEN '0 or 1'
@@ -156,8 +162,10 @@ BEGIN
                 WHEN '@duration_ms' THEN 'NULL'
                 WHEN '@procedure_schema' THEN 'NULL; dbo if NULL and procedure name is not NULL'
                 WHEN '@procedure_name' THEN 'NULL'
-                WHEN '@plan_id' THEN 'NULL'
-                WHEN '@query_id' THEN 'NULL'
+                WHEN '@include_plan_ids' THEN 'NULL'
+                WHEN '@include_query_ids' THEN 'NULL'
+                WHEN '@ignore_plan_ids' THEN 'NULL'
+                WHEN '@ignore_query_ids' THEN 'NULL'
                 WHEN '@query_text_search' THEN 'NULL'
                 WHEN '@expert_mode' THEN '0'
                 WHEN '@format_output' THEN '0'
@@ -254,11 +262,32 @@ CREATE TABLE
     plan_id bigint NOT NULL
 );
 
-/* Hold plan_ids for query_ids*/
+/* Hold plan_ids for plan_ids we want*/
 CREATE TABLE
-    #query_id_plans
+    #include_plan_ids
 (
     plan_id bigint NOT NULL
+);
+
+/* Hold plan_ids for query_ids we want*/
+CREATE TABLE
+    #include_query_ids
+(
+    query_id bigint NOT NULL
+);
+
+/* Hold plan_ids for ignored plan_ids*/
+CREATE TABLE
+    #ignore_plan_ids
+(
+    plan_id bigint NOT NULL
+);
+
+/* Hold plan_ids for ignored query_ids*/
+CREATE TABLE
+    #ignore_query_ids
+(
+    query_id bigint NOT NULL
 );
 
 /* Hold plan_ids for matching query text */
@@ -427,7 +456,7 @@ CREATE TABLE
 CREATE TABLE 
     #dm_exec_query_stats
 (
-    statement_sql_handle varbinary(64) NULL,
+    statement_sql_handle varbinary(64) NOT NULL,
     total_grant_mb bigint NULL,
     last_grant_mb bigint NULL,
     min_grant_mb bigint NULL,
@@ -541,7 +570,7 @@ CREATE TABLE
     #query_store_wait_stats
 (
     plan_id bigint NOT NULL,
-    wait_category_desc nvarchar(60) NULL,
+    wait_category_desc nvarchar(60) NOT NULL,
     total_query_wait_time_ms bigint NOT NULL,
     avg_query_wait_time_ms float NULL,
     last_query_wait_time_ms bigint NOT NULL,
@@ -611,6 +640,7 @@ DECLARE
     @where_clause nvarchar(MAX),
     @procedure_exists bit,
     @query_store_exists bit,
+    @string_split nvarchar(MAX),
     @current_table nvarchar(100),
     @rc bigint;
 
@@ -683,11 +713,10 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @start_date datetime2,
           @end_date datetime2,
           @execution_count bigint,
-          @duration_ms bigint,
-          @plan_id bigint',
+          @duration_ms bigint',
     @plans_top = 
         CASE
-            WHEN @query_id IS NULL
+            WHEN @include_plan_ids IS NULL
             THEN 1
             ELSE 10
          END,
@@ -697,6 +726,49 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @procedure_exists = 0,
     @query_store_exists = 0,
     @current_table = N'',
+    @string_split = N'
+    SELECT 
+        LTRIM
+        (
+            RTRIM
+            (
+                ids.ids
+            )
+        ) AS ids
+    FROM
+    (
+        SELECT 
+            ids 
+                = x.x.value
+                      (
+                          ''(./text())[1]'', 
+                          ''bigint''
+                       )
+        FROM 
+        ( 
+            SELECT 
+                ids =  
+                    CONVERT
+                    (
+                        xml, 
+                        ''<x>'' + 
+                        REPLACE
+                        (
+                            REPLACE
+                            (
+                                @ids, 
+                                '','', 
+                                ''</x><x>''
+                            ), 
+                                '' '', 
+                                ''''
+                        ) + ''</x>''
+                    ).query(''.'')
+        ) AS ids 
+            CROSS APPLY ids.nodes(''x'') AS x(x)
+    ) AS ids
+    OPTION(RECOMPILE);
+    ',
     @rc = 0;
 
 /* Let's make sure things will work */
@@ -949,49 +1021,190 @@ BEGIN
 
 END;
 
-IF @plan_id IS NOT NULL
-BEGIN 
-    SELECT  
-        @where_clause += N'AND   qsrs.plan_id = @plan_id' + @nc10; 
-END; 
+/*This section filters query or plan ids*/
+IF 
+(
+       @include_plan_ids  IS NOT NULL
+    OR @include_query_ids IS NOT NULL
+    OR @ignore_plan_ids   IS NOT NULL
+    OR @ignore_query_ids  IS NOT NULL
+)
+BEGIN
 
-IF @query_id IS NOT NULL
-BEGIN 
-
-    SELECT 
-        @current_table = 'inserting #query_id_plans',
-        @sql = @isolation_level;
-
-    SELECT 
-        @sql += N' 
-           SELECT DISTINCT
-               qsp.plan_id
-           FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-           WHERE qsp.query_id = @query_id
-           OPTION(RECOMPILE);' + @nc10;
-           
-    INSERT 
-        #query_id_plans WITH(TABLOCK)
-    (
-        plan_id
-    )
-    EXEC sys.sp_executesql
-        @sql,
-      N'@query_id BIGINT',
-        @query_id;
-
-    IF @debug = 1 BEGIN PRINT @sql; END;
-
-    SELECT
-        @where_clause += N'AND   EXISTS
+    IF @include_plan_ids IS NOT NULL
+    BEGIN
+        
+        SELECT 
+            @current_table = 'inserting #include_plan_ids';
+        
+        IF @debug = 1 BEGIN PRINT @string_split; END;
+        
+        INSERT 
+            #include_plan_ids WITH(TABLOCK)
         (
-           SELECT
-               1/0
-           FROM #query_id_plans AS qip
-           WHERE qip.plan_id = qsrs.plan_id
-        )' + @nc10;
+            plan_id
+        )
+        EXEC sys.sp_executesql
+            @string_split,
+          N'@ids nvarchar(4000)',
+            @include_plan_ids;
 
-END; 
+        SELECT
+           @where_clause += N'AND   EXISTS
+           (
+              SELECT
+                 1/0
+              FROM #include_plan_ids AS idi
+              WHERE idi.plan_id = qsrs.plan_id
+           )' + @nc10;
+
+    END;
+
+    IF @ignore_plan_ids IS NOT NULL
+    BEGIN
+        
+        SELECT 
+            @current_table = 'inserting #ignore_plan_ids';
+        
+        IF @debug = 1 BEGIN PRINT @string_split; END;
+        
+        INSERT 
+            #ignore_plan_ids WITH(TABLOCK)
+        (
+            plan_id
+        )
+        EXEC sys.sp_executesql
+            @string_split,
+          N'@ids nvarchar(4000)',
+            @ignore_plan_ids;
+
+        SELECT
+           @where_clause += N'AND   NOT EXISTS
+           (
+              SELECT
+                 1/0
+              FROM #ignore_plan_ids AS idi
+              WHERE idi.plan_id = qsrs.plan_id
+           )' + @nc10;
+
+    END;
+
+    IF @include_query_ids IS NOT NULL
+    BEGIN
+        
+        SELECT 
+            @current_table = 'inserting #include_query_ids',
+            @sql = @isolation_level;
+        
+        IF @debug = 1 BEGIN PRINT @string_split; END;
+        
+        INSERT 
+            #include_query_ids WITH(TABLOCK)
+        (
+            query_id
+        )
+        EXEC sys.sp_executesql
+            @string_split,
+          N'@ids nvarchar(4000)',
+            @include_query_ids;
+
+        SELECT 
+            @sql += N' 
+               SELECT DISTINCT
+                   qsp.plan_id
+               FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+               WHERE EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #include_query_ids AS iqi
+                         WHERE iqi.query_id = qsp.query_id
+                     )
+               OPTION(RECOMPILE);' + @nc10;
+        
+        IF @debug = 1 BEGIN PRINT @sql; END; 
+        
+        SELECT 
+            @current_table = 'inserting #include_plan_ids';        
+        
+        INSERT
+            #include_plan_ids
+            (
+                plan_id
+            )
+        EXEC sys.sp_executesql
+            @sql;
+                
+        SELECT
+           @where_clause += N'AND   EXISTS
+           (
+              SELECT
+                 1/0
+              FROM #include_plan_ids AS idi
+              WHERE idi.plan_id = qsrs.plan_id
+           )' + @nc10;
+
+    END;
+
+    IF @ignore_query_ids IS NOT NULL
+    BEGIN
+        
+        SELECT 
+            @current_table = 'inserting #ignore_query_ids',
+            @sql = @isolation_level;
+        
+        IF @debug = 1 BEGIN PRINT @string_split; END;
+        
+        INSERT 
+            #ignore_query_ids WITH(TABLOCK)
+        (
+            query_id
+        )
+        EXEC sys.sp_executesql
+            @string_split,
+          N'@ids nvarchar(4000)',
+            @ignore_query_ids;
+
+        SELECT 
+            @sql += N' 
+               SELECT DISTINCT
+                   qsp.plan_id
+               FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+               WHERE EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM #ignore_query_ids AS iqi
+                         WHERE iqi.query_id = qsp.query_id
+                     )
+               OPTION(RECOMPILE);' + @nc10;
+        
+        IF @debug = 1 BEGIN PRINT @sql; END; 
+        
+        SELECT 
+            @current_table = 'inserting #ignore_plan_ids';        
+        
+        INSERT
+            #ignore_plan_ids
+            (
+                plan_id
+            )
+        EXEC sys.sp_executesql
+            @sql;        
+
+        SELECT
+           @where_clause += N'AND   NOT EXISTS
+           (
+              SELECT
+                 1/0
+              FROM #ignore_plan_ids AS idi
+              WHERE idi.plan_id = qsrs.plan_id
+           )' + @nc10;
+
+    END;
+
+
+END;
 
 IF @query_text_search IS NOT NULL
 BEGIN
@@ -1120,6 +1333,8 @@ SELECT
          FROM #maintenance_plans AS mp
          WHERE mp.plan_id = qsrs.plan_id
      )' + @nc10;
+
+
    
 
 /* Tidy up the where clause a bit */
@@ -1184,8 +1399,7 @@ EXEC sys.sp_executesql
     @start_date,
     @end_date,
     @execution_count,
-    @duration_ms,
-    @plan_id;
+    @duration_ms;
 
 /* This gets the runtime stats for the plans we care about */
 SELECT 
@@ -1328,8 +1542,7 @@ EXEC sys.sp_executesql
     @start_date,
     @end_date,
     @execution_count,
-    @duration_ms,
-    @plan_id;
+    @duration_ms;
 
 /* Update things to get the context settings for each query */
 SELECT 
@@ -3034,7 +3247,7 @@ BEGIN
             = FORMAT(dqso.interval_length_minutes, 'N0'),
         max_storage_size_mb 
             = FORMAT(dqso.max_storage_size_mb, 'N0'),
-        stale_query_threshold_days = dqso.stale_query_threshold_days,
+        dqso.stale_query_threshold_days,
         max_plans_per_query 
             = FORMAT(dqso.max_plans_per_query, 'N0'),
         dqso.query_capture_mode_desc,
@@ -3133,10 +3346,14 @@ BEGIN
             @procedure_schema,
         procedure_name = 
             @procedure_name,
-        plan_id = 
-            @plan_id,
-        query_id = 
-            @query_id,
+        include_plan_ids = 
+            @include_plan_ids,
+        include_query_ids = 
+            @include_query_ids,
+        ignore_plan_ids = 
+            @ignore_plan_ids,
+        ignore_query_ids = 
+            @ignore_query_ids,
         query_text_search = 
             @query_text_search,
         expert_mode = 
@@ -3189,6 +3406,8 @@ BEGIN
             @procedure_exists,
         query_store_exists = 
             @query_store_exists,
+        [string_split] = 
+            @string_split,
         rc = 
             @rc;
     
@@ -3238,21 +3457,84 @@ BEGIN
        (
            SELECT
                1/0
-           FROM #query_id_plans AS qip
+           FROM #include_plan_ids AS ipi
        )
     BEGIN
         SELECT 
             table_name = 
-                N'#query_id_plans',
-            qip.*
-        FROM #query_id_plans AS qip
-        ORDER BY qip.plan_id
+                N'#include_plan_ids',
+            ipi.*
+        FROM #include_plan_ids AS ipi
+        ORDER BY ipi.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
     BEGIN
         SELECT
-            N'#query_id_plans is empty' AS result;
+            N'#include_plan_ids is empty' AS result;
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #include_query_ids AS iqi
+       )
+    BEGIN
+        SELECT 
+            table_name = 
+                N'#include_query_ids',
+            iqi.*
+        FROM #include_query_ids AS iqi
+        ORDER BY iqi.query_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#include_query_ids is empty' AS result;
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #ignore_plan_ids AS ipi
+       )
+    BEGIN
+        SELECT 
+            table_name = 
+                N'#ignore_plan_ids',
+            ipi.*
+        FROM #ignore_plan_ids AS ipi
+        ORDER BY ipi.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#ignore_plan_ids is empty' AS result;
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #ignore_query_ids AS iqi
+       )
+    BEGIN
+        SELECT 
+            table_name = 
+                N'#ignore_query_ids',
+            iqi.*
+        FROM #ignore_query_ids AS iqi
+        ORDER BY iqi.query_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#ignore_query_ids is empty' AS result;
     END;
 
     IF EXISTS
