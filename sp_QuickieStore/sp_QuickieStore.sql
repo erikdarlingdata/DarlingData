@@ -247,9 +247,30 @@ CREATE TABLE
     plan_id bigint NOT NULL
 );
 
+/* Hold plan_ids for procedures we're searching */
+CREATE TABLE
+    #procedure_plans
+(
+    plan_id bigint NOT NULL
+);
+
+/* Hold plan_ids for query_ids*/
+CREATE TABLE
+    #query_id_plans
+(
+    plan_id bigint NOT NULL
+);
+
 /* Hold plan_ids for matching query text */
 CREATE TABLE
     #query_text_search
+(
+    plan_id bigint NOT NULL
+);
+
+/* Index and statistics entries to avoid */
+CREATE TABLE
+    #maintenance_plans
 (
     plan_id bigint NOT NULL
 );
@@ -663,9 +684,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @end_date datetime2,
           @execution_count bigint,
           @duration_ms bigint,
-          @procedure_name_quoted sysname,
-          @plan_id bigint,
-          @query_id bigint',
+          @plan_id bigint',
     @plans_top = 
         CASE
             WHEN @query_id IS NULL
@@ -747,8 +766,7 @@ SELECT
             THEN 0
             ELSE 1
         END
-OPTION(RECOMPILE);
-        ';
+OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
@@ -784,8 +802,7 @@ BEGIN
                 THEN 1
                 ELSE 0
             END
-    OPTION(RECOMPILE);
-            ';
+    OPTION(RECOMPILE);' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
@@ -894,17 +911,42 @@ IF
       AND @procedure_exists = 1
 )
 BEGIN 
+
     SELECT 
-        @where_clause += N'AND   EXISTS 
-       (
-           SELECT
-               1/0
+        @current_table = 'inserting #procedure_plans',
+        @sql = @isolation_level;
+
+    SELECT 
+        @sql += N'
+           SELECT DISTINCT
+               qsp.plan_id
            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
               ON qsq.query_id = qsp.query_id
            WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
-           AND   qsp.plan_id = qsrs.plan_id
-       )' + @nc10;
+           OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1 BEGIN PRINT @sql; END; 
+    
+    INSERT 
+        #procedure_plans WITH(TABLOCK)
+            (
+                plan_id
+            )
+    EXEC sys.sp_executesql
+        @sql,
+      N'@procedure_name_quoted sysname',
+        @procedure_name_quoted;
+
+    SELECT
+        @where_clause += N'AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #procedure_plans AS pp
+            WHERE pp.plan_id = qsrs.plan_id
+        )'  + @nc10;
+
 END;
 
 IF @plan_id IS NOT NULL
@@ -915,15 +957,40 @@ END;
 
 IF @query_id IS NOT NULL
 BEGIN 
+
     SELECT 
-        @where_clause += N'AND   EXISTS 
-       (
+        @current_table = 'inserting #query_id_plans',
+        @sql = @isolation_level;
+
+    SELECT 
+        @sql += N' 
+           SELECT DISTINCT
+               qsp.plan_id
+           FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+           WHERE qsp.query_id = @query_id
+           OPTION(RECOMPILE);' + @nc10;
+           
+    INSERT 
+        #query_id_plans
+            (
+                plan_id
+            )
+    EXEC sys.sp_executesql
+        @sql,
+      N'@query_id BIGINT',
+        @query_id;
+
+    IF @debug = 1 BEGIN PRINT @sql; END;
+
+    SELECT
+        @where_clause += N'AND   EXISTS
+        (
            SELECT
                1/0
-           FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-           WHERE qsp.plan_id = qsrs.plan_id
-           AND   qsp.query_id = @query_id
-       )' + @nc10; 
+           FROM #query_id_plans AS qip
+           WHERE qip.plan_id = qsrs.plan_id
+        )' + @nc10;
+
 END; 
 
 IF @query_text_search IS NOT NULL
@@ -984,8 +1051,7 @@ BEGIN
                       AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 LIKE @query_text_search
                   )
           )
-    OPTION(RECOMPILE);
-    ';   
+    OPTION(RECOMPILE);' + @nc10;    
     
     IF @debug = 1 BEGIN PRINT @sql; END;    
     
@@ -1011,27 +1077,50 @@ BEGIN
 END;
 
 /* This section screens out index create and alter statements because who cares */
-    SELECT 
-        @where_clause += N'AND   NOT EXISTS
-      (
-           SELECT
-              1/0
-           FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-           WHERE qsp.plan_id = qsrs.plan_id
-           AND NOT EXISTS
-               (
-                   SELECT
-                      1/0
-                   FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-                   JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                       ON qsqt.query_text_id = qsq.query_text_id
-                   WHERE qsp.query_id = qsq.query_id
-                   AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''ALTER INDEX%''
-                   AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE%INDEX%''
-                   AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE STATISTICS%''
-                   AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''UPDATE STATISTICS%''
-               )
-      )' + @nc10; 
+
+SELECT 
+    @current_table = 'inserting #maintenance_plans',
+    @sql = @isolation_level;
+
+SELECT 
+    @sql += N'
+       SELECT DISTINCT
+          qsp.plan_id
+       FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+       WHERE NOT EXISTS
+           (
+               SELECT
+                  1/0
+               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+               JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                   ON qsqt.query_text_id = qsq.query_text_id
+               WHERE qsq.query_id = qsp.query_id
+               AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''ALTER INDEX%''
+               AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE%INDEX%''
+               AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE STATISTICS%''
+               AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''UPDATE STATISTICS%''
+           )
+       OPTION(RECOMPILE);' + @nc10;
+       
+IF @debug = 1 BEGIN PRINT @sql; END;
+
+INSERT 
+    #maintenance_plans WITH(TABLOCK)
+    (
+        plan_id
+    )
+EXEC sys.sp_executesql
+    @sql;
+
+SELECT
+    @where_clause += N'AND   NOT EXISTS
+     (
+         SELECT
+             1/0
+         FROM #maintenance_plans AS mp
+         WHERE mp.plan_id = qsrs.plan_id
+     )' + @nc10;
+   
 
 /* Tidy up the where clause a bit */
 SELECT 
@@ -1079,8 +1168,7 @@ CASE @sort_order
      ELSE N'qsrs.avg_cpu_time'
 END +
 N') DESC
-OPTION(RECOMPILE);
-';
+OPTION(RECOMPILE);' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
@@ -1096,9 +1184,7 @@ EXEC sys.sp_executesql
     @end_date,
     @execution_count,
     @duration_ms,
-    @procedure_name_quoted,
-    @plan_id,
-    @query_id;
+    @plan_id;
 
 /* This gets the runtime stats for the plans we care about */
 SELECT 
@@ -1211,8 +1297,7 @@ CASE @sort_order
      ELSE N'qsrs.avg_cpu_time'
 END + N' DESC
 ) AS qsrs
-OPTION(RECOMPILE);
-';
+OPTION(RECOMPILE);' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
@@ -1243,9 +1328,7 @@ EXEC sys.sp_executesql
     @end_date,
     @execution_count,
     @duration_ms,
-    @procedure_name_quoted,
-    @plan_id,
-    @query_id;
+    @plan_id;
 
 /* Update things to get the context settings for each query */
 SELECT 
@@ -1338,8 +1421,7 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     ON qsp.query_id = qsq.query_id
 JOIN ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
     ON qsq.context_settings_id = qcs.context_settings_id
-OPTION(RECOMPILE);
-';
+OPTION(RECOMPILE);' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
@@ -1421,8 +1503,7 @@ CROSS APPLY
     AND   qsp.is_online_index_plan = 0
     ORDER BY qsp.last_execution_time DESC
 ) AS qsp
-OPTION(RECOMPILE);
-';
+OPTION(RECOMPILE);' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
@@ -1508,8 +1589,7 @@ CROSS APPLY
     AND   qsq.last_execution_time >= qsp.last_execution_time
     ORDER BY qsq.last_execution_time
 ) AS qsq
-OPTION(RECOMPILE);
-';
+OPTION(RECOMPILE);' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
@@ -1574,8 +1654,7 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     WHERE qsqt.query_text_id = qsq.query_text_id
 ) AS qsqt
-OPTION(RECOMPILE);
-';
+OPTION(RECOMPILE);' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
@@ -1735,8 +1814,7 @@ GROUP BY
     qsws.wait_category_desc
 HAVING 
     SUM(qsws.min_query_wait_time_ms) >= 0.
-OPTION(RECOMPILE);
-';
+OPTION(RECOMPILE);' + @nc10; 
 
     IF @debug = 1 BEGIN PRINT @sql; END;
     
@@ -1827,8 +1905,7 @@ SELECT
     END 
     + N'
 FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
-OPTION(RECOMPILE);
-';
+OPTION(RECOMPILE);' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT @sql; END;
 
@@ -2435,8 +2512,7 @@ CASE @sort_order
      WHEN 'executions' THEN N'x.count_executions'
      ELSE N'x.avg_cpu_time_ms'
 END + N' DESC
-OPTION(RECOMPILE);
-';
+OPTION(RECOMPILE);' + @nc10; 
 
 IF @debug = 1 
 BEGIN 
@@ -3106,6 +3182,48 @@ BEGIN
 
     IF EXISTS
        (
+           SELECT
+               1/0
+           FROM #procedure_plans AS pp
+       )
+    BEGIN
+        SELECT 
+            table_name = 
+                N'#procedure_plans',
+            pp.*
+        FROM #procedure_plans AS pp
+        ORDER BY pp.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#procedure_plans is empty' AS result;
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_id_plans AS qip
+       )
+    BEGIN
+        SELECT 
+            table_name = 
+                N'#query_id_plans',
+            qip.*
+        FROM #query_id_plans AS qip
+        ORDER BY qip.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#query_id_plans is empty' AS result;
+    END;
+
+    IF EXISTS
+       (
           SELECT
               1/0
           FROM #query_text_search AS qst
@@ -3123,6 +3241,27 @@ BEGIN
     BEGIN
         SELECT
             N'#query_text_search is empty' AS result;
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #maintenance_plans AS mp
+       )
+    BEGIN
+        SELECT 
+            table_name = 
+                N'#maintenance_plans',
+            mp.*
+        FROM #maintenance_plans AS mp
+        ORDER BY mp.plan_id
+        OPTION(RECOMPILE);    
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#maintenance_plans is empty' AS result;
     END;
 
     IF EXISTS
