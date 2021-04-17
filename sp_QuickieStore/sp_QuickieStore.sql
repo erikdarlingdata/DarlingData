@@ -2183,6 +2183,8 @@ BEGIN
         qsq.object_name,
         query_sql_text = 
         qsqt.query_sql_text,
+        qsp.compatibility_level,
+        qsp.plan_forcing_type_desc,
         query_plan = TRY_CONVERT(XML, qsp.query_plan),'
         +
             CASE @new
@@ -2303,6 +2305,8 @@ BEGIN
         qsrs.execution_type_desc,        
         qsq.object_name,
         qsqt.query_sql_text,
+        qsp.compatibility_level,
+        qsp.plan_forcing_type_desc,
         query_plan = TRY_CONVERT(XML, qsp.query_plan),'
         +
             CASE @new
@@ -2427,6 +2431,8 @@ BEGIN
         qsrs.execution_type_desc,        
         qsq.object_name,
         qsqt.query_sql_text,
+        qsp.compatibility_level,
+        qsp.plan_forcing_type_desc,
         query_plan = TRY_CONVERT(XML, qsp.query_plan),'
         +
             CASE @new
@@ -2513,6 +2519,8 @@ BEGIN
         qsrs.execution_type_desc,        
         qsq.object_name,
         qsqt.query_sql_text,
+        qsp.compatibility_level,
+        qsp.plan_forcing_type_desc,
         query_plan = TRY_CONVERT(XML, qsp.query_plan),'
         +
             CASE @new
@@ -2955,11 +2963,13 @@ SELECT
     END;
     
     SELECT 
-        @current_table = 'selecting query store options';
-
+        @current_table = 'selecting query store options',
+        @sql = @isolation_level;
+   
+    SELECT @sql += N'
     SELECT
         source =
-            'query_store_options',
+            ''query_store_options'',
         dqso.desired_state_desc,
         dqso.actual_state_desc,
         dqso.readonly_reason,
@@ -2968,16 +2978,41 @@ SELECT
         dqso.interval_length_minutes,
         dqso.max_storage_size_mb,
         dqso.stale_query_threshold_days,
-        dqso.max_plans_per_query,
-        dqso.query_capture_mode_desc,
+        dqso.max_plans_per_query,        
+        dqso.query_capture_mode_desc,';
+        
+        IF 
+        (
+            @azure = 1
+              OR @product_version > 13
+        )
+        BEGIN
+            SELECT @sql += N'
+        dqso.wait_stats_capture_mode_desc,';
+        END;
+        
+        IF 
+        (
+            @azure = 1
+              OR @product_version > 14
+        )
+        BEGIN
+            SELECT @sql += N'
         dqso.capture_policy_execution_count,
         dqso.capture_policy_total_compile_cpu_time_ms,
         dqso.capture_policy_total_execution_cpu_time_ms,
-        dqso.capture_policy_stale_threshold_hours,
-        dqso.size_based_cleanup_mode_desc,
-        dqso.wait_stats_capture_mode_desc
+        dqso.capture_policy_stale_threshold_hours,';
+        END;
+    
+    SELECT @sql += N'
+    dqso.size_based_cleanup_mode_desc
     FROM #database_query_store_options AS dqso
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1 BEGIN PRINT @sql; END;
+
+    EXEC sys.sp_executesql
+        @sql;
 
 END;
 
@@ -3231,38 +3266,65 @@ BEGIN
     END;
            
     SELECT 
-        @current_table = 'selecting query store options';
+        @current_table = 'selecting query store options',
+        @sql = @isolation_level;
 
+    SELECT @sql += N'
     SELECT
         source =
-            'query_store_options',
+            ''query_store_options'',
         dqso.desired_state_desc,
         dqso.actual_state_desc,
         dqso.readonly_reason,
         current_storage_size_mb 
-            = FORMAT(dqso.current_storage_size_mb, 'N0'),
+            = FORMAT(dqso.current_storage_size_mb, ''N0''),
         flush_interval_seconds 
-            = FORMAT(dqso.flush_interval_seconds, 'N0'),
+            = FORMAT(dqso.flush_interval_seconds, ''N0''),
         interval_length_minutes 
-            = FORMAT(dqso.interval_length_minutes, 'N0'),
+            = FORMAT(dqso.interval_length_minutes, ''N0''),
         max_storage_size_mb 
-            = FORMAT(dqso.max_storage_size_mb, 'N0'),
+            = FORMAT(dqso.max_storage_size_mb, ''N0''),
         dqso.stale_query_threshold_days,
         max_plans_per_query 
-            = FORMAT(dqso.max_plans_per_query, 'N0'),
-        dqso.query_capture_mode_desc,
+            = FORMAT(dqso.max_plans_per_query, ''N0''),
+        dqso.query_capture_mode_desc,';
+        
+        IF 
+        (
+            @azure = 1
+              OR @product_version > 13
+        )
+        BEGIN
+            SELECT @sql += N'
+        dqso.wait_stats_capture_mode_desc,';
+        END;
+        
+        IF 
+        (
+            @azure = 1
+              OR @product_version > 14
+        )
+        BEGIN
+            SELECT @sql += N'
         capture_policy_execution_count 
-            = FORMAT(dqso.capture_policy_execution_count, 'N0'),
+            = FORMAT(dqso.capture_policy_execution_count, ''N0''),
         capture_policy_total_compile_cpu_time_ms 
-            = FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, 'N0'),
+            = FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, ''N0''),
         capture_policy_total_execution_cpu_time_ms 
-            = FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, 'N0'),
+            = FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, ''N0''),
         capture_policy_stale_threshold_hours 
-            = FORMAT(dqso.capture_policy_stale_threshold_hours, 'N0'),
-        dqso.size_based_cleanup_mode_desc,
-        dqso.wait_stats_capture_mode_desc
+            = FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),';
+        END;
+    
+    SELECT @sql += N'
+    dqso.size_based_cleanup_mode_desc
     FROM #database_query_store_options AS dqso
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1 BEGIN PRINT @sql; END;
+
+    EXEC sys.sp_executesql
+        @sql;
 
 END;
 
@@ -3313,7 +3375,7 @@ BEGIN CATCH
     RAISERROR ('error while %s', 11, 1, @current_table) WITH NOWAIT;
     
     /*Query that caused the error*/
-    RAISERROR ('offending query:', 11, 1, @current_table) WITH NOWAIT;
+    RAISERROR ('offending query:', 10, 1) WITH NOWAIT;
     RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
 
     /*This reliably throws the actual error from dynamic SQL*/
@@ -3583,21 +3645,20 @@ BEGIN
        (
           SELECT
               1/0
-          FROM #query_store_runtime_stats AS qsrs
+          FROM #database_query_store_options AS qst
        )
     BEGIN
-        SELECT
+        SELECT 
             table_name = 
-                N'#query_store_runtime_stats',
-            qsrs.*
-        FROM #query_store_runtime_stats AS qsrs
-        ORDER BY qsrs.plan_id
+                N'#database_query_store_options',
+            dqso.*
+        FROM #database_query_store_options AS dqso
         OPTION(RECOMPILE);
     END;
     ELSE
     BEGIN
         SELECT
-            N'#query_store_runtime_stats is empty' AS result;
+            N'#database_query_store_options is empty' AS result;
     END;
 
     IF EXISTS
@@ -3684,6 +3745,27 @@ BEGIN
             N'#dm_exec_query_stats is empty' AS result;
     END;
 
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #query_store_runtime_stats AS qsrs
+       )
+    BEGIN
+        SELECT
+            table_name = 
+                N'#query_store_runtime_stats',
+            qsrs.*
+        FROM #query_store_runtime_stats AS qsrs
+        ORDER BY qsrs.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            N'#query_store_runtime_stats is empty' AS result;
+    END;
+
     IF 
       (
           @new = 1
@@ -3708,27 +3790,28 @@ BEGIN
         SELECT
             N'#query_store_wait_stats is empty' AS result;
     END;
-
+    
     IF EXISTS
        (
           SELECT
               1/0
-          FROM #database_query_store_options AS qst
+          FROM #query_context_settings AS qcs
        )
     BEGIN
-        SELECT 
+        SELECT
             table_name = 
-                N'#database_query_store_options',
-            dqso.*
-        FROM #database_query_store_options AS dqso
+                N'#query_store_runtime_stats',
+            qcs.*
+        FROM #query_context_settings AS qcs
+        ORDER BY qcs.context_settings_id
         OPTION(RECOMPILE);
     END;
     ELSE
     BEGIN
         SELECT
-            N'#database_query_store_options is empty' AS result;
+            N'#query_context_settings is empty' AS result;
     END;
-    
+
     RETURN;
 
 END;
