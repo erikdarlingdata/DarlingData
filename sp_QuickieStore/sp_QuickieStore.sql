@@ -32,6 +32,9 @@ For usage and licensing details, run:
 EXEC sp_QuickieStore
     @help = 1;
 
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData
+
 */
 
 CREATE OR ALTER PROCEDURE dbo.sp_QuickieStore
@@ -49,7 +52,7 @@ CREATE OR ALTER PROCEDURE dbo.sp_QuickieStore
     @include_query_ids nvarchar(4000) = NULL,
     @ignore_plan_ids nvarchar(4000) = NULL,
     @ignore_query_ids nvarchar(4000) = NULL,
-    @query_text_search nvarchar(MAX) = NULL,
+    @query_text_search nvarchar(4000) = NULL,
     @expert_mode bit = 0,
     @format_output bit = 0,
     @version varchar(30) = NULL OUTPUT,
@@ -74,7 +77,7 @@ IF NOT EXISTS
        WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_stats', N'V')
        AND   ac.name = N'total_spills'
    )
-BEGIN
+BEGIN    
     RAISERROR('This procedure only runs on supported versions of SQL Server', 11, 1) WITH NOWAIT;
     RETURN;
 END;
@@ -122,7 +125,7 @@ BEGIN
                 WHEN '@version' THEN 'OUTPUT; for support'
                 WHEN '@version_date' THEN 'OUTPUT; for support'
                 WHEN '@help' THEN 'how you got here'
-                WHEN '@debug' THEN 'prints dynamic sql, parameter and variable values, and raw temp table contents'
+                WHEN '@debug' THEN 'prints dynamic sql (including statement length), parameter and variable values, and raw temp table contents'
                 WHEN '@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
             END,
         valid_inputs = 
@@ -156,7 +159,7 @@ BEGIN
                 WHEN '@database_name' THEN 'NULL'
                 WHEN '@sort_order' THEN 'cpu'
                 WHEN '@top' THEN '10'
-                WHEN '@start_date' THEN 'an hour ago'
+                WHEN '@start_date' THEN 'the last 24 hours'
                 WHEN '@end_date' THEN 'NULL'
                 WHEN '@execution_count' THEN 'NULL'
                 WHEN '@duration_ms' THEN 'NULL'
@@ -616,7 +619,7 @@ IF
                 N'rdsadmin'
             )
   )
-BEGIN
+BEGIN   
     SELECT 
         @database_name 
             = DB_NAME();
@@ -631,16 +634,16 @@ DECLARE
     @database_name_quoted sysname,
     @procedure_name_quoted sysname,
     @collation sysname,
-    @new bit = 0,
+    @new bit,
     @sql nvarchar(MAX),
     @isolation_level nvarchar(MAX),
-    @parameters nvarchar(MAX),
+    @parameters nvarchar(200),
     @plans_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(MAX),
     @procedure_exists bit,
     @query_store_exists bit,
-    @string_split nvarchar(MAX),
+    @string_split nvarchar(1500),
     @current_table nvarchar(100),
     @rc bigint;
 
@@ -704,6 +707,7 @@ SELECT
                 'Collation'
             )
         ),
+    @new = 0,
     @sql = N'',
     @isolation_level = 
         N'
@@ -720,8 +724,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             THEN 1
             ELSE 10
          END,
-    @nc10 = 
-        NCHAR(10),
+    @nc10 = NCHAR(10),
     @where_clause = N'',
     @procedure_exists = 0,
     @query_store_exists = 0,
@@ -767,8 +770,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         ) AS ids 
             CROSS APPLY ids.nodes(''x'') AS x(x)
     ) AS ids
-    OPTION(RECOMPILE);
-    ',
+    OPTION(RECOMPILE);',
     @rc = 0;
 
 /* Let's make sure things will work */
@@ -840,7 +842,7 @@ SELECT
         END
 OPTION(RECOMPILE);' + @nc10;
 
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 EXEC sys.sp_executesql
     @sql,
@@ -861,22 +863,22 @@ BEGIN
         @sql = @isolation_level;
     SELECT 
         @sql += N'
-    SELECT
-        @procedure_exists = 
-            CASE 
-                WHEN EXISTS
-                     (
-                         SELECT
-                             1/0
-                         FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-                         WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted) 
-                     )
-                THEN 1
-                ELSE 0
-            END
-    OPTION(RECOMPILE);' + @nc10; 
+SELECT
+    @procedure_exists = 
+        CASE 
+            WHEN EXISTS
+                 (
+                     SELECT
+                         1/0
+                     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                     WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted) 
+                 )
+            THEN 1
+            ELSE 0
+        END
+OPTION(RECOMPILE);' + @nc10; 
 
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 EXEC sys.sp_executesql
     @sql,
@@ -990,15 +992,15 @@ BEGIN
 
     SELECT 
         @sql += N'
-           SELECT DISTINCT
-               qsp.plan_id
-           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
-           WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
-           OPTION(RECOMPILE);' + @nc10;
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+   ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT @sql; END; 
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END; 
     
     INSERT 
         #procedure_plans WITH(TABLOCK)
@@ -1037,7 +1039,7 @@ BEGIN
         SELECT 
             @current_table = 'inserting #include_plan_ids';
         
-        IF @debug = 1 BEGIN PRINT @string_split; END;
+        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
         
         INSERT 
             #include_plan_ids WITH(TABLOCK)
@@ -1051,12 +1053,12 @@ BEGIN
 
         SELECT
            @where_clause += N'AND   EXISTS
-           (
-              SELECT
-                 1/0
-              FROM #include_plan_ids AS idi
-              WHERE idi.plan_id = qsrs.plan_id
-           )' + @nc10;
+      (
+         SELECT
+            1/0
+         FROM #include_plan_ids AS idi
+         WHERE idi.plan_id = qsrs.plan_id
+      )' + @nc10;
 
     END;
 
@@ -1066,7 +1068,7 @@ BEGIN
         SELECT 
             @current_table = 'inserting #ignore_plan_ids';
         
-        IF @debug = 1 BEGIN PRINT @string_split; END;
+        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
         
         INSERT 
             #ignore_plan_ids WITH(TABLOCK)
@@ -1080,12 +1082,12 @@ BEGIN
 
         SELECT
            @where_clause += N'AND   NOT EXISTS
-           (
-              SELECT
-                 1/0
-              FROM #ignore_plan_ids AS idi
-              WHERE idi.plan_id = qsrs.plan_id
-           )' + @nc10;
+          (
+             SELECT
+                1/0
+             FROM #ignore_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
 
     END;
 
@@ -1096,7 +1098,7 @@ BEGIN
             @current_table = 'inserting #include_query_ids',
             @sql = @isolation_level;
         
-        IF @debug = 1 BEGIN PRINT @string_split; END;
+        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
         
         INSERT 
             #include_query_ids WITH(TABLOCK)
@@ -1110,19 +1112,19 @@ BEGIN
 
         SELECT 
             @sql += N' 
-               SELECT DISTINCT
-                   qsp.plan_id
-               FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-               WHERE EXISTS
-                     (
-                         SELECT
-                             1/0
-                         FROM #include_query_ids AS iqi
-                         WHERE iqi.query_id = qsp.query_id
-                     )
-               OPTION(RECOMPILE);' + @nc10;
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #include_query_ids AS iqi
+          WHERE iqi.query_id = qsp.query_id
+      )
+OPTION(RECOMPILE);' + @nc10;
         
-        IF @debug = 1 BEGIN PRINT @sql; END; 
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END; 
         
         SELECT 
             @current_table = 'inserting #include_plan_ids';        
@@ -1137,12 +1139,12 @@ BEGIN
                 
         SELECT
            @where_clause += N'AND   EXISTS
-           (
-              SELECT
-                 1/0
-              FROM #include_plan_ids AS idi
-              WHERE idi.plan_id = qsrs.plan_id
-           )' + @nc10;
+      (
+         SELECT
+            1/0
+         FROM #include_plan_ids AS idi
+         WHERE idi.plan_id = qsrs.plan_id
+      )' + @nc10;
 
     END;
 
@@ -1153,7 +1155,7 @@ BEGIN
             @current_table = 'inserting #ignore_query_ids',
             @sql = @isolation_level;
         
-        IF @debug = 1 BEGIN PRINT @string_split; END;
+        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
         
         INSERT 
             #ignore_query_ids WITH(TABLOCK)
@@ -1167,19 +1169,19 @@ BEGIN
 
         SELECT 
             @sql += N' 
-               SELECT DISTINCT
-                   qsp.plan_id
-               FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-               WHERE EXISTS
-                     (
-                         SELECT
-                             1/0
-                         FROM #ignore_query_ids AS iqi
-                         WHERE iqi.query_id = qsp.query_id
-                     )
-               OPTION(RECOMPILE);' + @nc10;
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #ignore_query_ids AS iqi
+          WHERE iqi.query_id = qsp.query_id
+      )
+OPTION(RECOMPILE);' + @nc10;
         
-        IF @debug = 1 BEGIN PRINT @sql; END; 
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END; 
         
         SELECT 
             @current_table = 'inserting #ignore_plan_ids';        
@@ -1194,15 +1196,14 @@ BEGIN
 
         SELECT
            @where_clause += N'AND   NOT EXISTS
-           (
-              SELECT
-                 1/0
-              FROM #ignore_plan_ids AS idi
-              WHERE idi.plan_id = qsrs.plan_id
-           )' + @nc10;
+          (
+             SELECT
+                1/0
+             FROM #ignore_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
 
     END;
-
 
 END;
 
@@ -1246,27 +1247,27 @@ BEGIN
     
     SELECT 
         @sql += N'
-    SELECT DISTINCT
-        qsp.plan_id
-    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-    WHERE EXISTS
-          (
-              SELECT
-                  1/0
-              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              WHERE qsp.query_id = qsq.query_id
-              AND EXISTS
-                  (
-                      SELECT
-                          1/0
-                      FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                      WHERE qsqt.query_text_id = qsq.query_text_id
-                      AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 LIKE @query_text_search
-                  )
-          )
-    OPTION(RECOMPILE);' + @nc10;    
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          WHERE qsp.query_id = qsq.query_id
+          AND EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                  WHERE qsqt.query_text_id = qsq.query_text_id
+                  AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 LIKE @query_text_search
+              )
+      )
+OPTION(RECOMPILE);' + @nc10;    
     
-    IF @debug = 1 BEGIN PRINT @sql; END;    
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;    
     
     INSERT
         #query_text_search WITH(TABLOCK)
@@ -1275,7 +1276,7 @@ BEGIN
     )
     EXEC sys.sp_executesql
         @sql,
-      N'@query_text_search nvarchar(MAX)',
+      N'@query_text_search nvarchar(4000)',
         @query_text_search;
 
     SELECT 
@@ -1297,25 +1298,25 @@ SELECT
 
 SELECT 
     @sql += N'
-       SELECT DISTINCT
-          qsp.plan_id
-       FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-       WHERE NOT EXISTS
-                 (
-                     SELECT
-                        1/0
-                     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-                     JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                         ON qsqt.query_text_id = qsq.query_text_id
-                     WHERE qsq.query_id = qsp.query_id
-                     AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''ALTER INDEX%''
-                     AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE%INDEX%''
-                     AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE STATISTICS%''
-                     AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''UPDATE STATISTICS%''
-                 )
-       OPTION(RECOMPILE);' + @nc10;
+SELECT DISTINCT
+   qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE NOT EXISTS
+          (
+              SELECT
+                 1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+              JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                  ON qsqt.query_text_id = qsq.query_text_id
+              WHERE qsq.query_id = qsp.query_id
+              AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''ALTER INDEX%''
+              AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE%INDEX%''
+              AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE STATISTICS%''
+              AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''UPDATE STATISTICS%''
+          )
+OPTION(RECOMPILE);' + @nc10;
        
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 INSERT 
     #maintenance_plans WITH(TABLOCK)
@@ -1327,12 +1328,12 @@ EXEC sys.sp_executesql
 
 SELECT
     @where_clause += N'AND   NOT EXISTS
-     (
-         SELECT
-             1/0
-         FROM #maintenance_plans AS mp
-         WHERE mp.plan_id = qsrs.plan_id
-     )' + @nc10;
+          (
+              SELECT
+                  1/0
+              FROM #maintenance_plans AS mp
+              WHERE mp.plan_id = qsrs.plan_id
+          )' + @nc10;
 
 
    
@@ -1385,7 +1386,7 @@ END +
 N') DESC
 OPTION(RECOMPILE);' + @nc10; 
 
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 INSERT 
     #distinct_plans WITH(TABLOCK)
@@ -1454,6 +1455,7 @@ SELECT
 
 IF @new = 1
     BEGIN
+        
         SELECT 
             @sql += N'
     ((qsrs.avg_num_physical_io_reads * 8.) / 1024.),
@@ -1468,10 +1470,12 @@ IF @new = 1
     ((qsrs.last_tempdb_space_used * 8) / 1024.),
     ((qsrs.min_tempdb_space_used * 8) / 1024.),
     ((qsrs.max_tempdb_space_used * 8) / 1024.),';
+    
     END;    
 
 IF @new = 0
     BEGIN
+        
         SELECT 
             @sql += N'
     NULL,
@@ -1486,6 +1490,7 @@ IF @new = 0
     NULL,
     NULL,
     NULL,';
+    
     END;
 
 SELECT 
@@ -1514,7 +1519,7 @@ END + N' DESC
 ) AS qsrs
 OPTION(RECOMPILE);' + @nc10; 
 
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 INSERT
     #query_store_runtime_stats WITH(TABLOCK)
@@ -1546,7 +1551,7 @@ EXEC sys.sp_executesql
 
 /* Update things to get the context settings for each query */
 SELECT 
-    @current_table = 'updating #query_store_runtime_stats',
+    @current_table = 'updating context_settings in #query_store_runtime_stats',
     @sql = @isolation_level;
 
 SELECT 
@@ -1637,7 +1642,7 @@ JOIN ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
     ON qsq.context_settings_id = qcs.context_settings_id
 OPTION(RECOMPILE);' + @nc10; 
 
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 EXEC sys.sp_executesql
     @sql;
@@ -1661,7 +1666,7 @@ SELECT
                     RTRIM
                         (qsp_plans.plan_id)
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
-                WHERE qsp.query_id = qsp_plans.query_id
+                WHERE qsp_plans.query_id = qsp.query_id
                 FOR XML PATH(''''), TYPE
             ).value(''.[1]'', ''varchar(MAX)''), 
             1, 
@@ -1690,16 +1695,16 @@ SELECT
 
 IF @new = 1
 BEGIN
-SELECT 
-    @sql += N'
+    SELECT 
+        @sql += N'
     qsp.plan_forcing_type,
     qsp.plan_forcing_type_desc';
 END;
 
 IF @new = 0
 BEGIN
-SELECT 
-    @sql += N'
+    SELECT 
+        @sql += N'
     NULL,
     NULL';
 END;
@@ -1719,7 +1724,7 @@ CROSS APPLY
 ) AS qsp
 OPTION(RECOMPILE);' + @nc10; 
 
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 INSERT 
     #query_store_plan WITH(TABLOCK)
@@ -1805,7 +1810,7 @@ CROSS APPLY
 ) AS qsq
 OPTION(RECOMPILE);' + @nc10; 
 
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 INSERT 
     #query_store_query WITH(TABLOCK)
@@ -1870,7 +1875,7 @@ CROSS APPLY
 ) AS qsqt
 OPTION(RECOMPILE);' + @nc10; 
 
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 INSERT 
     #query_store_query_text WITH(TABLOCK)
@@ -1992,6 +1997,7 @@ END;
 IF @new = 1
 
 BEGIN
+
     SELECT 
         @current_table = 'inserting #query_store_wait_stats',
         @sql = @isolation_level;
@@ -2030,7 +2036,7 @@ HAVING
     SUM(qsws.min_query_wait_time_ms) >= 0.
 OPTION(RECOMPILE);' + @nc10; 
 
-    IF @debug = 1 BEGIN PRINT @sql; END;
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
     
     INSERT
         #query_store_wait_stats WITH(TABLOCK)
@@ -2094,7 +2100,7 @@ SELECT
     +
     CASE 
         WHEN (@product_version > 14
-                AND @azure = 0)
+                OR @azure = 1)
         THEN N'
     dqso.capture_policy_execution_count,
     dqso.capture_policy_total_compile_cpu_time_ms,
@@ -2121,7 +2127,7 @@ SELECT
 FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
 OPTION(RECOMPILE);' + @nc10; 
 
-IF @debug = 1 BEGIN PRINT @sql; END;
+IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
 INSERT 
     #database_query_store_options WITH(TABLOCK)
@@ -2152,27 +2158,35 @@ BEGIN
 END;
 
 /*This is where we start returning results */
-SELECT 
-    @sql = @isolation_level,
-    @current_table = 'selecting #query_store_wait_stats';
+IF EXISTS
+   (
+      SELECT
+          1/0
+      FROM #query_store_runtime_stats AS qsrs
+   )
+BEGIN
 
-SELECT 
-    @sql += N'
+    SELECT 
+        @sql = @isolation_level,
+        @current_table = 'selecting #query_store_wait_stats';
+
+    SELECT 
+        @sql += N'
 SELECT
     x.*
 FROM
 (';
-
-/* Expert mode returns more columns from runtime stats */
-IF 
-  (
-      @expert_mode = 1 
-        AND @format_output = 0
-  )
-BEGIN
-
-    SELECT 
-        @sql += N'
+    
+    /* Expert mode returns more columns from runtime stats */
+    IF 
+      (
+          @expert_mode = 1 
+            AND @format_output = 0
+      )
+    BEGIN
+    
+        SELECT 
+            @sql += N'
     SELECT    
         source =
             ''runtime_stats'',
@@ -2273,29 +2287,31 @@ BEGIN
                     qsrs.plan_id
                 ORDER BY 
                     ' +
-CASE @sort_order  
-    WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-    WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-    WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-    WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-    WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-    WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-    WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-    WHEN 'executions' THEN N'qsrs.count_executions'
-    ELSE N'qsrs.avg_cpu_time_ms'
-END + N' DESC 
+    CASE @sort_order  
+        WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
+        WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
+        WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
+        WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
+        WHEN 'duration' THEN N'qsrs.avg_duration_ms'
+        WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
+        WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
+        WHEN 'executions' THEN N'qsrs.count_executions'
+        ELSE N'qsrs.avg_cpu_time_ms'
+    END + N' DESC 
             )';
-END;
-
-/*Do we want to format things?*/
-IF 
-  (
-      @expert_mode = 1 
-        AND @format_output = 1
-  )
-BEGIN
-    SELECT 
-        @sql += N'
+    
+    END;
+    
+    /*Do we want to format things?*/
+    IF 
+      (
+          @expert_mode = 1 
+            AND @format_output = 1
+      )
+    BEGIN
+        
+        SELECT 
+            @sql += N'
     SELECT    
         source =
             ''runtime_stats'',
@@ -2399,29 +2415,31 @@ BEGIN
                     qsrs.plan_id
                 ORDER BY 
                     ' +
-CASE @sort_order  
-    WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-    WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-    WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-    WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-    WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-    WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-    WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-    WHEN 'executions' THEN N'qsrs.count_executions'
-    ELSE N'qsrs.avg_cpu_time_ms'
-END + N' DESC 
+    CASE @sort_order  
+        WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
+        WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
+        WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
+        WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
+        WHEN 'duration' THEN N'qsrs.avg_duration_ms'
+        WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
+        WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
+        WHEN 'executions' THEN N'qsrs.count_executions'
+        ELSE N'qsrs.avg_cpu_time_ms'
+    END + N' DESC 
             )';
-END;
-
-/* For non-experts only! */
-IF 
-  (
-      @expert_mode = 0
-        AND @format_output = 0
-  )
-BEGIN
-    SELECT 
-        @sql += N'
+    
+    END;
+    
+    /* For non-experts only! */
+    IF 
+      (
+          @expert_mode = 0
+            AND @format_output = 0
+      )
+    BEGIN
+        
+        SELECT 
+            @sql += N'
     SELECT
         source =
             ''runtime_stats'',
@@ -2487,29 +2505,31 @@ BEGIN
                     qsrs.plan_id
                 ORDER BY 
                     ' +
-CASE @sort_order  
-    WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-    WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-    WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-    WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-    WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-    WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-    WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-    WHEN 'executions' THEN N'qsrs.count_executions'
-    ELSE N'qsrs.avg_cpu_time_ms'
-END + N' DESC 
+    CASE @sort_order  
+        WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
+        WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
+        WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
+        WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
+        WHEN 'duration' THEN N'qsrs.avg_duration_ms'
+        WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
+        WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
+        WHEN 'executions' THEN N'qsrs.count_executions'
+        ELSE N'qsrs.avg_cpu_time_ms'
+    END + N' DESC 
             )';
-END; 
-
-/* Formatted but not still not expert output */
-IF 
-  (
-      @expert_mode = 0
-        AND @format_output = 1
-  )
-BEGIN
-    SELECT 
-        @sql += N'
+    
+    END; 
+    
+    /* Formatted but not still not expert output */
+    IF 
+      (
+          @expert_mode = 0
+            AND @format_output = 1
+      )
+    BEGIN
+        
+        SELECT 
+            @sql += N'
     SELECT
         source =
             ''runtime_stats'',
@@ -2575,23 +2595,24 @@ BEGIN
                     qsrs.plan_id
                 ORDER BY 
                     ' +
-CASE @sort_order  
-     WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-     WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-     WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-     WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-     WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-     WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-     WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-     WHEN 'executions' THEN N'qsrs.count_executions'
-     ELSE N'qsrs.avg_cpu_time_ms'
-END + N' DESC 
+    CASE @sort_order  
+         WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
+         WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
+         WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
+         WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
+         WHEN 'duration' THEN N'qsrs.avg_duration_ms'
+         WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
+         WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
+         WHEN 'executions' THEN N'qsrs.count_executions'
+         ELSE N'qsrs.avg_cpu_time_ms'
+    END + N' DESC 
             )';
-END; 
-
-/* Add on the from and stuff */
-SELECT 
-    @sql += N'
+    
+    END; 
+    
+    /* Add on the from and stuff */
+    SELECT 
+        @sql += N'
     FROM #query_store_runtime_stats AS qsrs
     CROSS APPLY
     (
@@ -2632,16 +2653,17 @@ SELECT
         WHERE qsq.query_id = qsp.query_id
         ORDER BY qsq.last_execution_time
     ) AS qsq';
-
-/*Get wait stats if we can*/
-IF 
-  (
-      @new = 1
-        AND @format_output = 0
-  )
-BEGIN
-SELECT 
-    @sql += N'
+    
+    /*Get wait stats if we can*/
+    IF 
+      (
+          @new = 1
+            AND @format_output = 0
+      )
+    BEGIN
+    
+        SELECT 
+            @sql += N'
     CROSS APPLY
     (
         SELECT TOP (1)
@@ -2677,16 +2699,18 @@ SELECT
                     ''''
                 )
     ) AS w';
-END;
+    
+    END;
+    
+    IF 
+      (
+          @new = 1
+            AND @format_output = 1
+      )
+    BEGIN
 
-IF 
-  (
-      @new = 1
-        AND @format_output = 1
-  )
-BEGIN
-SELECT 
-    @sql += N'
+        SELECT 
+            @sql += N'
     CROSS APPLY
     (
         SELECT TOP (1)
@@ -2721,35 +2745,45 @@ SELECT
                     ''''
                 )
     ) AS w';
-END;
-
-SELECT 
-    @sql += N'
+    
+    END;
+    
+    SELECT 
+        @sql += N'
 ) AS x
 WHERE x.n = 1
 ORDER BY ' +
-CASE @sort_order  
-     WHEN 'cpu' THEN N'x.avg_cpu_time_ms'
-     WHEN 'logical reads' THEN N'x.avg_logical_io_reads_mb'
-     WHEN 'physical reads' THEN N'x.avg_physical_io_reads_mb'
-     WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
-     WHEN 'duration' THEN N'x.avg_duration_ms'
-     WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
-     WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
-     WHEN 'executions' THEN N'x.count_executions'
-     ELSE N'x.avg_cpu_time_ms'
-END + N' DESC
+    CASE @sort_order  
+         WHEN 'cpu' THEN N'x.avg_cpu_time_ms'
+         WHEN 'logical reads' THEN N'x.avg_logical_io_reads_mb'
+         WHEN 'physical reads' THEN N'x.avg_physical_io_reads_mb'
+         WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
+         WHEN 'duration' THEN N'x.avg_duration_ms'
+         WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
+         WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
+         WHEN 'executions' THEN N'x.count_executions'
+         ELSE N'x.avg_cpu_time_ms'
+    END + N' DESC
 OPTION(RECOMPILE);' + @nc10; 
+    
+    IF @debug = 1 
+    BEGIN 
+        PRINT LEN(@sql);
+        PRINT SUBSTRING(@sql, 0, 4000);
+        PRINT SUBSTRING(@sql, 4000, 8000);
+    END;
 
-IF @debug = 1 
-BEGIN 
-    PRINT SUBSTRING(@sql, 0, 4000);
-    PRINT SUBSTRING(@sql, 4000, 8000);
-    PRINT SUBSTRING(@sql, 8000, 12000);
+
+    EXEC sys.sp_executesql
+        @sql;
+
 END;
-
-EXEC sys.sp_executesql
-    @sql;
+ELSE
+    BEGIN
+        SELECT
+            result = 
+                '#query_store_runtime_stats is empty';
+    END;
 
 /* Return special things, unformatted */
 IF 
@@ -2758,215 +2792,261 @@ IF
         AND @format_output = 0
   )
 BEGIN
-SELECT 
-    @current_table = 'selecting compilation stats';
+    
+    IF EXISTS
+       (
+           SELECT
+               1/0
+            FROM #query_store_query
+       )
+    BEGIN
+        
+        SELECT 
+            @current_table = 'selecting compilation stats';
 
-    SELECT
-        x.*
-    FROM
-    (
         SELECT
-            source =
-                'compilation_stats',
-            qsq.query_id,
-            qsq.object_name,
-            qsq.query_text_id,
-            qsq.query_parameterization_type_desc,
-            qsq.initial_compile_start_time,
-            qsq.last_compile_start_time,
-            qsq.last_execution_time,
-            qsq.count_compiles,
-            qsq.avg_compile_duration_ms,
-            qsq.total_compile_duration_ms,
-            qsq.last_compile_duration_ms,
-            qsq.avg_bind_duration_ms,
-            qsq.total_bind_duration_ms,
-            qsq.last_bind_duration_ms,
-            qsq.avg_bind_cpu_time_ms,
-            qsq.total_bind_cpu_time_ms,
-            qsq.last_bind_cpu_time_ms,
-            qsq.avg_optimize_duration_ms,
-            qsq.total_optimize_duration_ms,
-            qsq.last_optimize_duration_ms,
-            qsq.avg_optimize_cpu_time_ms,
-            qsq.total_optimize_cpu_time_ms,
-            qsq.last_optimize_cpu_time_ms,
-            qsq.avg_compile_memory_mb,
-            qsq.total_compile_memory_mb,
-            qsq.last_compile_memory_mb,
-            qsq.max_compile_memory_mb,
-            qsq.query_hash,
-            qsq.batch_sql_handle,
-            qsqt.statement_sql_handle,
-            qsq.last_compile_batch_sql_handle,
-            qsq.last_compile_batch_offset_start,
-            qsq.last_compile_batch_offset_end,
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    qsq.query_id,
-                    qsq.query_text_id
-                ORDER BY
-                    qsq.query_id
-            ) AS n
-        FROM #query_store_query AS qsq
-        CROSS APPLY
+            x.*
+        FROM
         (
-            SELECT TOP (1)
-                qsqt.*
-            FROM #query_store_query_text AS qsqt
-            WHERE qsqt.query_text_id = qsq.query_text_id
-        ) AS qsqt
-    ) AS x
-    WHERE x.n = 1
-    ORDER BY x.query_id
-    OPTION(RECOMPILE);    
+            SELECT
+                source =
+                    'compilation_stats',
+                qsq.query_id,
+                qsq.object_name,
+                qsq.query_text_id,
+                qsq.query_parameterization_type_desc,
+                qsq.initial_compile_start_time,
+                qsq.last_compile_start_time,
+                qsq.last_execution_time,
+                qsq.count_compiles,
+                qsq.avg_compile_duration_ms,
+                qsq.total_compile_duration_ms,
+                qsq.last_compile_duration_ms,
+                qsq.avg_bind_duration_ms,
+                qsq.total_bind_duration_ms,
+                qsq.last_bind_duration_ms,
+                qsq.avg_bind_cpu_time_ms,
+                qsq.total_bind_cpu_time_ms,
+                qsq.last_bind_cpu_time_ms,
+                qsq.avg_optimize_duration_ms,
+                qsq.total_optimize_duration_ms,
+                qsq.last_optimize_duration_ms,
+                qsq.avg_optimize_cpu_time_ms,
+                qsq.total_optimize_cpu_time_ms,
+                qsq.last_optimize_cpu_time_ms,
+                qsq.avg_compile_memory_mb,
+                qsq.total_compile_memory_mb,
+                qsq.last_compile_memory_mb,
+                qsq.max_compile_memory_mb,
+                qsq.query_hash,
+                qsq.batch_sql_handle,
+                qsqt.statement_sql_handle,
+                qsq.last_compile_batch_sql_handle,
+                qsq.last_compile_batch_offset_start,
+                qsq.last_compile_batch_offset_end,
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        qsq.query_id,
+                        qsq.query_text_id
+                    ORDER BY
+                        qsq.query_id
+                ) AS n
+            FROM #query_store_query AS qsq
+            CROSS APPLY
+            (
+                SELECT TOP (1)
+                    qsqt.*
+                FROM #query_store_query_text AS qsqt
+                WHERE qsqt.query_text_id = qsq.query_text_id
+            ) AS qsqt
+        ) AS x
+        WHERE x.n = 1
+        ORDER BY x.query_id
+        OPTION(RECOMPILE);
+    
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result = 
+                '#query_store_query is empty';
+    END;
   
     IF @rc > 0  
-    BEGIN
-    
+    BEGIN    
+        
         SELECT 
             @current_table = 'selecting resource stats';
         
-            SELECT
-                source =
-                    'resource_stats',
-                qsq.query_id,
-                qsq.object_name,
-                qsqt.total_grant_mb,
-                qsqt.last_grant_mb,
-                qsqt.min_grant_mb,
-                qsqt.max_grant_mb,
-                qsqt.total_used_grant_mb,
-                qsqt.last_used_grant_mb,
-                qsqt.min_used_grant_mb,
-                qsqt.max_used_grant_mb,
-                qsqt.total_ideal_grant_mb,
-                qsqt.last_ideal_grant_mb,
-                qsqt.min_ideal_grant_mb,
-                qsqt.max_ideal_grant_mb,
-                qsqt.total_reserved_threads,
-                qsqt.last_reserved_threads,
-                qsqt.min_reserved_threads,
-                qsqt.max_reserved_threads,
-                qsqt.total_used_threads,
-                qsqt.last_used_threads,
-                qsqt.min_used_threads,
-                qsqt.max_used_threads
-            FROM #query_store_query AS qsq
-            JOIN #query_store_query_text AS qsqt
-                ON qsq.query_text_id = qsqt.query_text_id
-            WHERE ( qsqt.total_grant_mb IS NOT NULL
-            OR      qsqt.total_reserved_threads IS NOT NULL )
-            ORDER BY qsq.query_id
-            OPTION(RECOMPILE);
+        SELECT
+            source =
+                'resource_stats',
+            qsq.query_id,
+            qsq.object_name,
+            qsqt.total_grant_mb,
+            qsqt.last_grant_mb,
+            qsqt.min_grant_mb,
+            qsqt.max_grant_mb,
+            qsqt.total_used_grant_mb,
+            qsqt.last_used_grant_mb,
+            qsqt.min_used_grant_mb,
+            qsqt.max_used_grant_mb,
+            qsqt.total_ideal_grant_mb,
+            qsqt.last_ideal_grant_mb,
+            qsqt.min_ideal_grant_mb,
+            qsqt.max_ideal_grant_mb,
+            qsqt.total_reserved_threads,
+            qsqt.last_reserved_threads,
+            qsqt.min_reserved_threads,
+            qsqt.max_reserved_threads,
+            qsqt.total_used_threads,
+            qsqt.last_used_threads,
+            qsqt.min_used_threads,
+            qsqt.max_used_threads
+        FROM #query_store_query AS qsq
+        JOIN #query_store_query_text AS qsqt
+            ON qsq.query_text_id = qsqt.query_text_id
+        WHERE ( qsqt.total_grant_mb IS NOT NULL
+        OR      qsqt.total_reserved_threads IS NOT NULL )
+        ORDER BY qsq.query_id
+        OPTION(RECOMPILE);   
     
+    END;
+    ELSE
+    BEGIN
+        SELECT 
+            result = 
+                '#dm_exec_query_stats is empty';
     END;
 
     IF @new = 1
     BEGIN
-    
-    SELECT 
-        @current_table = 'selecting wait stats by query';
 
-        SELECT
-            source =
-                'query_store_wait_stats_by_query',
-            qsws.plan_id,
-            x.object_name,
-            qsws.wait_category_desc,
-            qsws.total_query_wait_time_ms,
-            total_query_duration_ms = 
-                x.total_duration_ms,
-            qsws.avg_query_wait_time_ms,
-            avg_query_duration_ms =
-                x.avg_duration_ms,
-            qsws.last_query_wait_time_ms,
-            last_query_duration_ms = 
-                x.last_duration_ms,
-            qsws.min_query_wait_time_ms,
-            min_query_duration_ms =
-                x.min_duration_ms,
-            qsws.max_query_wait_time_ms,
-            max_query_duration_ms = 
-                x.max_duration_ms
-        FROM #query_store_wait_stats AS qsws
-        CROSS APPLY
-        (
+        IF EXISTS 
+           (
+               SELECT
+                   1/0
+                FROM #query_store_wait_stats
+           )
+        BEGIN
+
+            SELECT 
+                @current_table = 'selecting wait stats by query';
+            
             SELECT
-                qsrs.avg_duration_ms,
-                qsrs.last_duration_ms,
-                qsrs.min_duration_ms,
-                qsrs.max_duration_ms,
-                qsrs.total_duration_ms,
-                qsq.object_name
-            FROM #query_store_runtime_stats AS qsrs
-            JOIN #query_store_plan AS qsp
-                ON qsrs.plan_id = qsp.plan_id
-            JOIN #query_store_query AS qsq
-                ON qsp.query_id = qsq.query_id
-            WHERE qsws.plan_id = qsrs.plan_id
-        ) AS x
-        ORDER BY 
-            qsws.plan_id,
-            qsws.total_query_wait_time_ms DESC
-        OPTION(RECOMPILE);
-
-        SELECT 
-            @current_table = 'selecting wait stats in total';
-
-        SELECT
-            source =
-                'query_store_wait_stats_total',
-            qsws.wait_category_desc,
-            total_query_wait_time_ms = 
-                SUM(qsws.total_query_wait_time_ms),
-            total_query_duration_ms = 
-                SUM(x.total_duration_ms),
-            avg_query_wait_time_ms = 
-                SUM(qsws.avg_query_wait_time_ms),
-            avg_query_duration_ms =
-                SUM(x.avg_duration_ms),
-            last_query_wait_time_ms = 
-                SUM(qsws.last_query_wait_time_ms),
-            last_query_duration_ms = 
-                SUM(x.last_duration_ms),
-            min_query_wait_time_ms = 
-                SUM(qsws.min_query_wait_time_ms),
-            min_query_duration_ms =
-                SUM(x.min_duration_ms),
-            max_query_wait_time_ms = 
-                SUM(qsws.max_query_wait_time_ms),
-            max_query_duration_ms = 
-                SUM(x.max_duration_ms)
-        FROM #query_store_wait_stats AS qsws
-        CROSS APPLY
-        (
+                source =
+                    'query_store_wait_stats_by_query',
+                qsws.plan_id,
+                x.object_name,
+                qsws.wait_category_desc,
+                qsws.total_query_wait_time_ms,
+                total_query_duration_ms = 
+                    x.total_duration_ms,
+                qsws.avg_query_wait_time_ms,
+                avg_query_duration_ms =
+                    x.avg_duration_ms,
+                qsws.last_query_wait_time_ms,
+                last_query_duration_ms = 
+                    x.last_duration_ms,
+                qsws.min_query_wait_time_ms,
+                min_query_duration_ms =
+                    x.min_duration_ms,
+                qsws.max_query_wait_time_ms,
+                max_query_duration_ms = 
+                    x.max_duration_ms
+            FROM #query_store_wait_stats AS qsws
+            CROSS APPLY
+            (
+                SELECT
+                    qsrs.avg_duration_ms,
+                    qsrs.last_duration_ms,
+                    qsrs.min_duration_ms,
+                    qsrs.max_duration_ms,
+                    qsrs.total_duration_ms,
+                    qsq.object_name
+                FROM #query_store_runtime_stats AS qsrs
+                JOIN #query_store_plan AS qsp
+                    ON qsrs.plan_id = qsp.plan_id
+                JOIN #query_store_query AS qsq
+                    ON qsp.query_id = qsq.query_id
+                WHERE qsws.plan_id = qsrs.plan_id
+            ) AS x
+            ORDER BY 
+                qsws.plan_id,
+                qsws.total_query_wait_time_ms DESC
+            OPTION(RECOMPILE);
+            
+            SELECT 
+                @current_table = 'selecting wait stats in total';
+            
             SELECT
-                qsrs.avg_duration_ms,
-                qsrs.last_duration_ms,
-                qsrs.min_duration_ms,
-                qsrs.max_duration_ms,
-                qsrs.total_duration_ms,
-                qsq.object_name
-            FROM #query_store_runtime_stats AS qsrs
-            JOIN #query_store_plan AS qsp
-                ON qsrs.plan_id = qsp.plan_id
-            JOIN #query_store_query AS qsq
-                ON qsp.query_id = qsq.query_id
-            WHERE qsws.plan_id = qsrs.plan_id
-        ) AS x
-        GROUP BY qsws.wait_category_desc
-        ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
-        OPTION(RECOMPILE);
+                source =
+                    'query_store_wait_stats_total',
+                qsws.wait_category_desc,
+                total_query_wait_time_ms = 
+                    SUM(qsws.total_query_wait_time_ms),
+                total_query_duration_ms = 
+                    SUM(x.total_duration_ms),
+                avg_query_wait_time_ms = 
+                    SUM(qsws.avg_query_wait_time_ms),
+                avg_query_duration_ms =
+                    SUM(x.avg_duration_ms),
+                last_query_wait_time_ms = 
+                    SUM(qsws.last_query_wait_time_ms),
+                last_query_duration_ms = 
+                    SUM(x.last_duration_ms),
+                min_query_wait_time_ms = 
+                    SUM(qsws.min_query_wait_time_ms),
+                min_query_duration_ms =
+                    SUM(x.min_duration_ms),
+                max_query_wait_time_ms = 
+                    SUM(qsws.max_query_wait_time_ms),
+                max_query_duration_ms = 
+                    SUM(x.max_duration_ms)
+            FROM #query_store_wait_stats AS qsws
+            CROSS APPLY
+            (
+                SELECT
+                    qsrs.avg_duration_ms,
+                    qsrs.last_duration_ms,
+                    qsrs.min_duration_ms,
+                    qsrs.max_duration_ms,
+                    qsrs.total_duration_ms,
+                    qsq.object_name
+                FROM #query_store_runtime_stats AS qsrs
+                JOIN #query_store_plan AS qsp
+                    ON qsrs.plan_id = qsp.plan_id
+                JOIN #query_store_query AS qsq
+                    ON qsp.query_id = qsq.query_id
+                WHERE qsws.plan_id = qsrs.plan_id
+            ) AS x
+            GROUP BY qsws.wait_category_desc
+            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+            OPTION(RECOMPILE);
+        
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result = 
+                    '#query_store_wait_stats is empty' + 
+                    CASE 
+                        WHEN (@product_version = 13 
+                                AND @azure = 0)
+                        THEN ' because it''s not available < 2017'
+                        ELSE ''
+                    END;
+        END;
 
     END;
     
     SELECT 
         @current_table = 'selecting query store options',
-        @sql = @isolation_level;
+        @sql = N'';
    
-    SELECT @sql += N'
+    SELECT 
+        @sql += N'
     SELECT
         source =
             ''query_store_options'',
@@ -2982,34 +3062,37 @@ SELECT
         dqso.query_capture_mode_desc,';
         
         IF 
-        (
-            @azure = 1
-              OR @product_version > 13
-        )
+          (
+              @azure = 1
+                OR @product_version > 13
+          )
         BEGIN
-            SELECT @sql += N'
+            SELECT 
+                @sql += N'
         dqso.wait_stats_capture_mode_desc,';
         END;
         
         IF 
-        (
-            @azure = 1
-              OR @product_version > 14
-        )
+          (
+              @azure = 1
+                OR @product_version > 14
+          )
         BEGIN
-            SELECT @sql += N'
+            SELECT 
+                @sql += N'
         dqso.capture_policy_execution_count,
         dqso.capture_policy_total_compile_cpu_time_ms,
         dqso.capture_policy_total_execution_cpu_time_ms,
         dqso.capture_policy_stale_threshold_hours,';
         END;
     
-    SELECT @sql += N'
+    SELECT 
+        @sql += N'
     dqso.size_based_cleanup_mode_desc
     FROM #database_query_store_options AS dqso
     OPTION(RECOMPILE);';
 
-    IF @debug = 1 BEGIN PRINT @sql; END;
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
     EXEC sys.sp_executesql
         @sql;
@@ -3017,97 +3100,113 @@ SELECT
 END;
 
 /* Return special things, formatted */
-IF 
+IF
   (
       @expert_mode = 1
         AND @format_output = 1
   )
 BEGIN
 
-    SELECT 
-        @current_table = 'selecting compilation stats';
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #query_store_query
+       )
+    BEGIN
     
-    SELECT
-        x.*
-    FROM
-    (
+        SELECT 
+            @current_table = 'selecting compilation stats';
+        
         SELECT
-            source =
-                'compilation_stats',
-            qsq.query_id,
-            qsq.object_name,
-            qsq.query_text_id,
-            qsq.query_parameterization_type_desc,
-            qsq.initial_compile_start_time,
-            qsq.last_compile_start_time,
-            qsq.last_execution_time,
-            count_compiles = 
-                FORMAT(qsq.count_compiles, 'N0'),
-            avg_compile_duration_ms = 
-                FORMAT(qsq.avg_compile_duration_ms, 'N0'),
-            total_compile_duration_ms = 
-                FORMAT(qsq.total_compile_duration_ms, 'N0'),
-            last_compile_duration_ms = 
-                FORMAT(qsq.last_compile_duration_ms, 'N0'),
-            avg_bind_duration_ms = 
-                FORMAT(qsq.avg_bind_duration_ms, 'N0'),
-            total_bind_duration_ms = 
-                FORMAT(qsq.total_bind_duration_ms, 'N0'),
-            last_bind_duration_ms = 
-                FORMAT(qsq.last_bind_duration_ms, 'N0'),
-            avg_bind_cpu_time_ms = 
-                FORMAT(qsq.avg_bind_cpu_time_ms, 'N0'),
-            total_bind_cpu_time_ms = 
-                FORMAT(qsq.total_bind_cpu_time_ms, 'N0'),
-            last_bind_cpu_time_ms = 
-                FORMAT(qsq.last_bind_cpu_time_ms, 'N0'),
-            avg_optimize_duration_ms = 
-                FORMAT(qsq.avg_optimize_duration_ms, 'N0'),
-            total_optimize_duration_ms = 
-                FORMAT(qsq.total_optimize_duration_ms, 'N0'),
-            last_optimize_duration_ms = 
-                FORMAT(qsq.last_optimize_duration_ms, 'N0'),
-            avg_optimize_cpu_time_ms = 
-                FORMAT(qsq.avg_optimize_cpu_time_ms, 'N0'),
-            total_optimize_cpu_time_ms = 
-                FORMAT(qsq.total_optimize_cpu_time_ms, 'N0'),
-            last_optimize_cpu_time_ms = 
-                FORMAT(qsq.last_optimize_cpu_time_ms, 'N0'),
-            avg_compile_memory_mb = 
-                FORMAT(qsq.avg_compile_memory_mb, 'N0'),
-            total_compile_memory_mb = 
-                FORMAT(qsq.total_compile_memory_mb, 'N0'),
-            last_compile_memory_mb = 
-                FORMAT(qsq.last_compile_memory_mb, 'N0'),
-            max_compile_memory_mb = 
-                FORMAT(qsq.max_compile_memory_mb, 'N0'),
-            qsq.query_hash,
-            qsq.batch_sql_handle,
-            qsqt.statement_sql_handle,
-            qsq.last_compile_batch_sql_handle,
-            qsq.last_compile_batch_offset_start,
-            qsq.last_compile_batch_offset_end,
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    qsq.query_id,
-                    qsq.query_text_id
-                ORDER BY
-                    qsq.query_id
-            ) AS n
-        FROM #query_store_query AS qsq
-        CROSS APPLY
+            x.*
+        FROM
         (
-            SELECT TOP (1)
-                qsqt.*
-            FROM #query_store_query_text AS qsqt
-            WHERE qsqt.query_text_id = qsq.query_text_id
-        ) AS qsqt
-    ) AS x
-    WHERE x.n = 1
-    ORDER BY x.query_id
-    OPTION(RECOMPILE);     
+            SELECT
+                source =
+                    'compilation_stats',
+                qsq.query_id,
+                qsq.object_name,
+                qsq.query_text_id,
+                qsq.query_parameterization_type_desc,
+                qsq.initial_compile_start_time,
+                qsq.last_compile_start_time,
+                qsq.last_execution_time,
+                count_compiles = 
+                    FORMAT(qsq.count_compiles, 'N0'),
+                avg_compile_duration_ms = 
+                    FORMAT(qsq.avg_compile_duration_ms, 'N0'),
+                total_compile_duration_ms = 
+                    FORMAT(qsq.total_compile_duration_ms, 'N0'),
+                last_compile_duration_ms = 
+                    FORMAT(qsq.last_compile_duration_ms, 'N0'),
+                avg_bind_duration_ms = 
+                    FORMAT(qsq.avg_bind_duration_ms, 'N0'),
+                total_bind_duration_ms = 
+                    FORMAT(qsq.total_bind_duration_ms, 'N0'),
+                last_bind_duration_ms = 
+                    FORMAT(qsq.last_bind_duration_ms, 'N0'),
+                avg_bind_cpu_time_ms = 
+                    FORMAT(qsq.avg_bind_cpu_time_ms, 'N0'),
+                total_bind_cpu_time_ms = 
+                    FORMAT(qsq.total_bind_cpu_time_ms, 'N0'),
+                last_bind_cpu_time_ms = 
+                    FORMAT(qsq.last_bind_cpu_time_ms, 'N0'),
+                avg_optimize_duration_ms = 
+                    FORMAT(qsq.avg_optimize_duration_ms, 'N0'),
+                total_optimize_duration_ms = 
+                    FORMAT(qsq.total_optimize_duration_ms, 'N0'),
+                last_optimize_duration_ms = 
+                    FORMAT(qsq.last_optimize_duration_ms, 'N0'),
+                avg_optimize_cpu_time_ms = 
+                    FORMAT(qsq.avg_optimize_cpu_time_ms, 'N0'),
+                total_optimize_cpu_time_ms = 
+                    FORMAT(qsq.total_optimize_cpu_time_ms, 'N0'),
+                last_optimize_cpu_time_ms = 
+                    FORMAT(qsq.last_optimize_cpu_time_ms, 'N0'),
+                avg_compile_memory_mb = 
+                    FORMAT(qsq.avg_compile_memory_mb, 'N0'),
+                total_compile_memory_mb = 
+                    FORMAT(qsq.total_compile_memory_mb, 'N0'),
+                last_compile_memory_mb = 
+                    FORMAT(qsq.last_compile_memory_mb, 'N0'),
+                max_compile_memory_mb = 
+                    FORMAT(qsq.max_compile_memory_mb, 'N0'),
+                qsq.query_hash,
+                qsq.batch_sql_handle,
+                qsqt.statement_sql_handle,
+                qsq.last_compile_batch_sql_handle,
+                qsq.last_compile_batch_offset_start,
+                qsq.last_compile_batch_offset_end,
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        qsq.query_id,
+                        qsq.query_text_id
+                    ORDER BY
+                        qsq.query_id
+                ) AS n
+            FROM #query_store_query AS qsq
+            CROSS APPLY
+            (
+                SELECT TOP (1)
+                    qsqt.*
+                FROM #query_store_query_text AS qsqt
+                WHERE qsqt.query_text_id = qsq.query_text_id
+            ) AS qsqt
+        ) AS x
+        WHERE x.n = 1
+        ORDER BY x.query_id
+        OPTION(RECOMPILE);     
     
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result = 
+                '#query_store_query is empty';
+    END;
+
     IF @rc > 0
     BEGIN
     
@@ -3160,116 +3259,145 @@ BEGIN
         OPTION(RECOMPILE);
     
     END;
+    ELSE
+    BEGIN
+        SELECT
+            result = 
+                '#dm_exec_query_stats is empty';
+    END;
 
     IF @new = 1
     BEGIN
 
-    SELECT 
-        @current_table = 'selecting wait stats by query';
-
-        SELECT
-            source =
-                'query_store_wait_stats_by_query',
-            qsws.plan_id,
-            x.object_name,
-            qsws.wait_category_desc,
-            total_query_wait_time_ms = 
-                FORMAT(qsws.total_query_wait_time_ms, 'N0'),
-            total_query_duration_ms = 
-                FORMAT(x.total_duration_ms, 'N0'),
-            avg_query_wait_time_ms = 
-                FORMAT(qsws.avg_query_wait_time_ms, 'N0'),
-            avg_query_duration_ms = 
-                FORMAT(x.avg_duration_ms, 'N0'),
-            last_query_wait_time_ms = 
-                FORMAT(qsws.last_query_wait_time_ms, 'N0'),
-            last_query_duration_ms = 
-                FORMAT(x.last_duration_ms, 'N0'),
-            min_query_wait_time_ms = 
-                FORMAT(qsws.min_query_wait_time_ms, 'N0'),
-            min_query_duration_ms = 
-                FORMAT(x.min_duration_ms, 'N0'),
-            max_query_wait_time_ms = 
-                FORMAT(qsws.max_query_wait_time_ms, 'N0'),
-            max_query_duration_ms = 
-                FORMAT(x.max_duration_ms, 'N0')
-        FROM #query_store_wait_stats AS qsws
-        CROSS APPLY
-        (
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+                FROM #query_store_wait_stats
+           )
+        BEGIN
+            
+            SELECT 
+                @current_table = 'selecting wait stats by query';
+            
             SELECT
-                qsrs.avg_duration_ms,
-                qsrs.last_duration_ms,
-                qsrs.min_duration_ms,
-                qsrs.max_duration_ms,
-                qsrs.total_duration_ms,
-                qsq.object_name
-            FROM #query_store_runtime_stats AS qsrs
-            JOIN #query_store_plan AS qsp
-                ON qsrs.plan_id = qsp.plan_id
-            JOIN #query_store_query AS qsq
-                ON qsp.query_id = qsq.query_id
-            WHERE qsws.plan_id = qsrs.plan_id
-        ) AS x
-        ORDER BY 
-            qsws.plan_id,
-            qsws.total_query_wait_time_ms DESC
-        OPTION(RECOMPILE);
-
-    SELECT 
-        @current_table = 'selecting wait stats in total';
-
+                source =
+                    'query_store_wait_stats_by_query',
+                qsws.plan_id,
+                x.object_name,
+                qsws.wait_category_desc,
+                total_query_wait_time_ms = 
+                    FORMAT(qsws.total_query_wait_time_ms, 'N0'),
+                total_query_duration_ms = 
+                    FORMAT(x.total_duration_ms, 'N0'),
+                avg_query_wait_time_ms = 
+                    FORMAT(qsws.avg_query_wait_time_ms, 'N0'),
+                avg_query_duration_ms = 
+                    FORMAT(x.avg_duration_ms, 'N0'),
+                last_query_wait_time_ms = 
+                    FORMAT(qsws.last_query_wait_time_ms, 'N0'),
+                last_query_duration_ms = 
+                    FORMAT(x.last_duration_ms, 'N0'),
+                min_query_wait_time_ms = 
+                    FORMAT(qsws.min_query_wait_time_ms, 'N0'),
+                min_query_duration_ms = 
+                    FORMAT(x.min_duration_ms, 'N0'),
+                max_query_wait_time_ms = 
+                    FORMAT(qsws.max_query_wait_time_ms, 'N0'),
+                max_query_duration_ms = 
+                    FORMAT(x.max_duration_ms, 'N0')
+            FROM #query_store_wait_stats AS qsws
+            CROSS APPLY
+            (
+                SELECT
+                    qsrs.avg_duration_ms,
+                    qsrs.last_duration_ms,
+                    qsrs.min_duration_ms,
+                    qsrs.max_duration_ms,
+                    qsrs.total_duration_ms,
+                    qsq.object_name
+                FROM #query_store_runtime_stats AS qsrs
+                JOIN #query_store_plan AS qsp
+                    ON qsrs.plan_id = qsp.plan_id
+                JOIN #query_store_query AS qsq
+                    ON qsp.query_id = qsq.query_id
+                WHERE qsws.plan_id = qsrs.plan_id
+            ) AS x
+            ORDER BY 
+                qsws.plan_id,
+                qsws.total_query_wait_time_ms DESC
+            OPTION(RECOMPILE);
+            
+            SELECT 
+                @current_table = 'selecting wait stats in total';
+            
+                SELECT
+                    source =
+                        'query_store_wait_stats_total',
+                    qsws.wait_category_desc,
+                    total_query_wait_time_ms = 
+                        FORMAT(SUM(qsws.total_query_wait_time_ms), 'N0'),
+                    total_query_duration_ms = 
+                        FORMAT(SUM(x.total_duration_ms), 'N0'),
+                    avg_query_wait_time_ms = 
+                        FORMAT(SUM(qsws.avg_query_wait_time_ms), 'N0'),
+                    avg_query_duration_ms = 
+                        FORMAT(SUM(x.avg_duration_ms), 'N0'),
+                    last_query_wait_time_ms = 
+                        FORMAT(SUM(qsws.last_query_wait_time_ms), 'N0'),
+                    last_query_duration_ms = 
+                        FORMAT(SUM(x.last_duration_ms), 'N0'),
+                    min_query_wait_time_ms = 
+                        FORMAT(SUM(qsws.min_query_wait_time_ms), 'N0'),
+                    min_query_duration_ms = 
+                        FORMAT(SUM(x.min_duration_ms), 'N0'),
+                    max_query_wait_time_ms = 
+                        FORMAT(SUM(qsws.max_query_wait_time_ms), 'N0'),
+                    max_query_duration_ms = 
+                        FORMAT(SUM(x.max_duration_ms), 'N0')
+                FROM #query_store_wait_stats AS qsws
+                CROSS APPLY
+                (
+                    SELECT
+                        qsrs.avg_duration_ms,
+                        qsrs.last_duration_ms,
+                        qsrs.min_duration_ms,
+                        qsrs.max_duration_ms,
+                        qsrs.total_duration_ms,
+                        qsq.object_name
+                    FROM #query_store_runtime_stats AS qsrs
+                    JOIN #query_store_plan AS qsp
+                        ON qsrs.plan_id = qsp.plan_id
+                    JOIN #query_store_query AS qsq
+                        ON qsp.query_id = qsq.query_id
+                    WHERE qsws.plan_id = qsrs.plan_id
+                ) AS x
+                GROUP BY qsws.wait_category_desc
+                ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+                OPTION(RECOMPILE);
+        
+        END;
+    
+    END;
+    ELSE
+    BEGIN
         SELECT
-            source =
-                'query_store_wait_stats_total',
-            qsws.wait_category_desc,
-            total_query_wait_time_ms = 
-                FORMAT(SUM(qsws.total_query_wait_time_ms), 'N0'),
-            total_query_duration_ms = 
-                FORMAT(SUM(x.total_duration_ms), 'N0'),
-            avg_query_wait_time_ms = 
-                FORMAT(SUM(qsws.avg_query_wait_time_ms), 'N0'),
-            avg_query_duration_ms = 
-                FORMAT(SUM(x.avg_duration_ms), 'N0'),
-            last_query_wait_time_ms = 
-                FORMAT(SUM(qsws.last_query_wait_time_ms), 'N0'),
-            last_query_duration_ms = 
-                FORMAT(SUM(x.last_duration_ms), 'N0'),
-            min_query_wait_time_ms = 
-                FORMAT(SUM(qsws.min_query_wait_time_ms), 'N0'),
-            min_query_duration_ms = 
-                FORMAT(SUM(x.min_duration_ms), 'N0'),
-            max_query_wait_time_ms = 
-                FORMAT(SUM(qsws.max_query_wait_time_ms), 'N0'),
-            max_query_duration_ms = 
-                FORMAT(SUM(x.max_duration_ms), 'N0')
-        FROM #query_store_wait_stats AS qsws
-        CROSS APPLY
-        (
-            SELECT
-                qsrs.avg_duration_ms,
-                qsrs.last_duration_ms,
-                qsrs.min_duration_ms,
-                qsrs.max_duration_ms,
-                qsrs.total_duration_ms,
-                qsq.object_name
-            FROM #query_store_runtime_stats AS qsrs
-            JOIN #query_store_plan AS qsp
-                ON qsrs.plan_id = qsp.plan_id
-            JOIN #query_store_query AS qsq
-                ON qsp.query_id = qsq.query_id
-            WHERE qsws.plan_id = qsrs.plan_id
-        ) AS x
-        GROUP BY qsws.wait_category_desc
-        ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
-        OPTION(RECOMPILE);
-
+            result = 
+                '#query_store_wait_stats is empty' + 
+                CASE 
+                    WHEN (@product_version = 13 
+                            AND @azure = 0)
+                    THEN ' because it''s not available < 2017'
+                    ELSE ''
+                END;
     END;
            
     SELECT 
         @current_table = 'selecting query store options',
-        @sql = @isolation_level;
+        @sql = N'';
 
-    SELECT @sql += N'
+    SELECT 
+        @sql += N'
     SELECT
         source =
             ''query_store_options'',
@@ -3290,22 +3418,24 @@ BEGIN
         dqso.query_capture_mode_desc,';
         
         IF 
-        (
-            @azure = 1
-              OR @product_version > 13
-        )
+          (
+              @azure = 1
+                OR @product_version > 13
+          )
         BEGIN
-            SELECT @sql += N'
+            SELECT 
+                @sql += N'
         dqso.wait_stats_capture_mode_desc,';
         END;
         
         IF 
-        (
-            @azure = 1
-              OR @product_version > 14
-        )
+          (
+              @azure = 1
+                OR @product_version > 14
+          )
         BEGIN
-            SELECT @sql += N'
+            SELECT 
+                @sql += N'
         capture_policy_execution_count 
             = FORMAT(dqso.capture_policy_execution_count, ''N0''),
         capture_policy_total_compile_cpu_time_ms 
@@ -3316,12 +3446,13 @@ BEGIN
             = FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),';
         END;
     
-    SELECT @sql += N'
+    SELECT 
+        @sql += N'
     dqso.size_based_cleanup_mode_desc
     FROM #database_query_store_options AS dqso
     OPTION(RECOMPILE);';
 
-    IF @debug = 1 BEGIN PRINT @sql; END;
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
     EXEC sys.sp_executesql
         @sql;
@@ -3453,7 +3584,9 @@ BEGIN
         new = 
             @new, 
         [sql] = 
-            @sql, 
+            @sql,
+         len_sql = 
+             LEN(@sql), 
         isolation_level = 
             @isolation_level, 
         parameters = 
@@ -3482,7 +3615,7 @@ BEGIN
     BEGIN
         SELECT 
             table_name = 
-                N'#distinct_plans',
+                '#distinct_plans',
             dp.*
         FROM #distinct_plans AS dp
         ORDER BY dp.plan_id
@@ -3491,7 +3624,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#distinct_plans is empty' AS result;
+            result = 
+                '#distinct_plans is empty';
     END;
 
     IF EXISTS
@@ -3503,7 +3637,7 @@ BEGIN
     BEGIN
         SELECT 
             table_name = 
-                N'#procedure_plans',
+                '#procedure_plans',
             pp.*
         FROM #procedure_plans AS pp
         ORDER BY pp.plan_id
@@ -3512,7 +3646,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#procedure_plans is empty' AS result;
+            result = 
+                '#procedure_plans is empty';
     END;
 
     IF EXISTS
@@ -3524,7 +3659,7 @@ BEGIN
     BEGIN
         SELECT 
             table_name = 
-                N'#include_plan_ids',
+                '#include_plan_ids',
             ipi.*
         FROM #include_plan_ids AS ipi
         ORDER BY ipi.plan_id
@@ -3533,7 +3668,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#include_plan_ids is empty' AS result;
+            result = 
+                '#include_plan_ids is empty';
     END;
 
     IF EXISTS
@@ -3545,7 +3681,7 @@ BEGIN
     BEGIN
         SELECT 
             table_name = 
-                N'#include_query_ids',
+                '#include_query_ids',
             iqi.*
         FROM #include_query_ids AS iqi
         ORDER BY iqi.query_id
@@ -3554,7 +3690,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#include_query_ids is empty' AS result;
+            result = 
+                '#include_query_ids is empty';
     END;
 
     IF EXISTS
@@ -3566,7 +3703,7 @@ BEGIN
     BEGIN
         SELECT 
             table_name = 
-                N'#ignore_plan_ids',
+                '#ignore_plan_ids',
             ipi.*
         FROM #ignore_plan_ids AS ipi
         ORDER BY ipi.plan_id
@@ -3575,7 +3712,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#ignore_plan_ids is empty' AS result;
+            result = 
+                '#ignore_plan_ids is empty';
     END;
 
     IF EXISTS
@@ -3587,7 +3725,7 @@ BEGIN
     BEGIN
         SELECT 
             table_name = 
-                N'#ignore_query_ids',
+                '#ignore_query_ids',
             iqi.*
         FROM #ignore_query_ids AS iqi
         ORDER BY iqi.query_id
@@ -3596,7 +3734,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#ignore_query_ids is empty' AS result;
+            result = 
+                '#ignore_query_ids is empty';
     END;
 
     IF EXISTS
@@ -3608,7 +3747,7 @@ BEGIN
     BEGIN
         SELECT 
             table_name = 
-                N'#query_text_search',
+                '#query_text_search',
             qst.*
         FROM #query_text_search AS qst
         ORDER BY qst.plan_id
@@ -3617,7 +3756,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#query_text_search is empty' AS result;
+            result = 
+                '#query_text_search is empty';
     END;
 
     IF EXISTS
@@ -3629,7 +3769,7 @@ BEGIN
     BEGIN
         SELECT 
             table_name = 
-                N'#maintenance_plans',
+                '#maintenance_plans',
             mp.*
         FROM #maintenance_plans AS mp
         ORDER BY mp.plan_id
@@ -3638,7 +3778,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#maintenance_plans is empty' AS result;
+            result = 
+                '#maintenance_plans is empty';
     END;
 
     IF EXISTS
@@ -3650,7 +3791,7 @@ BEGIN
     BEGIN
         SELECT 
             table_name = 
-                N'#database_query_store_options',
+                '#database_query_store_options',
             dqso.*
         FROM #database_query_store_options AS dqso
         OPTION(RECOMPILE);
@@ -3658,7 +3799,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#database_query_store_options is empty' AS result;
+            result = 
+                '#database_query_store_options is empty';
     END;
 
     IF EXISTS
@@ -3670,7 +3812,7 @@ BEGIN
     BEGIN
         SELECT
             table_name = 
-                N'#query_store_plan',
+                '#query_store_plan',
             qsp.*
         FROM #query_store_plan AS qsp
         ORDER BY qsp.plan_id, qsp.query_id
@@ -3679,7 +3821,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#query_store_plan is empty' AS result;
+            result = 
+                '#query_store_plan is empty';
     END;
 
     IF EXISTS
@@ -3691,7 +3834,7 @@ BEGIN
     BEGIN
         SELECT
             table_name = 
-                N'#query_store_query',
+                '#query_store_query',
             qsq.*
         FROM #query_store_query AS qsq
         ORDER BY qsq.query_id, qsq.query_text_id
@@ -3700,7 +3843,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#query_store_query is empty' AS result;
+            result = 
+                '#query_store_query is empty';
     END;
 
     IF EXISTS
@@ -3712,7 +3856,7 @@ BEGIN
     BEGIN
         SELECT
             table_name = 
-                N'#query_store_query_text',
+                '#query_store_query_text',
             qsqt.*
         FROM #query_store_query_text AS qsqt
         ORDER BY qsqt.query_text_id
@@ -3721,7 +3865,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#query_store_query_text is empty' AS result;
+            result = 
+                '#query_store_query_text is empty';
     END;
 
     IF EXISTS
@@ -3733,7 +3878,7 @@ BEGIN
     BEGIN
         SELECT
             table_name = 
-                N'#dm_exec_query_stats ',
+                '#dm_exec_query_stats ',
             deqs.*
         FROM #dm_exec_query_stats AS deqs
         ORDER BY deqs.statement_sql_handle
@@ -3742,7 +3887,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#dm_exec_query_stats is empty' AS result;
+            result = 
+                '#dm_exec_query_stats is empty';
     END;
 
     IF EXISTS
@@ -3754,7 +3900,7 @@ BEGIN
     BEGIN
         SELECT
             table_name = 
-                N'#query_store_runtime_stats',
+                '#query_store_runtime_stats',
             qsrs.*
         FROM #query_store_runtime_stats AS qsrs
         ORDER BY qsrs.plan_id
@@ -3763,7 +3909,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#query_store_runtime_stats is empty' AS result;
+            result = 
+                '#query_store_runtime_stats is empty';
     END;
 
     IF 
@@ -3779,7 +3926,7 @@ BEGIN
     BEGIN
         SELECT
             table_name = 
-                N'#query_store_wait_stats',
+                '#query_store_wait_stats',
             qsws.*
         FROM #query_store_wait_stats AS qsws
         ORDER BY qsws.plan_id
@@ -3788,7 +3935,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#query_store_wait_stats is empty' AS result;
+            result = 
+                '#query_store_wait_stats is empty';
     END;
     
     IF EXISTS
@@ -3800,7 +3948,7 @@ BEGIN
     BEGIN
         SELECT
             table_name = 
-                N'#query_store_runtime_stats',
+                '#query_store_runtime_stats',
             qcs.*
         FROM #query_context_settings AS qcs
         ORDER BY qcs.context_settings_id
@@ -3809,7 +3957,8 @@ BEGIN
     ELSE
     BEGIN
         SELECT
-            N'#query_context_settings is empty' AS result;
+            result = 
+                '#query_context_settings is empty';
     END;
 
     RETURN;
