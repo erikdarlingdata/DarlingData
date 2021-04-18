@@ -920,6 +920,14 @@ IF @query_store_exists = 0
         RETURN;    
     END;
 
+/*
+Turn this on here if we're hitting perf issues
+*/
+IF @troubleshoot_performance = 1
+BEGIN
+   SET STATISTICS XML ON;
+END;
+
 /* 
 If you specified a procedure name, we need to figure out if it's there 
 */
@@ -1424,14 +1432,6 @@ SELECT
                 @where_clause
             ) - 1
         );
-
-/*
-Turn this on here if we're hitting perf issues
-*/
-IF @troubleshoot_performance = 1
-BEGIN
-   SET STATISTICS XML ON;
-END;
 
 /* 
 This gets the plan_ids we care about 
