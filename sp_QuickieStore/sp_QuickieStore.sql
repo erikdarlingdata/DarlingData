@@ -68,7 +68,9 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-/* If this column doesn't exist, you're not on a good version of SQL Server */
+/* 
+If this column doesn't exist, you're not on a good version of SQL Server 
+*/
 IF NOT EXISTS
    (
        SELECT
@@ -82,16 +84,22 @@ BEGIN
     RETURN;
 END;
 
-/* These are for your outputs. */
+/* 
+These are for your outputs. 
+*/
 SELECT 
     @version = '-1', 
     @version_date = '20210416';
 
-/* Helpful section! For help. */
+/* 
+Helpful section! For help.
+*/
 IF @help = 1
 BEGIN 
     
-    /* Introduction */
+    /* 
+    Introduction 
+    */
     SELECT 
         introduction = 
            'hi, i''m sp_QuickieStore!' UNION ALL
@@ -99,7 +107,9 @@ BEGIN
     SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
     SELECT 'so what can you do and how do you do it? read below!';
  
-    /* Parameters */
+    /* 
+    Parameters 
+    */
     SELECT 
         parameter_name = ap.name,
         data_type = t.name,
@@ -187,7 +197,9 @@ BEGIN
     WHERE o.name = N'sp_QuickieStore'
     OPTION(RECOMPILE);
 
-    /* Results */
+    /* 
+    Results 
+    */
     SELECT 
         results = 
            'results returned at the end of the procedure:' UNION ALL
@@ -207,7 +219,9 @@ BEGIN
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Options (expert mode only): details about current query store configuration';
 
-    /* Limitations */
+    /* 
+    Limitations 
+    */
     SELECT 
         limitations = 
            'frigid shortcomings:'  UNION ALL
@@ -215,7 +229,9 @@ BEGIN
     SELECT 'if you''re on azure sqldb then you''ll need to be in compat level 130' UNION ALL
     SELECT 'i do not currently support synapse or edge or other memes';
 
-    /* License to F5 */
+    /* 
+    License to F5 
+    */
     SELECT 
         mit_license_yo = 
            'i am MIT licensed, so like, do whatever' UNION ALL
@@ -251,63 +267,81 @@ It will be fun
 You'll love it
 */
 
-/* Plans we'll be working on */
+/* 
+Plans we'll be working on 
+*/
 CREATE TABLE
     #distinct_plans
 (
     plan_id bigint NOT NULL
 );
 
-/* Hold plan_ids for procedures we're searching */
+/* 
+Hold plan_ids for procedures we're searching 
+*/
 CREATE TABLE
     #procedure_plans
 (
     plan_id bigint NOT NULL
 );
 
-/* Hold plan_ids for plan_ids we want*/
+/* 
+Hold plan_ids for plan_ids we want
+*/
 CREATE TABLE
     #include_plan_ids
 (
     plan_id bigint NOT NULL
 );
 
-/* Hold plan_ids for query_ids we want*/
+/* 
+Hold plan_ids for query_ids we want
+*/
 CREATE TABLE
     #include_query_ids
 (
     query_id bigint NOT NULL
 );
 
-/* Hold plan_ids for ignored plan_ids*/
+/* 
+Hold plan_ids for ignored plan_ids
+*/
 CREATE TABLE
     #ignore_plan_ids
 (
     plan_id bigint NOT NULL
 );
 
-/* Hold plan_ids for ignored query_ids*/
+/* 
+Hold plan_ids for ignored query_ids
+*/
 CREATE TABLE
     #ignore_query_ids
 (
     query_id bigint NOT NULL
 );
 
-/* Hold plan_ids for matching query text */
+/* 
+Hold plan_ids for matching query text 
+*/
 CREATE TABLE
     #query_text_search
 (
     plan_id bigint NOT NULL
 );
 
-/* Index and statistics entries to avoid */
+/* 
+Index and statistics entries to avoid 
+*/
 CREATE TABLE
     #maintenance_plans
 (
     plan_id bigint NOT NULL
 );
 
-/* Query Store Setup */
+/* 
+Query Store Setup 
+*/
 CREATE TABLE
     #database_query_store_options
 (
@@ -329,7 +363,9 @@ CREATE TABLE
     wait_stats_capture_mode_desc nvarchar(60) NULL
 );
 
-/* Plans and Plan information */
+/* 
+Plans and Plan information 
+*/
 CREATE TABLE
     #query_store_plan
 (
@@ -359,7 +395,9 @@ CREATE TABLE
     plan_forcing_type_desc nvarchar(60) NULL
 );
 
-/* Queries and Compile Information */
+/* 
+Queries and Compile Information 
+*/
 CREATE TABLE
     #query_store_query
 (
@@ -424,7 +462,9 @@ CREATE TABLE
     database_id sysname NULL
 );
 
-/* Query Text And Columns From sys.dm_exec_query_stats */
+/* 
+Query Text And Columns From sys.dm_exec_query_stats 
+*/
 CREATE TABLE
     #query_store_query_text
 (
@@ -455,7 +495,9 @@ CREATE TABLE
     max_used_threads bigint NULL
 );
 
-/* Figure it out. */
+/* 
+Figure it out. 
+*/
 CREATE TABLE 
     #dm_exec_query_stats
 (
@@ -482,7 +524,9 @@ CREATE TABLE
     max_used_threads bigint NULL
 );
 
-/* Runtime stats information */
+/* 
+Runtime stats information 
+*/
 CREATE TABLE
     #query_store_runtime_stats
 (
@@ -568,7 +612,9 @@ CREATE TABLE
     context_settings nvarchar(256) NULL
 );
 
-/* Wait Stats, When Available*/
+/* 
+Wait Stats, When Available
+*/
 CREATE TABLE
     #query_store_wait_stats
 (
@@ -581,7 +627,9 @@ CREATE TABLE
     max_query_wait_time_ms bigint NOT NULL
 );
 
-/* Context is everything */
+/* 
+Context is everything 
+*/
 CREATE TABLE
     #query_context_settings
 (
@@ -599,7 +647,9 @@ CREATE TABLE
     is_contained varbinary(1) NULL
 );
 
-/*Try to be helpful by subbing in a database name if null*/
+/*
+Try to be helpful by subbing in a database name if null
+*/
 IF 
   (
       @database_name IS NULL
@@ -616,7 +666,8 @@ IF
                 N'dbatools',
                 N'dbadmin',
                 N'dbmaintenance',
-                N'rdsadmin'
+                N'rdsadmin',
+                N'other_memes'
             )
   )
 BEGIN   
@@ -625,7 +676,9 @@ BEGIN
             = DB_NAME();
 END;
 
-/* Variables for the variable gods */
+/* 
+Variables for the variable gods 
+*/
 DECLARE 
     @azure bit,
     @engine int,
@@ -647,7 +700,9 @@ DECLARE
     @current_table nvarchar(100),
     @rc bigint;
 
-/* Some variable assignment, because why not? */
+/* 
+Some variable assignment, because why not? 
+*/
 SELECT 
     @azure = 
         CASE 
@@ -773,9 +828,13 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     OPTION(RECOMPILE);',
     @rc = 0;
 
-/* Let's make sure things will work */
+/* 
+Let's make sure things will work 
+*/
 
-/* Database are you there? */
+/* 
+Database are you there? 
+*/
 IF 
   (
       @database_id IS NULL 
@@ -786,7 +845,9 @@ BEGIN
     RETURN;
 END;
 
-/* Database what are you? */        
+/* 
+Database what are you? 
+*/        
 IF 
   (
       @azure = 1 
@@ -797,7 +858,9 @@ BEGIN
     RETURN;
 END;
 
-/* Database are you compatible? */
+/* 
+Database are you compatible? 
+*/
 IF 
   (
       @azure = 1
@@ -815,7 +878,9 @@ BEGIN
     RETURN;
 END;
 
-/* Sometimes sys.databases will report Query Store being on, but it's really not */
+/* 
+Sometimes sys.databases will report Query Store being on, but it's really not 
+*/
 SELECT 
     @sql = @isolation_level;
 SELECT 
@@ -855,7 +920,9 @@ IF @query_store_exists = 0
         RETURN;    
     END;
 
-/* If you specified a procedure name, we need to figure out if it's there */
+/* 
+If you specified a procedure name, we need to figure out if it's there 
+*/
 IF @procedure_name IS NOT NULL
 BEGIN
  
@@ -912,7 +979,9 @@ BEGIN
        @new = 1;
 END;
 
-/*Validate Sort Order*/
+/*
+Validate Sort Order
+*/
 IF @sort_order NOT IN 
                (
                    'cpu', 
@@ -930,7 +999,9 @@ BEGIN
        @sort_order = 'cpu';
 END;
 
-/* These columns are only available in 2017+ */
+/* 
+These columns are only available in 2017+ 
+*/
 IF 
   (
       @sort_order = 'tempdb' 
@@ -980,10 +1051,10 @@ BEGIN
 END; 
 
 IF 
-(
-    @procedure_name IS NOT NULL 
-      AND @procedure_exists = 1
-)
+  (
+      @procedure_name IS NOT NULL 
+        AND @procedure_exists = 1
+  )
 BEGIN 
 
     SELECT 
@@ -1023,14 +1094,16 @@ OPTION(RECOMPILE);' + @nc10;
 
 END;
 
-/*This section filters query or plan ids*/
+/*
+This section filters query or plan ids
+*/
 IF 
-(
-       @include_plan_ids  IS NOT NULL
-    OR @include_query_ids IS NOT NULL
-    OR @ignore_plan_ids   IS NOT NULL
-    OR @ignore_query_ids  IS NOT NULL
-)
+  (
+         @include_plan_ids  IS NOT NULL
+      OR @include_query_ids IS NOT NULL
+      OR @ignore_plan_ids   IS NOT NULL
+      OR @ignore_query_ids  IS NOT NULL
+  )
 BEGIN
 
     IF @include_plan_ids IS NOT NULL
@@ -1290,7 +1363,9 @@ OPTION(RECOMPILE);' + @nc10;
 
 END;
 
-/* This section screens out index create and alter statements because who cares */
+/* 
+This section screens out index create and alter statements because who cares 
+*/
 
 SELECT 
     @current_table = 'inserting #maintenance_plans',
@@ -1335,10 +1410,9 @@ SELECT
               WHERE mp.plan_id = qsrs.plan_id
           )' + @nc10;
 
-
-   
-
-/* Tidy up the where clause a bit */
+/* 
+Tidy up the where clause a bit 
+*/
 SELECT 
     @where_clause = 
         SUBSTRING
@@ -1351,13 +1425,17 @@ SELECT
             ) - 1
         );
 
-/*Turn this on here if we're hitting perf issues*/
+/*
+Turn this on here if we're hitting perf issues
+*/
 IF @troubleshoot_performance = 1
 BEGIN
    SET STATISTICS XML ON;
 END;
 
-/* This gets the plan_ids we care about */
+/* 
+This gets the plan_ids we care about 
+*/
 SELECT 
     @current_table = 'inserting #distinct_plans',
     @sql = @isolation_level;
@@ -1402,7 +1480,9 @@ EXEC sys.sp_executesql
     @execution_count,
     @duration_ms;
 
-/* This gets the runtime stats for the plans we care about */
+/* 
+This gets the runtime stats for the plans we care about 
+*/
 SELECT 
     @current_table = 'inserting #query_store_runtime_stats',
     @sql = @isolation_level;
@@ -1549,7 +1629,9 @@ EXEC sys.sp_executesql
     @execution_count,
     @duration_ms;
 
-/* Update things to get the context settings for each query */
+/* 
+Update things to get the context settings for each query 
+*/
 SELECT 
     @current_table = 'updating context_settings in #query_store_runtime_stats',
     @sql = @isolation_level;
@@ -1647,7 +1729,9 @@ IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 EXEC sys.sp_executesql
     @sql;
 
-/* This gets the query plans we're after */
+/* 
+This gets the query plans we're after 
+*/
 SELECT 
     @current_table = 'inserting #query_store_plan',
     @sql = @isolation_level;
@@ -1759,7 +1843,9 @@ EXEC sys.sp_executesql
   N'@plans_top bigint',
     @plans_top;
 
-/* This gets some query information */
+/* 
+This gets some query information 
+*/
 SELECT 
     @current_table = 'inserting #query_store_query',
     @sql = @isolation_level;
@@ -1852,7 +1938,9 @@ EXEC sys.sp_executesql
   N'@database_id int',
     @database_id;
 
-/* This gets they query text for them! */
+/* 
+This gets they query text for them! 
+*/
 SELECT 
     @current_table = 'inserting #query_store_query_text',
     @sql = @isolation_level;
@@ -1993,7 +2081,9 @@ BEGIN
 
 END;
 
-/* If wait stats are available, we'll grab them here */
+/* 
+If wait stats are available, we'll grab them here 
+*/
 IF @new = 1
 
 BEGIN
@@ -2157,7 +2247,9 @@ BEGIN
    SET STATISTICS XML OFF;
 END;
 
-/*This is where we start returning results */
+/*
+This is where we start returning results 
+*/
 IF EXISTS
    (
       SELECT
@@ -2177,7 +2269,9 @@ SELECT
 FROM
 (';
     
-    /* Expert mode returns more columns from runtime stats */
+    /* 
+    Expert mode returns more columns from runtime stats 
+    */
     IF 
       (
           @expert_mode = 1 
@@ -2302,7 +2396,9 @@ FROM
     
     END;
     
-    /*Do we want to format things?*/
+    /*
+    Do we want to format things?
+    */
     IF 
       (
           @expert_mode = 1 
@@ -2430,7 +2526,9 @@ FROM
     
     END;
     
-    /* For non-experts only! */
+    /* 
+    For non-experts only! 
+    */
     IF 
       (
           @expert_mode = 0
@@ -2520,7 +2618,9 @@ FROM
     
     END; 
     
-    /* Formatted but not still not expert output */
+    /* 
+    Formatted but not still not expert output 
+    */
     IF 
       (
           @expert_mode = 0
@@ -2610,7 +2710,9 @@ FROM
     
     END; 
     
-    /* Add on the from and stuff */
+    /* 
+    Add on the from and stuff 
+    */
     SELECT 
         @sql += N'
     FROM #query_store_runtime_stats AS qsrs
@@ -2654,7 +2756,9 @@ FROM
         ORDER BY qsq.last_execution_time
     ) AS qsq';
     
-    /*Get wait stats if we can*/
+    /*
+    Get wait stats if we can
+    */
     IF 
       (
           @new = 1
@@ -2785,7 +2889,9 @@ ELSE
                 '#query_store_runtime_stats is empty';
     END;
 
-/* Return special things, unformatted */
+/* 
+Return special things, unformatted 
+*/
 IF 
   (
       @expert_mode = 1
@@ -3099,7 +3205,9 @@ BEGIN
 
 END;
 
-/* Return special things, formatted */
+/* 
+Return special things, formatted 
+*/
 IF
   (
       @expert_mode = 1
@@ -3502,19 +3610,27 @@ ORDER BY x.sort;
 END TRY
 BEGIN CATCH
 
-    /*Where the error happened and the message*/
+    /*
+    Where the error happened and the message
+    */
     RAISERROR ('error while %s', 11, 1, @current_table) WITH NOWAIT;
     
-    /*Query that caused the error*/
+    /*
+    Query that caused the error
+    */
     RAISERROR ('offending query:', 10, 1) WITH NOWAIT;
     RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
 
-    /*This reliably throws the actual error from dynamic SQL*/
+    /*
+    This reliably throws the actual error from dynamic SQ
+    L*/
     THROW;
 
 END CATCH;
 
-/* Debug elements! */
+/* 
+Debug elements! 
+*/
 IF @debug = 1
 BEGIN   
 
@@ -3967,5 +4083,8 @@ END;
 
 RETURN;
 
-END; /*Final End*/
+END; 
+/*
+Final End
+*/
 GO
