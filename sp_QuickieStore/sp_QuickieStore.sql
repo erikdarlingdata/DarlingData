@@ -2081,71 +2081,9 @@ BEGIN
 
 END;
 
-/* 
-If wait stats are available, we'll grab them here 
-*/
-IF @new = 1
-
-BEGIN
-
-    SELECT 
-        @current_table = 'inserting #query_store_wait_stats',
-        @sql = @isolation_level;
-
-    SELECT 
-        @sql += N'
-SELECT
-    qsws.plan_id,
-    qsws.wait_category_desc,
-    total_query_wait_time_ms = 
-        SUM(qsws.total_query_wait_time_ms),
-    avg_query_wait_time_ms = 
-        SUM(qsws.avg_query_wait_time_ms),
-    last_query_wait_time_ms = 
-        SUM(qsws.last_query_wait_time_ms),
-    min_query_wait_time_ms = 
-        SUM(qsws.min_query_wait_time_ms),
-    max_query_wait_time_ms = 
-        SUM(qsws.max_query_wait_time_ms)
-FROM #query_store_runtime_stats AS qsrs
-CROSS APPLY
-(
-    SELECT TOP (5)
-        qsws.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-    WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
-    AND   qsws.plan_id = qsrs.plan_id
-    AND   qsws.execution_type = 0
-    AND   qsws.wait_category > 0
-    ORDER BY qsws.avg_query_wait_time_ms DESC
-) AS qsws
-GROUP BY 
-    qsws.plan_id, 
-    qsws.wait_category_desc
-HAVING 
-    SUM(qsws.min_query_wait_time_ms) >= 0.
-OPTION(RECOMPILE);' + @nc10; 
-
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
-    
-    INSERT
-        #query_store_wait_stats WITH(TABLOCK)
-    (
-        plan_id,
-        wait_category_desc,
-        total_query_wait_time_ms,
-        avg_query_wait_time_ms,
-        last_query_wait_time_ms,
-        min_query_wait_time_ms,
-        max_query_wait_time_ms
-    ) 
-    EXEC sys.sp_executesql
-        @sql;
-
-END;
-
 /*
 Let's check on settings, etc.
+We do this first so we can see if wait stats capture mode is true more easily
 */
 SELECT  
     @current_table = 'inserting #database_query_store_options',
@@ -2241,6 +2179,78 @@ INSERT
 )
 EXEC sys.sp_executesql
    @sql;
+
+/* 
+If wait stats are available, we'll grab them here 
+*/
+IF 
+(
+    @new = 1
+      AND EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #database_query_store_options AS dqso
+              WHERE dqso.wait_stats_capture_mode_desc = 'ON'
+          )
+)
+BEGIN
+
+    SELECT 
+        @current_table = 'inserting #query_store_wait_stats',
+        @sql = @isolation_level;
+
+    SELECT 
+        @sql += N'
+SELECT
+    qsws.plan_id,
+    qsws.wait_category_desc,
+    total_query_wait_time_ms = 
+        SUM(qsws.total_query_wait_time_ms),
+    avg_query_wait_time_ms = 
+        SUM(qsws.avg_query_wait_time_ms),
+    last_query_wait_time_ms = 
+        SUM(qsws.last_query_wait_time_ms),
+    min_query_wait_time_ms = 
+        SUM(qsws.min_query_wait_time_ms),
+    max_query_wait_time_ms = 
+        SUM(qsws.max_query_wait_time_ms)
+FROM #query_store_runtime_stats AS qsrs
+CROSS APPLY
+(
+    SELECT TOP (5)
+        qsws.*
+    FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+    WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
+    AND   qsws.plan_id = qsrs.plan_id
+    AND   qsws.execution_type = 0
+    AND   qsws.wait_category > 0
+    ORDER BY qsws.avg_query_wait_time_ms DESC
+) AS qsws
+GROUP BY 
+    qsws.plan_id, 
+    qsws.wait_category_desc
+HAVING 
+    SUM(qsws.min_query_wait_time_ms) >= 0.
+OPTION(RECOMPILE);' + @nc10; 
+
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    
+    INSERT
+        #query_store_wait_stats WITH(TABLOCK)
+    (
+        plan_id,
+        wait_category_desc,
+        total_query_wait_time_ms,
+        avg_query_wait_time_ms,
+        last_query_wait_time_ms,
+        min_query_wait_time_ms,
+        max_query_wait_time_ms
+    ) 
+    EXEC sys.sp_executesql
+        @sql;
+
+END;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -3040,7 +3050,7 @@ BEGIN
             SELECT 
                 @current_table = 'selecting wait stats by query';
             
-            SELECT
+            SELECT DISTINCT
                 source =
                     'query_store_wait_stats_by_query',
                 qsws.plan_id,
@@ -3417,7 +3427,7 @@ BEGIN
             FROM #query_store_wait_stats AS qsws
             CROSS APPLY
             (
-                SELECT
+                SELECT DISTINCT
                     qsrs.avg_duration_ms,
                     qsrs.last_duration_ms,
                     qsrs.min_duration_ms,
@@ -3496,7 +3506,15 @@ BEGIN
                     WHEN (@product_version = 13 
                             AND @azure = 0)
                     THEN ' because it''s not available < 2017'
-                    ELSE ''
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #database_query_store_options AS dqso
+                             WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                         )
+                    THEN ' because you have it disabled in your Query Store options'
+                    ELSE ' for the queries in the results'
                 END;
     END;
            
