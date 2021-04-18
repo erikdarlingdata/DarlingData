@@ -226,7 +226,7 @@ BEGIN
         limitations = 
            'frigid shortcomings:'  UNION ALL
     SELECT 'you need to be on at least SQL Server 2016 or higher to run this' UNION ALL
-    SELECT 'if you''re on azure sqldb then you''ll need to be in compat level 130' UNION ALL
+    SELECT 'if you''re on azure sql db then you''ll need to be in compat level 130' UNION ALL
     SELECT 'i do not currently support synapse or edge or other memes';
 
     /* 
