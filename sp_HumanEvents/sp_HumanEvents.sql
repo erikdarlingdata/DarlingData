@@ -2325,7 +2325,7 @@ WHILE 1 = 1
                        THEN N'CREATE TABLE ' + @object_name_check + NCHAR(10) +
                             N'( id BIGINT PRIMARY KEY IDENTITY, server_name sysname NULL, event_time DATETIME2 NULL, ' + NCHAR(10) +
                             N'  activity NVARCHAR(20) NULL, database_name sysname NULL, database_id INT NULL, object_id BIGINT NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + NCHAR(10) +
-                            N'  transaction_id INT NULL, resource_owner_type NVARCHAR(256) NULL, monitor_loop INT NULL, spid INT NULL, ecid INT NULL, query_text NVARCHAR(MAX) NULL, ' + 
+                            N'  transaction_id BIGINT NULL, resource_owner_type NVARCHAR(256) NULL, monitor_loop INT NULL, spid INT NULL, ecid INT NULL, query_text NVARCHAR(MAX) NULL, ' + 
                             N'  wait_time BIGINT NULL, transaction_name NVARCHAR(256) NULL,  last_transaction_started NVARCHAR(30) NULL, ' + NCHAR(10) +
                             N'  lock_mode NVARCHAR(10) NULL, status NVARCHAR(10) NULL, priority INT NULL, transaction_count INT NULL, ' + NCHAR(10) +
                             N'  client_app sysname NULL, host_name sysname NULL, login_name sysname NULL, isolation_level NVARCHAR(30) NULL, sql_handle VARBINARY(64) NULL, blocked_process_report XML NULL );'
