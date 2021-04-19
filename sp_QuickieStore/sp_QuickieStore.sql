@@ -103,6 +103,7 @@ BEGIN
     SELECT 
         introduction = 
            'hi, i''m sp_QuickieStore!' UNION ALL
+    SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData' UNION ALL
     SELECT 'i can be used to quickly grab misbehaving queries from query store' UNION ALL
     SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
     SELECT 'so what can you do and how do you do it? read below!';
@@ -768,9 +769,9 @@ SELECT
         N'
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @parameters = 
-        N'@top int,
-          @start_date datetime2,
-          @end_date datetime2,
+        N'@top bigint,
+          @start_date datetime,
+          @end_date datetime,
           @execution_count bigint,
           @duration_ms bigint',
     @plans_top = 
@@ -1462,7 +1463,7 @@ CASE @sort_order
      ELSE N'qsrs.avg_cpu_time'
 END +
 N') DESC
-OPTION(RECOMPILE);' + @nc10; 
+OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
@@ -1806,7 +1807,7 @@ CROSS APPLY
     AND   qsp.is_online_index_plan = 0
     ORDER BY qsp.last_execution_time DESC
 ) AS qsp
-OPTION(RECOMPILE);' + @nc10; 
+OPTION(RECOMPILE, OPTIMIZE FOR (@plans_top = 9223372036854775807));' + @nc10; 
 
 IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
@@ -4106,3 +4107,4 @@ END;
 Final End
 */
 GO
+
