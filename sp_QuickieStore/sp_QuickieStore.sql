@@ -1853,6 +1853,8 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     WHERE qsrs.plan_id = dp.plan_id
     AND   qsrs.execution_type = 0
+    ' + @where_clause
+  + N'
 ORDER BY ' +
 CASE @sort_order  
      WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
@@ -2872,13 +2874,13 @@ FROM
         query_sql_text = 
         qsqt.query_sql_text,
         qsp.compatibility_level,
-        qsp.plan_forcing_type_desc,
         query_plan = TRY_CONVERT(XML, qsp.query_plan),'
         +
             CASE @new
                  WHEN 1 
                  THEN
         N'
+        qsp.plan_forcing_type_desc,
         w.top_waits,'
                  ELSE 
         N''
@@ -2998,13 +3000,13 @@ FROM
         qsq.object_name,
         qsqt.query_sql_text,
         qsp.compatibility_level,
-        qsp.plan_forcing_type_desc,
         query_plan = TRY_CONVERT(XML, qsp.query_plan),'
         +
             CASE @new
                  WHEN 1 
                  THEN
         N'
+        qsp.plan_forcing_type_desc,
         w.top_waits,'
                  ELSE 
         N''
@@ -3128,13 +3130,13 @@ FROM
         qsq.object_name,
         qsqt.query_sql_text,
         qsp.compatibility_level,
-        qsp.plan_forcing_type_desc,
         query_plan = TRY_CONVERT(XML, qsp.query_plan),'
         +
             CASE @new
                  WHEN 1 
                  THEN
         N'
+        qsp.plan_forcing_type_desc,
         w.top_waits,'
                  ELSE 
         N''
@@ -3220,13 +3222,13 @@ FROM
         qsq.object_name,
         qsqt.query_sql_text,
         qsp.compatibility_level,
-        qsp.plan_forcing_type_desc,
         query_plan = TRY_CONVERT(XML, qsp.query_plan),'
         +
             CASE @new
                  WHEN 1 
                  THEN
         N'
+        qsp.plan_forcing_type_desc,
         w.top_waits,'
                  ELSE 
         N''
