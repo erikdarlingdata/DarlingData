@@ -649,6 +649,29 @@ CREATE TABLE
 );
 
 /*
+Trouble Loves Me
+*/
+CREATE TABLE
+    #troubleshoot_performance
+(
+    id bigint IDENTITY,
+    current_table nvarchar(100),
+    start_time datetime,
+    end_time datetime,
+    runtime_ms AS 
+        FORMAT
+        (
+            DATEDIFF
+            (
+                MILLISECOND,
+                start_time,
+                end_time
+            ),
+            'N0'
+        )
+);
+
+/*
 Try to be helpful by subbing in a database name if null
 */
 IF 
@@ -883,7 +906,26 @@ END;
 Sometimes sys.databases will report Query Store being on, but it's really not 
 */
 SELECT 
+    @current_table = 'checking query store existence',
     @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
+
 SELECT 
     @sql += N'
 SELECT
@@ -915,19 +957,23 @@ EXEC sys.sp_executesql
   N'@query_store_exists bit OUTPUT',
     @query_store_exists OUTPUT;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 IF @query_store_exists = 0
     BEGIN
         RAISERROR('Query Store doesn''t seem to be enabled for database: %s.', 11, 1, @database_name) WITH NOWAIT;
         RETURN;    
     END;
-
-/*
-Turn this on here if we're hitting perf issues
-*/
-IF @troubleshoot_performance = 1
-BEGIN
-   SET STATISTICS XML ON;
-END;
 
 /* 
 If you specified a procedure name, we need to figure out if it's there 
@@ -936,7 +982,26 @@ IF @procedure_name IS NOT NULL
 BEGIN
  
     SELECT 
+        @current_table = 'checking procedure existence',
         @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        INSERT 
+            #troubleshoot_performance WITH(TABLOCK)
+        (
+            current_table,
+            start_time
+        )
+        VALUES
+        (
+            @current_table,
+            GETDATE()
+        );
+    
+        SET STATISTICS XML ON;
+    END;
+
     SELECT 
         @sql += N'
 SELECT
@@ -954,20 +1019,32 @@ SELECT
         END
 OPTION(RECOMPILE);' + @nc10; 
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
-
-EXEC sys.sp_executesql
-    @sql,
-  N'@procedure_exists bit OUTPUT,
-    @procedure_name_quoted sysname',
-    @procedure_exists OUTPUT,
-    @procedure_name_quoted;
-
-IF @procedure_exists = 0
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    
+    EXEC sys.sp_executesql
+        @sql,
+      N'@procedure_exists bit OUTPUT,
+        @procedure_name_quoted sysname',
+        @procedure_exists OUTPUT,
+        @procedure_name_quoted;
+    
+    IF @troubleshoot_performance = 1
     BEGIN
-        RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s. 
-Check that you spelled everything correctly and you''re in the right database', 
-                   11, 1, @procedure_name, @database_name) WITH NOWAIT;
+        
+        SET STATISTICS XML OFF;
+    
+        UPDATE tp
+            SET tp.end_time = GETDATE()
+        FROM #troubleshoot_performance AS tp
+        WHERE current_table = @current_table;
+    
+    END;
+    
+    IF @procedure_exists = 0
+        BEGIN
+            RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s. 
+    Check that you spelled everything correctly and you''re in the right database', 
+                       11, 1, @procedure_name, @database_name) WITH NOWAIT;
         RETURN;    
     END;
 END;
@@ -1070,6 +1147,23 @@ BEGIN
         @current_table = 'inserting #procedure_plans',
         @sql = @isolation_level;
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        INSERT 
+            #troubleshoot_performance WITH(TABLOCK)
+        (
+            current_table,
+            start_time
+        )
+        VALUES
+        (
+            @current_table,
+            GETDATE()
+        );
+    
+        SET STATISTICS XML ON;
+    END;
+
     SELECT 
         @sql += N'
 SELECT DISTINCT
@@ -1091,6 +1185,18 @@ OPTION(RECOMPILE);' + @nc10;
         @sql,
       N'@procedure_name_quoted sysname',
         @procedure_name_quoted;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        
+        SET STATISTICS XML OFF;
+    
+        UPDATE tp
+            SET tp.end_time = GETDATE()
+        FROM #troubleshoot_performance AS tp
+        WHERE current_table = @current_table;
+    
+    END;
 
     SELECT
         @where_clause += N'AND   EXISTS
@@ -1193,6 +1299,26 @@ BEGIN
             @include_query_ids;
 
         SELECT 
+            @current_table = 'inserting #include_plan_ids for included query ids'; 
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            INSERT 
+                #troubleshoot_performance WITH(TABLOCK)
+            (
+                current_table,
+                start_time
+            )
+            VALUES
+            (
+                @current_table,
+                GETDATE()
+            );
+        
+            SET STATISTICS XML ON;
+        END;
+
+        SELECT 
             @sql += N' 
 SELECT DISTINCT
     qsp.plan_id
@@ -1206,10 +1332,7 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
         
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END; 
-        
-        SELECT 
-            @current_table = 'inserting #include_plan_ids';        
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;        
         
         INSERT
             #include_plan_ids
@@ -1218,6 +1341,18 @@ OPTION(RECOMPILE);' + @nc10;
             )
         EXEC sys.sp_executesql
             @sql;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            
+            SET STATISTICS XML OFF;
+        
+            UPDATE tp
+                SET tp.end_time = GETDATE()
+            FROM #troubleshoot_performance AS tp
+            WHERE current_table = @current_table;
+        
+        END;
                 
         SELECT
            @where_clause += N'AND   EXISTS
@@ -1250,6 +1385,26 @@ OPTION(RECOMPILE);' + @nc10;
             @ignore_query_ids;
 
         SELECT 
+            @current_table = 'inserting #ignore_plan_ids for ignored query ids';
+            
+        IF @troubleshoot_performance = 1
+        BEGIN
+            INSERT 
+                #troubleshoot_performance WITH(TABLOCK)
+            (
+                current_table,
+                start_time
+            )
+            VALUES
+            (
+                @current_table,
+                GETDATE()
+            );
+        
+            SET STATISTICS XML ON;
+        END;
+
+        SELECT 
             @sql += N' 
 SELECT DISTINCT
     qsp.plan_id
@@ -1263,10 +1418,7 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
         
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END; 
-        
-        SELECT 
-            @current_table = 'inserting #ignore_plan_ids';        
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;      
         
         INSERT
             #ignore_plan_ids
@@ -1274,7 +1426,19 @@ OPTION(RECOMPILE);' + @nc10;
                 plan_id
             )
         EXEC sys.sp_executesql
-            @sql;        
+            @sql;
+        
+        IF @troubleshoot_performance = 1
+        BEGIN
+            
+            SET STATISTICS XML OFF;
+        
+            UPDATE tp
+                SET tp.end_time = GETDATE()
+            FROM #troubleshoot_performance AS tp
+            WHERE current_table = @current_table;
+        
+        END;    
 
         SELECT
            @where_clause += N'AND   NOT EXISTS
@@ -1326,6 +1490,23 @@ BEGIN
     SELECT 
         @current_table = 'inserting #query_text_search',
         @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        INSERT 
+            #troubleshoot_performance WITH(TABLOCK)
+        (
+            current_table,
+            start_time
+        )
+        VALUES
+        (
+            @current_table,
+            GETDATE()
+        );
+    
+        SET STATISTICS XML ON;
+    END;
     
     SELECT 
         @sql += N'
@@ -1361,6 +1542,18 @@ OPTION(RECOMPILE);' + @nc10;
       N'@query_text_search nvarchar(4000)',
         @query_text_search;
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        
+        SET STATISTICS XML OFF;
+    
+        UPDATE tp
+            SET tp.end_time = GETDATE()
+        FROM #troubleshoot_performance AS tp
+        WHERE current_table = @current_table;
+    
+    END;
+
     SELECT 
         @where_clause += N'AND   EXISTS 
        (
@@ -1379,6 +1572,23 @@ This section screens out index create and alter statements because who cares
 SELECT 
     @current_table = 'inserting #maintenance_plans',
     @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
 
 SELECT 
     @sql += N'
@@ -1410,6 +1620,18 @@ INSERT
 EXEC sys.sp_executesql
     @sql;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 SELECT
     @where_clause += N'AND   NOT EXISTS
           (
@@ -1440,6 +1662,23 @@ This gets the plan_ids we care about
 SELECT 
     @current_table = 'inserting #distinct_plans',
     @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
 
 SELECT 
     @sql += N'
@@ -1481,12 +1720,41 @@ EXEC sys.sp_executesql
     @execution_count,
     @duration_ms;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 /* 
 This gets the runtime stats for the plans we care about 
 */
 SELECT 
     @current_table = 'inserting #query_store_runtime_stats',
     @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
 
 SELECT 
     @sql += N'
@@ -1630,12 +1898,41 @@ EXEC sys.sp_executesql
     @execution_count,
     @duration_ms;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 /* 
 This gets context info and settings 
 */
 SELECT 
-    @current_table = 'inserting #query_store_runtime_stats',
+    @current_table = 'inserting #query_context_settings',
     @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
 
 SELECT 
     @sql += N'
@@ -1673,12 +1970,41 @@ INSERT
 EXEC sys.sp_executesql
     @sql;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 /* 
 This gets the query plans we're after 
 */
 SELECT 
     @current_table = 'inserting #query_store_plan',
     @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
 
 SELECT 
     @sql += N'
@@ -1787,12 +2113,41 @@ EXEC sys.sp_executesql
   N'@plans_top bigint',
     @plans_top;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 /* 
 This gets some query information 
 */
 SELECT 
     @current_table = 'inserting #query_store_query',
     @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
 
 SELECT 
     @sql += N'
@@ -1882,12 +2237,42 @@ EXEC sys.sp_executesql
   N'@database_id int',
     @database_id;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 /* 
 This gets they query text for them! 
 */
 SELECT 
     @current_table = 'inserting #query_store_query_text',
     @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
+
 
 SELECT 
     @sql += N'
@@ -1921,6 +2306,18 @@ INSERT
 EXEC sys.sp_executesql
     @sql;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 /* 
 Here we try to get some data from the "plan cache"
 that isn't available in Query Store :(
@@ -1928,6 +2325,23 @@ that isn't available in Query Store :(
 SELECT 
     @sql = N'',
     @current_table = 'inserting #dm_exec_query_stats';
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
 
 INSERT 
     #dm_exec_query_stats WITH(TABLOCK)
@@ -1990,11 +2404,40 @@ OPTION(RECOMPILE);
 SELECT 
     @rc = @@ROWCOUNT;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 IF @rc > 0
 BEGIN
 
     SELECT 
         @current_table = 'updating #dm_exec_query_stats';
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        INSERT 
+            #troubleshoot_performance WITH(TABLOCK)
+        (
+            current_table,
+            start_time
+        )
+        VALUES
+        (
+            @current_table,
+            GETDATE()
+        );
+    
+        SET STATISTICS XML ON;
+    END;
     
     UPDATE qsqt
         SET
@@ -2023,6 +2466,18 @@ BEGIN
         ON qsqt.statement_sql_handle = deqs.statement_sql_handle
     OPTION(RECOMPILE);
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        
+        SET STATISTICS XML OFF;
+    
+        UPDATE tp
+            SET tp.end_time = GETDATE()
+        FROM #troubleshoot_performance AS tp
+        WHERE current_table = @current_table;
+    
+    END;
+
 END;
 
 /*
@@ -2032,6 +2487,23 @@ We do this first so we can see if wait stats capture mode is true more easily
 SELECT  
     @current_table = 'inserting #database_query_store_options',
     @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    INSERT 
+        #troubleshoot_performance WITH(TABLOCK)
+    (
+        current_table,
+        start_time
+    )
+    VALUES
+    (
+        @current_table,
+        GETDATE()
+    );
+
+    SET STATISTICS XML ON;
+END;
 
 SELECT  
     @sql += N'
@@ -2124,6 +2596,18 @@ INSERT
 EXEC sys.sp_executesql
    @sql;
 
+IF @troubleshoot_performance = 1
+BEGIN
+    
+    SET STATISTICS XML OFF;
+
+    UPDATE tp
+        SET tp.end_time = GETDATE()
+    FROM #troubleshoot_performance AS tp
+    WHERE current_table = @current_table;
+
+END;
+
 /* 
 If wait stats are available, we'll grab them here 
 */
@@ -2143,6 +2627,23 @@ BEGIN
     SELECT 
         @current_table = 'inserting #query_store_wait_stats',
         @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        INSERT 
+            #troubleshoot_performance WITH(TABLOCK)
+        (
+            current_table,
+            start_time
+        )
+        VALUES
+        (
+            @current_table,
+            GETDATE()
+        );
+    
+        SET STATISTICS XML ON;
+    END;
 
     SELECT 
         @sql += N'
@@ -2194,11 +2695,44 @@ OPTION(RECOMPILE);' + @nc10;
     EXEC sys.sp_executesql
         @sql;
 
+    IF @troubleshoot_performance = 1
+    BEGIN
+        
+        SET STATISTICS XML OFF;
+    
+        UPDATE tp
+            SET tp.end_time = GETDATE()
+        FROM #troubleshoot_performance AS tp
+        WHERE current_table = @current_table;
+    
+    END;
+
 END;
 
 IF @troubleshoot_performance = 1
 BEGIN
-   SET STATISTICS XML OFF;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #troubleshoot_performance AS qcs
+       )
+    BEGIN
+        SELECT
+            table_name = 
+                '#troubleshoot_performance',
+            tp.*
+        FROM #troubleshoot_performance AS tp
+        ORDER BY tp.id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result = 
+                '#troubleshoot_performance is empty';
+    END;
 END;
 
 /* 
