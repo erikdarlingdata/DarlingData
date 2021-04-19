@@ -1631,102 +1631,45 @@ EXEC sys.sp_executesql
     @duration_ms;
 
 /* 
-Update things to get the context settings for each query 
+This gets context info and settings 
 */
 SELECT 
-    @current_table = 'updating context_settings in #query_store_runtime_stats',
+    @current_table = 'inserting #query_store_runtime_stats',
     @sql = @isolation_level;
 
 SELECT 
     @sql += N'
-UPDATE qsrs
-    SET qsrs.context_settings = 
-        SUBSTRING
-        (
-            CASE 
-                WHEN 
-                    CONVERT
-                    (
-                        int, 
-                        qcs.set_options
-                    ) & 1 = 1
-                THEN '', ANSI_PADDING'' 
-                ELSE '''' 
-            END +
-            CASE 
-                WHEN 
-                    CONVERT
-                    (
-                        int, 
-                        qcs.set_options
-                    ) & 8 = 8
-                THEN '', CONCAT_NULL_YIELDS_NULL'' 
-                ELSE '''' 
-            END +
-            CASE 
-                WHEN 
-                    CONVERT
-                    (
-                        int, 
-                        qcs.set_options
-                    ) & 16 = 16
-                THEN '', ANSI_WARNINGS'' 
-                ELSE '''' 
-            END +
-            CASE 
-                WHEN 
-                    CONVERT
-                    (
-                        int, 
-                        qcs.set_options
-                    ) & 32 = 32
-                THEN '', ANSI_NULLS'' 
-                ELSE '''' 
-            END +
-            CASE 
-                WHEN 
-                    CONVERT
-                    (
-                        int, 
-                        qcs.set_options
-                    ) & 64 = 64
-                THEN '', QUOTED_IDENTIFIER'' 
-                ELSE ''''
-            END +
-            CASE 
-                WHEN 
-                    CONVERT
-                    (
-                        int, 
-                        qcs.set_options
-                    ) & 4096 = 4096
-                THEN '', ARITH_ABORT'' 
-                ELSE '''' 
-            END +
-            CASE 
-                WHEN 
-                    CONVERT
-                    (
-                        int, 
-                        qcs.set_options
-                    ) & 8192 = 8192
-                THEN '', NUMERIC_ROUNDABORT'' 
-                ELSE '''' 
-            END, 
-            2, 
-            256
-        )
-FROM #query_store_runtime_stats AS qsrs
-JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-    ON qsrs.plan_id = qsp.plan_id
-JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-    ON qsp.query_id = qsq.query_id
-JOIN ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
-    ON qsq.context_settings_id = qcs.context_settings_id
-OPTION(RECOMPILE);' + @nc10; 
+SELECT
+    context_settings_id,
+    set_options,
+    language_id,
+    date_format,
+    date_first,
+    status,
+    required_cursor_options,
+    acceptable_cursor_options,
+    merge_action_type,
+    default_schema_id,
+    is_replication_specific,
+    is_contained
+FROM ' + @database_name_quoted + N'.sys.query_context_settings';
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
-
+INSERT
+    #query_context_settings WITH(TABLOCK)
+(
+    context_settings_id,
+    set_options,
+    language_id,
+    date_format,
+    date_first,
+    status,
+    required_cursor_options,
+    acceptable_cursor_options,
+    merge_action_type,
+    default_schema_id,
+    is_replication_specific,
+    is_contained
+)
 EXEC sys.sp_executesql
     @sql;
 
@@ -2257,6 +2200,98 @@ IF @troubleshoot_performance = 1
 BEGIN
    SET STATISTICS XML OFF;
 END;
+
+/* 
+Update things to get the context settings for each query 
+*/
+SELECT 
+    @current_table = 'updating context_settings in #query_store_runtime_stats';
+
+UPDATE qsrs
+    SET qsrs.context_settings = 
+        SUBSTRING
+        (
+            CASE 
+                WHEN 
+                    CONVERT
+                    (
+                        int, 
+                        qcs.set_options
+                    ) & 1 = 1
+                THEN ', ANSI_PADDING' 
+                ELSE '' 
+            END +
+            CASE 
+                WHEN 
+                    CONVERT
+                    (
+                        int, 
+                        qcs.set_options
+                    ) & 8 = 8
+                THEN ', CONCAT_NULL_YIELDS_NULL' 
+                ELSE '' 
+            END +
+            CASE 
+                WHEN 
+                    CONVERT
+                    (
+                        int, 
+                        qcs.set_options
+                    ) & 16 = 16
+                THEN ', ANSI_WARNINGS' 
+                ELSE '' 
+            END +
+            CASE 
+                WHEN 
+                    CONVERT
+                    (
+                        int, 
+                        qcs.set_options
+                    ) & 32 = 32
+                THEN ', ANSI_NULLS' 
+                ELSE '' 
+            END +
+            CASE 
+                WHEN 
+                    CONVERT
+                    (
+                        int, 
+                        qcs.set_options
+                    ) & 64 = 64
+                THEN ', QUOTED_IDENTIFIER' 
+                ELSE ''
+            END +
+            CASE 
+                WHEN 
+                    CONVERT
+                    (
+                        int, 
+                        qcs.set_options
+                    ) & 4096 = 4096
+                THEN ', ARITH_ABORT' 
+                ELSE '' 
+            END +
+            CASE 
+                WHEN 
+                    CONVERT
+                    (
+                        int, 
+                        qcs.set_options
+                    ) & 8192 = 8192
+                THEN ', NUMERIC_ROUNDABORT' 
+                ELSE '' 
+            END, 
+            2, 
+            256
+        )
+FROM #query_store_runtime_stats AS qsrs
+JOIN #query_store_plan AS qsp
+    ON qsrs.plan_id = qsp.plan_id
+JOIN #query_store_query AS qsq
+    ON qsp.query_id = qsq.query_id
+JOIN #query_context_settings AS qcs
+    ON qsq.context_settings_id = qcs.context_settings_id
+OPTION(RECOMPILE); 
 
 /*
 This is where we start returning results 
@@ -4083,7 +4118,7 @@ BEGIN
     BEGIN
         SELECT
             table_name = 
-                '#query_store_runtime_stats',
+                '#query_context_settings',
             qcs.*
         FROM #query_context_settings AS qcs
         ORDER BY qcs.context_settings_id
@@ -4107,4 +4142,3 @@ END;
 Final End
 */
 GO
-
