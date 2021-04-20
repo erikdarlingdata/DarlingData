@@ -32,6 +32,14 @@ For usage and licensing details, run:
 EXEC sp_QuickieStore
     @help = 1;
 
+For working through errors:
+EXEC sp_QuickieStore
+    @debug = 1;
+
+For performance issues:
+EXEC sp_QuickieStore
+    @troubleshoot_performance = 1;
+
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
 
@@ -89,7 +97,7 @@ These are for your outputs.
 */
 SELECT 
     @version = '1', 
-    @version_date = '20210419';
+    @version_date = '20210420';
 
 /* 
 Helpful section! For help.
@@ -106,7 +114,7 @@ BEGIN
     SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData' UNION ALL
     SELECT 'i can be used to quickly grab misbehaving queries from query store' UNION ALL
     SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
-    SELECT 'so what can you do and how do you do it? read below!';
+    SELECT 'so what can you do, and how do you do it? read below!';
  
     /* 
     Parameters 
@@ -287,7 +295,7 @@ CREATE TABLE
 );
 
 /* 
-Hold plan_ids for plan_ids we want
+Hold plan_ids for plans we want
 */
 CREATE TABLE
     #include_plan_ids
@@ -296,7 +304,7 @@ CREATE TABLE
 );
 
 /* 
-Hold plan_ids for query_ids we want
+Hold query_ids for plans we want
 */
 CREATE TABLE
     #include_query_ids
@@ -305,7 +313,7 @@ CREATE TABLE
 );
 
 /* 
-Hold plan_ids for ignored plan_ids
+Hold plan_ids for ignored plans
 */
 CREATE TABLE
     #ignore_plan_ids
@@ -314,7 +322,7 @@ CREATE TABLE
 );
 
 /* 
-Hold plan_ids for ignored query_ids
+Hold query_ids for ignored plans
 */
 CREATE TABLE
     #ignore_query_ids
@@ -460,7 +468,7 @@ CREATE TABLE
     last_compile_memory_mb bigint NULL,
     max_compile_memory_mb bigint NULL,
     is_clouddb_internal_query bit NULL,
-    database_id sysname NULL
+    database_id int NULL
 );
 
 /* 
@@ -722,6 +730,8 @@ DECLARE
     @query_store_exists bit,
     @string_split nvarchar(1500),
     @current_table nvarchar(100),
+    @troubleshoot_insert nvarchar(MAX),
+    @troubleshoot_update nvarchar(MAX),
     @rc bigint;
 
 /* 
@@ -842,14 +852,34 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                                 '','', 
                                 ''</x><x>''
                             ), 
-                                '' '', 
-                                ''''
+                            '' '', 
+                            ''''
                         ) + ''</x>''
                     ).query(''.'')
         ) AS ids 
-            CROSS APPLY ids.nodes(''x'') AS x(x)
+            CROSS APPLY ids.nodes(''x'') AS x (x)
     ) AS ids
     OPTION(RECOMPILE);',
+    @troubleshoot_insert = N'        
+        INSERT 
+            #troubleshoot_performance WITH(TABLOCK)
+        (
+            current_table,
+            start_time
+        )
+        VALUES
+        (
+            @current_table,
+            GETDATE()
+        )
+        OPTION(RECOMPILE);',
+    @troubleshoot_update = N'
+        UPDATE tp
+            SET tp.end_time = GETDATE()
+        FROM #troubleshoot_performance AS tp
+        WHERE current_table = @current_table
+        OPTION(RECOMPILE);
+    ',
     @rc = 0;
 
 /* 
@@ -911,19 +941,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 SELECT 
@@ -959,13 +984,13 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-    
+
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -987,19 +1012,14 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        INSERT 
-            #troubleshoot_performance WITH(TABLOCK)
-        (
-            current_table,
-            start_time
-        )
-        VALUES
-        (
-            @current_table,
-            GETDATE()
-        );
+
+        EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
     
         SET STATISTICS XML ON;
+
     END;
 
     SELECT 
@@ -1033,10 +1053,10 @@ OPTION(RECOMPILE);' + @nc10;
         
         SET STATISTICS XML OFF;
     
-        UPDATE tp
-            SET tp.end_time = GETDATE()
-        FROM #troubleshoot_performance AS tp
-        WHERE current_table = @current_table;
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
     
     END;
     
@@ -1149,19 +1169,14 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        INSERT 
-            #troubleshoot_performance WITH(TABLOCK)
-        (
-            current_table,
-            start_time
-        )
-        VALUES
-        (
-            @current_table,
-            GETDATE()
-        );
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
     
         SET STATISTICS XML ON;
+
     END;
 
     SELECT 
@@ -1191,10 +1206,10 @@ OPTION(RECOMPILE);' + @nc10;
         
         SET STATISTICS XML OFF;
     
-        UPDATE tp
-            SET tp.end_time = GETDATE()
-        FROM #troubleshoot_performance AS tp
-        WHERE current_table = @current_table;
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
     
     END;
 
@@ -1227,8 +1242,6 @@ BEGIN
         SELECT 
             @current_table = 'inserting #include_plan_ids';
         
-        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
-        
         INSERT 
             #include_plan_ids WITH(TABLOCK)
         (
@@ -1255,8 +1268,6 @@ BEGIN
         
         SELECT 
             @current_table = 'inserting #ignore_plan_ids';
-        
-        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
         
         INSERT 
             #ignore_plan_ids WITH(TABLOCK)
@@ -1286,8 +1297,6 @@ BEGIN
             @current_table = 'inserting #include_query_ids',
             @sql = @isolation_level;
         
-        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
-        
         INSERT 
             #include_query_ids WITH(TABLOCK)
         (
@@ -1303,19 +1312,14 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-            INSERT 
-                #troubleshoot_performance WITH(TABLOCK)
-            (
-                current_table,
-                start_time
-            )
-            VALUES
-            (
-                @current_table,
-                GETDATE()
-            );
+
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
         
             SET STATISTICS XML ON;
+
         END;
 
         SELECT 
@@ -1347,10 +1351,10 @@ OPTION(RECOMPILE);' + @nc10;
             
             SET STATISTICS XML OFF;
         
-            UPDATE tp
-                SET tp.end_time = GETDATE()
-            FROM #troubleshoot_performance AS tp
-            WHERE current_table = @current_table;
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
         
         END;
                 
@@ -1372,8 +1376,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table = 'inserting #ignore_query_ids',
             @sql = @isolation_level;
         
-        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
-        
         INSERT 
             #ignore_query_ids WITH(TABLOCK)
         (
@@ -1389,19 +1391,14 @@ OPTION(RECOMPILE);' + @nc10;
             
         IF @troubleshoot_performance = 1
         BEGIN
-            INSERT 
-                #troubleshoot_performance WITH(TABLOCK)
-            (
-                current_table,
-                start_time
-            )
-            VALUES
-            (
-                @current_table,
-                GETDATE()
-            );
+            
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
         
             SET STATISTICS XML ON;
+
         END;
 
         SELECT 
@@ -1433,10 +1430,10 @@ OPTION(RECOMPILE);' + @nc10;
             
             SET STATISTICS XML OFF;
         
-            UPDATE tp
-                SET tp.end_time = GETDATE()
-            FROM #troubleshoot_performance AS tp
-            WHERE current_table = @current_table;
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
         
         END;    
 
@@ -1493,19 +1490,14 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        INSERT 
-            #troubleshoot_performance WITH(TABLOCK)
-        (
-            current_table,
-            start_time
-        )
-        VALUES
-        (
-            @current_table,
-            GETDATE()
-        );
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
     
         SET STATISTICS XML ON;
+
     END;
     
     SELECT 
@@ -1547,10 +1539,10 @@ OPTION(RECOMPILE);' + @nc10;
         
         SET STATISTICS XML OFF;
     
-        UPDATE tp
-            SET tp.end_time = GETDATE()
-        FROM #troubleshoot_performance AS tp
-        WHERE current_table = @current_table;
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
     
     END;
 
@@ -1575,19 +1567,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 SELECT 
@@ -1625,10 +1612,10 @@ BEGIN
     
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -1665,19 +1652,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 SELECT 
@@ -1725,10 +1707,10 @@ BEGIN
     
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -1741,19 +1723,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 SELECT 
@@ -1905,10 +1882,10 @@ BEGIN
     
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -1921,19 +1898,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 SELECT 
@@ -1977,10 +1949,10 @@ BEGIN
     
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -1993,19 +1965,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 SELECT 
@@ -2120,10 +2087,10 @@ BEGIN
     
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -2136,19 +2103,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 SELECT 
@@ -2244,10 +2206,10 @@ BEGIN
     
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -2260,19 +2222,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 
@@ -2313,10 +2270,10 @@ BEGIN
     
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -2330,19 +2287,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 INSERT 
@@ -2411,10 +2363,10 @@ BEGIN
     
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -2426,19 +2378,14 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        INSERT 
-            #troubleshoot_performance WITH(TABLOCK)
-        (
-            current_table,
-            start_time
-        )
-        VALUES
-        (
-            @current_table,
-            GETDATE()
-        );
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
     
         SET STATISTICS XML ON;
+
     END;
     
     UPDATE qsqt
@@ -2473,10 +2420,10 @@ BEGIN
         
         SET STATISTICS XML OFF;
     
-        UPDATE tp
-            SET tp.end_time = GETDATE()
-        FROM #troubleshoot_performance AS tp
-        WHERE current_table = @current_table;
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
     
     END;
 
@@ -2492,19 +2439,14 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    INSERT 
-        #troubleshoot_performance WITH(TABLOCK)
-    (
-        current_table,
-        start_time
-    )
-    VALUES
-    (
-        @current_table,
-        GETDATE()
-    );
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
     SET STATISTICS XML ON;
+
 END;
 
 SELECT  
@@ -2603,10 +2545,10 @@ BEGIN
     
     SET STATISTICS XML OFF;
 
-    UPDATE tp
-        SET tp.end_time = GETDATE()
-    FROM #troubleshoot_performance AS tp
-    WHERE current_table = @current_table;
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
 
 END;
 
@@ -2632,19 +2574,14 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        INSERT 
-            #troubleshoot_performance WITH(TABLOCK)
-        (
-            current_table,
-            start_time
-        )
-        VALUES
-        (
-            @current_table,
-            GETDATE()
-        );
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
     
         SET STATISTICS XML ON;
+
     END;
 
     SELECT 
@@ -2702,10 +2639,10 @@ OPTION(RECOMPILE);' + @nc10;
         
         SET STATISTICS XML OFF;
     
-        UPDATE tp
-            SET tp.end_time = GETDATE()
-        FROM #troubleshoot_performance AS tp
-        WHERE current_table = @current_table;
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
     
     END;
 
@@ -4021,50 +3958,50 @@ BEGIN
             SELECT 
                 @current_table = 'selecting wait stats in total';
             
+            SELECT
+                source =
+                    'query_store_wait_stats_total',
+                qsws.wait_category_desc,
+                total_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.total_query_wait_time_ms), 'N0'),
+                total_query_duration_ms = 
+                    FORMAT(SUM(x.total_duration_ms), 'N0'),
+                avg_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.avg_query_wait_time_ms), 'N0'),
+                avg_query_duration_ms = 
+                    FORMAT(SUM(x.avg_duration_ms), 'N0'),
+                last_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.last_query_wait_time_ms), 'N0'),
+                last_query_duration_ms = 
+                    FORMAT(SUM(x.last_duration_ms), 'N0'),
+                min_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.min_query_wait_time_ms), 'N0'),
+                min_query_duration_ms = 
+                    FORMAT(SUM(x.min_duration_ms), 'N0'),
+                max_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.max_query_wait_time_ms), 'N0'),
+                max_query_duration_ms = 
+                    FORMAT(SUM(x.max_duration_ms), 'N0')
+            FROM #query_store_wait_stats AS qsws
+            CROSS APPLY
+            (
                 SELECT
-                    source =
-                        'query_store_wait_stats_total',
-                    qsws.wait_category_desc,
-                    total_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.total_query_wait_time_ms), 'N0'),
-                    total_query_duration_ms = 
-                        FORMAT(SUM(x.total_duration_ms), 'N0'),
-                    avg_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.avg_query_wait_time_ms), 'N0'),
-                    avg_query_duration_ms = 
-                        FORMAT(SUM(x.avg_duration_ms), 'N0'),
-                    last_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.last_query_wait_time_ms), 'N0'),
-                    last_query_duration_ms = 
-                        FORMAT(SUM(x.last_duration_ms), 'N0'),
-                    min_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.min_query_wait_time_ms), 'N0'),
-                    min_query_duration_ms = 
-                        FORMAT(SUM(x.min_duration_ms), 'N0'),
-                    max_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.max_query_wait_time_ms), 'N0'),
-                    max_query_duration_ms = 
-                        FORMAT(SUM(x.max_duration_ms), 'N0')
-                FROM #query_store_wait_stats AS qsws
-                CROSS APPLY
-                (
-                    SELECT
-                        qsrs.avg_duration_ms,
-                        qsrs.last_duration_ms,
-                        qsrs.min_duration_ms,
-                        qsrs.max_duration_ms,
-                        qsrs.total_duration_ms,
-                        qsq.object_name
-                    FROM #query_store_runtime_stats AS qsrs
-                    JOIN #query_store_plan AS qsp
-                        ON qsrs.plan_id = qsp.plan_id
-                    JOIN #query_store_query AS qsq
-                        ON qsp.query_id = qsq.query_id
-                    WHERE qsws.plan_id = qsrs.plan_id
-                ) AS x
-                GROUP BY qsws.wait_category_desc
-                ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
-                OPTION(RECOMPILE);
+                    qsrs.avg_duration_ms,
+                    qsrs.last_duration_ms,
+                    qsrs.min_duration_ms,
+                    qsrs.max_duration_ms,
+                    qsrs.total_duration_ms,
+                    qsq.object_name
+                FROM #query_store_runtime_stats AS qsrs
+                JOIN #query_store_plan AS qsp
+                    ON qsrs.plan_id = qsp.plan_id
+                JOIN #query_store_query AS qsq
+                    ON qsp.query_id = qsq.query_id
+                WHERE qsws.plan_id = qsrs.plan_id
+            ) AS x
+            GROUP BY qsws.wait_category_desc
+            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+            OPTION(RECOMPILE);
         
         END;
     
@@ -4193,7 +4130,7 @@ FROM
         performance = 
             'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
         thanks =
-            'i hope you find it useful or whatever'
+            'i hope you find it useful, or whatever'
 ) AS x
 ORDER BY x.sort;
 
@@ -4212,8 +4149,8 @@ BEGIN CATCH
     RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
 
     /*
-    This reliably throws the actual error from dynamic SQ
-    L*/
+    This reliably throws the actual error from dynamic SQL
+    */
     THROW;
 
 END CATCH;
@@ -4309,6 +4246,10 @@ BEGIN
             @query_store_exists,
         [string_split] = 
             @string_split,
+        troubleshoot_insert = 
+            @troubleshoot_insert,
+        troubleshoot_update = 
+            @troubleshoot_update,
         rc = 
             @rc;
     

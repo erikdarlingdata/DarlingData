@@ -13,7 +13,7 @@ IF OBJECT_ID('dbo.sp_PressureDetector') IS  NULL
 GO
 
 ALTER PROCEDURE dbo.sp_PressureDetector 
-(  
+(
     @what_to_check NVARCHAR(6) = N'both',     
     @version VARCHAR(5) = NULL OUTPUT,
     @versiondate DATETIME = NULL OUTPUT 
@@ -24,7 +24,7 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
-SELECT @version = '1.30', @versiondate = '20210318';
+SELECT @version = '1.30', @versiondate = '20210420';
 
 /*
     Copyright (c) 2020 Darling Data, LLC 
@@ -53,8 +53,25 @@ SELECT @version = '1.30', @versiondate = '20210318';
     Check to see if the DAC is enabled.
     If it's not, give people some helpful information.
     */
+    DECLARE
+        @azure bit;
+
+    SELECT 
+        @azure = 
+            CASE 
+                WHEN 
+                    CONVERT
+                    (
+                        sysname, 
+                        SERVERPROPERTY('EDITION')
+                    ) = N'SQL Azure'
+                THEN 1
+                ELSE 0 
+        END;
+        
+    
     IF 
-    ( 
+    (
         SELECT 
             c.value_in_use
         FROM sys.configurations AS c
@@ -71,34 +88,40 @@ SELECT @version = '1.30', @versiondate = '20210318';
     See if someone else is using the DAC.
     Return some helpful information if they are.
     */
-    IF EXISTS 
-    ( 
-        SELECT 
-            1/0
-        FROM sys.endpoints AS ep
-        JOIN sys.dm_exec_sessions AS ses
-            ON ep.endpoint_id = ses.endpoint_id
-        WHERE ep.name = N'Dedicated Admin Connection'
-        AND   ses.session_id <> @@SPID 
-    )
+    IF @azure = 0
     BEGIN
-        SELECT 
-            N'who stole the dac?' AS dac_thief,
-            ses.session_id,
-            ses.login_time,
-            ses.host_name,
-            ses.program_name,
-            ses.login_name,
-            ses.nt_domain,
-            ses.nt_user_name,
-            ses.status,
-            ses.last_request_start_time,
-            ses.last_request_end_time
-        FROM sys.endpoints AS ep
-        JOIN sys.dm_exec_sessions AS ses
-            ON ep.endpoint_id = ses.endpoint_id
-        WHERE ep.name = N'Dedicated Admin Connection'
-        AND   ses.session_id <> @@SPID;
+
+        IF EXISTS 
+        (
+            SELECT 
+                1/0
+            FROM sys.endpoints AS ep
+            JOIN sys.dm_exec_sessions AS ses
+                ON ep.endpoint_id = ses.endpoint_id
+            WHERE ep.name = N'Dedicated Admin Connection'
+            AND   ses.session_id <> @@SPID 
+        )
+        BEGIN
+            SELECT 
+                dac_thief =
+                   'who stole the dac?',
+                ses.session_id,
+                ses.login_time,
+                ses.host_name,
+                ses.program_name,
+                ses.login_name,
+                ses.nt_domain,
+                ses.nt_user_name,
+                ses.status,
+                ses.last_request_start_time,
+                ses.last_request_end_time
+            FROM sys.endpoints AS ep
+            JOIN sys.dm_exec_sessions AS ses
+                ON ep.endpoint_id = ses.endpoint_id
+            WHERE ep.name = N'Dedicated Admin Connection'
+            AND   ses.session_id <> @@SPID;
+        END;
+
     END;
 
 
@@ -129,27 +152,29 @@ SELECT @version = '1.30', @versiondate = '20210318';
     */
     SET @pool_sql += N'
     SELECT 
-        N''Buffer Pool Memory'' AS memory_consumer,
+        memory_consumer = 
+            N''Buffer Pool Memory'',
         domc.type,
-        CONVERT
-        (
-            DECIMAL(5, 2),
-            SUM
+        memory_used_gb = 
+            CONVERT
             (
-                ' +
-                  CASE @pages_kb
-                  WHEN 1 THEN
-                N'domc.pages_kb + '
-                  ELSE 
-                N'domc.single_pages_kb +
-                domc.multi_pages_kb + '
-                  END
-                + N'
-                domc.virtual_memory_committed_kb +
-                domc.awe_allocated_kb +
-                domc.shared_memory_committed_kb
-            ) / 1024. / 1024. 
-        ) AS memory_used_gb
+                DECIMAL(5, 2),
+                SUM
+                (
+                    ' +
+                      CASE @pages_kb
+                      WHEN 1 THEN
+                    N'domc.pages_kb + '
+                      ELSE 
+                    N'domc.single_pages_kb +
+                    domc.multi_pages_kb + '
+                      END
+                    + N'
+                    domc.virtual_memory_committed_kb +
+                    domc.awe_allocated_kb +
+                    domc.shared_memory_committed_kb
+                ) / 1024. / 1024. 
+            )
     FROM sys.dm_os_memory_clerks AS domc
     WHERE domc.type = N''MEMORYCLERK_SQLBUFFERPOOL''
     AND   domc.memory_node_id < 64
@@ -179,22 +204,23 @@ SELECT @version = '1.30', @versiondate = '20210318';
     (
         SELECT TOP (5)
             domc.type,
-            CONVERT
-            (
-                DECIMAL(5, 2), 
-                SUM
+            memory_used_gb =
+                CONVERT
                 (
-                ' +
-                  CASE @pages_kb
-                  WHEN 1 THEN
-                N'    domc.pages_kb '
-                  ELSE 
-                N'    domc.single_pages_kb +
-                    domc.multi_pages_kb '
-                  END
-                + N'
-                ) / 1024. / 1024. 
-            ) AS memory_used_gb
+                    DECIMAL(5, 2), 
+                    SUM
+                    (
+                    ' +
+                      CASE @pages_kb
+                      WHEN 1 THEN
+                    N'    domc.pages_kb '
+                      ELSE 
+                    N'    domc.single_pages_kb +
+                        domc.multi_pages_kb '
+                      END
+                    + N'
+                    ) / 1024. / 1024. 
+                )
         FROM sys.dm_os_memory_clerks AS domc
         WHERE domc.type <> N''MEMORYCLERK_SQLBUFFERPOOL''
         GROUP BY
@@ -224,7 +250,7 @@ SELECT @version = '1.30', @versiondate = '20210318';
     DECLARE @helpful_new_columns BIT = 0;  
     
     IF 
-    ( 
+    (
         SELECT 
             COUNT_BIG(*)
         FROM sys.all_columns AS ac 
@@ -240,17 +266,25 @@ SELECT @version = '1.30', @versiondate = '20210318';
         deqmg.session_id,
         deqmg.request_time,
         deqmg.grant_time,
-        (deqmg.requested_memory_kb / 1024.) requested_memory_mb,
-        (deqmg.granted_memory_kb / 1024.) granted_memory_mb,
-        (deqmg.ideal_memory_kb / 1024.) ideal_memory_mb,        
-        (deqmg.required_memory_kb / 1024.) required_memory_mb,
-        (deqmg.used_memory_kb / 1024.) used_memory_mb,
-        (deqmg.max_used_memory_kb / 1024.) max_used_memory_mb,
+        requested_memory_mb = 
+            (deqmg.requested_memory_kb / 1024.),
+        granted_memory_mb = 
+            (deqmg.granted_memory_kb / 1024.),
+        ideal_memory_mb = 
+            (deqmg.ideal_memory_kb / 1024.),        
+        required_memory_mb = 
+            (deqmg.required_memory_kb / 1024.),
+        used_memory_mb = 
+            (deqmg.used_memory_kb / 1024.),
+        max_used_memory_mb = 
+            (deqmg.max_used_memory_kb / 1024.),
         deqmg.queue_id,
         deqmg.wait_order,
         deqmg.is_next_candidate,
-        (deqmg.wait_time_ms / 1000.) wait_time_s,
-        (waits.wait_duration_ms / 1000.) wait_duration_s,
+        wait_time_s = 
+            (deqmg.wait_time_ms / 1000.),
+        wait_duration_s = 
+            (waits.wait_duration_ms / 1000.),
         deqmg.dop,
         waits.wait_type,'
         + CASE WHEN @helpful_new_columns = 1
@@ -264,7 +298,7 @@ SELECT @version = '1.30', @versiondate = '20210318';
         deqmg.plan_handle
     FROM sys.dm_exec_query_memory_grants AS deqmg
     OUTER APPLY 
-    ( 
+    (
         SELECT TOP (1) 
             dowt.*
         FROM sys.dm_os_waiting_tasks AS dowt
@@ -282,12 +316,18 @@ SELECT @version = '1.30', @versiondate = '20210318';
     /*Resource semaphore info*/
     SELECT  
         deqrs.resource_semaphore_id,
-        (deqrs.target_memory_kb / 1024.) target_memory_mb,
-        (deqrs.max_target_memory_kb / 1024.) max_target_memory_mb,
-        (deqrs.total_memory_kb / 1024.) total_memory_mb,
-        (deqrs.available_memory_kb / 1024.) available_memory_mb,
-        (deqrs.granted_memory_kb / 1024.) granted_memory_mb,
-        (deqrs.used_memory_kb / 1024.) used_memory_mb,
+        target_memory_mb = 
+            (deqrs.target_memory_kb / 1024.),
+        max_target_memory_mb =
+            (deqrs.max_target_memory_kb / 1024.),
+        total_memory_mb = 
+            (deqrs.total_memory_kb / 1024.),
+        available_memory_mb = 
+            (deqrs.available_memory_kb / 1024.),
+        granted_memory_mb = 
+            (deqrs.granted_memory_kb / 1024.),
+        used_memory_mb = 
+            (deqrs.used_memory_kb / 1024.),
         deqrs.grantee_count,
         deqrs.waiter_count,
         deqrs.timeout_error_count,
@@ -302,14 +342,21 @@ SELECT @version = '1.30', @versiondate = '20210318';
     IF @what_to_check IN (N'cpu', N'both')
     BEGIN
     /*Thread usage*/
-    SELECT     
-        MAX(osi.max_workers_count) AS total_threads,
-        SUM(dos.active_workers_count) AS used_threads,
-        MAX(osi.max_workers_count) - SUM(dos.active_workers_count) AS available_threads,
-        SUM(dos.runnable_tasks_count) AS threads_waiting_for_cpu,
-        SUM(dos.work_queue_count) AS requests_waiting_for_threads,
-        SUM(dos.current_workers_count) AS current_workers,
-        MAX(ISNULL(r.high_runnable_percent, 0)) AS high_runnable_percent
+    SELECT
+        total_threads = 
+            MAX(osi.max_workers_count),
+        used_threads = 
+            SUM(dos.active_workers_count),
+        available_threads = 
+            MAX(osi.max_workers_count) - SUM(dos.active_workers_count),
+        threads_waiting_for_cpu = 
+            SUM(dos.runnable_tasks_count),
+        requests_waiting_for_threads = 
+            SUM(dos.work_queue_count),
+        current_workers = 
+            SUM(dos.current_workers_count),
+        high_runnable_percent = 
+            MAX(ISNULL(r.high_runnable_percent, 0))
     FROM sys.dm_os_schedulers AS dos
     CROSS JOIN sys.dm_os_sys_info AS osi
     OUTER APPLY 
@@ -323,24 +370,29 @@ SELECT @version = '1.30', @versiondate = '20210318';
             SELECT
                 x.total, 
                 x.runnable,
-                CONVERT(decimal(5,2),
+                runnable_pct = 
+                    CONVERT
                     (
-                        x.runnable / 
-                            (1. * NULLIF(x.total, 0))
-                    )
-                ) * 100. AS runnable_pct
+                        decimal(5,2),
+                        (
+                            x.runnable / 
+                                (1. * NULLIF(x.total, 0))
+                        )
+                    ) * 100.
             FROM 
             (
-                SELECT 
-                    COUNT_BIG(*) AS total, 
-                    SUM
-                    (
-                        CASE 
-                            WHEN r.status = N'runnable' 
-                            THEN 1 
-                            ELSE 0 
-                        END
-                    ) AS runnable
+                SELECT
+                    total = 
+                        COUNT_BIG(*), 
+                    runnable = 
+                        SUM
+                        (
+                            CASE 
+                                WHEN r.status = N'runnable' 
+                                THEN 1 
+                                ELSE 0 
+                            END
+                        )
                 FROM sys.dm_exec_requests AS r
                 WHERE r.session_id > 50
             ) AS x
@@ -367,7 +419,7 @@ SELECT @version = '1.30', @versiondate = '20210318';
     DECLARE @cool_new_columns BIT = 0;
     
     IF 
-    ( 
+    (
         SELECT 
             COUNT_BIG(*)
         FROM sys.all_columns AS ac 
@@ -383,19 +435,38 @@ SELECT @version = '1.30', @versiondate = '20210318';
     
     SELECT 
         der.session_id,
-        DB_NAME(der.database_id) AS database_name,
+        database_name = 
+            DB_NAME(der.database_id),
         der.start_time,
-        SUBSTRING(
-                 dest.text, ( der.statement_start_offset / 2 ) + 1,
-                 (( CASE der.statement_end_offset WHEN -1 THEN DATALENGTH(dest.text) ELSE der.statement_end_offset END
-                    - der.statement_start_offset ) / 2 ) + 1) AS query_text,
-        ( der.statement_start_offset / 2 ) + 1 AS statement_start_offset,
-        (( CASE der.statement_end_offset 
-               WHEN -1 
-               THEN DATALENGTH(dest.text) 
-               ELSE der.statement_end_offset 
-            END - der.statement_start_offset ) 
-            / 2 ) + 1 AS statement_end_offset,
+        query_text =
+            SUBSTRING
+            (
+                dest.text, 
+                (der.statement_start_offset / 2) + 1,
+                (
+                    (
+                        CASE der.statement_end_offset 
+                            WHEN -1 
+                            THEN DATALENGTH(dest.text) 
+                            ELSE der.statement_end_offset 
+                        END
+                        - der.statement_start_offset 
+                    ) / 2 
+                ) + 1
+            ),
+        statement_start_offset = 
+            (der.statement_start_offset / 2) + 1,
+        statement_end_offset = 
+            (
+                (
+                    CASE der.statement_end_offset 
+                        WHEN -1 
+                        THEN DATALENGTH(dest.text) 
+                        ELSE der.statement_end_offset 
+                    END 
+                    - der.statement_start_offset 
+                ) / 2 
+            ) + 1,
         deqp.query_plan,
         der.plan_handle,
         der.status,
@@ -408,16 +479,40 @@ SELECT @version = '1.30', @versiondate = '20210318';
         der.reads,
         der.writes,
         der.logical_reads,
-        CASE 
-            WHEN der.transaction_isolation_level = 0 THEN ''Unspecified''
-            WHEN der.transaction_isolation_level = 1 THEN ''Read Uncommitted''
-            WHEN der.transaction_isolation_level = 2 AND EXISTS ( SELECT 1/0 FROM sys.dm_tran_active_snapshot_database_transactions AS trn WHERE der.session_id = trn.session_id AND is_snapshot = 0 ) THEN ''Read Committed Snapshot Isolation''
-            WHEN der.transaction_isolation_level = 2 AND NOT EXISTS ( SELECT 1/0 FROM sys.dm_tran_active_snapshot_database_transactions AS trn WHERE der.session_id = trn.session_id AND is_snapshot = 0 ) THEN ''Read Committed''
-            WHEN der.transaction_isolation_level = 3 THEN ''Repeatable Read''
-            WHEN der.transaction_isolation_level = 4 THEN ''Serializable''
-            WHEN der.transaction_isolation_level = 5 THEN ''Snapshot''
-            ELSE ''???''
-        END AS transaction_isolation_level,
+        transaction_isolation_level = 
+            CASE 
+                WHEN der.transaction_isolation_level = 0 
+                THEN ''Unspecified''
+                WHEN der.transaction_isolation_level = 1 
+                THEN ''Read Uncommitted''
+                WHEN der.transaction_isolation_level = 2 
+                AND  EXISTS 
+                     (
+                         SELECT 
+                             1/0 
+                         FROM sys.dm_tran_active_snapshot_database_transactions AS trn 
+                         WHERE der.session_id = trn.session_id 
+                         AND   trn.is_snapshot = 0 
+                     ) 
+                THEN ''Read Committed Snapshot Isolation''
+                WHEN der.transaction_isolation_level = 2 
+                AND  NOT EXISTS 
+                         (
+                             SELECT 
+                                 1/0 
+                             FROM sys.dm_tran_active_snapshot_database_transactions AS trn 
+                             WHERE der.session_id = trn.session_id 
+                             AND   trn.is_snapshot = 0 
+                         ) 
+                THEN ''Read Committed''
+                WHEN der.transaction_isolation_level = 3 
+                THEN ''Repeatable Read''
+                WHEN der.transaction_isolation_level = 4 
+                THEN ''Serializable''
+                WHEN der.transaction_isolation_level = 5 
+                THEN ''Snapshot''
+                ELSE ''???''
+            END,
         der.granted_query_memory'
         + CASE WHEN @cool_new_columns = 1
                THEN N',
@@ -430,13 +525,14 @@ SELECT @version = '1.30', @versiondate = '20210318';
     CROSS APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
     CROSS APPLY sys.dm_exec_query_plan(der.plan_handle) AS deqp
     WHERE der.session_id <> @@SPID
-    AND der.session_id >= 50
-    ORDER BY ' + CASE WHEN @cool_new_columns = 1
-                      THEN N'der.parallel_worker_count DESC
-                     OPTION(MAXDOP 1);'
-                      ELSE N'der.cpu_time DESC
-                     OPTION(MAXDOP 1);'
-             END;
+    AND   der.session_id >= 50
+    ORDER BY ' + CASE 
+                     WHEN @cool_new_columns = 1
+                     THEN N'der.parallel_worker_count DESC
+                      OPTION(MAXDOP 1);'
+                     ELSE N'der.cpu_time DESC
+                      OPTION(MAXDOP 1);'
+                 END;
     
     EXEC sys.sp_executesql @cpu_sql;
     END;
