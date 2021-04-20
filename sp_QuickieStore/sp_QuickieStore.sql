@@ -32,6 +32,14 @@ For usage and licensing details, run:
 EXEC sp_QuickieStore
     @help = 1;
 
+For working through errors:
+EXEC sp_QuickieStore
+    @debug = 1;
+
+For performance issues:
+EXEC sp_QuickieStore
+    @troubleshoot_performance = 1;
+
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
 
@@ -89,7 +97,7 @@ These are for your outputs.
 */
 SELECT 
     @version = '1', 
-    @version_date = '20210419';
+    @version_date = '20210420';
 
 /* 
 Helpful section! For help.
@@ -460,7 +468,7 @@ CREATE TABLE
     last_compile_memory_mb bigint NULL,
     max_compile_memory_mb bigint NULL,
     is_clouddb_internal_query bit NULL,
-    database_id sysname NULL
+    database_id int NULL
 );
 
 /* 
