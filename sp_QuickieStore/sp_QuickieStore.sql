@@ -114,7 +114,7 @@ BEGIN
     SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData' UNION ALL
     SELECT 'i can be used to quickly grab misbehaving queries from query store' UNION ALL
     SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
-    SELECT 'so what can you do and how do you do it? read below!';
+    SELECT 'so what can you do, and how do you do it? read below!';
  
     /* 
     Parameters 
@@ -1242,8 +1242,6 @@ BEGIN
         SELECT 
             @current_table = 'inserting #include_plan_ids';
         
-        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
-        
         INSERT 
             #include_plan_ids WITH(TABLOCK)
         (
@@ -1270,8 +1268,6 @@ BEGIN
         
         SELECT 
             @current_table = 'inserting #ignore_plan_ids';
-        
-        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
         
         INSERT 
             #ignore_plan_ids WITH(TABLOCK)
@@ -1300,8 +1296,6 @@ BEGIN
         SELECT 
             @current_table = 'inserting #include_query_ids',
             @sql = @isolation_level;
-        
-        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
         
         INSERT 
             #include_query_ids WITH(TABLOCK)
@@ -1381,8 +1375,6 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT 
             @current_table = 'inserting #ignore_query_ids',
             @sql = @isolation_level;
-        
-        IF @debug = 1 BEGIN PRINT LEN(@string_split); PRINT @string_split; END;
         
         INSERT 
             #ignore_query_ids WITH(TABLOCK)
