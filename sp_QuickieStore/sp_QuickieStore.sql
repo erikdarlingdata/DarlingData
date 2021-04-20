@@ -3966,50 +3966,50 @@ BEGIN
             SELECT 
                 @current_table = 'selecting wait stats in total';
             
+            SELECT
+                source =
+                    'query_store_wait_stats_total',
+                qsws.wait_category_desc,
+                total_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.total_query_wait_time_ms), 'N0'),
+                total_query_duration_ms = 
+                    FORMAT(SUM(x.total_duration_ms), 'N0'),
+                avg_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.avg_query_wait_time_ms), 'N0'),
+                avg_query_duration_ms = 
+                    FORMAT(SUM(x.avg_duration_ms), 'N0'),
+                last_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.last_query_wait_time_ms), 'N0'),
+                last_query_duration_ms = 
+                    FORMAT(SUM(x.last_duration_ms), 'N0'),
+                min_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.min_query_wait_time_ms), 'N0'),
+                min_query_duration_ms = 
+                    FORMAT(SUM(x.min_duration_ms), 'N0'),
+                max_query_wait_time_ms = 
+                    FORMAT(SUM(qsws.max_query_wait_time_ms), 'N0'),
+                max_query_duration_ms = 
+                    FORMAT(SUM(x.max_duration_ms), 'N0')
+            FROM #query_store_wait_stats AS qsws
+            CROSS APPLY
+            (
                 SELECT
-                    source =
-                        'query_store_wait_stats_total',
-                    qsws.wait_category_desc,
-                    total_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.total_query_wait_time_ms), 'N0'),
-                    total_query_duration_ms = 
-                        FORMAT(SUM(x.total_duration_ms), 'N0'),
-                    avg_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.avg_query_wait_time_ms), 'N0'),
-                    avg_query_duration_ms = 
-                        FORMAT(SUM(x.avg_duration_ms), 'N0'),
-                    last_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.last_query_wait_time_ms), 'N0'),
-                    last_query_duration_ms = 
-                        FORMAT(SUM(x.last_duration_ms), 'N0'),
-                    min_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.min_query_wait_time_ms), 'N0'),
-                    min_query_duration_ms = 
-                        FORMAT(SUM(x.min_duration_ms), 'N0'),
-                    max_query_wait_time_ms = 
-                        FORMAT(SUM(qsws.max_query_wait_time_ms), 'N0'),
-                    max_query_duration_ms = 
-                        FORMAT(SUM(x.max_duration_ms), 'N0')
-                FROM #query_store_wait_stats AS qsws
-                CROSS APPLY
-                (
-                    SELECT
-                        qsrs.avg_duration_ms,
-                        qsrs.last_duration_ms,
-                        qsrs.min_duration_ms,
-                        qsrs.max_duration_ms,
-                        qsrs.total_duration_ms,
-                        qsq.object_name
-                    FROM #query_store_runtime_stats AS qsrs
-                    JOIN #query_store_plan AS qsp
-                        ON qsrs.plan_id = qsp.plan_id
-                    JOIN #query_store_query AS qsq
-                        ON qsp.query_id = qsq.query_id
-                    WHERE qsws.plan_id = qsrs.plan_id
-                ) AS x
-                GROUP BY qsws.wait_category_desc
-                ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
-                OPTION(RECOMPILE);
+                    qsrs.avg_duration_ms,
+                    qsrs.last_duration_ms,
+                    qsrs.min_duration_ms,
+                    qsrs.max_duration_ms,
+                    qsrs.total_duration_ms,
+                    qsq.object_name
+                FROM #query_store_runtime_stats AS qsrs
+                JOIN #query_store_plan AS qsp
+                    ON qsrs.plan_id = qsp.plan_id
+                JOIN #query_store_query AS qsq
+                    ON qsp.query_id = qsq.query_id
+                WHERE qsws.plan_id = qsrs.plan_id
+            ) AS x
+            GROUP BY qsws.wait_category_desc
+            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+            OPTION(RECOMPILE);
         
         END;
     
@@ -4157,8 +4157,8 @@ BEGIN CATCH
     RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
 
     /*
-    This reliably throws the actual error from dynamic SQ
-    L*/
+    This reliably throws the actual error from dynamic SQL
+    */
     THROW;
 
 END CATCH;
