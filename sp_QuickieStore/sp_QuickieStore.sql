@@ -4098,8 +4098,8 @@ SELECT
     x.all_done,
     x.support,
     x.help,
-    x.performance,
     x.problems,
+    x.performance,
     x.thanks
 FROM 
 (
