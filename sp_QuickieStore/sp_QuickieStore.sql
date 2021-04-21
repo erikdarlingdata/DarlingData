@@ -4095,10 +4095,11 @@ BEGIN
 END;
 
 SELECT
-    x.all_done, 
-    x.support, 
-    x.help, 
-    x.performance, 
+    x.all_done,
+    x.support,
+    x.help,
+    x.performance,
+    x.problems,
     x.thanks
 FROM 
 (
@@ -4111,6 +4112,8 @@ FROM
             'for support, head over to github',
         help = 
             'for local help, use @help = 1',
+        problems = 
+            'to debug issues, use @debug = 1;',
         performance = 
             'if this runs slowly, use to get query plans',
         thanks = 
@@ -4127,6 +4130,8 @@ FROM
             'https://github.com/erikdarlingdata/DarlingData',
         help = 
             'EXEC sp_QuickieStore @help = 1;',
+        problems = 
+            'EXEC sp_QuickieStore @debug = 1;',
         performance = 
             'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
         thanks =
