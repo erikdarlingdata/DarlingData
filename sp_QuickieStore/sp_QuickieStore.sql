@@ -76,6 +76,8 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
+BEGIN TRY 
+
 /* 
 If this column doesn't exist, you're not on a good version of SQL Server 
 */
@@ -854,7 +856,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                             ), 
                             '' '', 
                             ''''
-                        ) + ''</x>''
+                        ) + 
+                        ''</x>''
                     ).query(''.'')
         ) AS ids 
             CROSS APPLY ids.nodes(''x'') AS x (x)
@@ -878,8 +881,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             SET tp.end_time = GETDATE()
         FROM #troubleshoot_performance AS tp
         WHERE current_table = @current_table
-        OPTION(RECOMPILE);
-    ',
+        OPTION(RECOMPILE);',
     @rc = 0;
 
 /* 
@@ -1118,8 +1120,6 @@ BEGIN
    SELECT 
        @sort_order = N'cpu';
 END;
-
-BEGIN TRY
 
 /*
 Get filters ready, or whatever
@@ -1923,7 +1923,7 @@ SELECT
     default_schema_id,
     is_replication_specific,
     is_contained
-FROM ' + @database_name_quoted + N'.sys.query_context_settings';
+FROM ' + @database_name_quoted + N'.sys.query_context_settings;';
 
 INSERT
     #query_context_settings WITH(TABLOCK)
