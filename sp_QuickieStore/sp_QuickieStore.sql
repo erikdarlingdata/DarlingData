@@ -76,6 +76,8 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
+BEGIN TRY 
+
 /* 
 If this column doesn't exist, you're not on a good version of SQL Server 
 */
@@ -854,7 +856,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                             ), 
                             '' '', 
                             ''''
-                        ) + ''</x>''
+                        ) + 
+                        ''</x>''
                     ).query(''.'')
         ) AS ids 
             CROSS APPLY ids.nodes(''x'') AS x (x)
@@ -878,8 +881,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             SET tp.end_time = GETDATE()
         FROM #troubleshoot_performance AS tp
         WHERE current_table = @current_table
-        OPTION(RECOMPILE);
-    ',
+        OPTION(RECOMPILE);',
     @rc = 0;
 
 /* 
@@ -1118,8 +1120,6 @@ BEGIN
    SELECT 
        @sort_order = N'cpu';
 END;
-
-BEGIN TRY
 
 /*
 Get filters ready, or whatever
@@ -1923,7 +1923,7 @@ SELECT
     default_schema_id,
     is_replication_specific,
     is_contained
-FROM ' + @database_name_quoted + N'.sys.query_context_settings';
+FROM ' + @database_name_quoted + N'.sys.query_context_settings;';
 
 INSERT
     #query_context_settings WITH(TABLOCK)
@@ -4095,10 +4095,11 @@ BEGIN
 END;
 
 SELECT
-    x.all_done, 
-    x.support, 
-    x.help, 
-    x.performance, 
+    x.all_done,
+    x.support,
+    x.help,
+    x.problems,
+    x.performance,
     x.thanks
 FROM 
 (
@@ -4111,6 +4112,8 @@ FROM
             'for support, head over to github',
         help = 
             'for local help, use @help = 1',
+        problems = 
+            'to debug issues, use @debug = 1;',
         performance = 
             'if this runs slowly, use to get query plans',
         thanks = 
@@ -4127,6 +4130,8 @@ FROM
             'https://github.com/erikdarlingdata/DarlingData',
         help = 
             'EXEC sp_QuickieStore @help = 1;',
+        problems = 
+            'EXEC sp_QuickieStore @debug = 1;',
         performance = 
             'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
         thanks =
