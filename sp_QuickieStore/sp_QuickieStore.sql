@@ -885,13 +885,13 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         OPTION(RECOMPILE);',
     @xml_info = N'
         SELECT
-            ''sql/query_length'' = 
-                FORMAT(LEN(@sql), ''N0''),
-            ''sql/current_table'' = 
+            ''current_table'' = 
                 @current_table,
-            ''sql/processing-instruction(statement_text)'' =
+            ''query_length'' = 
+                FORMAT(LEN(@sql), ''N0''),
+            ''processing-instruction(statement_text)'' =
                 @sql            
-        FOR XML PATH(''query_info''), ROOT(''troubleshooting_performance'')
+        FOR XML PATH('''')
         OPTION(RECOMPILE);',
     @rc = 0;
 
