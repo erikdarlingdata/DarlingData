@@ -734,6 +734,7 @@ DECLARE
     @current_table nvarchar(100),
     @troubleshoot_insert nvarchar(MAX),
     @troubleshoot_update nvarchar(MAX),
+    @xml_info nvarchar(MAX),
     @rc bigint;
 
 /* 
@@ -882,6 +883,16 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         FROM #troubleshoot_performance AS tp
         WHERE current_table = @current_table
         OPTION(RECOMPILE);',
+    @xml_info = N'
+        SELECT
+            ''sql/query_length'' = 
+                FORMAT(LEN(@sql), ''N0''),
+            ''sql/current_table'' = 
+                @current_table,
+            ''sql/processing-instruction(statement_text)'' =
+                @sql            
+        FOR XML PATH(''query_info''), ROOT(''troubleshooting_performance'')
+        OPTION(RECOMPILE);',
     @rc = 0;
 
 /* 
@@ -994,6 +1005,13 @@ BEGIN
       N'@current_table nvarchar(100)',
         @current_table;
 
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+
 END;
 
 IF @query_store_exists = 0
@@ -1059,6 +1077,13 @@ OPTION(RECOMPILE);' + @nc10;
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
+
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
     
     END;
     
@@ -1211,6 +1236,13 @@ OPTION(RECOMPILE);' + @nc10;
           N'@current_table nvarchar(100)',
             @current_table;
     
+        EXEC sys.sp_executesql
+            @xml_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    
     END;
 
     SELECT
@@ -1355,17 +1387,27 @@ OPTION(RECOMPILE);' + @nc10;
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
+
+            EXEC sys.sp_executesql
+                @xml_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
         
         END;
                 
-        SELECT
-           @where_clause += N'AND   EXISTS
-      (
-         SELECT
-            1/0
-         FROM #include_plan_ids AS idi
-         WHERE idi.plan_id = qsrs.plan_id
-      )' + @nc10;
+        IF @include_plan_ids IS NULL
+        BEGIN
+            SELECT
+               @where_clause += N'AND   EXISTS
+          (
+             SELECT
+                1/0
+             FROM #include_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
+        END;
 
     END;
 
@@ -1434,18 +1476,27 @@ OPTION(RECOMPILE);' + @nc10;
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
+
+            EXEC sys.sp_executesql
+                @xml_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
         
         END;    
 
+        IF @ignore_plan_ids IS NULL
+        BEGIN
         SELECT
-           @where_clause += N'AND   NOT EXISTS
-          (
-             SELECT
-                1/0
-             FROM #ignore_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
-
+               @where_clause += N'AND   NOT EXISTS
+              (
+                 SELECT
+                    1/0
+                 FROM #ignore_plan_ids AS idi
+                 WHERE idi.plan_id = qsrs.plan_id
+              )' + @nc10;
+          END;
     END;
 
 END;
@@ -1543,6 +1594,13 @@ OPTION(RECOMPILE);' + @nc10;
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
+
+        EXEC sys.sp_executesql
+            @xml_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
     
     END;
 
@@ -1615,6 +1673,13 @@ BEGIN
     EXEC sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
         @current_table;
 
 END;
@@ -1710,6 +1775,13 @@ BEGIN
     EXEC sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
         @current_table;
 
 END;
@@ -1887,6 +1959,13 @@ BEGIN
       N'@current_table nvarchar(100)',
         @current_table;
 
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+
 END;
 
 /* 
@@ -1952,6 +2031,13 @@ BEGIN
     EXEC sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
         @current_table;
 
 END;
@@ -2092,6 +2178,13 @@ BEGIN
       N'@current_table nvarchar(100)',
         @current_table;
 
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+
 END;
 
 /* 
@@ -2211,6 +2304,13 @@ BEGIN
       N'@current_table nvarchar(100)',
         @current_table;
 
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+
 END;
 
 /* 
@@ -2273,6 +2373,13 @@ BEGIN
     EXEC sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
         @current_table;
 
 END;
@@ -2368,6 +2475,13 @@ BEGIN
       N'@current_table nvarchar(100)',
         @current_table;
 
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+
 END;
 
 IF @rc > 0
@@ -2423,6 +2537,13 @@ BEGIN
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @xml_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
             @current_table;
     
     END;
@@ -2550,6 +2671,13 @@ BEGIN
       N'@current_table nvarchar(100)',
         @current_table;
 
+    EXEC sys.sp_executesql
+        @xml_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+
 END;
 
 /* 
@@ -2642,6 +2770,13 @@ OPTION(RECOMPILE);' + @nc10;
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @xml_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
             @current_table;
     
     END;
@@ -4255,6 +4390,8 @@ BEGIN
             @troubleshoot_insert,
         troubleshoot_update = 
             @troubleshoot_update,
+        xml_info = 
+            @xml_info,
         rc = 
             @rc;
     
