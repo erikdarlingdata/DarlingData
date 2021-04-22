@@ -3492,17 +3492,43 @@ FROM
 ) AS x
 WHERE x.n = 1
 ORDER BY ' +
-    CASE @sort_order  
-         WHEN 'cpu' THEN N'x.avg_cpu_time_ms'
-         WHEN 'logical reads' THEN N'x.avg_logical_io_reads_mb'
-         WHEN 'physical reads' THEN N'x.avg_physical_io_reads_mb'
-         WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
-         WHEN 'duration' THEN N'x.avg_duration_ms'
-         WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
-         WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
-         WHEN 'executions' THEN N'x.count_executions'
-         ELSE N'x.avg_cpu_time_ms'
-    END + N' DESC
+    CASE @format_output
+         WHEN 0 
+         THEN
+             CASE @sort_order  
+                  WHEN 'cpu' THEN N'x.avg_cpu_time_ms'
+                  WHEN 'logical reads' THEN N'x.avg_logical_io_reads_mb'
+                  WHEN 'physical reads' THEN N'x.avg_physical_io_reads_mb'
+                  WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
+                  WHEN 'duration' THEN N'x.avg_duration_ms'
+                  WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
+                  WHEN 'tempdb' THEN 
+                                CASE WHEN @new = 1 
+                                     THEN N'x.avg_tempdb_space_used_mb' 
+                                     ELSE N'x.avg_cpu_time' 
+                                END
+                  WHEN 'executions' THEN N'x.count_executions'
+                  ELSE N'x.avg_cpu_time_ms'
+             END
+         WHEN 1 
+         THEN
+             CASE @sort_order  
+                  WHEN 'cpu' THEN N'CONVERT(money, x.avg_cpu_time_ms)'
+                  WHEN 'logical reads' THEN N'CONVERT(money, x.avg_logical_io_reads_mb)'
+                  WHEN 'physical reads' THEN N'CONVERT(money, x.avg_physical_io_reads_mb)'
+                  WHEN 'writes' THEN N'CONVERT(money, x.avg_logical_io_writes_mb)'
+                  WHEN 'duration' THEN N'CONVERT(money, x.avg_duration_ms)'
+                  WHEN 'memory' THEN N'CONVERT(money, x.avg_query_max_used_memory_mb)'
+                  WHEN 'tempdb' THEN 
+                                CASE WHEN @new = 1 
+                                     THEN N'CONVERT(money, x.avg_tempdb_space_used_mb)' 
+                                     ELSE N'CONVERT(money, x.avg_cpu_time)' 
+                                END
+                  WHEN 'executions' THEN N'CONVERT(money, x.count_executions)'
+                  ELSE N'CONVERT(money, x.avg_cpu_time_ms)'
+             END             
+    END
+             + N' DESC
 OPTION(RECOMPILE);' + @nc10; 
     
     IF @debug = 1 
@@ -4155,17 +4181,17 @@ BEGIN
         dqso.desired_state_desc,
         dqso.actual_state_desc,
         dqso.readonly_reason,
-        current_storage_size_mb 
-            = FORMAT(dqso.current_storage_size_mb, ''N0''),
-        flush_interval_seconds 
-            = FORMAT(dqso.flush_interval_seconds, ''N0''),
-        interval_length_minutes 
-            = FORMAT(dqso.interval_length_minutes, ''N0''),
-        max_storage_size_mb 
-            = FORMAT(dqso.max_storage_size_mb, ''N0''),
+        current_storage_size_mb =
+            FORMAT(dqso.current_storage_size_mb, ''N0''),
+        flush_interval_seconds =
+            FORMAT(dqso.flush_interval_seconds, ''N0''),
+        interval_length_minutes =
+            FORMAT(dqso.interval_length_minutes, ''N0''),
+        max_storage_size_mb =
+            FORMAT(dqso.max_storage_size_mb, ''N0''),
         dqso.stale_query_threshold_days,
-        max_plans_per_query 
-            = FORMAT(dqso.max_plans_per_query, ''N0''),
+        max_plans_per_query =
+            FORMAT(dqso.max_plans_per_query, ''N0''),
         dqso.query_capture_mode_desc,';
         
         IF 
@@ -4187,14 +4213,14 @@ BEGIN
         BEGIN
             SELECT 
                 @sql += N'
-        capture_policy_execution_count 
-            = FORMAT(dqso.capture_policy_execution_count, ''N0''),
-        capture_policy_total_compile_cpu_time_ms 
-            = FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, ''N0''),
-        capture_policy_total_execution_cpu_time_ms 
-            = FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, ''N0''),
-        capture_policy_stale_threshold_hours 
-            = FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),';
+        capture_policy_execution_count =
+            FORMAT(dqso.capture_policy_execution_count, ''N0''),
+        capture_policy_total_compile_cpu_time_ms =
+            FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, ''N0''),
+        capture_policy_total_execution_cpu_time_ms =
+           FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, ''N0''),
+        capture_policy_stale_threshold_hours =
+            FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),';
         END;
     
     SELECT 
