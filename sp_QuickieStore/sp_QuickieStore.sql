@@ -881,17 +881,31 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         UPDATE tp
             SET tp.end_time = GETDATE()
         FROM #troubleshoot_performance AS tp
-        WHERE current_table = @current_table
+        WHERE tp.current_table = @current_table
         OPTION(RECOMPILE);',
     @xml_info = N'
         SELECT
-            ''current_table'' = 
-                @current_table,
-            ''query_length'' = 
-                FORMAT(LEN(@sql), ''N0''),
-            ''processing-instruction(statement_text)'' =
-                @sql            
-        FOR XML PATH('''')
+            current_query = 
+                CONVERT
+                (
+                    xml,
+                    x.current_query
+                )
+        FROM
+        (
+            SELECT
+                ''runtime_ms'' =
+                    tp.runtime_ms,
+                ''current_table'' = 
+                    tp.current_table,
+                ''query_length'' = 
+                    FORMAT(LEN(@sql), ''N0''),
+                ''processing-instruction(statement_text)'' =
+                    @sql
+            FROM #troubleshoot_performance AS tp
+            WHERE tp.current_table = @current_table        
+            FOR XML PATH('''')
+        ) AS x (current_query)
         OPTION(RECOMPILE);',
     @rc = 0;
 
@@ -1078,12 +1092,12 @@ OPTION(RECOMPILE);' + @nc10;
           N'@current_table nvarchar(100)',
             @current_table;
 
-    EXEC sys.sp_executesql
-        @xml_info,
-      N'@sql nvarchar(max),
-        @current_table nvarchar(100)',
-        @sql,
-        @current_table;
+        EXEC sys.sp_executesql
+            @xml_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
     
     END;
     
@@ -2781,32 +2795,6 @@ OPTION(RECOMPILE);' + @nc10;
     
     END;
 
-END;
-
-IF @troubleshoot_performance = 1
-BEGIN
-
-    IF EXISTS
-       (
-          SELECT
-              1/0
-          FROM #troubleshoot_performance AS qcs
-       )
-    BEGIN
-        SELECT
-            table_name = 
-                '#troubleshoot_performance',
-            tp.*
-        FROM #troubleshoot_performance AS tp
-        ORDER BY tp.id
-        OPTION(RECOMPILE);
-    END;
-    ELSE
-    BEGIN
-        SELECT
-            result = 
-                '#troubleshoot_performance is empty';
-    END;
 END;
 
 /* 
@@ -4748,6 +4736,28 @@ BEGIN
         SELECT
             result = 
                 '#query_context_settings is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #troubleshoot_performance AS qcs
+       )
+    BEGIN
+        SELECT
+            table_name = 
+                '#troubleshoot_performance',
+            tp.*
+        FROM #troubleshoot_performance AS tp
+        ORDER BY tp.id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result = 
+                '#troubleshoot_performance is empty';
     END;
 
     RETURN;
