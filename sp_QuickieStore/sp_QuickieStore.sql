@@ -99,7 +99,7 @@ These are for your outputs.
 */
 SELECT 
     @version = '1', 
-    @version_date = '20210420';
+    @version_date = '20210423';
 
 /* 
 Helpful section! For help.
@@ -901,6 +901,38 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             ) AS current_query
         OPTION(RECOMPILE);',
     @rc = 0;
+
+/*
+Some parameters can't be NULL,
+and some shouldn't be empty strings
+*/
+SELECT
+    @sort_order = 
+        ISNULL(@sort_order, 'cpu'),
+    @top = 
+        ISNULL(@top, 10),
+    @expert_mode = 
+        ISNULL(@expert_mode, 0),
+    @procedure_schema = 
+        NULLIF(@procedure_schema, ''),
+    @procedure_name = 
+        NULLIF(@procedure_name, ''),
+    @include_plan_ids = 
+        NULLIF(@include_plan_ids, ''),
+    @include_query_ids = 
+        NULLIF(@include_query_ids, ''),
+    @ignore_plan_ids = 
+        NULLIF(@ignore_plan_ids, ''),
+    @ignore_query_ids = 
+        NULLIF(@ignore_query_ids, ''),
+    @format_output = 
+        ISNULL(@format_output, 0),
+    @help = 
+        ISNULL(@help, 0),
+    @debug = 
+        ISNULL(@debug, 0),
+    @troubleshoot_performance = 
+        ISNULL(@troubleshoot_performance, 0);
 
 /* 
 Let's make sure things will work 
