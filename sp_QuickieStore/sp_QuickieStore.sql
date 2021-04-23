@@ -99,7 +99,7 @@ These are for your outputs.
 */
 SELECT 
     @version = '1', 
-    @version_date = '20210420';
+    @version_date = '20210423';
 
 /* 
 Helpful section! For help.
@@ -284,7 +284,7 @@ Plans we'll be working on
 CREATE TABLE
     #distinct_plans
 (
-    plan_id bigint NOT NULL
+    plan_id bigint PRIMARY KEY
 );
 
 /* 
@@ -293,7 +293,7 @@ Hold plan_ids for procedures we're searching
 CREATE TABLE
     #procedure_plans
 (
-    plan_id bigint NOT NULL
+    plan_id bigint PRIMARY KEY
 );
 
 /* 
@@ -302,7 +302,7 @@ Hold plan_ids for plans we want
 CREATE TABLE
     #include_plan_ids
 (
-    plan_id bigint NOT NULL
+    plan_id bigint PRIMARY KEY
 );
 
 /* 
@@ -311,7 +311,7 @@ Hold query_ids for plans we want
 CREATE TABLE
     #include_query_ids
 (
-    query_id bigint NOT NULL
+    query_id bigint PRIMARY KEY
 );
 
 /* 
@@ -320,7 +320,7 @@ Hold plan_ids for ignored plans
 CREATE TABLE
     #ignore_plan_ids
 (
-    plan_id bigint NOT NULL
+    plan_id bigint PRIMARY KEY
 );
 
 /* 
@@ -329,7 +329,7 @@ Hold query_ids for ignored plans
 CREATE TABLE
     #ignore_query_ids
 (
-    query_id bigint NOT NULL
+    query_id bigint PRIMARY KEY
 );
 
 /* 
@@ -338,7 +338,7 @@ Hold plan_ids for matching query text
 CREATE TABLE
     #query_text_search
 (
-    plan_id bigint NOT NULL
+    plan_id bigint PRIMARY KEY
 );
 
 /* 
@@ -347,7 +347,7 @@ Index and statistics entries to avoid
 CREATE TABLE
     #maintenance_plans
 (
-    plan_id bigint NOT NULL
+    plan_id bigint PRIMARY KEY
 );
 
 /* 
@@ -734,7 +734,7 @@ DECLARE
     @current_table nvarchar(100),
     @troubleshoot_insert nvarchar(MAX),
     @troubleshoot_update nvarchar(MAX),
-    @xml_info nvarchar(MAX),
+    @troubleshoot_info nvarchar(MAX),
     @rc bigint;
 
 /* 
@@ -822,7 +822,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @query_store_exists = 0,
     @current_table = N'',
     @string_split = N'
-    SELECT 
+    SELECT DISTINCT
         LTRIM
         (
             RTRIM
@@ -881,19 +881,58 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         UPDATE tp
             SET tp.end_time = GETDATE()
         FROM #troubleshoot_performance AS tp
-        WHERE current_table = @current_table
+        WHERE tp.current_table = @current_table
         OPTION(RECOMPILE);',
-    @xml_info = N'
+    @troubleshoot_info = N'
         SELECT
-            ''current_table'' = 
-                @current_table,
-            ''query_length'' = 
-                FORMAT(LEN(@sql), ''N0''),
-            ''processing-instruction(statement_text)'' =
-                @sql            
-        FOR XML PATH('''')
+            (
+                SELECT
+                    ''runtime_ms'' =
+                        tp.runtime_ms,
+                    ''current_table'' = 
+                        tp.current_table,
+                    ''query_length'' = 
+                        FORMAT(LEN(@sql), ''N0''),
+                    ''processing-instruction(statement_text)'' =
+                        @sql
+                FROM #troubleshoot_performance AS tp
+                WHERE tp.current_table = @current_table        
+                FOR XML PATH(''''), TYPE
+            ) AS current_query
         OPTION(RECOMPILE);',
     @rc = 0;
+
+/*
+Some parameters can't be NULL,
+and some shouldn't be empty strings
+*/
+SELECT
+    @sort_order = 
+        ISNULL(@sort_order, 'cpu'),
+    @top = 
+        ISNULL(@top, 10),
+    @expert_mode = 
+        ISNULL(@expert_mode, 0),
+    @procedure_schema = 
+        NULLIF(@procedure_schema, ''),
+    @procedure_name = 
+        NULLIF(@procedure_name, ''),
+    @include_plan_ids = 
+        NULLIF(@include_plan_ids, ''),
+    @include_query_ids = 
+        NULLIF(@include_query_ids, ''),
+    @ignore_plan_ids = 
+        NULLIF(@ignore_plan_ids, ''),
+    @ignore_query_ids = 
+        NULLIF(@ignore_query_ids, ''),
+    @format_output = 
+        ISNULL(@format_output, 0),
+    @help = 
+        ISNULL(@help, 0),
+    @debug = 
+        ISNULL(@debug, 0),
+    @troubleshoot_performance = 
+        ISNULL(@troubleshoot_performance, 0);
 
 /* 
 Let's make sure things will work 
@@ -1006,7 +1045,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -1078,12 +1117,12 @@ OPTION(RECOMPILE);' + @nc10;
           N'@current_table nvarchar(100)',
             @current_table;
 
-    EXEC sys.sp_executesql
-        @xml_info,
-      N'@sql nvarchar(max),
-        @current_table nvarchar(100)',
-        @sql,
-        @current_table;
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
     
     END;
     
@@ -1237,7 +1276,7 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     
         EXEC sys.sp_executesql
-            @xml_info,
+            @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
             @sql,
@@ -1389,7 +1428,7 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table;
 
             EXEC sys.sp_executesql
-                @xml_info,
+                @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
                 @sql,
@@ -1478,7 +1517,7 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table;
 
             EXEC sys.sp_executesql
-                @xml_info,
+                @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
                 @sql,
@@ -1568,7 +1607,7 @@ WHERE EXISTS
                       1/0
                   FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
                   WHERE qsqt.query_text_id = qsq.query_text_id
-                  AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 LIKE @query_text_search
+                  AND   qsqt.query_sql_text LIKE @query_text_search
               )
       )
 OPTION(RECOMPILE);' + @nc10;    
@@ -1596,7 +1635,7 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
 
         EXEC sys.sp_executesql
-            @xml_info,
+            @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
             @sql,
@@ -1648,10 +1687,10 @@ WHERE NOT EXISTS
               JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
                   ON qsqt.query_text_id = qsq.query_text_id
               WHERE qsq.query_id = qsp.query_id
-              AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''ALTER INDEX%''
-              AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE%INDEX%''
-              AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''CREATE STATISTICS%''
-              AND   qsqt.query_sql_text COLLATE Latin1_General_100_BIN2 NOT LIKE ''UPDATE STATISTICS%''
+              AND   qsqt.query_sql_text NOT LIKE ''ALTER INDEX%''
+              AND   qsqt.query_sql_text NOT LIKE ''CREATE%INDEX%''
+              AND   qsqt.query_sql_text NOT LIKE ''CREATE STATISTICS%''
+              AND   qsqt.query_sql_text NOT LIKE ''UPDATE STATISTICS%''
           )
 OPTION(RECOMPILE);' + @nc10;
        
@@ -1676,7 +1715,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -1778,7 +1817,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -1960,7 +1999,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -2034,7 +2073,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -2179,7 +2218,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -2305,7 +2344,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -2376,7 +2415,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -2476,7 +2515,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -2540,7 +2579,7 @@ BEGIN
             @current_table;
 
         EXEC sys.sp_executesql
-            @xml_info,
+            @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
             @sql,
@@ -2672,7 +2711,7 @@ BEGIN
         @current_table;
 
     EXEC sys.sp_executesql
-        @xml_info,
+        @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
         @sql,
@@ -2773,7 +2812,7 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
 
         EXEC sys.sp_executesql
-            @xml_info,
+            @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
             @sql,
@@ -2781,32 +2820,6 @@ OPTION(RECOMPILE);' + @nc10;
     
     END;
 
-END;
-
-IF @troubleshoot_performance = 1
-BEGIN
-
-    IF EXISTS
-       (
-          SELECT
-              1/0
-          FROM #troubleshoot_performance AS qcs
-       )
-    BEGIN
-        SELECT
-            table_name = 
-                '#troubleshoot_performance',
-            tp.*
-        FROM #troubleshoot_performance AS tp
-        ORDER BY tp.id
-        OPTION(RECOMPILE);
-    END;
-    ELSE
-    BEGIN
-        SELECT
-            result = 
-                '#troubleshoot_performance is empty';
-    END;
 END;
 
 /* 
@@ -3511,17 +3524,43 @@ FROM
 ) AS x
 WHERE x.n = 1
 ORDER BY ' +
-    CASE @sort_order  
-         WHEN 'cpu' THEN N'x.avg_cpu_time_ms'
-         WHEN 'logical reads' THEN N'x.avg_logical_io_reads_mb'
-         WHEN 'physical reads' THEN N'x.avg_physical_io_reads_mb'
-         WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
-         WHEN 'duration' THEN N'x.avg_duration_ms'
-         WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
-         WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
-         WHEN 'executions' THEN N'x.count_executions'
-         ELSE N'x.avg_cpu_time_ms'
-    END + N' DESC
+    CASE @format_output
+         WHEN 0 
+         THEN
+             CASE @sort_order  
+                  WHEN 'cpu' THEN N'x.avg_cpu_time_ms'
+                  WHEN 'logical reads' THEN N'x.avg_logical_io_reads_mb'
+                  WHEN 'physical reads' THEN N'x.avg_physical_io_reads_mb'
+                  WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
+                  WHEN 'duration' THEN N'x.avg_duration_ms'
+                  WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
+                  WHEN 'tempdb' THEN 
+                                CASE WHEN @new = 1 
+                                     THEN N'x.avg_tempdb_space_used_mb' 
+                                     ELSE N'x.avg_cpu_time' 
+                                END
+                  WHEN 'executions' THEN N'x.count_executions'
+                  ELSE N'x.avg_cpu_time_ms'
+             END
+         WHEN 1 
+         THEN
+             CASE @sort_order  
+                  WHEN 'cpu' THEN N'CONVERT(money, x.avg_cpu_time_ms)'
+                  WHEN 'logical reads' THEN N'CONVERT(money, x.avg_logical_io_reads_mb)'
+                  WHEN 'physical reads' THEN N'CONVERT(money, x.avg_physical_io_reads_mb)'
+                  WHEN 'writes' THEN N'CONVERT(money, x.avg_logical_io_writes_mb)'
+                  WHEN 'duration' THEN N'CONVERT(money, x.avg_duration_ms)'
+                  WHEN 'memory' THEN N'CONVERT(money, x.avg_query_max_used_memory_mb)'
+                  WHEN 'tempdb' THEN 
+                                CASE WHEN @new = 1 
+                                     THEN N'CONVERT(money, x.avg_tempdb_space_used_mb)' 
+                                     ELSE N'CONVERT(money, x.avg_cpu_time)' 
+                                END
+                  WHEN 'executions' THEN N'CONVERT(money, x.count_executions)'
+                  ELSE N'CONVERT(money, x.avg_cpu_time_ms)'
+             END             
+    END
+             + N' DESC
 OPTION(RECOMPILE);' + @nc10; 
     
     IF @debug = 1 
@@ -4174,17 +4213,17 @@ BEGIN
         dqso.desired_state_desc,
         dqso.actual_state_desc,
         dqso.readonly_reason,
-        current_storage_size_mb 
-            = FORMAT(dqso.current_storage_size_mb, ''N0''),
-        flush_interval_seconds 
-            = FORMAT(dqso.flush_interval_seconds, ''N0''),
-        interval_length_minutes 
-            = FORMAT(dqso.interval_length_minutes, ''N0''),
-        max_storage_size_mb 
-            = FORMAT(dqso.max_storage_size_mb, ''N0''),
+        current_storage_size_mb =
+            FORMAT(dqso.current_storage_size_mb, ''N0''),
+        flush_interval_seconds =
+            FORMAT(dqso.flush_interval_seconds, ''N0''),
+        interval_length_minutes =
+            FORMAT(dqso.interval_length_minutes, ''N0''),
+        max_storage_size_mb =
+            FORMAT(dqso.max_storage_size_mb, ''N0''),
         dqso.stale_query_threshold_days,
-        max_plans_per_query 
-            = FORMAT(dqso.max_plans_per_query, ''N0''),
+        max_plans_per_query =
+            FORMAT(dqso.max_plans_per_query, ''N0''),
         dqso.query_capture_mode_desc,';
         
         IF 
@@ -4206,14 +4245,14 @@ BEGIN
         BEGIN
             SELECT 
                 @sql += N'
-        capture_policy_execution_count 
-            = FORMAT(dqso.capture_policy_execution_count, ''N0''),
-        capture_policy_total_compile_cpu_time_ms 
-            = FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, ''N0''),
-        capture_policy_total_execution_cpu_time_ms 
-            = FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, ''N0''),
-        capture_policy_stale_threshold_hours 
-            = FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),';
+        capture_policy_execution_count =
+            FORMAT(dqso.capture_policy_execution_count, ''N0''),
+        capture_policy_total_compile_cpu_time_ms =
+            FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, ''N0''),
+        capture_policy_total_execution_cpu_time_ms =
+           FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, ''N0''),
+        capture_policy_stale_threshold_hours =
+            FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),';
         END;
     
     SELECT 
@@ -4391,7 +4430,7 @@ BEGIN
         troubleshoot_update = 
             @troubleshoot_update,
         xml_info = 
-            @xml_info,
+            @troubleshoot_info,
         rc = 
             @rc;
     
@@ -4748,6 +4787,28 @@ BEGIN
         SELECT
             result = 
                 '#query_context_settings is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #troubleshoot_performance AS qcs
+       )
+    BEGIN
+        SELECT
+            table_name = 
+                '#troubleshoot_performance',
+            tp.*
+        FROM #troubleshoot_performance AS tp
+        ORDER BY tp.id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result = 
+                '#troubleshoot_performance is empty';
     END;
 
     RETURN;
