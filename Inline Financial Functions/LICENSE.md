@@ -1,0 +1,7 @@
+Everything in this folder is presented without any license whatsoever. These are common financial calculations used in a wide variety of industries, 
+and one of my clients was nice enough to let me publish work I did for them here for general use.
+
+I take no credit for the code presented here, aside from putting it into inline table valued functions to avoid the performance issues caused by scalar valued functions.
+
+All of the calculations were put together by other people, and the original source is unknown to me. If you're reading this and can provide attribution, 
+please open an issue with the details.
