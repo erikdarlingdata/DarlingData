@@ -382,7 +382,7 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    all_plan_ids varchar(1000),
+    all_plan_ids varchar(max),
     plan_group_id bigint NULL,
     engine_version nvarchar(32) NULL,
     compatibility_level smallint NOT NULL,
