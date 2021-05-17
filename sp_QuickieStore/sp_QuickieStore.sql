@@ -87,7 +87,7 @@ IF NOT EXISTS
            1/0
        FROM sys.all_columns AS ac
        WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_stats', N'V')
-       AND   ac.name = N'total_spillsb'
+       AND   ac.name = N'total_spills'
    )
 BEGIN    
     RAISERROR('This procedure only runs on supported versions of SQL Server
