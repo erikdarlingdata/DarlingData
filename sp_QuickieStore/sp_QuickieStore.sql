@@ -87,10 +87,15 @@ IF NOT EXISTS
            1/0
        FROM sys.all_columns AS ac
        WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_stats', N'V')
-       AND   ac.name = N'total_spills'
+       AND   ac.name = N'total_spillsb'
    )
 BEGIN    
-    RAISERROR('This procedure only runs on supported versions of SQL Server', 11, 1) WITH NOWAIT;
+    RAISERROR('This procedure only runs on supported versions of SQL Server
+* 2016 SP2+
+* 2017 CU3+
+* 2019+
+* Probably Azure', 11, 1) WITH NOWAIT;
+
     RETURN;
 END;
 
@@ -215,7 +220,7 @@ BEGIN
         results = 
            'results returned at the end of the procedure:' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Runtime Stats: data from query_store_runtime_stats, along with query plan, query text, wait stats (2017+), and parent object' UNION ALL
+    SELECT 'Runtime Stats: data from query_store_runtime_stats, along with query plan, query text, wait stats (2017+, when enabled), and parent object' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Compilation Stats (expert mode only): data from query_store_query about compilation metrics' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
@@ -236,7 +241,7 @@ BEGIN
     SELECT 
         limitations = 
            'frigid shortcomings:'  UNION ALL
-    SELECT 'you need to be on at least SQL Server 2016 or higher to run this' UNION ALL
+    SELECT 'you need to be on at least SQL Server 2016 SP2, 2017 CU3, or any higher version to run this' UNION ALL
     SELECT 'if you''re on azure sql db then you''ll need to be in compat level 130' UNION ALL
     SELECT 'i do not currently support synapse or edge or other memes';
 
@@ -4319,13 +4324,19 @@ BEGIN CATCH
     /*
     Where the error happened and the message
     */
-    RAISERROR ('error while %s', 11, 1, @current_table) WITH NOWAIT;
-    
-    /*
-    Query that caused the error
-    */
-    RAISERROR ('offending query:', 10, 1) WITH NOWAIT;
-    RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
+    IF @current_table IS NOT NULL
+    BEGIN
+        RAISERROR ('error while %s', 11, 1, @current_table) WITH NOWAIT;
+    END
+        
+        /*
+        Query that caused the error
+        */
+    IF @sql IS NOT NULL
+    BEGIN
+        RAISERROR ('offending query:', 10, 1) WITH NOWAIT;
+        RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
+    END;
 
     /*
     This reliably throws the actual error from dynamic SQL
