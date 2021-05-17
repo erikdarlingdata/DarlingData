@@ -263,6 +263,8 @@ SELECT @version = '1.40', @versiondate = '20210517';
         SET @mem_sql += N'
         SELECT 
             deqmg.session_id,
+            database_name = 
+                DB_NAME(deqp.dbid),
             deqmg.request_time,
             deqmg.grant_time,
             requested_memory_mb = 
@@ -315,7 +317,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
         ORDER BY deqmg.request_time
         OPTION(MAXDOP 1, RECOMPILE);
         ';
-        
+
         EXEC sys.sp_executesql @mem_sql;
         
         /*Resource semaphore info*/
