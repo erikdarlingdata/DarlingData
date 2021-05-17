@@ -149,6 +149,8 @@ SELECT @version = '1.40', @versiondate = '20210517';
             and top non-buffer pool consumers
         */
         SET @pool_sql += N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
         SELECT 
             memory_consumer = 
                 N''Buffer Pool Memory'',
@@ -261,6 +263,8 @@ SELECT @version = '1.40', @versiondate = '20210517';
         END;    
         
         SET @mem_sql += N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
         SELECT 
             deqmg.session_id,
             database_name = 
