@@ -5,5 +5,3 @@ I take no credit for the code presented here, aside from putting it into inline 
 
 All of the calculations were put together by other people, and the original source is unknown to me. If you're reading this and can provide attribution, 
 please open an issue with the details. 
-
-Please review the code carefully for logical correctness, usage applicability, and adherence to the regulations of your industry. I can make no guarantees that these will conform to your specific needs, legal or logical.
