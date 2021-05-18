@@ -2820,6 +2820,12 @@ WHILE 1 = 1
          @the_sleeper_must_awaken;
     END;
 
+    IF 
+    (
+        SELECT
+            COUNT_BIG(*)
+        FROM #human_events_worker AS hew
+    ) = 0
     BEGIN
     
         /*Insert any sessions we find*/
@@ -3859,7 +3865,7 @@ OPTION (RECOMPILE);'
     END;
 
 
-/*This session handles deleting data from tables older than the retention period*/
+/*This section handles deleting data from tables older than the retention period*/
 /*The idea is to only check once an hour so we're not constantly purging*/
 SET @Time = SYSDATETIME();
 IF 
