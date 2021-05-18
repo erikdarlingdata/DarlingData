@@ -429,8 +429,7 @@ DECLARE
     @cleanup_sessions nvarchar(MAX) = N'',
     @cleanup_tables nvarchar(MAX) = N'',
     @drop_holder nvarchar(MAX) = N'',
-    @cleanup_views nvarchar(MAX) = N'',
-    @msg nvarchar(2048) = N'';
+    @cleanup_views nvarchar(MAX) = N'';
 
 
 IF 
@@ -3965,22 +3964,7 @@ BEGIN CATCH
     
     IF @@TRANCOUNT > 0 
         ROLLBACK TRANSACTION;
-    
-    SELECT  
-         @msg += 
-             N'Error number ' + 
-               RTRIM(ERROR_NUMBER()) +  
-               N' with severity ' + 
-               RTRIM(ERROR_SEVERITY()) +  
-               N' and a state of ' + 
-               RTRIM(ERROR_STATE()) +  
-               N' in procedure ' +  
-               ERROR_PROCEDURE() +  
-               N' on line ' +   
-               RTRIM(ERROR_LINE()) + 
-               NCHAR(10) + 
-               ERROR_MESSAGE(); 
-          
+              
         /*Only try to drop a session if we're not outputting*/
         IF ( @output_database_name = N''
               AND @output_schema_name = N'' )
@@ -3994,7 +3978,6 @@ BEGIN CATCH
             EXEC (@drop_sql);
         END;
 
-        RAISERROR (@msg, 11, 1) WITH NOWAIT;
         THROW;
 
         RETURN -138;
