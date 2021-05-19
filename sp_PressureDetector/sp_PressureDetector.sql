@@ -25,7 +25,7 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
-SELECT @version = '1.40', @versiondate = '20210517';
+SELECT @version = '1.50', @versiondate = '20210519';
 
 /*
     Copyright (c) 2021 Darling Data, LLC 
@@ -158,7 +158,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
             memory_used_gb = 
                 CONVERT
                 (
-                    DECIMAL(5, 2),
+                    decimal(9, 2),
                     SUM
                     (
                         ' +
@@ -189,7 +189,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
             dopc.counter_name AS memory_consumer,
             CONVERT
             (
-                DECIMAL(5, 2), 
+                decimal(9, 2), 
                 dopc.cntr_value / 1024. / 1024.
             ) AS stolen_memory_gb
         FROM sys.dm_os_performance_counters AS dopc
@@ -208,7 +208,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
                 memory_used_gb =
                     CONVERT
                     (
-                        DECIMAL(5, 2), 
+                        decimal(9, 2), 
                         SUM
                         (
                         ' +
@@ -384,7 +384,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
                     runnable_pct = 
                         CONVERT
                         (
-                            decimal(5,2),
+                            decimal(9,2),
                             (
                                 x.runnable / 
                                     (1. * NULLIF(x.total, 0))
