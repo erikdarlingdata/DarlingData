@@ -16,31 +16,38 @@ It's not a replacement for index analysis tools. There's just less overhead and 
 
 IF OBJECT_ID('dbo.WhatsUpIndexes') IS NULL
 BEGIN
-DECLARE @vsql NVARCHAR(MAX) = 
-    N'
-CREATE VIEW dbo.WhatsUpIndexes
-    AS
-SELECT 1 AS x;
-    ';
-
-PRINT @vsql;
-EXEC (@vsql);
+    DECLARE 
+        @vsql nvarchar(MAX) = N'
+    CREATE VIEW dbo.WhatsUpIndexes
+        AS
+    SELECT 
+        x = 1;';
+    
+    PRINT @vsql;
+    EXEC (@vsql);
 END;
 GO 
 
 
 ALTER VIEW dbo.WhatsUpIndexes
 AS
-SELECT TOP ( 2147483647 )
-       N'WhatsUpIndexes' AS view_name,
-       DB_NAME() AS database_name,
-       s.name AS schema_name,
-       OBJECT_NAME(ps.object_id) AS table_name,
-       i.name AS index_name,
-       ( ps.reserved_page_count * 8. / 1024. ) AS in_row_pages_mb,
-       ( ps.lob_reserved_page_count * 8. / 1024. ) AS lob_pages_mb,
-       ps.in_row_used_page_count,
-       ps.row_count
+SELECT TOP (2147483647)
+    view_name = 
+        'WhatsUpIndexes',
+    database_name = 
+        DB_NAME(),
+    schema_name =
+        s.name,
+    table_name = 
+        OBJECT_NAME(ps.object_id),
+    index_name = 
+        i.name,
+    in_row_pages_mb = 
+        ( ps.reserved_page_count * 8. / 1024. ),
+    lob_pages_mb = 
+        ( ps.lob_reserved_page_count * 8. / 1024. ),
+    ps.in_row_used_page_count,
+    ps.row_count
 FROM sys.dm_db_partition_stats AS ps
 JOIN sys.objects AS so
     ON  ps.object_id = so.object_id
@@ -50,8 +57,9 @@ JOIN sys.schemas AS s
     ON s.schema_id = so.schema_id
 JOIN sys.indexes AS i
     ON  ps.object_id = i.object_id
-    AND ps.index_id = i.index_id
-ORDER BY ps.object_id,
-         ps.index_id,
-         ps.partition_number;
+    AND ps.index_id  = i.index_id
+ORDER BY 
+    ps.object_id,
+    ps.index_id,
+    ps.partition_number;
 GO

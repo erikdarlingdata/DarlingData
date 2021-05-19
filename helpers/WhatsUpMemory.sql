@@ -19,15 +19,15 @@ The dm_os_buffer_descriptors DMV especially can be really slow at times
 
 IF OBJECT_ID('dbo.WhatsUpMemory') IS NULL
 BEGIN
-DECLARE @vsql NVARCHAR(MAX) = 
-    N'
-CREATE VIEW dbo.WhatsUpMemory
-    AS
-SELECT 1 AS x;
-    ';
-
-PRINT @vsql;
-EXEC (@vsql);
+    DECLARE 
+        @vsql nvarchar(MAX) = N'
+    CREATE VIEW dbo.WhatsUpMemory
+        AS
+    SELECT 
+        x = 1;';
+    
+    PRINT @vsql;
+    EXEC (@vsql);
 END;
 GO 
 
@@ -35,9 +35,12 @@ GO
 ALTER VIEW dbo.WhatsUpMemory
 AS
 SELECT TOP (2147483647)
-    N'WhatsUpMemory' AS view_name,
-    DB_NAME() AS database_name,
-    SCHEMA_NAME(x.schema_id) AS schema_name,
+    view_name = 
+        'WhatsUpMemory',
+    database_name =
+        DB_NAME(),
+    schema_name = 
+        SCHEMA_NAME(x.schema_id),
     x.object_name,
     x.index_name,    
     in_row_pages_mb = 
@@ -64,17 +67,19 @@ FROM
 (
     SELECT       
         o.schema_id,
-        o.name AS object_name,
-        i.name AS index_name,
+        object_name = 
+            o.name,
+        index_name = 
+            i.name,
         au.type,
         au.allocation_unit_id 
     FROM sys.allocation_units AS au
-    INNER JOIN sys.partitions AS p
+    JOIN sys.partitions AS p
         ON au.container_id = p.hobt_id 
         AND au.type =1
-    INNER JOIN sys.objects AS o
+    JOIN sys.objects AS o
         ON p.object_id = o.object_id
-    INNER JOIN sys.indexes AS i
+    JOIN sys.indexes AS i
         ON  o.object_id = i.object_id
         AND p.index_id = i.index_id
     WHERE au.type > 0
@@ -84,17 +89,19 @@ FROM
     
     SELECT       
         o.schema_id,
-        o.name AS object_name,
-        i.name AS index_name,
+        object_name = 
+            o.name,
+        index_name = 
+            i.name,
         au.type,
         au.allocation_unit_id 
     FROM sys.allocation_units AS au
-    INNER JOIN sys.partitions AS p
+    JOIN sys.partitions AS p
         ON au.container_id = p.hobt_id 
         AND au.type = 3
-    INNER JOIN sys.objects AS o
+    JOIN sys.objects AS o
         ON p.object_id = o.object_id
-    INNER JOIN sys.indexes AS i
+    JOIN sys.indexes AS i
         ON  o.object_id = i.object_id
         AND p.index_id = i.index_id
     WHERE au.type > 0
@@ -104,17 +111,19 @@ FROM
     
     SELECT       
         o.schema_id,
-        o.name AS object_name,
-        i.name AS index_name,
+        object_name = 
+            o.name,
+        index_name = 
+            i.name,
         au.type,
         au.allocation_unit_id 
     FROM sys.allocation_units AS au
-    INNER JOIN sys.partitions AS p
+    JOIN sys.partitions AS p
         ON au.container_id = p.partition_id 
         AND au.type = 2
-    INNER JOIN sys.objects AS o
+    JOIN sys.objects AS o
         ON p.object_id = o.object_id
-    INNER JOIN sys.indexes AS i
+    JOIN sys.indexes AS i
         ON  o.object_id = i.object_id
         AND p.index_id = i.index_id
     WHERE au.type > 0
@@ -128,4 +137,3 @@ GROUP BY
     x.index_name
 ORDER BY COUNT_BIG(*) DESC;
 GO
-
