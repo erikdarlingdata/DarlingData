@@ -23,6 +23,17 @@ SOFTWARE.
 */
 
 
+/*
+
+Example executions
+
+EXEC dbo.make_big_stack_cs @loops = 25, @truncate_tables = 1, @count_when_done = 1, @rebuild_when_done = 1;
+
+EXEC dbo.make_big_stack_cs @loops = 25, @truncate_tables = 0, @count_when_done = 1, @rebuild_when_done = 1;
+
+*/
+
+
 /*Assumes this database exists and has the right tables in it.*/
 USE StackOverflowCS;
 /*Just to be sure*/
@@ -30,27 +41,31 @@ ALTER DATABASE StackOverflowCS SET RECOVERY SIMPLE;
 GO 
 
 /*Creating a temporary proc for now*/
-CREATE OR ALTER PROCEDURE dbo.make_big_stack_cs(@loops INT = 1,
-                                                @truncate_tables BIT = 1,
-							                    @rebuild_when_done BIT = 1,
-							                    @count_when_done BIT = 1)
+CREATE OR ALTER PROCEDURE dbo.make_big_stack_cs
+(
+   @loops int = 1,
+   @truncate_tables bit = 1,
+   @rebuild_when_done bit = 1,
+   @count_when_done bit = 1
+)
 AS 
 BEGIN
 SET NOCOUNT ON;
 
-DECLARE @i INT = 1; --Loop counter
-DECLARE @umaxid BIGINT = 0; --Max Id in Users
-DECLARE @bmaxid BIGINT = 0; --Max Id in Badges
-DECLARE @cmaxid BIGINT = 0; --Max Id in Comments
-DECLARE @pmaxid BIGINT = 0; --Max Id in Posts
-DECLARE @vmaxid BIGINT = 0; --Max Id in Votes
-DECLARE @msg NVARCHAR(2000) = N''; --For RAISERROR
-DECLARE @starttime DATETIME = 1; --Timing things
-DECLARE @rc NVARCHAR(20) = N'' --Row counts
-DECLARE @loopstart DATETIME= 1; --Timing loops
-DECLARE @loopsec NVARCHAR(20) = N''; --Loop time as a string for RAISERROR
-DECLARE @looprows BIGINT = 0; --Numbers of rows per loop total
-DECLARE @looprowsmsg NVARCHAR(20) = N''; --Numbers of rows per loop total as a string for RAISERROR
+DECLARE 
+    @i int = 1, --Loop counter
+    @umaxid bigint = 0, --Max Id in Users
+    @bmaxid bigint = 0, --Max Id in Badges
+    @cmaxid bigint = 0, --Max Id in Comments
+    @pmaxid bigint = 0, --Max Id in Posts
+    @vmaxid bigint = 0, --Max Id in Votes
+    @msg nvarchar(2000) = N'', --For RAISERROR
+    @starttime datetime = 1, --Timing things
+    @rc nvarchar(20) = N'', --Row counts
+    @loopstart datetime= 1, --Timing loops
+    @loopsec nvarchar(20) = N'', --Loop time as a string for RAISERROR
+    @looprows bigint = 0, --Numbers of rows per loop total
+    @looprowsmsg nvarchar(20) = N''; --Numbers of rows per loop total as a string for RAISERROR
 
 IF @truncate_tables = 1
 BEGIN
@@ -65,166 +80,192 @@ END;
 WHILE @i <= @loops
     BEGIN
         
-		SET @loopstart = SYSDATETIME();
+        SET @loopstart = SYSDATETIME();
 
-		IF (@i > 1 
-		       OR @truncate_tables = 0)--If we're not truncating first, we should check base tables
-		BEGIN
-	        RAISERROR('Getting new max Ids...', 0, 1) WITH NOWAIT;
-            SELECT @umaxid = ISNULL(MAX(u.Id) + 2, 0)
-			/*Need to offset because there's a -1 in Id*/
-			/*If the table is empty it doesn't matter because MAX returns a NULL*/
+        IF 
+        (
+            @i > 1 
+              OR @truncate_tables = 0
+        )--If we're not truncating first, we should check base tables
+        BEGIN
+            RAISERROR('Getting new max Ids...', 0, 1) WITH NOWAIT;
+            
+            SELECT 
+                @umaxid = ISNULL(MAX(u.Id) + 2, 0)
+            /*Need to offset because there's a -1 in Id*/
+            /*If the table is empty it doesn't matter because MAX returns a NULL*/
             FROM StackOverflowCS.dbo.Users AS u;
             
-            SELECT @bmaxid = ISNULL(MAX(b.Id), 0)
+            SELECT 
+                @bmaxid = ISNULL(MAX(b.Id), 0)
             FROM StackOverflowCS.dbo.Badges AS b;
             
-            SELECT @cmaxid = ISNULL(MAX(c.Id), 0)
+            SELECT 
+                @cmaxid = ISNULL(MAX(c.Id), 0)
             FROM StackOverflowCS.dbo.Comments AS c;
             
-            SELECT @pmaxid = ISNULL(MAX(p.Id), 0)
+            SELECT 
+                @pmaxid = ISNULL(MAX(p.Id), 0)
             FROM StackOverflowCS.dbo.Posts AS p;
             
-            SELECT @vmaxid = ISNULL(MAX(v.Id), 0)
+            SELECT 
+                @vmaxid = ISNULL(MAX(v.Id), 0)
             FROM StackOverflowCS.dbo.Votes AS v;
-		END
+        END;
 
-		RAISERROR('Inserting to Users...', 0, 1) WITH NOWAIT;
-		SET @starttime = SYSDATETIME();
+        RAISERROR('Inserting to Users...', 0, 1) WITH NOWAIT;
+        SET @starttime = SYSDATETIME();
 
-        INSERT StackOverflowCS.dbo.Users WITH (TABLOCKX)
+        INSERT 
+            StackOverflowCS.dbo.Users WITH (TABLOCKX)
         (
             Id, Age, CreationDate, DisplayName, DownVotes, EmailHash, LastAccessDate, 
-        	Location, Reputation, UpVotes, Views, WebsiteUrl, AccountId
+            Location, Reputation, UpVotes, Views, WebsiteUrl, AccountId
         )
-        SELECT u.Id + @umaxid, u.Age, u.CreationDate, u.DisplayName, u.DownVotes, u.EmailHash, u.LastAccessDate, 
-        	   u.Location, u.Reputation, u.UpVotes, u.Views, u.WebsiteUrl, u.AccountId + @umaxid
+        SELECT 
+            u.Id + @umaxid, u.Age, u.CreationDate, u.DisplayName, u.DownVotes, u.EmailHash, u.LastAccessDate, 
+            u.Location, u.Reputation, u.UpVotes, u.Views, u.WebsiteUrl, u.AccountId + @umaxid
         FROM StackOverflow.dbo.Users AS u;
 
-		SET @rc = @@ROWCOUNT;
-		SET @looprows += @rc;
+        SET @rc = @@ROWCOUNT;
+        SET @looprows += @rc;
 
-		SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
-		RAISERROR('Inserting to %s rows to Users took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
+        SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
+        RAISERROR('Inserting to %s rows to Users took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
         
         CHECKPOINT;
         
-		RAISERROR('Inserting to Posts...', 0, 1) WITH NOWAIT;
-		SET @starttime = SYSDATETIME();
+        RAISERROR('Inserting to Posts...', 0, 1) WITH NOWAIT;
+        SET @starttime = SYSDATETIME();
 
-        INSERT StackOverflowCS.dbo.Posts WITH (TABLOCKX)
+        INSERT 
+            StackOverflowCS.dbo.Posts WITH (TABLOCKX)
             (
                 Id, AcceptedAnswerId, AnswerCount, ClosedDate, CommentCount, CommunityOwnedDate, 
                 CreationDate, FavoriteCount, LastActivityDate, LastEditDate, LastEditorDisplayName,
                 LastEditorUserId, OwnerUserId, ParentId, PostTypeId, Score, Tags, ViewCount
             )
-        SELECT  p.Id + @pmaxid, p.AcceptedAnswerId + @pmaxid, p.AnswerCount, p.ClosedDate, p.CommentCount, p.CommunityOwnedDate, 
-                p.CreationDate, p.FavoriteCount, p.LastActivityDate, p.LastEditDate, p.LastEditorDisplayName,
-                p.LastEditorUserId + @umaxid, p.OwnerUserId + @umaxid, p.ParentId + @pmaxid, p.PostTypeId, p.Score, p.Tags, p.ViewCount
+        SELECT  
+            p.Id + @pmaxid, p.AcceptedAnswerId + @pmaxid, p.AnswerCount, p.ClosedDate, p.CommentCount, p.CommunityOwnedDate, 
+            p.CreationDate, p.FavoriteCount, p.LastActivityDate, p.LastEditDate, p.LastEditorDisplayName,
+            p.LastEditorUserId + @umaxid, p.OwnerUserId + @umaxid, p.ParentId + @pmaxid, p.PostTypeId, p.Score, p.Tags, p.ViewCount
         FROM StackOverflow.dbo.Posts AS p;
 
-		SET @rc = @@ROWCOUNT;
-		SET @looprows += @rc;
+        SET @rc = @@ROWCOUNT;
+        SET @looprows += @rc;
 
-		SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
-		RAISERROR('Inserting to %s rows to Posts took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
+        SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
+        RAISERROR('Inserting to %s rows to Posts took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
         
         CHECKPOINT;
         
-		RAISERROR('Inserting to Badges...', 0, 1) WITH NOWAIT;
-		SET @starttime = SYSDATETIME();
+        RAISERROR('Inserting to Badges...', 0, 1) WITH NOWAIT;
+        SET @starttime = SYSDATETIME();
 
-        INSERT StackOverflowCS.dbo.Badges WITH (TABLOCKX)
+        INSERT 
+            StackOverflowCS.dbo.Badges WITH (TABLOCKX)
             ( 
-        	    Id, Name, UserId, Date 
+                Id, Name, UserId, Date 
             )
-        SELECT b.Id + @bmaxid, b.Name, b.UserId + @umaxid, b.Date
+        SELECT 
+            b.Id + @bmaxid, b.Name, b.UserId + @umaxid, b.Date
         FROM StackOverflow.dbo.Badges AS b;
 
-		SET @rc = @@ROWCOUNT;
-		SET @looprows += @rc;
+        SET @rc = @@ROWCOUNT;
+        SET @looprows += @rc;
 
-		SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
-		RAISERROR('Inserting to %s rows to Badges took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
+        SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
+        RAISERROR('Inserting to %s rows to Badges took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
         
         CHECKPOINT;
         
-		RAISERROR('Inserting to Comments...', 0, 1) WITH NOWAIT;
-		SET @starttime = SYSDATETIME();
+        RAISERROR('Inserting to Comments...', 0, 1) WITH NOWAIT;
+        SET @starttime = SYSDATETIME();
 
-        INSERT StackOverflowCS.dbo.Comments WITH (TABLOCKX)
+        INSERT 
+            StackOverflowCS.dbo.Comments WITH (TABLOCKX)
             (
                 Id, CreationDate, PostId, Score, UserId
             )
-        SELECT c.Id + @cmaxid, c.CreationDate, c.PostId + @pmaxid, c.Score, c.UserId + @umaxid
+        SELECT 
+            c.Id + @cmaxid, c.CreationDate, c.PostId + @pmaxid, c.Score, c.UserId + @umaxid
         FROM StackOverflow.dbo.Comments AS c;
 
-		SET @rc = @@ROWCOUNT;
-		SET @looprows += @rc;
+        SET @rc = @@ROWCOUNT;
+        SET @looprows += @rc;
 
-		SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
-		RAISERROR('Inserting to %s rows to Comments took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
+        SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
+        RAISERROR('Inserting to %s rows to Comments took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
         
         CHECKPOINT;
         
-		RAISERROR('Inserting to Votes...', 0, 1) WITH NOWAIT;
-		SET @starttime = SYSDATETIME();
+        RAISERROR('Inserting to Votes...', 0, 1) WITH NOWAIT;
+        SET @starttime = SYSDATETIME();
 
-        INSERT StackOverflowCS.dbo.Votes WITH (TABLOCKX)
+        INSERT 
+            StackOverflowCS.dbo.Votes WITH (TABLOCKX)
             (
                 Id, PostId, UserId, BountyAmount, VoteTypeId, CreationDate
             )
-        SELECT v.Id + @vmaxid, v.PostId + @pmaxid, v.UserId + @umaxid, 
-		       v.BountyAmount, v.VoteTypeId, v.CreationDate
+        SELECT 
+            v.Id + @vmaxid, v.PostId + @pmaxid, v.UserId + @umaxid, 
+            v.BountyAmount, v.VoteTypeId, v.CreationDate
         FROM StackOverflow.dbo.Votes AS v;
 
-		SET @rc = @@ROWCOUNT;
-		SET @looprows += @rc;
+        SET @rc = @@ROWCOUNT;
+        SET @looprows += @rc;
 
-		SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
-		RAISERROR('Inserting to %s rows to Votes took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
+        SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
+        RAISERROR('Inserting to %s rows to Votes took %s seconds', 0, 1, @rc, @msg) WITH NOWAIT;
 
-		CHECKPOINT;
+        CHECKPOINT;
         
-		SET @msg = RTRIM(@i);
-		SET @loopsec = DATEDIFF(SECOND, @loopstart, SYSDATETIME());
-		SET @looprowsmsg = @looprows;
-		RAISERROR('Loop #%s done in %s seconds, %s total rows inserted', 0, 1, @msg, @loopsec, @looprowsmsg) WITH NOWAIT;        		
-		SET @i += 1;
-		SET @looprows = 0;
-		
-		RAISERROR('Resetting loop....', 0, 1) WITH NOWAIT;
+        SET @msg = RTRIM(@i);
+        SET @loopsec = DATEDIFF(SECOND, @loopstart, SYSDATETIME());
+        SET @looprowsmsg = @looprows;
+        RAISERROR('Loop #%s done in %s seconds, %s total rows inserted', 0, 1, @msg, @loopsec, @looprowsmsg) WITH NOWAIT;                
+        SET @i += 1;
+        SET @looprows = 0;
+        
+        RAISERROR('Resetting loop....', 0, 1) WITH NOWAIT;
    
     END;
 
-	RAISERROR('Checking for incorrect VoteTypeId and PostTypeId rows', 0, 1) WITH NOWAIT;    
-	IF EXISTS ( SELECT   1/0
-                FROM     StackOverflowCS.dbo.Posts AS p
-                JOIN     StackOverflowCS.dbo.Votes AS v
-                    ON  p.Id = v.PostId
-                WHERE v.VoteTypeId = 1
-                AND   p.PostTypeId = 1 )
-	BEGIN
-	RAISERROR('Found incorrect VoteTypeId and PostTypeId rows', 0, 1) WITH NOWAIT;    
-	    SELECT   v.Id
-        INTO     #t
-        FROM     StackOverflowCS.dbo.Posts AS p
-        JOIN     StackOverflowCS.dbo.Votes AS v
+    RAISERROR('Checking for incorrect VoteTypeId and PostTypeId rows', 0, 1) WITH NOWAIT;    
+    IF EXISTS 
+    ( 
+        SELECT   
+            1/0
+        FROM StackOverflowCS.dbo.Posts AS p
+        JOIN StackOverflowCS.dbo.Votes AS v
+            ON  p.Id = v.PostId
+        WHERE v.VoteTypeId = 1
+        AND   p.PostTypeId = 1 
+    )
+    BEGIN
+        RAISERROR('Found incorrect VoteTypeId and PostTypeId rows', 0, 1) WITH NOWAIT;    
+        
+        SELECT   
+            v.Id
+        INTO #t
+        FROM StackOverflowCS.dbo.Posts AS p
+        JOIN StackOverflowCS.dbo.Votes AS v
             ON  p.Id = v.PostId
         WHERE v.VoteTypeId = 1
         AND   p.PostTypeId = 1;
         
         DELETE v
         FROM StackOverflowCS.dbo.Votes AS v
-        	WHERE EXISTS
-            (
-                SELECT 1/0
-                FROM #t AS t
-                WHERE t.Id = v.Id
-            );
+        WHERE EXISTS
+              (
+                  SELECT 
+                      1/0
+                  FROM #t AS t
+                  WHERE t.Id = v.Id
+              );
         
         DROP TABLE #t;
-	END
+    END;
 
 /*Rebuilding indexes after we're done to make sure everything is fully compressed*/
 IF @rebuild_when_done = 1
@@ -273,7 +314,7 @@ BEGIN
         
     SELECT @msg = DATEDIFF(SECOND, @starttime, SYSDATETIME());
     RAISERROR('Rebuilding Votes took %s seconds', 0, 1, @msg) WITH NOWAIT;
-END
+END;
 
 IF @count_when_done = 1
 BEGIN
@@ -286,8 +327,4 @@ BEGIN
 END;
 
 END;
-GO 
-
---EXEC dbo.make_big_stack_cs @loops = 25, @truncate_tables = 1, @count_when_done = 1, @rebuild_when_done = 1;
-
---EXEC dbo.make_big_stack_cs @loops = 25, @truncate_tables = 0, @count_when_done = 1, @rebuild_when_done = 1;
+GO

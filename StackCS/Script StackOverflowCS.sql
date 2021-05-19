@@ -25,44 +25,45 @@ SOFTWARE.
 USE master;
 GO
 
-CREATE DATABASE StackOverflowCS CONTAINMENT = NONE
+CREATE DATABASE StackOverflowCS 
+CONTAINMENT = NONE
 ON PRIMARY
-       (
-           NAME = N'StackOverflow_1',
-           FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_1.mdf',
-           SIZE = 27252736KB,
-           MAXSIZE = UNLIMITED,
-           FILEGROWTH = 524288KB
-       ),
-       (
-           NAME = N'StackOverflow_2',
-           FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_2.ndf',
-           SIZE = 27251712KB,
-           MAXSIZE = UNLIMITED,
-           FILEGROWTH = 524288KB
-       ),
-       (
-           NAME = N'StackOverflow_3',
-           FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_3.ndf',
-           SIZE = 27252736KB,
-           MAXSIZE = UNLIMITED,
-           FILEGROWTH = 524288KB
-       ),
-       (
-           NAME = N'StackOverflow_4',
-           FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_4.ndf',
-           SIZE = 27382784KB,
-           MAXSIZE = UNLIMITED,
-           FILEGROWTH = 524288KB
-       )
+(
+    NAME = N'StackOverflow_1',
+    FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_1.mdf',
+    SIZE = 27252736KB,
+    MAXSIZE = UNLIMITED,
+    FILEGROWTH = 524288KB
+),
+(
+    NAME = N'StackOverflow_2',
+    FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_2.ndf',
+    SIZE = 27251712KB,
+    MAXSIZE = UNLIMITED,
+    FILEGROWTH = 524288KB
+),
+(
+    NAME = N'StackOverflow_3',
+    FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_3.ndf',
+    SIZE = 27252736KB,
+    MAXSIZE = UNLIMITED,
+    FILEGROWTH = 524288KB
+),
+(
+    NAME = N'StackOverflow_4',
+    FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_4.ndf',
+    SIZE = 27382784KB,
+    MAXSIZE = UNLIMITED,
+    FILEGROWTH = 524288KB
+)
 LOG ON
-    (
-        NAME = N'StackOverflow_log',
-        FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_log.ldf',
-        SIZE = 2877376KB,
-        MAXSIZE = 2048GB,
-        FILEGROWTH = 524288KB
-    );
+(
+    NAME = N'StackOverflow_log',
+    FILENAME = N'D:\SQL2017\StackCS\StackOverflowCS_log.ldf',
+    SIZE = 2877376KB,
+    MAXSIZE = 2048GB,
+    FILEGROWTH = 524288KB
+);
 GO
 
 ALTER DATABASE StackOverflowCS
@@ -151,17 +152,18 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.partition_functions AS pf
     WHERE pf.name = N'pfunc'
-          AND pf.type = N'R'
+    AND   pf.type = N'R'
 )
 BEGIN
 
-    CREATE PARTITION FUNCTION pfunc (DATETIME)
+    CREATE PARTITION FUNCTION pfunc (datetime)
     AS RANGE RIGHT FOR VALUES
     (   
-	    N'2007-01-01T00:00:00.000',
+        N'2007-01-01T00:00:00.000',
         N'2008-01-01T00:00:00.000',
         N'2009-01-01T00:00:00.000',
         N'2010-01-01T00:00:00.000',
@@ -174,35 +176,41 @@ BEGIN
         N'2017-01-01T00:00:00.000',
         N'2018-01-01T00:00:00.000',
         N'2019-01-01T00:00:00.000',
-        N'2020-01-01T00:00:00.000'
+        N'2020-01-01T00:00:00.000',
+        N'2021-01-01T00:00:00.000',
+        N'2022-01-01T00:00:00.000'
     );
 END;
 
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.partition_schemes AS ps
     WHERE ps.name = N'pscheme'
-          AND ps.type = N'PS'
+    AND   ps.type = N'PS'
 )
 BEGIN
-    CREATE PARTITION SCHEME pscheme AS PARTITION pfunc ALL TO ([PRIMARY]);
+    CREATE PARTITION SCHEME pscheme 
+    AS PARTITION pfunc 
+    ALL TO ([PRIMARY]);
 END;
 
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Badges]')
-          AND type IN ( N'U' )
+    AND   type IN ( N'U' )
 )
 BEGIN
     CREATE TABLE dbo.Badges
     (
-        Id BIGINT NULL,
-        Name NVARCHAR(40) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
-        UserId BIGINT NULL,
-        Date DATETIME NOT NULL
+        Id bigint NULL,
+        Name nvarchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+        UserId bigint NULL,
+        Date datetime NOT NULL
     ) ON pscheme (Date);
 END;
 GO
@@ -213,19 +221,20 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Comments]')
-          AND type IN ( N'U' )
+    AND   type IN ( N'U' )
 )
 BEGIN
     CREATE TABLE dbo.Comments
     (
-        Id BIGINT NULL,
-        CreationDate DATETIME NOT NULL,
-        PostId BIGINT NULL,
-        Score INT NULL,
-        UserId BIGINT NULL
+        Id bigint NULL,
+        CreationDate datetime NOT NULL,
+        PostId bigint NULL,
+        Score int NULL,
+        UserId bigint NULL
     ) ON pscheme (CreationDate);
 END;
 GO
@@ -236,32 +245,33 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Posts]')
-          AND type IN ( N'U' )
+    AND   type IN ( N'U' )
 )
 BEGIN
     CREATE TABLE dbo.Posts
     (
-        Id BIGINT NULL,
-        AcceptedAnswerId BIGINT NULL,
-        AnswerCount INT NULL,
-        ClosedDate DATETIME NULL,
-        CommentCount INT NULL,
-        CommunityOwnedDate DATETIME NULL,
-        CreationDate DATETIME NOT NULL,
-        FavoriteCount INT NULL,
-        LastActivityDate DATETIME NOT NULL,
-        LastEditDate DATETIME NULL,
-        LastEditorDisplayName NVARCHAR(40) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
-        LastEditorUserId BIGINT NULL,
-        OwnerUserId BIGINT NULL,
-        ParentId BIGINT NULL,
-        PostTypeId INT NOT NULL,
-        Score INT NOT NULL,
-        Tags NVARCHAR(150) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
-        ViewCount INT NOT NULL
+        Id bigint NULL,
+        AcceptedAnswerId bigint NULL,
+        AnswerCount int NULL,
+        ClosedDate datetime NULL,
+        CommentCount int NULL,
+        CommunityOwnedDate datetime NULL,
+        CreationDate datetime NOT NULL,
+        FavoriteCount int NULL,
+        LastActivityDate datetime NOT NULL,
+        LastEditDate datetime NULL,
+        LastEditorDisplayName nvarchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+        LastEditorUserId bigint NULL,
+        OwnerUserId bigint NULL,
+        ParentId bigint NULL,
+        PostTypeId int NOT NULL,
+        Score int NOT NULL,
+        Tags nvarchar(150) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+        ViewCount int NOT NULL
     ) ON pscheme (CreationDate);
 END;
 GO
@@ -272,21 +282,21 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[PostTypes]')
-          AND type IN ( N'U' )
+    AND   type IN ( N'U' )
 )
 BEGIN
     CREATE TABLE dbo.PostTypes
     (
-        Id INT IDENTITY(1, 1) NOT NULL,
-        Type NVARCHAR(50) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+        Id int IDENTITY(1, 1) NOT NULL,
+        Type nvarchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
         CONSTRAINT PK_PostTypes__Id
             PRIMARY KEY CLUSTERED (Id ASC)
             WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON,
-                  ALLOW_PAGE_LOCKS = ON
-                 ) ON [PRIMARY]
+                  ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
     ) ON [PRIMARY];
 END;
 GO
@@ -297,27 +307,28 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Users]')
-          AND type IN ( N'U' )
+    AND   type IN ( N'U' )
 )
 BEGIN
     CREATE TABLE dbo.Users
     (
-        Id BIGINT NULL,
-        Age INT NULL,
-        CreationDate DATETIME NOT NULL,
-        DisplayName NVARCHAR(40) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
-        DownVotes INT NOT NULL,
-        EmailHash NVARCHAR(40) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
-        LastAccessDate DATETIME NOT NULL,
-        Location NVARCHAR(100) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
-        Reputation INT NOT NULL,
-        UpVotes INT NOT NULL,
-        Views INT NOT NULL,
-        WebsiteUrl NVARCHAR(200) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
-        AccountId BIGINT NULL
+        Id bigint NULL,
+        Age int NULL,
+        CreationDate datetime NOT NULL,
+        DisplayName nvarchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+        DownVotes int NOT NULL,
+        EmailHash nvarchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+        LastAccessDate datetime NOT NULL,
+        Location nvarchar(100) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+        Reputation int NOT NULL,
+        UpVotes int NOT NULL,
+        Views int NOT NULL,
+        WebsiteUrl nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
+        AccountId bigint NULL
     ) ON pscheme (CreationDate);
 END;
 GO
@@ -328,20 +339,21 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Votes]')
-          AND type IN ( N'U' )
+    AND   type IN ( N'U' )
 )
 BEGIN
     CREATE TABLE dbo.Votes
     (
-        Id BIGINT NULL,
-        PostId BIGINT NULL,
-        UserId BIGINT NULL,
-        BountyAmount INT NULL,
-        VoteTypeId INT NOT NULL,
-        CreationDate DATETIME NOT NULL
+        Id bigint NULL,
+        PostId bigint NULL,
+        UserId bigint NULL,
+        BountyAmount int NULL,
+        VoteTypeId int NOT NULL,
+        CreationDate datetime NOT NULL
     ) ON pscheme (CreationDate);
 END;
 GO
@@ -352,31 +364,32 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[VoteTypes]')
-          AND type IN ( N'U' )
+    AND   type IN ( N'U' )
 )
 BEGIN
     CREATE TABLE dbo.VoteTypes
     (
-        Id INT IDENTITY(1, 1) NOT NULL,
-        Name VARCHAR(50) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+        Id int IDENTITY(1, 1) NOT NULL,
+        Name varchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
         CONSTRAINT PK_VoteType__Id
             PRIMARY KEY CLUSTERED (Id ASC)
             WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON,
-                  ALLOW_PAGE_LOCKS = ON
-                 ) ON [PRIMARY]
+                  ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
     ) ON [PRIMARY];
 END;
 GO
 
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Badges]')
-          AND name = N'ccsi_Badges'
+    AND   name = N'ccsi_Badges'
 )
     CREATE CLUSTERED COLUMNSTORE INDEX ccsi_Badges
     ON dbo.Badges
@@ -386,10 +399,11 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Comments]')
-          AND name = N'ccsi_Comments'
+    AND   name = N'ccsi_Comments'
 )
     CREATE CLUSTERED COLUMNSTORE INDEX ccsi_Comments
     ON dbo.Comments
@@ -399,10 +413,11 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Posts]')
-          AND name = N'ccsi_Posts'
+    AND   name = N'ccsi_Posts'
 )
     CREATE CLUSTERED COLUMNSTORE INDEX ccsi_Posts
     ON dbo.Posts
@@ -412,10 +427,11 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Users]')
-          AND name = N'ccsi_Users'
+    AND   name = N'ccsi_Users'
 )
     CREATE CLUSTERED COLUMNSTORE INDEX ccsi_Users
     ON dbo.Users
@@ -425,10 +441,11 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT *
+    SELECT 
+        1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Votes]')
-          AND name = N'ccsi_Votes'
+    AND   name = N'ccsi_Votes'
 )
     CREATE CLUSTERED COLUMNSTORE INDEX ccsi_Votes
     ON dbo.Votes

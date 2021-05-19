@@ -17,54 +17,58 @@ It's definitely not a replacements for sp_WhoIsActive, it just gives me
 
 IF OBJECT_ID('dbo.WhatsUpLocks') IS NULL
 BEGIN
-DECLARE @fsql NVARCHAR(MAX) = 
-    N'
-CREATE FUNCTION WhatsUpLocks()
-RETURNS TABLE
-AS 
-RETURN
-SELECT 1 AS x;
-    ';
-
-PRINT @fsql;
-EXEC (@fsql);
+    DECLARE 
+        @fsql nvarchar(MAX) = N'
+    CREATE FUNCTION WhatsUpLocks()
+    RETURNS TABLE
+    AS 
+    RETURN
+    SELECT 
+        x = 1;';
+    
+    PRINT @fsql;
+    EXEC (@fsql);
 END;
 GO 
 
 ALTER FUNCTION dbo.WhatsUpLocks
 (
-    @SPID INT
+    @spid int
 )
-RETURNS TABLE
+RETURNS table
 AS
 RETURN 
-SELECT dtl.request_mode,
-       CASE dtl.resource_type
-            WHEN N'OBJECT' 
-            THEN OBJECT_NAME(dtl.resource_associated_entity_id)
-            ELSE OBJECT_NAME(p.object_id)
-       END AS locked_object,
-       ISNULL(i.name, N'OBJECT') AS index_name,
-       dtl.resource_type,
-       dtl.request_status,
-       COUNT_BIG(*) AS total_locks
+SELECT 
+    dtl.request_mode,
+    locked_object = 
+        CASE dtl.resource_type
+             WHEN N'OBJECT' 
+             THEN OBJECT_NAME(dtl.resource_associated_entity_id)
+             ELSE OBJECT_NAME(p.object_id)
+        END,
+    index_name = 
+        ISNULL(i.name, N'OBJECT'),
+    dtl.resource_type,
+    dtl.request_status,
+    total_locks = 
+        COUNT_BIG(*)
 FROM sys.dm_tran_locks AS dtl WITH(NOLOCK)
 LEFT JOIN sys.partitions AS p WITH(NOLOCK)
     ON p.hobt_id = dtl.resource_associated_entity_id
 LEFT JOIN sys.indexes AS i WITH(NOLOCK)
     ON  p.object_id = i.object_id
-    AND p.index_id = i.index_id
-WHERE (dtl.request_session_id = @SPID OR @SPID IS NULL)
+    AND p.index_id  = i.index_id
+WHERE (dtl.request_session_id = @spid 
+         OR @spid IS NULL)
 AND    dtl.resource_type <> N'DATABASE'
-GROUP BY CASE dtl.resource_type
-              WHEN N'OBJECT' 
-              THEN OBJECT_NAME(dtl.resource_associated_entity_id)
-              ELSE OBJECT_NAME(p.object_id)
-         END,
-         ISNULL(i.name, N'OBJECT'),
-         dtl.resource_type,
-         dtl.request_mode,
-         dtl.request_status;
+GROUP BY 
+    CASE dtl.resource_type
+         WHEN N'OBJECT' 
+         THEN OBJECT_NAME(dtl.resource_associated_entity_id)
+         ELSE OBJECT_NAME(p.object_id)
+    END,
+    ISNULL(i.name, N'OBJECT'),
+    dtl.resource_type,
+    dtl.request_mode,
+    dtl.request_status;
 GO
-
-
