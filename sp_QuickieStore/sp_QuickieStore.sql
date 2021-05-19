@@ -127,8 +127,10 @@ BEGIN
     Parameters 
     */
     SELECT 
-        parameter_name = ap.name,
-        data_type = t.name,
+        parameter_name = 
+            ap.name,
+        data_type = t.
+            name,
         description = 
             CASE 
                 ap.name
@@ -902,8 +904,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                         @sql
                 FROM #troubleshoot_performance AS tp
                 WHERE tp.current_table = @current_table        
-                FOR XML PATH(''''), TYPE
-            ) AS current_query
+                FOR XML PATH(N''''), TYPE
+            ).query(''.[1]'') AS current_query
         OPTION(RECOMPILE);',
     @rc = 0;
 
@@ -2121,7 +2123,7 @@ SELECT
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
                 WHERE qsp_plans.query_id = qsp.query_id
                 FOR XML PATH(''''), TYPE
-            ).value(''.[1]'', ''varchar(MAX)''), 
+            ).value(''./text()[1]'', ''varchar(MAX)''), 
             1, 
             2, 
             ''''
@@ -3463,13 +3465,13 @@ FROM
                                     )
                                 )
                             ) + 
-                            '' ms) ''
+                            '' ms)''
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
                        GROUP BY qsws.wait_category_desc
                        ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
-                    ).value(''.[1]'', ''varchar(MAX)''), 
+                    ).value(''./text()[1]'', ''varchar(MAX)''), 
                     1, 
                     2, 
                     ''''
@@ -3509,13 +3511,13 @@ FROM
                                     )
                                 ), ''N0''
                             ) + 
-                            '' ms) ''
+                            '' ms)''
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
                        GROUP BY qsws.wait_category_desc
                        ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
-                    ).value(''.[1]'', ''varchar(MAX)''), 
+                    ).value(''./text()[1]'', ''varchar(MAX)''), 
                     1, 
                     2, 
                     ''''
@@ -4436,6 +4438,8 @@ BEGIN
             @query_store_exists,
         [string_split] = 
             @string_split,
+        current_table = 
+            @current_table,
         troubleshoot_insert = 
             @troubleshoot_insert,
         troubleshoot_update = 

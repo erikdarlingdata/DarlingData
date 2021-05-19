@@ -1563,7 +1563,7 @@ BEGIN
                                         @nc10
                                     END
                                 FROM grps FOR XML PATH(''), TYPE
-                            ).value('.[1]', 'nvarchar(MAX)')
+                            ).value('./text()[1]', 'nvarchar(max)')
                             , 
                             1, 
                             13, 
