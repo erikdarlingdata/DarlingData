@@ -1,8 +1,11 @@
 /* This version relies on a Numbers table */
 /* https://www.mssqltips.com/sqlservertip/4176/the-sql-server-numbers-table-explained--part-1/ */
 
-CREATE FUNCTION dbo.get_numbers(@string NVARCHAR(4000))
-RETURNS TABLE
+CREATE FUNCTION dbo.get_numbers
+(
+    @string nvarchar(4000)
+)
+RETURNS table
 WITH SCHEMABINDING
 AS
 /*
@@ -13,17 +16,39 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 */
 RETURN 
 
-WITH x
-  AS ( SELECT TOP (LEN(ISNULL(@string, N'')))
-                  ROW_NUMBER() OVER (ORDER BY n.n) AS x
-       FROM dbo.Numbers AS n )
-    SELECT CONVERT(NVARCHAR(4000),
-           ( SELECT SUBSTRING(@string COLLATE Latin1_General_100_BIN2, x.x, 1)
-             FROM x AS x
-             WHERE SUBSTRING(@string COLLATE Latin1_General_100_BIN2, x.x, 1) LIKE '[0-9]'
-             ORDER BY x.x
-             FOR XML PATH('') )
-           ) AS numbers_only;
+WITH x AS 
+( 
+    SELECT TOP (LEN(ISNULL(@string, N'')))
+        ROW_NUMBER() OVER 
+        (
+            ORDER BY 
+                n.Number
+        ) AS x
+    FROM dbo.Numbers AS n 
+)
+SELECT 
+    CONVERT
+    (
+        nvarchar(4000),
+        ( 
+            SELECT 
+                SUBSTRING
+                (
+                   @string COLLATE Latin1_General_100_BIN2, 
+                   x.x, 
+                   1
+                )
+         FROM x AS x
+         WHERE SUBSTRING
+               (
+                   @string COLLATE Latin1_General_100_BIN2, 
+                   x.x, 
+                   1
+               ) LIKE N'[0-9]'
+         ORDER BY x.x
+         FOR XML PATH(N''), TYPE 
+       ).value('./text()[1]', 'nvarchar(max)')
+    ) AS numbers_only;
 GO 
 
 
@@ -31,8 +56,11 @@ GO
 /*User requested code (probably) originates here, from Jeff Moden*/
 /* https://sqlservercentral.com/articles/the-numbers-or-tally-table-what-it-is-and-how-it-replaces-a-loop-1 */
 
-CREATE FUNCTION dbo.get_numbers_cte(@string NVARCHAR(4000))
-RETURNS TABLE
+CREATE FUNCTION dbo.get_numbers_cte
+(
+    @string nvarchar(4000)
+)
+RETURNS table
 WITH SCHEMABINDING
 AS
 /*
@@ -42,16 +70,62 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 RETURN 
-WITH e1 (n) AS (SELECT 1 FROM (VALUES (1), (1), (1), (1), (1), (1), (1), (1), (1), (1)) AS x (n)),
-     e2 (n) AS (SELECT 1 FROM e1 AS a CROSS JOIN e1 AS b),
-     e4 (n) AS (SELECT 1 FROM e2 AS a CROSS JOIN e2 AS b)
-   , x AS ( SELECT TOP (LEN(ISNULL(@string, N''))) 
-            ROW_NUMBER() OVER (ORDER BY n.n) x
-            FROM e4 AS n )
-    SELECT CONVERT(NVARCHAR(4000), 
-    ( SELECT SUBSTRING(@string COLLATE Latin1_General_100_BIN2, x.x, 1)
-      FROM x AS x
-      WHERE SUBSTRING(@string COLLATE Latin1_General_100_BIN2, x.x, 1) LIKE '[0-9]'
-      ORDER BY x.x
-      FOR XML PATH('')) ) AS numbers_only;
+WITH e1 (n) AS 
+(
+    SELECT 
+       n = 1 
+    FROM 
+    (
+        VALUES 
+            (1), (1), (1), (1), (1), 
+            (1), (1), (1), (1), (1)
+    ) AS x (n)
+),
+     e2 (n) AS 
+(
+    SELECT 
+        1 
+    FROM e1 AS a 
+    CROSS JOIN e1 AS b
+),
+     e4 (n) AS 
+(
+    SELECT 
+        1 
+    FROM e2 AS a 
+    CROSS JOIN e2 AS b
+),
+     x AS 
+( 
+    SELECT TOP (LEN(ISNULL(@string, N''))) 
+         ROW_NUMBER() OVER 
+         (
+             ORDER BY 
+                 n.n
+         ) x
+    FROM e4 AS n 
+)
+SELECT 
+    CONVERT
+    (
+        nvarchar(4000),
+        ( 
+            SELECT 
+                SUBSTRING
+                (
+                   @string COLLATE Latin1_General_100_BIN2, 
+                   x.x, 
+                   1
+                )
+            FROM x AS x
+            WHERE SUBSTRING
+                  (
+                      @string COLLATE Latin1_General_100_BIN2, 
+                      x.x, 
+                      1
+                  ) LIKE N'[0-9]'
+            ORDER BY x.x
+            FOR XML PATH(N''), TYPE 
+        ).value('./text()[1]', 'nvarchar(max)')
+    ) AS numbers_only;
 GO 

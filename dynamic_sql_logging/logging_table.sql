@@ -8,18 +8,18 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 DROP TABLE IF EXISTS dbo.logger;
 CREATE TABLE dbo.logger
 (
-  run_hash UNIQUEIDENTIFIER,
-  run_date DATETIME,
+  run_hash uniqueidentifier,
+  run_date datetime,
   user_name sysname,
-  cpu_time_ms DECIMAL(18,2),
-  total_elapsed_time_ms DECIMAL(18,2),
-  physical_reads_mb DECIMAL(18,2),
-  logical_reads_mb DECIMAL(18,2),
-  writes_mb DECIMAL(18,2),
-  statement_text NVARCHAR(MAX),
-  execution_text NVARCHAR(MAX),
-  query_plan XML,
-  is_final BIT DEFAULT 0,
+  cpu_time_ms decimal(18,2),
+  total_elapsed_time_ms decimal(18,2),
+  physical_reads_mb decimal(18,2),
+  logical_reads_mb decimal(18,2),
+  writes_mb decimal(18,2),
+  statement_text nvarchar(MAX),
+  execution_text nvarchar(MAX),
+  query_plan xml,
+  is_final bit DEFAULT 0,
   CONSTRAINT loggerino PRIMARY KEY (run_hash) 
 );
 GO 

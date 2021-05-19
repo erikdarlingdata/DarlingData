@@ -1,8 +1,11 @@
-CREATE OR ALTER PROCEDURE dbo.logging( @spid INT, 
-                                       @sql NVARCHAR(MAX), 
-                                       @query_plan XML,
-                                       @guid_in UNIQUEIDENTIFIER, 
-                                       @guid_out UNIQUEIDENTIFIER OUTPUT )
+CREATE OR ALTER PROCEDURE dbo.logging
+( 
+    @spid int, 
+    @sql nvarchar(MAX), 
+    @query_plan xml,
+    @guid_in uniqueidentifier, 
+    @guid_out uniqueidentifier OUTPUT 
+)
 WITH RECOMPILE 
 AS 
 BEGIN
@@ -17,29 +20,51 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 */
 
 /*variables for the variable gods*/
-DECLARE @run_hash UNIQUEIDENTIFIER = NEWID();
-DECLARE @cpu_time DECIMAL(18,2);
-DECLARE @total_elapsed_time DECIMAL(18,2);
-DECLARE @reads DECIMAL(18,2);
-DECLARE @writes DECIMAL(18,2);
-DECLARE @logical_reads DECIMAL(18,2);
+DECLARE 
+    @run_hash uniqueidentifier = NEWID(),
+    @cpu_time decimal(18,2),
+    @total_elapsed_time decimal(18,2),
+    @reads decimal(18,2),
+    @writes decimal(18,2),
+    @logical_reads decimal(18,2);
 
 /*first pass to collect initial metrics*/
 IF @guid_in IS NULL
 BEGIN
 
-    INSERT dbo.logger ( run_hash, run_date, user_name, cpu_time_ms, total_elapsed_time_ms, 
-                        physical_reads_mb, logical_reads_mb, writes_mb, statement_text, execution_text )
-    SELECT @run_hash,
-           SYSDATETIME(),
-           SUSER_NAME(),
-           cpu_time,
-           total_elapsed_time,
-           ((reads - logical_reads) * 8.) / 1024. AS physical_reads_mb, 
-           (logical_reads * 8.) / 1024.  AS logical_reads_mb,
-           (writes * 8.) / 1024.  AS writes_mb,
-           @sql AS statement_text,
-           (SELECT deib.event_info FROM sys.dm_exec_input_buffer(@spid, 0) AS deib) AS execution_text
+    INSERT 
+        dbo.logger 
+    ( 
+        run_hash, 
+        run_date, 
+        user_name, 
+        cpu_time_ms, 
+        total_elapsed_time_ms, 
+        physical_reads_mb, 
+        logical_reads_mb, 
+        writes_mb, 
+        statement_text, 
+        execution_text 
+    )
+    SELECT 
+        @run_hash,
+        SYSDATETIME(),
+        SUSER_NAME(),
+        cpu_time,
+        total_elapsed_time,
+        physical_reads_mb = 
+            ((reads - logical_reads) * 8.) / 1024., 
+        logical_reads_mb = 
+            (logical_reads * 8.) / 1024.,
+        writes_mb = 
+            (writes * 8.) / 1024.,
+        @sql AS statement_text,
+        execution_text = 
+            (
+                SELECT 
+                    deib.event_info 
+                FROM sys.dm_exec_input_buffer(@spid, 0) AS deib
+            )
     FROM sys.dm_exec_requests
     WHERE session_id = @spid
     OPTION(RECOMPILE);
@@ -54,13 +79,21 @@ IF @guid_in IS NOT NULL
 BEGIN
 
     UPDATE l
-        SET l.cpu_time_ms = r.cpu_time - l.cpu_time_ms,
-            l.total_elapsed_time_ms = r.total_elapsed_time - l.total_elapsed_time_ms,
-            l.physical_reads_mb = (((reads - logical_reads) * 8.) / 1024.) - l.physical_reads_mb,
-            l.logical_reads_mb = ((r.logical_reads * 8.) / 1024.) - l.logical_reads_mb,
-            l.writes_mb = ((r.writes * 8.) / 1024.) - l.writes_mb,
-            l.query_plan = @query_plan,
-            l.is_final = CONVERT(BIT, 1)
+        SET 
+            l.cpu_time_ms 
+                = r.cpu_time - l.cpu_time_ms,
+            l.total_elapsed_time_ms 
+                = r.total_elapsed_time - l.total_elapsed_time_ms,
+            l.physical_reads_mb 
+                = (((reads - logical_reads) * 8.) / 1024.) - l.physical_reads_mb,
+            l.logical_reads_mb 
+                = ((r.logical_reads * 8.) / 1024.) - l.logical_reads_mb,
+            l.writes_mb 
+                = ((r.writes * 8.) / 1024.) - l.writes_mb,
+            l.query_plan 
+                = @query_plan,
+            l.is_final 
+                = CONVERT(bit, 1)
     FROM dbo.logger AS l
     CROSS JOIN sys.dm_exec_requests AS r
     WHERE l.run_hash = @guid_in

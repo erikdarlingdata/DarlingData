@@ -14,10 +14,10 @@ GO
 
 ALTER PROCEDURE dbo.sp_PressureDetector 
 (
-    @what_to_check NVARCHAR(6) = N'both',    
+    @what_to_check nvarchar(6) = N'both',    
     @skip_plan_xml bit = 0,
-    @version VARCHAR(5) = NULL OUTPUT,
-    @versiondate DATETIME = NULL OUTPUT
+    @version varchar(5) = NULL OUTPUT,
+    @versiondate datetime = NULL OUTPUT
 )
 WITH RECOMPILE
 AS 
@@ -25,7 +25,7 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
-SELECT @version = '1.40', @versiondate = '20210517';
+SELECT @version = '1.50', @versiondate = '20210519';
 
 /*
     Copyright (c) 2021 Darling Data, LLC 
@@ -68,12 +68,12 @@ SELECT @version = '1.40', @versiondate = '20210517';
                 THEN 1
                 ELSE 0
             END,
-        @pool_sql NVARCHAR(MAX) = N'',
+        @pool_sql nvarchar(MAX) = N'',
         @pages_kb bit = 0,
-        @mem_sql NVARCHAR(MAX) = N'',
-        @helpful_new_columns BIT = 0,
-        @cpu_sql NVARCHAR(MAX) = N'',
-        @cool_new_columns BIT = 0;
+        @mem_sql nvarchar(MAX) = N'',
+        @helpful_new_columns bit = 0,
+        @cpu_sql nvarchar(MAX) = N'',
+        @cool_new_columns bit = 0;
            
     IF 
     (
@@ -124,7 +124,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
                 ON ep.endpoint_id = ses.endpoint_id
             WHERE ep.name = N'Dedicated Admin Connection'
             AND   ses.session_id <> @@SPID
-            OPTION(MAXDOP 1, RECOMPILE)
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
     END;
 
@@ -141,8 +141,8 @@ SELECT @version = '1.40', @versiondate = '20210517';
             AND   ac.name = N'pages_kb'
         ) = 1    
         BEGIN
-            SET @pages_kb = 1
-        END
+            SET @pages_kb = 1;
+        END;
     
         /*
             See buffer pool size, along with stolen memory
@@ -158,7 +158,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
             memory_used_gb = 
                 CONVERT
                 (
-                    DECIMAL(5, 2),
+                    decimal(9, 2),
                     SUM
                     (
                         ' +
@@ -189,7 +189,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
             dopc.counter_name AS memory_consumer,
             CONVERT
             (
-                DECIMAL(5, 2), 
+                decimal(9, 2), 
                 dopc.cntr_value / 1024. / 1024.
             ) AS stolen_memory_gb
         FROM sys.dm_os_performance_counters AS dopc
@@ -208,7 +208,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
                 memory_used_gb =
                     CONVERT
                     (
-                        DECIMAL(5, 2), 
+                        decimal(9, 2), 
                         SUM
                         (
                         ' +
@@ -384,7 +384,7 @@ SELECT @version = '1.40', @versiondate = '20210517';
                     runnable_pct = 
                         CONVERT
                         (
-                            decimal(5,2),
+                            decimal(9,2),
                             (
                                 x.runnable / 
                                     (1. * NULLIF(x.total, 0))
