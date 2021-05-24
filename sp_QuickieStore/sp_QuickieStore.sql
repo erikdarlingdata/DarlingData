@@ -458,22 +458,28 @@ CREATE TABLE
     last_compile_batch_offset_end bigint NULL,
     count_compiles bigint NULL,
     avg_compile_duration_ms float NULL,
-    total_compile_duration_ms AS (count_compiles * avg_compile_duration_ms),
+    total_compile_duration_ms AS 
+        (count_compiles * avg_compile_duration_ms),
     last_compile_duration_ms bigint NULL,
     avg_bind_duration_ms float NULL,
-    total_bind_duration_ms AS (count_compiles * avg_bind_duration_ms),
+    total_bind_duration_ms AS 
+        (count_compiles * avg_bind_duration_ms),
     last_bind_duration_ms bigint NULL,
     avg_bind_cpu_time_ms float NULL,
-    total_bind_cpu_time_ms AS (count_compiles * avg_bind_cpu_time_ms),
+    total_bind_cpu_time_ms AS 
+        (count_compiles * avg_bind_cpu_time_ms),
     last_bind_cpu_time_ms bigint NULL,
     avg_optimize_duration_ms float NULL,
-    total_optimize_duration_ms AS (count_compiles * avg_optimize_duration_ms),
+    total_optimize_duration_ms AS 
+        (count_compiles * avg_optimize_duration_ms),
     last_optimize_duration_ms bigint NULL,
     avg_optimize_cpu_time_ms float NULL,
-    total_optimize_cpu_time_ms AS (count_compiles * avg_optimize_cpu_time_ms),
+    total_optimize_cpu_time_ms AS 
+        (count_compiles * avg_optimize_cpu_time_ms),
     last_optimize_cpu_time_ms bigint NULL,
     avg_compile_memory_mb float NULL,
-    total_compile_memory_mb AS (count_compiles * avg_compile_memory_mb),
+    total_compile_memory_mb AS 
+        (count_compiles * avg_compile_memory_mb),
     last_compile_memory_mb bigint NULL,
     max_compile_memory_mb bigint NULL,
     is_clouddb_internal_query bit NULL,
@@ -573,32 +579,38 @@ CREATE TABLE
     last_duration_ms bigint NOT NULL,
     min_duration_ms bigint NOT NULL,
     max_duration_ms bigint NOT NULL,
-    total_duration_ms AS (avg_duration_ms * count_executions),
+    total_duration_ms AS 
+        (avg_duration_ms * count_executions),
     avg_cpu_time_ms float NULL,
     last_cpu_time_ms bigint NOT NULL,
     min_cpu_time_ms bigint NOT NULL,
     max_cpu_time_ms bigint NOT NULL,
-    total_cpu_time_ms AS (avg_cpu_time_ms * count_executions),
+    total_cpu_time_ms AS 
+        (avg_cpu_time_ms * count_executions),
     avg_logical_io_reads_mb float NULL,
     last_logical_io_reads_mb bigint NOT NULL,
     min_logical_io_reads_mb bigint NOT NULL,
     max_logical_io_reads_mb bigint NOT NULL,
-    total_logical_io_reads_mb AS (avg_logical_io_reads_mb * count_executions),
+    total_logical_io_reads_mb AS 
+        (avg_logical_io_reads_mb * count_executions),
     avg_logical_io_writes_mb float NULL,
     last_logical_io_writes_mb bigint NOT NULL,
     min_logical_io_writes_mb bigint NOT NULL,
     max_logical_io_writes_mb bigint NOT NULL,
-    total_logical_io_writes_mb AS (avg_logical_io_writes_mb * count_executions),
+    total_logical_io_writes_mb AS 
+        (avg_logical_io_writes_mb * count_executions),
     avg_physical_io_reads_mb float NULL,
     last_physical_io_reads_mb bigint NOT NULL,
     min_physical_io_reads_mb bigint NOT NULL,
     max_physical_io_reads_mb bigint NOT NULL,
-    total_physical_io_reads_mb AS (avg_physical_io_reads_mb * count_executions),
+    total_physical_io_reads_mb AS 
+        (avg_physical_io_reads_mb * count_executions),
     avg_clr_time_ms float NULL,
     last_clr_time_ms bigint NOT NULL,
     min_clr_time_ms bigint NOT NULL,
     max_clr_time_ms bigint NOT NULL,
-    total_clr_time_ms AS (avg_clr_time_ms * count_executions),
+    total_clr_time_ms AS 
+        (avg_clr_time_ms * count_executions),
     last_dop bigint NOT NULL,
     min_dop bigint NOT NULL,
     max_dop bigint NOT NULL,
@@ -606,27 +618,32 @@ CREATE TABLE
     last_query_max_used_memory_mb bigint NOT NULL,
     min_query_max_used_memory_mb bigint NOT NULL,
     max_query_max_used_memory_mb bigint NOT NULL,
-    total_query_max_used_memory_mb AS (avg_query_max_used_memory_mb * count_executions),
+    total_query_max_used_memory_mb AS 
+        (avg_query_max_used_memory_mb * count_executions),
     avg_rowcount float NULL,
     last_rowcount bigint NOT NULL,
     min_rowcount bigint NOT NULL,
     max_rowcount bigint NOT NULL,
-    total_rowcount AS (avg_rowcount * count_executions),
+    total_rowcount AS 
+        (avg_rowcount * count_executions),
     avg_num_physical_io_reads_mb float NULL,
     last_num_physical_io_reads_mb bigint NULL,
     min_num_physical_io_reads_mb bigint NULL,
     max_num_physical_io_reads_mb bigint NULL,
-    total_num_physical_io_reads_mb AS (avg_num_physical_io_reads_mb * count_executions),
+    total_num_physical_io_reads_mb AS 
+        (avg_num_physical_io_reads_mb * count_executions),
     avg_log_bytes_used_mb float NULL,
     last_log_bytes_used_mb bigint NULL,
     min_log_bytes_used_mb bigint NULL,
     max_log_bytes_used_mb bigint NULL,
-    total_log_bytes_used_mb AS (avg_log_bytes_used_mb * count_executions),
+    total_log_bytes_used_mb AS 
+        (avg_log_bytes_used_mb * count_executions),
     avg_tempdb_space_used_mb float NULL,
     last_tempdb_space_used_mb bigint NULL,
     min_tempdb_space_used_mb bigint NULL,
     max_tempdb_space_used_mb bigint NULL,
-    total_tempdb_space_used_mb AS (avg_tempdb_space_used_mb * count_executions),
+    total_tempdb_space_used_mb AS 
+        (avg_tempdb_space_used_mb * count_executions),
     context_settings nvarchar(256) NULL
 );
 
