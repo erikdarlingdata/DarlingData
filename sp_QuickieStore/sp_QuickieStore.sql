@@ -91,11 +91,11 @@ IF NOT EXISTS
        AND   ac.name = N'total_spills'
    )
 BEGIN
-    RAISERROR('This procedure only runs on supported versions of SQL Server
+    RAISERROR('This procedure only runs on supported versions of SQL Server:
 * 2016 SP2+
 * 2017 CU3+
 * 2019+
-* Probably Azure', 11, 1) WITH NOWAIT;
+* Probably Azure?', 11, 1) WITH NOWAIT;
 
     RETURN;
 END;
@@ -105,7 +105,7 @@ These are for your outputs.
 */
 SELECT
     @version = '1.1',
-    @version_date = '20210425';
+    @version_date = '20210525';
 
 /*
 Helpful section! For help.
@@ -119,7 +119,7 @@ BEGIN
     SELECT
         introduction =
            'hi, i''m sp_QuickieStore!' UNION ALL
-    SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData' UNION ALL
+    SELECT 'you got me from https://www.erikdarlingdata.com/sp_quickiestore/' UNION ALL
     SELECT 'i can be used to quickly grab misbehaving queries from query store' UNION ALL
     SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
     SELECT 'so what can you do, and how do you do it? read below!';
@@ -130,8 +130,7 @@ BEGIN
     SELECT
         parameter_name =
             ap.name,
-        data_type = t.
-            name,
+        data_type = t.name,
         description =
             CASE
                 ap.name
@@ -424,7 +423,7 @@ CREATE TABLE
     engine_version nvarchar(32) NULL,
     compatibility_level smallint NOT NULL,
     query_plan_hash binary(8) NOT NULL,
-    query_plan nvarchar(MAX) NULL,
+    query_plan nvarchar(max) NULL,
     is_online_index_plan bit NOT NULL,
     is_trivial_plan bit NOT NULL,
     is_parallel_plan bit NOT NULL,
@@ -475,7 +474,7 @@ CREATE TABLE
             ),
             N'Adhoc'
         ),
-    batch_sql_handle varbinary(44) NULL,
+    batch_sql_handle varbinary(64) NULL,
     query_hash binary(8) NOT NULL,
     is_internal_query bit NOT NULL,
     query_parameterization_type tinyint NOT NULL,
@@ -483,7 +482,7 @@ CREATE TABLE
     initial_compile_start_time datetimeoffset(7) NOT NULL,
     last_compile_start_time datetimeoffset(7) NULL,
     last_execution_time datetimeoffset(7) NULL,
-    last_compile_batch_sql_handle varbinary(44) NULL,
+    last_compile_batch_sql_handle varbinary(64) NULL,
     last_compile_batch_offset_start bigint NULL,
     last_compile_batch_offset_end bigint NULL,
     count_compiles bigint NULL,
@@ -524,7 +523,7 @@ CREATE TABLE
 (
     query_text_id bigint NOT NULL,
     query_sql_text xml NULL,
-    statement_sql_handle varbinary(44) NULL,
+    statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
     has_restricted_text bit NOT NULL,
     total_grant_mb bigint NULL,
@@ -760,8 +759,8 @@ IF
   )
 BEGIN
     SELECT
-        @database_name
-            = DB_NAME();
+        @database_name =
+            DB_NAME();
 END;
 
 /*
@@ -776,19 +775,19 @@ DECLARE
     @procedure_name_quoted sysname,
     @collation sysname,
     @new bit,
-    @sql nvarchar(MAX),
-    @isolation_level nvarchar(MAX),
+    @sql nvarchar(max),
+    @isolation_level nvarchar(max),
     @parameters nvarchar(200),
     @plans_top bigint,
     @nc10 nvarchar(2),
-    @where_clause nvarchar(MAX),
+    @where_clause nvarchar(max),
     @procedure_exists bit,
     @query_store_exists bit,
     @string_split nvarchar(1500),
     @current_table nvarchar(100),
-    @troubleshoot_insert nvarchar(MAX),
-    @troubleshoot_update nvarchar(MAX),
-    @troubleshoot_info nvarchar(MAX),
+    @troubleshoot_insert nvarchar(max),
+    @troubleshoot_update nvarchar(max),
+    @troubleshoot_info nvarchar(max),
     @rc bigint;
 
 /*
@@ -887,12 +886,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     FROM
     (
         SELECT
-            ids
-                = x.x.value
-                      (
-                          ''(./text())[1]'',
-                          ''bigint''
-                       )
+            ids =
+                x.x.value
+                    (
+                        ''(./text())[1]'',
+                        ''bigint''
+                    )
         FROM
         (
             SELECT
@@ -1111,7 +1110,7 @@ END;
 
 IF @query_store_exists = 0
     BEGIN
-        RAISERROR('Query Store doesn''t seem to be enabled for database: %s.', 11, 1, @database_name) WITH NOWAIT;
+        RAISERROR('Query Store doesn''t seem to be enabled for database: %s', 11, 1, @database_name) WITH NOWAIT;
         RETURN;
     END;
 
@@ -1184,7 +1183,7 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @procedure_exists = 0
         BEGIN
-            RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s.
+            RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s
     Check that you spelled everything correctly and you''re in the right database',
                        11, 1, @procedure_name, @database_name) WITH NOWAIT;
         RETURN;
@@ -2299,7 +2298,7 @@ SELECT
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
                 WHERE qsp_plans.query_id = qsp.query_id
                 FOR XML PATH(''''), TYPE
-            ).value(''./text()[1]'', ''varchar(MAX)''),
+            ).value(''./text()[1]'', ''varchar(max)''),
             1,
             2,
             ''''
@@ -2536,7 +2535,7 @@ BEGIN
 END;
 
 /*
-This gets they query text for them!
+This gets the query text for them!
 */
 SELECT
     @current_table = 'inserting #query_store_query_text',
@@ -2970,8 +2969,7 @@ CROSS APPLY
 GROUP BY
     qsws.plan_id,
     qsws.wait_category_desc
-HAVING
-    SUM(qsws.min_query_wait_time_ms) >= 0.
+HAVING SUM(qsws.min_query_wait_time_ms) >= 0.
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -3337,7 +3335,7 @@ FROM
                  THEN
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
         N'
         avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
         total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),
@@ -3600,7 +3598,7 @@ FROM
         JOIN #query_store_query_text AS qsqt
             ON qsqt.query_text_id = qsq.query_text_id
         WHERE qsq.query_id = qsp.query_id
-        ORDER BY qsq.last_execution_time
+        ORDER BY qsq.last_execution_time DESC
     ) AS qsqt
     CROSS APPLY
     (
@@ -3608,7 +3606,7 @@ FROM
             qsq.*
         FROM #query_store_query AS qsq
         WHERE qsq.query_id = qsp.query_id
-        ORDER BY qsq.last_execution_time
+        ORDER BY qsq.last_execution_time DESC
     ) AS qsq';
 
     /*
@@ -3652,7 +3650,7 @@ FROM
                        GROUP BY qsws.wait_category_desc
                        ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
-                    ).value(''./text()[1]'', ''varchar(MAX)''),
+                    ).value(''./text()[1]'', ''varchar(max)''),
                     1,
                     2,
                     ''''
@@ -3698,7 +3696,7 @@ FROM
                        GROUP BY qsws.wait_category_desc
                        ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
-                    ).value(''./text()[1]'', ''varchar(MAX)''),
+                    ).value(''./text()[1]'', ''varchar(max)''),
                     1,
                     2,
                     ''''
