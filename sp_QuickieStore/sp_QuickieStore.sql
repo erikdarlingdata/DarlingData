@@ -61,6 +61,7 @@ CREATE OR ALTER PROCEDURE dbo.sp_QuickieStore
     @ignore_plan_ids nvarchar(4000) = NULL,
     @ignore_query_ids nvarchar(4000) = NULL,
     @query_text_search nvarchar(4000) = NULL,
+    @wait_filter varchar(20) = NULL,
     @expert_mode bit = 0,
     @format_output bit = 0,
     @version varchar(30) = NULL OUTPUT,
@@ -148,6 +149,7 @@ BEGIN
                 WHEN '@ignore_plan_ids' THEN 'a list of plan ids to ignore'
                 WHEN '@ignore_query_ids' THEN 'a list of query ids to ignore'
                 WHEN '@query_text_search' THEN 'query text to search for'
+                WHEN '@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN '@expert_mode' THEN 'returns additional columns and results'
                 WHEN '@format_output' THEN 'returns numbers formatted with commas'
                 WHEN '@version' THEN 'OUTPUT; for support'
@@ -173,6 +175,7 @@ BEGIN
                 WHEN '@ignore_plan_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN '@ignore_query_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN '@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
+                WHEN '@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN '@expert_mode' THEN '0 or 1'
                 WHEN '@format_output' THEN '0 or 1'
                 WHEN '@version' THEN 'none'
@@ -198,6 +201,7 @@ BEGIN
                 WHEN '@ignore_plan_ids' THEN 'NULL'
                 WHEN '@ignore_query_ids' THEN 'NULL'
                 WHEN '@query_text_search' THEN 'NULL'
+                WHEN '@wait_filter' THEN 'NULL'
                 WHEN '@expert_mode' THEN '0'
                 WHEN '@format_output' THEN '0'
                 WHEN '@version' THEN 'none'
@@ -214,6 +218,42 @@ BEGIN
         AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_QuickieStore'
     OPTION(RECOMPILE);
+
+    /*
+    Wait categories
+    */
+
+    SELECT
+        wait_categories =
+          'cpu: SOS_SCHEDULER_YIELD'
+    UNION ALL
+    SELECT
+           'worker thread: THREADPOOL'
+    UNION ALL
+    SELECT
+           'lock: LCK_M_%'
+    UNION ALL
+    SELECT
+           'latch: LATCH_%'
+    UNION ALL
+    SELECT
+           'buffer latch: PAGELATCH_%'
+    UNION ALL
+    SELECT
+           'buffer io: PAGEIOLATCH_%'
+    UNION ALL
+    SELECT
+           'log io: LOGMGR, LOGBUFFER, LOGMGR_RESERVE_APPEND, LOGMGR_FLUSH, LOGMGR_PMM_LOG, CHKPT, WRITELOG'
+    UNION ALL
+    SELECt
+           'network io: ASYNC_NETWORK_IO, NET_WAITFOR_PACKET, PROXY_NETWORK_IO, EXTERNAL_SCRIPT_NETWORK_IOF'
+    UNION ALL
+    SELECT
+           'parallelism: CXPACKET, EXCHANGE, HT%, BMP%, BP%'
+    UNION ALL
+    SELECT
+           'memory: RESOURCE_SEMAPHORE, CMEMTHREAD, CMEMPARTITIONED, EE_PMOLOCK, MEMORY_ALLOCATION_EXT, RESERVED_MEMORY_ALLOCATION_EXT, MEMORY_GRANT_UPDATE';
+
 
     /* 
     Results 
@@ -344,6 +384,15 @@ Hold plan_ids for matching query text
 */
 CREATE TABLE
     #query_text_search
+(
+    plan_id bigint PRIMARY KEY
+);
+
+/* 
+Hold plan_ids for matching wait filter
+*/
+CREATE TABLE
+    #wait_filter
 (
     plan_id bigint PRIMARY KEY
 );
@@ -493,7 +542,7 @@ CREATE TABLE
     #query_store_query_text
 (
     query_text_id bigint NOT NULL,
-    query_sql_text nvarchar(MAX) NULL,
+    query_sql_text xml NULL,
     statement_sql_handle varbinary(44) NULL,
     is_part_of_encrypted_module bit NOT NULL,
     has_restricted_text bit NOT NULL,
@@ -911,11 +960,11 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         SELECT
             (
                 SELECT
-                    ''runtime_ms'' =
+                    runtime_ms =
                         tp.runtime_ms,
-                    ''current_table'' = 
+                    current_table = 
                         tp.current_table,
-                    ''query_length'' = 
+                    query_length = 
                         FORMAT(LEN(@sql), ''N0''),
                     ''processing-instruction(statement_text)'' =
                         @sql
@@ -949,6 +998,8 @@ SELECT
         NULLIF(@ignore_plan_ids, ''),
     @ignore_query_ids = 
         NULLIF(@ignore_query_ids, ''),
+    @wait_filter = 
+        NULLIF(@wait_filter, ''),
     @format_output = 
         ISNULL(@format_output, 0),
     @help = 
@@ -1678,6 +1729,133 @@ OPTION(RECOMPILE);' + @nc10;
 
 END;
 
+/*
+Validate wait stats stuff
+*/
+IF @wait_filter IS NOT NULL
+BEGIN
+
+    IF @wait_filter NOT IN 
+                    (
+                        'cpu', 
+                        'worker',
+                        'workers', 
+                        'worker threads', 
+                        'lock',
+                        'locks',
+                        'latch',
+                        'latches',
+                        'buffer latch',
+                        'buffer latches',
+                        'buffer io',
+                        'log',
+                        'log io',
+                        'network',
+                        'network io',
+                        'parallel',
+                        'parallelism',
+                        'memory'
+                    )
+    BEGIN
+       RAISERROR('The wait category (%s) you chose is invalid', 11, 1, @wait_filter) WITH NOWAIT;
+       RETURN;
+    END;
+    
+    ELSE
+    
+    BEGIN
+
+        SELECT 
+            @current_table = 'inserting #wait_filter',
+            @sql = @isolation_level;
+        
+        IF @troubleshoot_performance = 1
+        BEGIN
+        
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+        
+            SET STATISTICS XML ON;
+        
+        END;
+
+        SELECT
+            @sql += N'
+SELECT
+    qsws.plan_id
+FROM  ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+WHERE qsws.execution_type = 0
+AND   qsws.wait_category = ' +
+CASE @wait_filter
+     WHEN 'cpu' THEN N'1'
+     WHEN 'worker' THEN N'2'
+     WHEN 'workers' THEN N'2'
+     WHEN 'worker threads' THEN N'2'
+     WHEN 'lock' THEN N'3'
+     WHEN 'locks' THEN N'3'
+     WHEN 'latch' THEN N'4'
+     WHEN 'latches' THEN N'4'
+     WHEN 'buffer latch' THEN N'5'
+     WHEN 'buffer latches' THEN N'5'
+     WHEN 'buffer io' THEN N'6'
+     WHEN 'log' THEN N'14'
+     WHEN 'log io' THEN N'14'
+     WHEN 'network' THEN N'15'
+     WHEN 'network io' THEN N'15'
+     WHEN 'parallel' THEN N'16'
+     WHEN 'parallelism' THEN N'16'
+     WHEN 'memory' THEN N'17'
+END
++ N'
+GROUP BY qsws.plan_id
+HAVING SUM(qsws.avg_query_wait_time_ms) > 1000.
+ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
+OPTION(RECOMPILE);'
+    END
+
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;    
+    
+    INSERT
+        #wait_filter WITH(TABLOCK)
+    (
+        plan_id
+    )
+    EXEC sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        
+        SET STATISTICS XML OFF;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    
+    END;
+
+    SELECT 
+        @where_clause += N'AND   EXISTS 
+       (
+           SELECT
+               1/0
+           FROM #wait_filter AS wf
+           WHERE wf.plan_id = qsrs.plan_id
+       )' + @nc10; 
+
+END
+
+
 /* 
 This section screens out index create and alter statements because who cares 
 */
@@ -2400,7 +2578,13 @@ SELECT
     @sql += N'
 SELECT 
     qsqt.query_text_id,
-    qsqt.query_sql_text,
+    query_sql_text = 
+        (
+             SELECT
+                 [processing-instruction(query)] = 
+                     qsqt.query_sql_text
+             FOR XML PATH(''''), TYPE
+        ),
     qsqt.statement_sql_handle,
     qsqt.is_part_of_encrypted_module,
     qsqt.has_restricted_text
@@ -2980,7 +3164,6 @@ FROM
         qsp.all_plan_ids,
         qsrs.execution_type_desc,        
         qsq.object_name,
-        query_sql_text = 
         qsqt.query_sql_text,
         qsp.compatibility_level,
         query_plan = TRY_CONVERT(XML, qsp.query_plan),'
@@ -4401,6 +4584,8 @@ BEGIN
             @ignore_query_ids,
         query_text_search = 
             @query_text_search,
+        wait_filter = 
+            @wait_filter,
         expert_mode = 
             @expert_mode,
         format_output = 
@@ -4618,6 +4803,28 @@ BEGIN
         SELECT
             result = 
                 '#query_text_search is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #wait_filter AS wf
+       )
+    BEGIN
+        SELECT 
+            table_name = 
+                '#wait_filter',
+            wf.*
+        FROM #wait_filter AS wf
+        ORDER BY wf.plan_id
+        OPTION(RECOMPILE);    
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result = 
+                '#wait_filter is empty';
     END;
 
     IF EXISTS
