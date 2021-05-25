@@ -783,6 +783,7 @@ DECLARE
     @where_clause nvarchar(max),
     @procedure_exists bit,
     @query_store_exists bit,
+    @query_store_waits_enabled bit,
     @string_split nvarchar(1500),
     @current_table nvarchar(100),
     @troubleshoot_insert nvarchar(max),
@@ -873,6 +874,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @where_clause = N'',
     @procedure_exists = 0,
     @query_store_exists = 0,
+    @query_store_waits_enabled = 0,
     @current_table = N'',
     @string_split = N'
     SELECT DISTINCT
@@ -1239,6 +1241,121 @@ BEGIN
    SELECT
        @sort_order = N'cpu';
 END;
+
+IF
+(
+    @wait_filter IS NOT NULL
+      AND @new = 0
+)
+BEGIN
+   RAISERROR('Query Store wait stats are not available prior to SQL Server 2017', 11, 1) WITH NOWAIT;
+   RETURN;
+END;
+
+IF 
+(
+    @new = 1
+      AND @wait_filter NOT IN
+                       (
+                           'cpu',
+                           'worker',
+                           'workers',
+                           'worker threads',
+                           'lock',
+                           'locks',
+                           'latch',
+                           'latches',
+                           'buffer latch',
+                           'buffer latches',
+                           'buffer io',
+                           'log',
+                           'log io',
+                           'network',
+                           'network io',
+                           'parallel',
+                           'parallelism',
+                           'memory'
+                       )
+)
+BEGIN
+   RAISERROR('The wait category (%s) you chose is invalid', 11, 1, @wait_filter) WITH NOWAIT;
+   RETURN;
+END;
+
+IF
+(
+    @wait_filter IS NOT NULL
+      AND @new = 1
+)
+BEGIN
+
+    SELECT
+        @current_table = 'checking query store waits are enabled',
+        @sql = @isolation_level;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        SET STATISTICS XML ON;
+    
+    END;
+    
+    SELECT
+        @sql += N'
+SELECT
+    @query_store_waits_enabled =
+        CASE
+            WHEN EXISTS
+                 (
+                     SELECT
+                         1/0
+                     FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
+                     WHERE dqso.wait_stats_capture_mode = 1
+                 )
+            THEN 1
+            ELSE 0
+        END
+OPTION(RECOMPILE);' + @nc10;
+    
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    
+    EXEC sys.sp_executesql
+        @sql,
+      N'@query_store_waits_enabled bit OUTPUT',
+        @query_store_waits_enabled OUTPUT;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+    
+        SET STATISTICS XML OFF;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    
+    END;
+    
+    IF @query_store_waits_enabled = 0
+    BEGIN
+       RAISERROR('Query Store wait stats are not enabled for database %s', 11, 1, @database_name_quoted) WITH NOWAIT;
+       RETURN;
+    END
+
+END;
+
 
 /*
 Get filters ready, or whatever
@@ -1714,34 +1831,6 @@ Validate wait stats stuff
 */
 IF @wait_filter IS NOT NULL
 BEGIN
-
-    IF @wait_filter NOT IN
-                    (
-                        'cpu',
-                        'worker',
-                        'workers',
-                        'worker threads',
-                        'lock',
-                        'locks',
-                        'latch',
-                        'latches',
-                        'buffer latch',
-                        'buffer latches',
-                        'buffer io',
-                        'log',
-                        'log io',
-                        'network',
-                        'network io',
-                        'parallel',
-                        'parallelism',
-                        'memory'
-                    )
-    BEGIN
-       RAISERROR('The wait category (%s) you chose is invalid', 11, 1, @wait_filter) WITH NOWAIT;
-       RETURN;
-    END;
-
-    ELSE
 
     BEGIN
 
@@ -4617,6 +4706,8 @@ BEGIN
             @procedure_exists,
         query_store_exists =
             @query_store_exists,
+        query_store_waits_enabled =
+            @query_store_waits_enabled,
         [string_split] =
             @string_split,
         current_table =
