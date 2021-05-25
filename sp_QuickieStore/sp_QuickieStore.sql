@@ -2469,7 +2469,7 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = qsp.query_id
     AND   qsq.last_execution_time >= qsp.last_execution_time
-    ORDER BY qsq.last_execution_time
+    ORDER BY qsq.last_execution_time DESC
 ) AS qsq
 OPTION(RECOMPILE);' + @nc10;
 
