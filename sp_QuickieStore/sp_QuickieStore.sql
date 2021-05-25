@@ -1792,8 +1792,8 @@ END
 GROUP BY qsws.plan_id
 HAVING SUM(qsws.avg_query_wait_time_ms) > 1000.
 ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
-OPTION(RECOMPILE);'
-    END
+OPTION(RECOMPILE);';
+    END;
 
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
@@ -1833,7 +1833,7 @@ OPTION(RECOMPILE);'
            WHERE wf.plan_id = qsrs.plan_id
        )' + @nc10;
 
-END
+END;
 
 
 /*
@@ -4508,7 +4508,7 @@ BEGIN CATCH
     IF @current_table IS NOT NULL
     BEGIN
         RAISERROR ('error while %s', 11, 1, @current_table) WITH NOWAIT;
-    END
+    END;
 
         /*
         Query that caused the error
