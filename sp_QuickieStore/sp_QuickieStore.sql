@@ -1184,7 +1184,7 @@ OPTION(RECOMPILE);' + @nc10;
     IF @procedure_exists = 0
         BEGIN
             RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s
-    Check that you spelled everything correctly and you''re in the right database',
+Check that you spelled everything correctly and you''re in the right database',
                        11, 1, @procedure_name, @database_name) WITH NOWAIT;
         RETURN;
     END;
