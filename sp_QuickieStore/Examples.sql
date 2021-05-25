@@ -109,6 +109,13 @@ EXEC dbo.sp_QuickieStore
     @format_output = 1;
 
 
+--Use wait filter to search for queries responsible for high waits
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @wait_filter = 'memory',
+    @sort_order = 'memory';
+
+
 --Troubleshoot performance
 EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
