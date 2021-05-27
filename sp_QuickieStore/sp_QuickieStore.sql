@@ -74,6 +74,7 @@ WITH RECOMPILE
 AS
 BEGIN
 
+SET STATISTICS XML OFF;
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
@@ -225,7 +226,6 @@ BEGIN
     SELECT
         wait_categories =
            'cpu (1): SOS_SCHEDULER_YIELD' UNION ALL
-    SELECT 'worker thread (2): THREADPOOL' UNION ALL
     SELECT 'lock (3): LCK_M_%' UNION ALL
     SELECT 'latch (4): LATCH_%' UNION ALL
     SELECT 'buffer latch (5): PAGELATCH_%' UNION ALL
@@ -1258,9 +1258,6 @@ IF
       AND @wait_filter NOT IN
                        (
                            'cpu',
-                           'worker',
-                           'workers',
-                           'worker threads',
                            'lock',
                            'locks',
                            'latch',
@@ -1852,16 +1849,13 @@ BEGIN
 
         SELECT
             @sql += N'
-SELECT
+SELECT TOP (@top)
     qsws.plan_id
 FROM  ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
 WHERE qsws.execution_type = 0
 AND   qsws.wait_category = ' +
 CASE @wait_filter
      WHEN 'cpu' THEN N'1'
-     WHEN 'worker' THEN N'2'
-     WHEN 'workers' THEN N'2'
-     WHEN 'worker threads' THEN N'2'
      WHEN 'lock' THEN N'3'
      WHEN 'locks' THEN N'3'
      WHEN 'latch' THEN N'4'
@@ -1881,7 +1875,8 @@ END
 GROUP BY qsws.plan_id
 HAVING SUM(qsws.avg_query_wait_time_ms) > 1000.
 ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
-OPTION(RECOMPILE);';
+OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+
     END;
 
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -1892,7 +1887,9 @@ OPTION(RECOMPILE);';
         plan_id
     )
     EXEC sys.sp_executesql
-        @sql;
+        @sql,
+      N'@top bigint',
+        @top;
 
     IF @troubleshoot_performance = 1
     BEGIN
