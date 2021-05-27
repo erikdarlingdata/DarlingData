@@ -226,7 +226,6 @@ BEGIN
     SELECT
         wait_categories =
            'cpu (1): SOS_SCHEDULER_YIELD' UNION ALL
-    SELECT 'worker thread (2): THREADPOOL' UNION ALL
     SELECT 'lock (3): LCK_M_%' UNION ALL
     SELECT 'latch (4): LATCH_%' UNION ALL
     SELECT 'buffer latch (5): PAGELATCH_%' UNION ALL
@@ -1259,9 +1258,6 @@ IF
       AND @wait_filter NOT IN
                        (
                            'cpu',
-                           'worker',
-                           'workers',
-                           'worker threads',
                            'lock',
                            'locks',
                            'latch',
@@ -1860,9 +1856,6 @@ WHERE qsws.execution_type = 0
 AND   qsws.wait_category = ' +
 CASE @wait_filter
      WHEN 'cpu' THEN N'1'
-     WHEN 'worker' THEN N'2'
-     WHEN 'workers' THEN N'2'
-     WHEN 'worker threads' THEN N'2'
      WHEN 'lock' THEN N'3'
      WHEN 'locks' THEN N'3'
      WHEN 'latch' THEN N'4'
