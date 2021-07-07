@@ -8,7 +8,8 @@ Navigatory
  
  - Scripts:
     - [sp_PressureDetector](#pressure-detector)
-   - [sp_HumanEvents](#human-events)
+    - [sp_HumanEvents](#human-events)
+    - [sp_QuickieStore](#quickie-store)
 
 ## Who are these scripts for?
 You need to troubleshoot problems with SQL Server, and you need to do it fast. 
@@ -69,6 +70,17 @@ Misuse of this procedure can harm performance. Be very careful about introducing
  * For a full, up-to-date description of the parameters and valid uses for this proc, use the `@help` parameter.
  * For a video walkthrough of the procedure, code, etc. there's a [YouTube playlist here](https://www.youtube.com/playlist?list=PLt4QZ-7lfQifgpvqsa21WLt-u2tZlyoC_).
  * For a text-based adventure, head to [my site here](https://www.erikdarlingdata.com/sp_humanevents/).
+
+[*Back to top*](#header1)
+
+
+## Quickie Store
+
+This procedure will dig into Query Store data for a specific database. It's designed to run as quickly as possible, but there are some circumstances that prevent me from realizing my ultimate dream.
+
+ * For a full, up-to-date description of the parameters and valid uses for this proc, use the `@help` parameter.
+ * For a video walkthrough of the procedure, code, etc. there's a [YouTube playlist here](https://www.youtube.com/playlist?list=PLt4QZ-7lfQie1XZHEm0HN-Zt1S7LFEx1P).
+ * For a text-based adventure, head to [my site here](https://www.erikdarlingdata.com/sp_quickiestore/).
 
 [*Back to top*](#header1)
 
