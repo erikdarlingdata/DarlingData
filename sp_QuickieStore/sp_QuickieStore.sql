@@ -104,9 +104,9 @@ END;
 /*
 These are for your outputs.
 */
-SELECT
-    @version = '1.1',
-    @version_date = '20210525';
+SELECT 
+    @version = '1.70', 
+    @version_date = '20210731';
 
 /*
 Helpful section! For help.

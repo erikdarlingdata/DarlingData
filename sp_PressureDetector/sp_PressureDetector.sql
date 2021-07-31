@@ -1,4 +1,4 @@
-SET ANSI_NULLS ON;
+﻿SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
@@ -8,6 +8,35 @@ SET STATISTICS IO OFF;
 SET STATISTICS TIME OFF;
 GO
 
+/*
+
+██████╗ ██████╗ ███████╗███████╗███████╗██╗   ██╗██████╗ ███████╗  
+██╔══██╗██╔══██╗██╔════╝██╔════╝██╔════╝██║   ██║██╔══██╗██╔════╝  
+██████╔╝██████╔╝█████╗  ███████╗███████╗██║   ██║██████╔╝█████╗    
+██╔═══╝ ██╔══██╗██╔══╝  ╚════██║╚════██║██║   ██║██╔══██╗██╔══╝    
+██║     ██║  ██║███████╗███████║███████║╚██████╔╝██║  ██║███████╗  
+╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝  
+                                                                   
+██████╗ ███████╗████████╗███████╗ ██████╗████████╗ ██████╗ ██████╗ 
+██╔══██╗██╔════╝╚══██╔══╝██╔════╝██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗
+██║  ██║█████╗     ██║   █████╗  ██║        ██║   ██║   ██║██████╔╝
+██║  ██║██╔══╝     ██║   ██╔══╝  ██║        ██║   ██║   ██║██╔══██╗
+██████╔╝███████╗   ██║   ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
+╚═════╝ ╚══════╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
+
+Copyright 2021 Darling Data, LLC
+https://www.erikdarlingdata.com/
+
+For usage and licensing details, run:
+EXEC sp_PressureDetector
+    @help = 1;
+
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData                                                                   
+
+*/
+
+
 IF OBJECT_ID('dbo.sp_PressureDetector') IS  NULL
     EXEC ('CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
 GO
@@ -16,8 +45,9 @@ ALTER PROCEDURE dbo.sp_PressureDetector
 (
     @what_to_check nvarchar(6) = N'both',    
     @skip_plan_xml bit = 0,
+    @help bit = 0,
     @version varchar(5) = NULL OUTPUT,
-    @versiondate datetime = NULL OUTPUT
+    @version_date datetime = NULL OUTPUT
 )
 WITH RECOMPILE
 AS 
@@ -27,32 +57,96 @@ SET STATISTICS XML OFF;
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
-SELECT @version = '1.50', @versiondate = '20210519';
+SELECT 
+    @version = '1.70', 
+    @version_date = '20210731';
 
-/*
-    Copyright (c) 2021 Darling Data, LLC 
-  
-    https://erikdarlingdata.com/
-  
-    MIT License
-    
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
-    
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
-*/
+
+IF @help = 1
+BEGIN
+
+    /*
+    Introduction
+    */
+    SELECT
+        introduction =
+           'hi, i''m sp_PressureDetector!' UNION ALL
+    SELECT 'you got me from https://www.erikdarlingdata.com/sp_pressuredetector/' UNION ALL
+    SELECT 'i''m a lightweight tool for monitoring cpu and memory pressure' UNION ALL
+    SELECT 'i''ll tell you how many worker threads and how much memory you have available' UNION ALL
+    SELECT 'and show you any running queries that are using cpu and memory';
+
+    /*
+    Parameters
+    */
+    SELECT
+        parameter_name =
+            ap.name,
+        data_type = t.name,
+        description =
+            CASE
+                ap.name
+                WHEN '@what_to_check' THEN 'areas to check for pressure '
+                WHEN '@skip_plan_xml' THEN 'if you want to skip getting plan XML'
+                WHEN '@version' THEN 'OUTPUT; for support'
+                WHEN '@version_date' THEN 'OUTPUT; for support'
+                WHEN '@help' THEN 'how you got here'
+            END,
+        valid_inputs =
+            CASE
+                ap.name
+                WHEN '@what_to_check' THEN '"both", "cpu", and "memory"'
+                WHEN '@skip_plan_xml' THEN '0 or 1'
+                WHEN '@version' THEN 'none'
+                WHEN '@version_date' THEN 'none'
+                WHEN '@help' THEN '0 or 1'
+            END,
+        defaults =
+            CASE
+                ap.name
+                WHEN '@what_to_check' THEN 'both'
+                WHEN '@skip_plan_xml' THEN '1'
+                WHEN '@version' THEN 'none'
+                WHEN '@version_date' THEN 'none'
+                WHEN '@help' THEN '0'
+            END
+    FROM sys.all_parameters AS ap
+    INNER JOIN sys.all_objects AS o
+        ON ap.object_id = o.object_id
+    INNER JOIN sys.types AS t
+        ON  ap.system_type_id = t.system_type_id
+        AND ap.user_type_id = t.user_type_id
+    WHERE o.name = N'sp_PressureDetector'
+    OPTION(RECOMPILE);
+
+    SELECT
+        mit_license_yo =
+           'i am MIT licensed, so like, do whatever' UNION ALL
+    SELECT 'see printed messages for full license';
+
+    RAISERROR('
+MIT License
+
+Copyright 2021 Darling Data, LLC
+
+https://www.erikdarlingdata.com/
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+', 0, 1) WITH NOWAIT;
+
+    RETURN;
+
+END;
 
     /*
     Check to see if the DAC is enabled.
