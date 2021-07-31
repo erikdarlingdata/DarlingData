@@ -1959,6 +1959,7 @@ WHERE NOT EXISTS
               AND   qsqt.query_sql_text NOT LIKE ''CREATE%INDEX%''
               AND   qsqt.query_sql_text NOT LIKE ''CREATE STATISTICS%''
               AND   qsqt.query_sql_text NOT LIKE ''UPDATE STATISTICS%''
+              AND   qsqt.query_sql_text NOT LIKE ''SELECT StatMan%''
           )
 OPTION(RECOMPILE);' + @nc10;
 

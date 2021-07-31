@@ -292,8 +292,8 @@ SELECT @version = '1.50', @versiondate = '20210519';
                 (deqmg.wait_time_ms / 1000.),
             wait_duration_s = 
                 (waits.wait_duration_ms / 1000.),
-            deqmg.dop,
-            waits.wait_type,'
+            waits.wait_type,
+            deqmg.dop,'
             + CASE 
                   WHEN @helpful_new_columns = 1
                   THEN N'
