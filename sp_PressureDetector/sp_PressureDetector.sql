@@ -75,7 +75,14 @@ SELECT @version = '1.50', @versiondate = '20210519';
         @mem_sql nvarchar(MAX) = N'',
         @helpful_new_columns bit = 0,
         @cpu_sql nvarchar(MAX) = N'',
-        @cool_new_columns bit = 0;
+        @cool_new_columns bit = 0,
+        @reserved_worker_count_out nvarchar(10) = N'0',
+        @reserved_worker_count nvarchar(MAX) = N'
+            SELECT
+                @reserved_worker_count_out = 
+                SUM(deqmg.reserved_worker_count)
+            FROM sys.dm_exec_query_memory_grants AS deqmg;
+            ';
            
     IF 
     (
@@ -292,8 +299,8 @@ SELECT @version = '1.50', @versiondate = '20210519';
                 (deqmg.wait_time_ms / 1000.),
             wait_duration_s = 
                 (waits.wait_duration_ms / 1000.),
-            deqmg.dop,
-            waits.wait_type,'
+            waits.wait_type,
+            deqmg.dop,'
             + CASE 
                   WHEN @helpful_new_columns = 1
                   THEN N'
@@ -354,6 +361,15 @@ SELECT @version = '1.50', @versiondate = '20210519';
 
     IF @what_to_check IN (N'cpu', N'both')
     BEGIN
+
+        IF @helpful_new_columns = 1
+        BEGIN        
+            EXEC sys.sp_executesql
+                @reserved_worker_count,
+              N'@reserved_worker_count_out varchar(10) OUTPUT',
+                @reserved_worker_count_out OUTPUT;
+        END
+
         /*Thread usage*/
         SELECT
             total_threads = 
@@ -362,6 +378,16 @@ SELECT @version = '1.50', @versiondate = '20210519';
                 SUM(dos.active_workers_count),
             available_threads = 
                 MAX(osi.max_workers_count) - SUM(dos.active_workers_count),
+            reserved_worker_count = 
+                CASE @helpful_new_columns
+                     WHEN 1
+                     THEN ISNULL
+                          (
+                              @reserved_worker_count_out, 
+                              N'0'
+                          )
+                     ELSE N'N/A'
+                END,
             threads_waiting_for_cpu = 
                 SUM(dos.runnable_tasks_count),
             requests_waiting_for_threads = 

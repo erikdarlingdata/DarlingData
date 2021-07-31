@@ -194,9 +194,9 @@ BEGIN
                         ELSE N'????' 
            END 
     FROM sys.all_parameters AS ap
-    INNER JOIN sys.all_objects AS o
+    JOIN sys.all_objects AS o
         ON ap.object_id = o.object_id
-    INNER JOIN sys.types AS t
+    JOIN sys.types AS t
         ON  ap.system_type_id = t.system_type_id
         AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_HumanEvents'
