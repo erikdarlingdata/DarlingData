@@ -49,7 +49,7 @@ SELECT
          ORDER BY x.x
          FOR XML PATH(N''), TYPE 
        ).value('./text()[1]', 'nvarchar(max)')
-    ) AS numbers_only;
+    ) AS strip_characters;
 GO 
 
 
@@ -129,5 +129,5 @@ SELECT
             ORDER BY x.x
             FOR XML PATH(N''), TYPE 
         ).value('./text()[1]', 'nvarchar(max)')
-    ) AS numbers_only;
+    ) AS strip_characters;
 GO
