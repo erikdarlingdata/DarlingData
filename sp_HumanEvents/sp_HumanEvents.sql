@@ -54,8 +54,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT 
-    @version = '2.0', 
-    @version_date = '20210601';
+    @version = '2.1', 
+    @version_date = '20210901';
 
 IF @help = 1
 BEGIN
@@ -2450,6 +2450,7 @@ IF @compile_events = 0
                 r.event_type,
                 r.database_name,
                 r.object_name,
+                r.recompile_cause,
                 r.statement_text
             FROM #recompiles_0 AS r
             ORDER BY r.event_time
