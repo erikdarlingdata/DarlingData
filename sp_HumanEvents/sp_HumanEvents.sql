@@ -2612,6 +2612,7 @@ BEGIN
                 bd.value('(process/@waittime)[1]', 'bigint') AS wait_time,
                 bd.value('(process/@transactionname)[1]', 'nvarchar(256)') AS transaction_name,
                 bd.value('(process/@lasttranstarted)[1]', 'datetime2') AS last_transaction_started,
+                bd.value('(process/@waitresource)[1]', 'nvarchar(100)') AS wait_resource,
                 bd.value('(process/@lockMode)[1]', 'nvarchar(10)') AS lock_mode,
                 bd.value('(process/@status)[1]', 'nvarchar(10)') AS status,
                 bd.value('(process/@priority)[1]', 'int') AS priority,
@@ -2655,6 +2656,7 @@ BEGIN
                 CONVERT(int, NULL) AS wait_time,
                 CONVERT(nvarchar(256), NULL) AS transaction_name,
                 CONVERT(datetime2, NULL) AS last_transaction_started,
+                CONVERT(nvarchar(100), NULL) AS wait_resource,
                 CONVERT(nvarchar(10), NULL) AS lock_mode,
                 bg.value('(process/@status)[1]', 'nvarchar(10)') AS status,
                 bg.value('(process/@priority)[1]', 'int') AS priority,
@@ -2687,6 +2689,7 @@ BEGIN
                 kheb.isolation_level,
                 kheb.last_transaction_started,
                 kheb.transaction_name,
+                kheb.wait_resource,
                 kheb.lock_mode,
                 kheb.priority,
                 kheb.transaction_count,
@@ -3014,7 +3017,7 @@ WHILE 1 = 1
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, ' + @nc10 +
                                  N'  activity nvarchar(20) NULL, database_name sysname NULL, database_id integer NULL, object_id bigint NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + @nc10 +
                                  N'  transaction_id bigint NULL, resource_owner_type nvarchar(256) NULL, monitor_loop integer NULL, spid integer NULL, ecid integer NULL, query_text nvarchar(MAX) NULL, ' + 
-                                 N'  wait_time bigint NULL, transaction_name nvarchar(256) NULL,  last_transaction_started nvarchar(30) NULL, ' + @nc10 +
+                                 N'  wait_time bigint NULL, transaction_name nvarchar(256) NULL,  last_transaction_started nvarchar(30) NULL, wait_resource nvarchar(100) NULL, ' + @nc10 +
                                  N'  lock_mode nvarchar(10) NULL, status nvarchar(10) NULL, priority integer NULL, transaction_count integer NULL, ' + @nc10 +
                                  N'  client_app sysname NULL, host_name sysname NULL, login_name sysname NULL, isolation_level nvarchar(30) NULL, sql_handle varbinary(64) NULL, blocked_process_report XML NULL );'
                             WHEN @event_type_check LIKE N'%quer%'
@@ -3412,12 +3415,12 @@ OPTION(RECOMPILE);'
                         THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 + 
                              N'( server_name, event_time, activity, database_name, database_id, object_id, ' + @nc10 +
                              N'  transaction_id, resource_owner_type, monitor_loop, spid, ecid, query_text, wait_time, ' + @nc10 +
-                             N'  transaction_name,  last_transaction_started, lock_mode, status, priority, ' + @nc10 +
+                             N'  transaction_name,  last_transaction_started, wait_resource, lock_mode, status, priority, ' + @nc10 +
                              N'  transaction_count, client_app, host_name, login_name, isolation_level, sql_handle, blocked_process_report )' + @nc10 +
 N'
 SELECT server_name, event_time, activity, database_name, database_id, object_id, 
        transaction_id, resource_owner_type, monitor_loop, spid, ecid, text, waittime, 
-       transactionname,  lasttranstarted, lockmode, status, priority, 
+       transactionname,  lasttranstarted, wait_resource, lockmode, status, priority, 
        trancount, clientapp, hostname, loginname, isolationlevel, sqlhandle, process_report
 FROM 
 ( 
@@ -3465,6 +3468,7 @@ FROM
             bd.value(''(process/@waittime)[1]'', ''bigint'') AS waittime,
             bd.value(''(process/@transactionname)[1]'', ''nvarchar(256)'') AS transactionname,
             bd.value(''(process/@lasttranstarted)[1]'', ''datetime2'') AS lasttranstarted,
+            bd.value(''(process/@waitresource)[1]'', ''nvarchar(100)'') AS wait_resource,
             bd.value(''(process/@lockMode)[1]'', ''nvarchar(10)'') AS lockmode,
             bd.value(''(process/@status)[1]'', ''nvarchar(10)'') AS status,
             bd.value(''(process/@priority)[1]'', ''int'') AS priority,
@@ -3512,6 +3516,7 @@ FROM
             NULL AS waittime,
             NULL AS transactionname,
             NULL AS lasttranstarted,
+            NULL AS wait_resource,
             NULL AS lockmode,
             bg.value(''(process/@status)[1]'', ''nvarchar(10)'') AS status,
             bg.value(''(process/@priority)[1]'', ''int'') AS priority,
