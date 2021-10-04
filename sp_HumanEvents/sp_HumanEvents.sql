@@ -3197,7 +3197,8 @@ WHILE 1 = 1
                @min_id = MIN(vc.id), 
                @max_id = MAX(vc.id)
             FROM #view_check AS vc
-            WHERE EXISTS
+            WHERE vc.output_table <> N''
+            AND   EXISTS
             (
                 SELECT 
                     1/0
@@ -3247,6 +3248,7 @@ WHILE 1 = 1
                             )
                     FROM #view_check AS vc
                     WHERE vc.id = @min_id
+                    AND   vc.output_table <> N''
                     OPTION (RECOMPILE);
                 
                     IF OBJECT_ID(@object_name_check) IS NOT NULL
@@ -3293,6 +3295,7 @@ WHILE 1 = 1
                             vc.id
                         FROM #view_check AS vc
                         WHERE vc.id > @min_id
+                        AND   vc.output_table <> N''
                         ORDER BY vc.id
                     );
             
