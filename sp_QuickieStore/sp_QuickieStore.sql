@@ -2435,7 +2435,6 @@ CROSS APPLY
         qsp.*
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE qsp.plan_id = qsrs.plan_id
-    AND   qsp.last_execution_time >= qsrs.last_execution_time
     AND   qsp.is_online_index_plan = 0
     ORDER BY qsp.last_execution_time DESC
 ) AS qsp
@@ -2555,7 +2554,6 @@ CROSS APPLY
         qsq.*
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = qsp.query_id
-    AND   qsq.last_execution_time >= qsp.last_execution_time
     ORDER BY qsq.last_execution_time DESC
 ) AS qsq
 OPTION(RECOMPILE);' + @nc10;
