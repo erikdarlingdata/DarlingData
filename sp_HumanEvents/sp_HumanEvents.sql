@@ -1085,8 +1085,11 @@ AND  EXISTS
 BEGIN
         RAISERROR(N'You need to set up the blocked process report in order to use this:
     EXEC sys.sp_configure ''show advanced options'', 1;
+    GO
     RECONFIGURE
+    GO
     EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
+    GO
     RECONFIGURE
     GO', 1, 0) WITH NOWAIT;
     RETURN;
