@@ -1,4 +1,5 @@
-CREATE OR ALTER PROCEDURE dbo.tempdb_tester
+CREATE OR ALTER PROCEDURE 
+    dbo.tempdb_tester
 AS
 SET NOCOUNT, XACT_ABORT ON;
 BEGIN;
