@@ -148,9 +148,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 END;
 
-    /*
-    Check to see if the DAC is enabled.
-    If it's not, give people some helpful information.
+    /*    
+    Declarations of Variablependence
     */
     DECLARE
         @azure bit = 
@@ -177,7 +176,11 @@ END;
                 SUM(deqmg.reserved_worker_count)
             FROM sys.dm_exec_query_memory_grants AS deqmg;
             ';
-           
+
+    /*
+    Check to see if the DAC is enabled.
+    If it's not, give people some helpful information.
+    */           
     IF 
     (
         SELECT 
@@ -425,7 +428,8 @@ END;
         OPTION(MAXDOP 1, RECOMPILE);
         ';
 
-        EXEC sys.sp_executesql @mem_sql;
+        EXEC sys.sp_executesql 
+            @mem_sql;
         
         /*Resource semaphore info*/
         SELECT  
@@ -615,6 +619,8 @@ END;
             der.reads,
             der.writes,
             der.logical_reads,
+            granted_query_memory_mb = 
+                (der.granted_query_memory / 128.),
             transaction_isolation_level = 
                 CASE 
                     WHEN der.transaction_isolation_level = 0 
@@ -648,8 +654,7 @@ END;
                     WHEN der.transaction_isolation_level = 5 
                     THEN ''Snapshot''
                     ELSE ''???''
-                END,
-            der.granted_query_memory'
+                END'
             + CASE 
                   WHEN @cool_new_columns = 1
                   THEN N',
@@ -667,6 +672,7 @@ END;
         + CASE 
               WHEN @cool_new_columns = 1
               THEN N'
+        der.cpu_time DESC,
         der.parallel_worker_count DESC
         OPTION(MAXDOP 1, RECOMPILE);'
               ELSE N'
@@ -674,6 +680,7 @@ END;
         OPTION(MAXDOP 1, RECOMPILE);'
           END;
         
-        EXEC sys.sp_executesql @cpu_sql;
+        EXEC sys.sp_executesql 
+            @cpu_sql;
     END;
 END;

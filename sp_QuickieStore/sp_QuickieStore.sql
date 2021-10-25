@@ -105,8 +105,8 @@ END;
 These are for your outputs.
 */
 SELECT 
-    @version = '1.70', 
-    @version_date = '20210731';
+    @version = '1.92', 
+    @version_date = '20211101';
 
 /*
 Helpful section! For help.
