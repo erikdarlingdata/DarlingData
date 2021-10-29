@@ -3260,8 +3260,7 @@ WHILE 1 = 1
                             )
                     FROM #view_check AS vc
                     WHERE vc.id = @min_id
-                    AND   vc.output_table <> N''
-                    OPTION (RECOMPILE);
+                    AND   vc.output_table <> N'';
                 
                     IF OBJECT_ID(@object_name_check) IS NOT NULL
                     BEGIN
@@ -3373,8 +3372,7 @@ WHILE 1 = 1
                     )
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
-            AND hew.is_table_created = 1
-            OPTION (RECOMPILE);
+            AND hew.is_table_created = 1;
         
             IF OBJECT_ID(@object_name_check) IS NOT NULL
             BEGIN
@@ -3978,7 +3976,7 @@ BEGIN
                     ''; '' + 
                     NCHAR(10)
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
-            WHERE s.name LIKE ''' + '%HumanEvents%' + N''' OPTION(RECOMPILE);';
+            WHERE s.name LIKE ''' + '%HumanEvents%' + N''';';
     
     EXEC sys.sp_executesql 
         @cleanup_tables, 
@@ -4009,7 +4007,7 @@ BEGIN
                     ''; '' + 
                     NCHAR(10)
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
-            WHERE v.name LIKE ''' + '%HumanEvents%' + N''' OPTION(RECOMPILE);';
+            WHERE v.name LIKE ''' + '%HumanEvents%' + N''';';
     
     EXEC sys.sp_executesql 
         @cleanup_views, 
