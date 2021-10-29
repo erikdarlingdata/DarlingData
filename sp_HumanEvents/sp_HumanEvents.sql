@@ -3796,8 +3796,7 @@ OPTION (RECOMPILE);'
                 JOIN   sys.dm_xe_sessions AS s
                     ON s.address = t.event_session_address
                 WHERE  s.name = @event_type_check
-                AND    t.target_name = N'ring_buffer'
-                OPTION (RECOMPILE);
+                AND    t.target_name = N'ring_buffer';
             END;
             ELSE
             BEGIN
@@ -3808,8 +3807,7 @@ OPTION (RECOMPILE);'
                 JOIN   sys.dm_xe_database_sessions AS s
                     ON s.address = t.event_session_address
                 WHERE  s.name = @event_type_check
-                AND    t.target_name = N'ring_buffer'
-                OPTION (RECOMPILE);
+                AND    t.target_name = N'ring_buffer';
             END;
             
             INSERT 
