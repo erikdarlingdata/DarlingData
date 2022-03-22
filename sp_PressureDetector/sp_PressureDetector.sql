@@ -58,8 +58,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
 SELECT 
-    @version = '1.70', 
-    @version_date = '20210731';
+    @version = '2.40', 
+    @version_date = '20220401';
 
 
 IF @help = 1
@@ -173,7 +173,7 @@ END;
         @reserved_worker_count nvarchar(MAX) = N'
             SELECT
                 @reserved_worker_count_out = 
-                SUM(deqmg.reserved_worker_count)
+                    SUM(deqmg.reserved_worker_count)
             FROM sys.dm_exec_query_memory_grants AS deqmg;
             ';
 
@@ -190,9 +190,12 @@ END;
     ) = 0
     BEGIN
         SELECT 
-            'This works a lot better on a troublesome server with the DAC enabled' AS message,
-            'EXEC sp_configure ''remote admin connections'', 1; RECONFIGURE;' AS command_to_run,
-            'https://bit.ly/RemoteDAC' AS how_to_use_the_dac;
+            message = 
+                'This works a lot better on a troublesome server with the DAC enabled',
+            command_to_run = 
+                'EXEC sp_configure ''remote admin connections'', 1; RECONFIGURE;',
+            how_to_use_the_dac = 
+                'https://bit.ly/RemoteDAC';
     END;
     
     /*
@@ -251,17 +254,18 @@ END;
         END;
     
         /*
-            See buffer pool size, along with stolen memory
-            and top non-buffer pool consumers
+        See buffer pool size, along with stolen memory
+        and top non-buffer pool consumers
         */
         SET @pool_sql += N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
         SELECT 
-            memory_consumer = 
+            memory_source = 
                 N''Buffer Pool Memory'',
-            domc.type,
-            memory_used_gb = 
+            memory_consumer = 
+                domc.type,
+            memory_consumed_gb = 
                 CONVERT
                 (
                     decimal(9, 2),
@@ -291,22 +295,28 @@ END;
         UNION ALL
         
         SELECT
-            N''Non-Buffer Pool Memory: Total'',
-            dopc.counter_name AS memory_consumer,
-            CONVERT
-            (
-                decimal(9, 2), 
-                dopc.cntr_value / 1024. / 1024.
-            ) AS stolen_memory_gb
+            memory_source = 
+                N''Non-Buffer Pool Memory: Total'',
+            memory_consumer = 
+                dopc.counter_name,
+            memory_consumed_gb = 
+                CONVERT
+                (
+                    decimal(9, 2), 
+                    dopc.cntr_value / 1024. / 1024.
+                )
         FROM sys.dm_os_performance_counters AS dopc
         WHERE dopc.counter_name LIKE N''Stolen Server%''
         
         UNION ALL
         
         SELECT
-            N''Non-Buffer Pool Memory: Top Five'',
-            x.type, 
-            x.memory_used_gb
+            memory_source = 
+                N''Non-Buffer Pool Memory: Top Five'',
+            memory_consumer = 
+                x.type, 
+            memory_consumed_gb = 
+                x.memory_used_gb
         FROM
         (
             SELECT TOP (5)
@@ -355,7 +365,131 @@ END;
         
         EXEC sys.sp_executesql
             @pool_sql;
-        
+
+        /*
+        Look at wait stats related to memory, disk, and query performance
+        */
+        SELECT
+            hours_uptime =
+                (
+                    SELECT 
+                        DATEDIFF
+                        (
+                            HOUR, 
+                            osi.sqlserver_start_time, 
+                            SYSDATETIME()
+                        )
+                    FROM sys.dm_os_sys_info AS osi
+                ),
+            dows.wait_type,
+            description = 
+                CASE 
+                    dows.wait_type
+                    WHEN N'PAGEIOLATCH_SH' 
+                    THEN N'Selects reading pages from disk into memory'
+                    WHEN N'PAGEIOLATCH_EX'
+                    THEN N'Modifications reading pages from disk into memory'
+                    WHEN N'RESOURCE_SEMAPHORE' 
+                    THEN N'Queries waiting to get memory to run'
+                    WHEN N'RESOURCE_SEMAPHORE_QUERY_COMPILE' 
+                    THEN N'Queries waiting to get memory to compile'
+                    WHEN N'CXPACKET' 
+                    THEN N'Parallelism'
+                    WHEN N'CXCONSUMER' 
+                    THEN N'Parallelism'
+                    WHEN N'CXSYNC_PORT' 
+                    THEN N'Parallelism'
+                    WHEN N'CXSYNC_CONSUMER' 
+                    THEN N'Parallelism'
+                    WHEN N'SOS_SCHEDULER_YIELD' 
+                    THEN N'Query scheduling'
+                    WHEN N'THREADPOOL' 
+                    THEN N'Worker thread exhaustion'
+                END,
+            hours_wait_time = 
+                CONVERT
+                (
+                    numeric(38, 9), 
+                    dows.wait_time_ms / 
+                        (1000. * 60. * 60.) % 24.
+                ),
+            hours_signal_wait_time = 
+                CONVERT
+                (
+                    numeric(38, 9), 
+                    dows.signal_wait_time_ms / 
+                        (1000. * 60. * 60.) % 24.
+                ),
+            waiting_tasks_count = 
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30), 
+                        CONVERT
+                        (
+                            money,
+                            dows.waiting_tasks_count
+                        ), 
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            avg_ms_per_wait = 
+                ISNULL
+                (
+                   CONVERT
+                   (
+                       numeric(38, 9), 
+                       dows.wait_time_ms / 
+                           NULLIF
+                           (
+                               1. * 
+                               dows.waiting_tasks_count, 0.
+                           )
+                    ), 
+                    0.
+                ),
+            avg_signal_ms_per_wait = 
+                ISNULL
+                (
+                   CONVERT
+                   (
+                       numeric(38, 9), 
+                       dows.signal_wait_time_ms / 
+                           NULLIF
+                           (
+                               1. * 
+                               dows.waiting_tasks_count, 0.
+                           )
+                    ), 
+                    0.
+                )
+        FROM sys.dm_os_wait_stats AS dows
+        WHERE dows.wait_type IN 
+              (
+                  /*Disk*/
+                  N'PAGEIOLATCH_SH', --Selects reading pages from disk into memory
+                  N'PAGEIOLATCH_EX', --Modifications reading pages from disk into memory
+                  /*Memory*/
+                  N'RESOURCE_SEMAPHORE', --Queries waiting to get memory to run
+                  N'RESOURCE_SEMAPHORE_QUERY_COMPILE', --Queries waiting to get memory to compile
+                  /*Parallelism*/
+                  N'CXPACKET', --Parallelism
+                  N'CXCONSUMER', --Parallelism
+                  N'CXSYNC_PORT', --Parallelism
+                  N'CXSYNC_CONSUMER', --Parallelism
+                  /*CPU*/
+                  N'SOS_SCHEDULER_YIELD', --Query scheduling
+                  N'THREADPOOL' --Worker thread exhaustion
+              )
+        ORDER BY dows.wait_time_ms DESC
+        OPTION(MAXDOP 1, RECOMPILE);
+
+        /*
+        Track down queries currently asking for memory grants
+        */
         IF 
         (
             SELECT 
@@ -375,6 +509,39 @@ END;
             deqmg.session_id,
             database_name = 
                 DB_NAME(deqp.dbid),
+            start_time = 
+                deqmg.request_time,
+            query_text =
+                (
+                    SELECT
+                        [processing-instruction(query)] = 
+                            SUBSTRING
+                            (
+                                dest.text, 
+                                (der.statement_start_offset / 2) + 1,
+                                (
+                                    (
+                                        CASE 
+                                            der.statement_end_offset 
+                                            WHEN -1 
+                                            THEN DATALENGTH(dest.text) 
+                                            ELSE der.statement_end_offset 
+                                        END
+                                        - der.statement_start_offset 
+                                    ) / 2 
+                                ) + 1
+                            )
+                       FROM sys.dm_exec_requests AS der
+                       WHERE der.session_id = deqmg.session_id
+                            FOR XML PATH(''''), 
+                            TYPE
+                ),'
+            + CASE 
+                  WHEN @skip_plan_xml = 0
+                  THEN N'
+            deqp.query_plan,'
+                  ELSE N''
+              END + N'
             deqmg.request_time,
             deqmg.grant_time,
             requested_memory_mb = 
@@ -394,21 +561,15 @@ END;
             deqmg.is_next_candidate,
             wait_time_s = 
                 (deqmg.wait_time_ms / 1000.),
+            waits.wait_type,
             wait_duration_s = 
                 (waits.wait_duration_ms / 1000.),
-            waits.wait_type,
             deqmg.dop,'
             + CASE 
                   WHEN @helpful_new_columns = 1
                   THEN N'
             deqmg.reserved_worker_count,
             deqmg.used_worker_count,'
-                  ELSE N''
-              END
-            + CASE 
-                  WHEN @skip_plan_xml = 0
-                  THEN N'
-            deqp.query_plan,'
                   ELSE N''
               END
             + N'
@@ -420,11 +581,12 @@ END;
                 dowt.*
             FROM sys.dm_os_waiting_tasks AS dowt
             WHERE dowt.session_id = deqmg.session_id
-            ORDER BY dowt.session_id 
+            ORDER BY dowt.wait_duration_ms DESC 
         ) AS waits
         OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
+        OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest
         WHERE deqmg.session_id <> @@SPID
-        ORDER BY deqmg.request_time
+        ORDER BY requested_memory_mb DESC
         OPTION(MAXDOP 1, RECOMPILE);
         ';
 
@@ -455,6 +617,7 @@ END;
         WHERE deqrs.resource_semaphore_id = 0
         AND   deqrs.pool_id > 1
         OPTION(MAXDOP 1, RECOMPILE);
+        
     END;
 
     IF @what_to_check IN (N'cpu', N'both')
@@ -499,9 +662,10 @@ END;
         OUTER APPLY 
         (
             SELECT
-                ''
-                + RTRIM(y.runnable_pct)
-                + '% of your queries are waiting to get on a CPU. ' AS high_runnable_percent
+                high_runnable_percent = 
+                    '' +
+                    RTRIM(y.runnable_pct) +
+                    '% of your queries are waiting to get on a CPU.'
             FROM
             (
                 SELECT
@@ -534,13 +698,14 @@ END;
                     WHERE r.session_id > 50
                 ) AS x
             ) AS y
-            WHERE y.runnable_pct > 20.
+            WHERE y.runnable_pct > 25.
+            AND   y.total > 10
         ) AS r
         WHERE dos.status = N'VISIBLE ONLINE'
         OPTION(MAXDOP 1, RECOMPILE);
         
         
-        /*Any threadpool waits*/
+        /*Any current threadpool waits?*/
         SELECT 
             dowt.session_id,
             dowt.wait_duration_ms,
@@ -558,7 +723,11 @@ END;
                 COUNT_BIG(*)
             FROM sys.all_columns AS ac 
             WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_requests')
-            AND ac.name IN (N'dop', N'parallel_worker_count') 
+            AND ac.name IN 
+                (
+                    N'dop', 
+                    N'parallel_worker_count'
+                ) 
         ) = 2
         BEGIN
             SET @cool_new_columns = 1;
@@ -571,23 +740,37 @@ END;
             der.session_id,
             database_name = 
                 DB_NAME(der.database_id),
-            der.start_time,
+            der.start_time,           
             query_text =
-                SUBSTRING
                 (
-                    dest.text, 
-                    (der.statement_start_offset / 2) + 1,
-                    (
-                        (
-                            CASE der.statement_end_offset 
-                                WHEN -1 
-                                THEN DATALENGTH(dest.text) 
-                                ELSE der.statement_end_offset 
-                            END
-                            - der.statement_start_offset 
-                        ) / 2 
-                    ) + 1
-                ),
+                    SELECT
+                        [processing-instruction(query)] = 
+                            SUBSTRING
+                            (
+                                dest.text, 
+                                (der.statement_start_offset / 2) + 1,
+                                (
+                                    (
+                                        CASE 
+                                            der.statement_end_offset 
+                                            WHEN -1 
+                                            THEN DATALENGTH(dest.text) 
+                                            ELSE der.statement_end_offset 
+                                        END
+                                        - der.statement_start_offset 
+                                    ) / 2 
+                                ) + 1
+                            ) 
+                            FOR XML PATH(''''), 
+                            TYPE
+                ),'
+            + CASE 
+                  WHEN @skip_plan_xml = 0
+                  THEN N'
+            deqp.query_plan,'
+                  ELSE N''
+              END
+            + N'
             statement_start_offset = 
                 (der.statement_start_offset / 2) + 1,
             statement_end_offset = 
@@ -600,14 +783,7 @@ END;
                         END 
                         - der.statement_start_offset 
                     ) / 2 
-                ) + 1,'
-            + CASE 
-                  WHEN @skip_plan_xml = 0
-                  THEN N'
-            deqp.query_plan,'
-                  ELSE N''
-              END
-            + N'
+                ) + 1,
             der.plan_handle,
             der.status,
             der.blocking_session_id,
@@ -662,7 +838,10 @@ END;
             der.parallel_worker_count'
                   ELSE N''
               END
-            + N'
+            + CONVERT
+              (
+                  nvarchar(MAX), 
+                  N'
         FROM sys.dm_exec_requests AS der
         CROSS APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
         CROSS APPLY sys.dm_exec_query_plan(der.plan_handle) AS deqp
@@ -678,9 +857,11 @@ END;
               ELSE N'
         der.cpu_time DESC
         OPTION(MAXDOP 1, RECOMPILE);'
-          END;
-        
+          END
+              );
         EXEC sys.sp_executesql 
             @cpu_sql;
+    
     END;
+
 END;
