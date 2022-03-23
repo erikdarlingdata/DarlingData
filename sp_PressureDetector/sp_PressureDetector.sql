@@ -596,6 +596,17 @@ END;
         /*Resource semaphore info*/
         SELECT  
             deqrs.resource_semaphore_id,
+            max_server_memory = 
+                (
+                    SELECT 
+                        CONVERT
+                        (
+                            bigint,
+                            c.value_in_use
+                        )
+                    FROM sys.configurations AS c
+                    WHERE c.name = N'max server memory (MB)'
+                ),
             target_memory_mb = 
                 (deqrs.target_memory_kb / 1024.),
             max_target_memory_mb =
