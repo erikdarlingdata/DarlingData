@@ -411,14 +411,14 @@ END;
                 (
                     numeric(38, 9), 
                     dows.wait_time_ms / 
-                        (1000. * 60. * 60.) % 24.
+                        (1000. * 60. * 60.)
                 ),
             hours_signal_wait_time = 
                 CONVERT
                 (
                     numeric(38, 9), 
                     dows.signal_wait_time_ms / 
-                        (1000. * 60. * 60.) % 24.
+                        (1000. * 60. * 60.)
                 ),
             waiting_tasks_count = 
                 REPLACE
