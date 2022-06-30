@@ -726,6 +726,69 @@ CREATE TABLE
 );
 
 /*
+Feed me Seymour
+*/
+CREATE TABLE
+    #query_store_plan_feedback
+(
+    plan_feedback_id bigint,
+    plan_id bigint,
+    feature_desc nvarchar(120),
+    feedback_data nvarchar(MAX),
+    state_desc nvarchar(120),
+    create_time datetimeoffset(7),
+    last_updated_time datetimeoffset(7)    
+);
+
+/*
+America's Most Hinted
+*/
+CREATE TABLE
+    #query_store_query_hints
+(
+    query_hint_id bigint,
+    query_id bigint,
+    query_hint_text nvarchar(MAX),
+    last_query_hint_failure_reason_desc nvarchar(256),
+    query_hint_failure_count bigint,
+    source_desc nvarchar(256)
+);
+
+/*
+Variant? Deviant? You decide!
+*/
+CREATE TABLE
+    #query_store_query_variant
+(
+    query_variant_query_id bigint,
+    parent_query_id bigint,
+    dispatcher_plan_id bigint
+);
+
+/*
+Replicants
+*/
+CREATE TABLE
+    #query_store_replicas
+(
+    replica_group_id bigint,
+    role_type smallint,
+    replica_name nvarchar(1288)
+);
+
+/*
+Location, location, location
+*/
+CREATE TABLE
+    #query_store_plan_forcing_locations
+(
+    plan_forcing_location_id bigint,
+    query_id bigint,
+    plan_id bigint,
+    replica_group_id bigint
+);
+
+/*
 Trouble Loves Me
 */
 CREATE TABLE
@@ -798,7 +861,10 @@ DECLARE
     @procedure_exists bit,
     @query_store_exists bit,
     @query_store_waits_enabled bit,
-    @string_split nvarchar(1500),
+    @sql_2022_views bit,
+    @ags_present bit,
+    @string_split_ints nvarchar(1500),
+    @string_split_strings nvarchar(1500),
     @current_table nvarchar(100),
     @troubleshoot_insert nvarchar(max),
     @troubleshoot_update nvarchar(max),
@@ -889,8 +955,10 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @procedure_exists = 0,
     @query_store_exists = 0,
     @query_store_waits_enabled = 0,
+    @sql_2022_views = 0,
+    @ags_present = 0,
     @current_table = N'',
-    @string_split = N'
+    @string_split_ints = N'
     SELECT DISTINCT
         LTRIM
         (
@@ -907,6 +975,49 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                     (
                         ''(./text())[1]'',
                         ''bigint''
+                    )
+        FROM
+        (
+            SELECT
+                ids =
+                    CONVERT
+                    (
+                        xml,
+                        ''<x>'' +
+                        REPLACE
+                        (
+                            REPLACE
+                            (
+                                @ids,
+                                '','',
+                                ''</x><x>''
+                            ),
+                            '' '',
+                            ''''
+                        ) +
+                        ''</x>''
+                    ).query(''.'')
+        ) AS ids
+            CROSS APPLY ids.nodes(''x'') AS x (x)
+    ) AS ids
+    OPTION(RECOMPILE);',
+    @string_split_strings = N'
+    SELECT DISTINCT
+        LTRIM
+        (
+            RTRIM
+            (
+                ids.ids
+            )
+        ) AS ids
+    FROM
+    (
+        SELECT
+            ids =
+                x.x.value
+                    (
+                        ''(./text())[1]'',
+                        ''varchar(1024)''
                     )
         FROM
         (
@@ -1367,6 +1478,42 @@ OPTION(RECOMPILE);' + @nc10;
 
 END;
 
+/*
+See if our cool new 2022 views exist. 
+May have to tweak this if views aren't present in some cloudy situations.
+*/
+SELECT
+    @sql_2022_views = 
+        CASE 
+            WHEN COUNT_BIG(*) = 5
+            THEN 1
+            ELSE 0 
+        END
+FROM sys.all_objects AS ao
+WHERE ao.name IN 
+      (
+          N'query_store_plan_feedback',
+          N'query_store_query_hints',
+          N'query_store_query_variant',
+          N'query_store_replicas',
+          N'query_store_plan_forcing_locations'
+      );
+
+/*
+See if AGs are a thing so we can skip the checks for replica stuff
+*/
+SELECT
+    @ags_present = 
+        CASE 
+            WHEN EXISTS 
+                 (
+                     SELECT 
+                         1/0
+                     FROM sys.availability_groups AS ag
+                 )
+            THEN 1
+            ELSE 0
+        END;
 
 /*
 Get filters ready, or whatever
@@ -1502,7 +1649,7 @@ BEGIN
             plan_id
         )
         EXEC sys.sp_executesql
-            @string_split,
+            @string_split_ints,
           N'@ids nvarchar(4000)',
             @include_plan_ids;
 
@@ -1529,7 +1676,7 @@ BEGIN
             plan_id
         )
         EXEC sys.sp_executesql
-            @string_split,
+            @string_split_ints,
           N'@ids nvarchar(4000)',
             @ignore_plan_ids;
 
@@ -1557,7 +1704,7 @@ BEGIN
             query_id
         )
         EXEC sys.sp_executesql
-            @string_split,
+            @string_split_ints,
           N'@ids nvarchar(4000)',
             @include_query_ids;
 
@@ -1646,7 +1793,7 @@ OPTION(RECOMPILE);' + @nc10;
             query_id
         )
         EXEC sys.sp_executesql
-            @string_split,
+            @string_split_ints,
           N'@ids nvarchar(4000)',
             @ignore_query_ids;
 
@@ -4718,8 +4865,8 @@ BEGIN
             @query_store_exists,
         query_store_waits_enabled =
             @query_store_waits_enabled,
-        [string_split] =
-            @string_split,
+        [string_split_ints] =
+            @string_split_ints,
         current_table =
             @current_table,
         troubleshoot_insert =
