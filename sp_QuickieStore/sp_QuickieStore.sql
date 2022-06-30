@@ -105,8 +105,8 @@ END;
 These are for your outputs.
 */
 SELECT 
-    @version = '1.92', 
-    @version_date = '20211101';
+    @version = '2.22', 
+    @version_date = '20220701';
 
 /*
 Helpful section! For help.
@@ -220,21 +220,29 @@ BEGIN
     OPTION(RECOMPILE);
 
     /*
-    Wait categories
+    Wait categories: Only 2017+
     */
-
-    SELECT
-        wait_categories =
-           'cpu (1): SOS_SCHEDULER_YIELD' UNION ALL
-    SELECT 'lock (3): LCK_M_%' UNION ALL
-    SELECT 'latch (4): LATCH_%' UNION ALL
-    SELECT 'buffer latch (5): PAGELATCH_%' UNION ALL
-    SELECT 'buffer io (6): PAGEIOLATCH_%' UNION ALL
-    SELECT 'log io (14): LOGMGR, LOGBUFFER, LOGMGR_RESERVE_APPEND, LOGMGR_FLUSH, LOGMGR_PMM_LOG, CHKPT, WRITELOG' UNION ALL
-    SELECT 'network io (15): ASYNC_NETWORK_IO, NET_WAITFOR_PACKET, PROXY_NETWORK_IO, EXTERNAL_SCRIPT_NETWORK_IOF' UNION ALL
-    SELECT 'parallelism (16): CXPACKET, EXCHANGE, HT%, BMP%, BP%' UNION ALL
-    SELECT 'memory (17): RESOURCE_SEMAPHORE, CMEMTHREAD, CMEMPARTITIONED, EE_PMOLOCK, MEMORY_ALLOCATION_EXT, RESERVED_MEMORY_ALLOCATION_EXT, MEMORY_GRANT_UPDATE';
-
+    IF EXISTS
+    (
+        SELECT 
+            1/0 
+        FROM sys.all_objects AS ao 
+        WHERE ao.name = N'query_store_wait_stats'
+    )
+    BEGIN
+        SELECT
+            wait_categories =
+               'cpu (1): SOS_SCHEDULER_YIELD' UNION ALL
+        SELECT 'lock (3): LCK_M_%' UNION ALL
+        SELECT 'latch (4): LATCH_%' UNION ALL
+        SELECT 'buffer latch (5): PAGELATCH_%' UNION ALL
+        SELECT 'buffer io (6): PAGEIOLATCH_%' UNION ALL
+        SELECT 'log io (14): LOGMGR, LOGBUFFER, LOGMGR_RESERVE_APPEND, LOGMGR_FLUSH, LOGMGR_PMM_LOG, CHKPT, WRITELOG' UNION ALL
+        SELECT 'network io (15): ASYNC_NETWORK_IO, NET_WAITFOR_PACKET, PROXY_NETWORK_IO, EXTERNAL_SCRIPT_NETWORK_IOF' UNION ALL
+        SELECT 'parallelism (16): CXPACKET, EXCHANGE, HT%, BMP%, BP%' UNION ALL
+        SELECT 'memory (17): RESOURCE_SEMAPHORE, CMEMTHREAD, CMEMPARTITIONED, EE_PMOLOCK, MEMORY_ALLOCATION_EXT, RESERVED_MEMORY_ALLOCATION_EXT, MEMORY_GRANT_UPDATE';
+    END;
+    
     /*
     Results
     */
@@ -248,12 +256,18 @@ BEGIN
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Resource Stats (expert mode only): data from dm_exec_query_stats, when available' UNION ALL
     SELECT 'query store does not currently track some details about memory grants and thread usage' UNION ALL
-    SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL
+    SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL    
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Waits By Query(expert mode only): information about query duration and logged wait stats' UNION ALL
+    SELECT 'Query Store Plan Feedback (2022+, expert mode only): Lists queries that have been adjusted based on automated feedback mechanisms' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Query Store Hints (2022+, expert mode only): lists hints applied to queries from automated feedback mechanisms' UNION ALL    
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Query Replicas (2022+, expert mode only): lists plans forced on AG replicas' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Query Store Waits By Query (2017+, expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Waits Total(expert mode only): total wait stats for the chosen date range only' UNION ALL
+    SELECT 'Query Store Waits Total (2017+, expert mode only): total wait stats for the chosen date range only' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Options (expert mode only): details about current query store configuration';
 
