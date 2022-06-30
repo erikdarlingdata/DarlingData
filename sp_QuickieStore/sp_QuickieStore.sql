@@ -2973,7 +2973,7 @@ SELECT
 SELECT TOP (@top)
     qsrs.plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-WHERE qsrs.execution_type = 0
+WHERE 1 = 1
 ' + @where_clause
   + N'
 GROUP BY qsrs.plan_id
@@ -3142,7 +3142,7 @@ CROSS APPLY
         qsrs.*
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     WHERE qsrs.plan_id = dp.plan_id
-    AND   qsrs.execution_type = 0
+    AND   1 = 1
     ' + @where_clause
   + N'
 ORDER BY ' +
@@ -3980,8 +3980,8 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
     WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
     AND   qsws.plan_id = qsrs.plan_id
-    AND   qsws.execution_type = 0
     AND   qsws.wait_category > 0
+    AND   qsws.min_query_wait_time_ms > 0
     ORDER BY qsws.avg_query_wait_time_ms DESC
 ) AS qsws
 GROUP BY
@@ -4158,12 +4158,29 @@ FROM
             ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
-        qsp.all_plan_ids,
+        qsp.all_plan_ids,'
+        +
+            CASE
+                WHEN @include_plan_hashes = 1
+                THEN
+        N'
+        qsp.query_plan_hash,'
+                WHEN @include_query_hashes = 1
+                THEN
+        N'
+        qsq.query_hash,'
+                WHEN @include_sql_handles = 1
+                THEN
+        N'
+        qsqt.statement_sql_handle,'
+                ELSE
+        N''
+            END + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
         qsp.compatibility_level,
-        query_plan = TRY_CONVERT(XML, qsp.query_plan),'
+        query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
                  WHEN 1
@@ -4284,12 +4301,29 @@ FROM
             ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
-        qsp.all_plan_ids,
+        qsp.all_plan_ids,'
+        +
+            CASE
+                WHEN @include_plan_hashes = 1
+                THEN
+        N'
+        qsp.query_plan_hash,'
+                WHEN @include_query_hashes = 1
+                THEN
+        N'
+        qsq.query_hash,'
+                WHEN @include_sql_handles = 1
+                THEN
+        N'
+        qsqt.statement_sql_handle,'
+                ELSE
+        N''
+            END + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
         qsp.compatibility_level,
-        query_plan = TRY_CONVERT(XML, qsp.query_plan),'
+        query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
                  WHEN 1
@@ -4414,12 +4448,29 @@ FROM
             ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
-        qsp.all_plan_ids,
+        qsp.all_plan_ids,'
+        +
+            CASE
+                WHEN @include_plan_hashes = 1
+                THEN
+        N'
+        qsp.query_plan_hash,'
+                WHEN @include_query_hashes = 1
+                THEN
+        N'
+        qsq.query_hash,'
+                WHEN @include_sql_handles = 1
+                THEN
+        N'
+        qsqt.statement_sql_handle,'
+                ELSE
+        N''
+            END + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
         qsp.compatibility_level,
-        query_plan = TRY_CONVERT(XML, qsp.query_plan),'
+        query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
                  WHEN 1
@@ -4506,12 +4557,29 @@ FROM
             ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
-        qsp.all_plan_ids,
+        qsp.all_plan_ids,'
+        +
+            CASE
+                WHEN @include_plan_hashes = 1
+                THEN
+        N'
+        qsp.query_plan_hash,'
+                WHEN @include_query_hashes = 1
+                THEN
+        N'
+        qsq.query_hash,'
+                WHEN @include_sql_handles = 1
+                THEN
+        N'
+        qsqt.statement_sql_handle,'
+                ELSE
+        N''
+            END + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
         qsp.compatibility_level,
-        query_plan = TRY_CONVERT(XML, qsp.query_plan),'
+        query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
                  WHEN 1
