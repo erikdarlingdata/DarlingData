@@ -404,7 +404,8 @@ Hold query hashes for plans we want
 CREATE TABLE
     #include_query_hashes
 (
-    query_hash varchar(131) PRIMARY KEY
+    query_hash_s varchar(131),
+    query_hash AS CONVERT(binary(8), query_hash_s, 1) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -413,7 +414,8 @@ Hold plan hashes for plans we want
 CREATE TABLE
     #include_plan_hashes
 (
-    plan_hash varchar(131) PRIMARY KEY
+    plan_hash_s varchar(131),
+    plan_hash AS CONVERT(binary(8), plan_hash_s, 1) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -422,7 +424,8 @@ Hold query hashes for ignored plans
 CREATE TABLE
     #ignore_query_hashes
 (
-    query_hash varchar(131) PRIMARY KEY
+    query_hash_s varchar(131),
+    query_hash AS CONVERT(binary(8), query_hash_s, 1) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -431,7 +434,8 @@ Hold plan hashes for ignored plans
 CREATE TABLE
     #ignore_plan_hashes
 (
-    plan_hash varchar(131) PRIMARY KEY
+    plan_hash_s varchar(131),
+    plan_hash AS CONVERT(binary(8), plan_hash_s, 1) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -440,7 +444,8 @@ Hold sql handles for plans we want
 CREATE TABLE
     #include_sql_handles
 (
-    sql_handle varchar(131) PRIMARY KEY
+    sql_handle_s varchar(131),
+    sql_handle AS CONVERT(varbinary(64), sql_handle_s, 1) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -449,7 +454,8 @@ Hold sql handles for ignored plans
 CREATE TABLE
     #ignore_sql_handles
 (
-    sql_handle varchar(131) PRIMARY KEY
+    sql_handle_s varchar(131),
+    sql_handle AS CONVERT(varbinary(64), sql_handle_s, 1) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -2020,7 +2026,7 @@ BEGIN
         INSERT
             #include_query_hashes WITH(TABLOCK)
             (
-                query_hash
+                query_hash_s
             )
         EXEC sys.sp_executesql
             @string_split_strings,
@@ -2126,7 +2132,7 @@ OPTION(RECOMPILE);' + @nc10;
         INSERT
             #ignore_query_hashes WITH(TABLOCK)
         (
-            query_hash
+            query_hash_s
         )
         EXEC sys.sp_executesql
             @string_split_strings,
@@ -2231,7 +2237,7 @@ OPTION(RECOMPILE);' + @nc10;
         INSERT
             #include_plan_hashes WITH(TABLOCK)
             (
-                plan_hash
+                plan_hash_s
             )
         EXEC sys.sp_executesql
             @string_split_strings,
@@ -2263,7 +2269,7 @@ WHERE EXISTS
           SELECT
               1/0
           FROM #include_plan_hashes AS iph
-          WHERE iph.plan_hash = qsp.plan_hash
+          WHERE iph.plan_hash = qsp.query_plan_hash
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -2330,7 +2336,7 @@ OPTION(RECOMPILE);' + @nc10;
         INSERT
             #ignore_plan_hashes WITH(TABLOCK)
         (
-            plan_hash
+            plan_hash_s
         )
         EXEC sys.sp_executesql
             @string_split_strings,
@@ -2362,7 +2368,7 @@ WHERE EXISTS
           SELECT
               1/0
           FROM #ignore_plan_hashes AS iph
-          WHERE iph.plan_hash = qsp.plan_hash
+          WHERE iph.plan_hash = qsp.query_plan_hash
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -2428,7 +2434,7 @@ OPTION(RECOMPILE);' + @nc10;
         INSERT
             #include_sql_handles WITH(TABLOCK)
             (
-                sql_handle
+                sql_handle_s
             )
         EXEC sys.sp_executesql
             @string_split_strings,
@@ -2472,7 +2478,7 @@ WHERE EXISTS
                             SELECT
                                 1/0
                             FROM #include_sql_handles AS ish
-                            WHERE ish.sql_handle = qsqt.sql_handle                        
+                            WHERE ish.sql_handle = qsqt.statement_sql_handle                        
                         )
               )
       )
@@ -2541,7 +2547,7 @@ OPTION(RECOMPILE);' + @nc10;
         INSERT
             #ignore_sql_handles WITH(TABLOCK)
         (
-            sql_handle
+            sql_handle_s
         )
         EXEC sys.sp_executesql
             @string_split_strings,
@@ -2585,7 +2591,7 @@ WHERE EXISTS
                             SELECT
                                 1/0
                             FROM #ignore_sql_handles AS ish
-                            WHERE ish.sql_handle = qsqt.sql_handle                        
+                            WHERE ish.sql_handle = qsqt.statement_sql_handle                        
                         )
               )
       )
@@ -4480,7 +4486,7 @@ BEGIN
 
     SELECT
         @sql = @isolation_level,
-        @current_table = 'selecting #query_store_wait_stats';
+        @current_table = 'selecting final results';
 
     SELECT
         @sql += N'
@@ -4500,7 +4506,8 @@ FROM
     BEGIN
 
         SELECT
-            @sql += N'
+            @sql += 
+            N'
     SELECT
         source =
             ''runtime_stats'',
@@ -4509,15 +4516,15 @@ FROM
         qsp.all_plan_ids,'
         +
             CASE
-                WHEN @include_plan_hashes = 1
+                WHEN @include_plan_hashes IS NOT NULL
                 THEN
         N'
         qsp.query_plan_hash,'
-                WHEN @include_query_hashes = 1
+                WHEN @include_query_hashes IS NOT NULL
                 THEN
         N'
         qsq.query_hash,'
-                WHEN @include_sql_handles = 1
+                WHEN @include_sql_handles IS NOT NULL
                 THEN
         N'
         qsqt.statement_sql_handle,'
@@ -4667,15 +4674,15 @@ FROM
         qsp.all_plan_ids,'
         +
             CASE
-                WHEN @include_plan_hashes = 1
+                WHEN @include_plan_hashes IS NOT NULL
                 THEN
         N'
         qsp.query_plan_hash,'
-                WHEN @include_query_hashes = 1
+                WHEN @include_query_hashes IS NOT NULL
                 THEN
         N'
         qsq.query_hash,'
-                WHEN @include_sql_handles = 1
+                WHEN @include_sql_handles IS NOT NULL
                 THEN
         N'
         qsqt.statement_sql_handle,'
@@ -4829,15 +4836,15 @@ FROM
         qsp.all_plan_ids,'
         +
             CASE
-                WHEN @include_plan_hashes = 1
+                WHEN @include_plan_hashes IS NOT NULL
                 THEN
         N'
         qsp.query_plan_hash,'
-                WHEN @include_query_hashes = 1
+                WHEN @include_query_hashes IS NOT NULL
                 THEN
         N'
         qsq.query_hash,'
-                WHEN @include_sql_handles = 1
+                WHEN @include_sql_handles IS NOT NULL
                 THEN
         N'
         qsqt.statement_sql_handle,'
@@ -4953,15 +4960,15 @@ FROM
         qsp.all_plan_ids,'
         +
             CASE
-                WHEN @include_plan_hashes = 1
+                WHEN @include_plan_hashes IS NOT NULL
                 THEN
         N'
         qsp.query_plan_hash,'
-                WHEN @include_query_hashes = 1
+                WHEN @include_query_hashes IS NOT NULL
                 THEN
         N'
         qsq.query_hash,'
-                WHEN @include_sql_handles = 1
+                WHEN @include_sql_handles IS NOT NULL
                 THEN
         N'
         qsqt.statement_sql_handle,'
@@ -5613,7 +5620,7 @@ BEGIN
     BEGIN
 
     SELECT
-        @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
+        @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
 
     SELECT 
         qsr.replica_group_id, 
@@ -6232,7 +6239,10 @@ BEGIN CATCH
     */
     IF @current_table IS NOT NULL
     BEGIN
-        RAISERROR ('error while %s', 11, 1, @current_table) WITH NOWAIT;
+        DECLARE 
+            @em tinyint = @expert_mode,
+            @fo tinyint = @format_output;
+        RAISERROR('error while %s with @expert mode = %i and format_output = %i', 11, 1, @current_table, @em, @fo) WITH NOWAIT;
     END;
 
         /*
@@ -6240,7 +6250,7 @@ BEGIN CATCH
         */
     IF @sql IS NOT NULL
     BEGIN
-        RAISERROR ('offending query:', 10, 1) WITH NOWAIT;
+        RAISERROR('offending query:', 10, 1) WITH NOWAIT;
         RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
     END;
 
