@@ -1515,7 +1515,7 @@ One last check: wait stat capture can be enabled or disabled in settings
 IF
 (
     @wait_filter IS NOT NULL
-      AND @new = 1
+      OR @new = 1
 )
 BEGIN
 
@@ -4230,7 +4230,7 @@ WHERE EXISTS
     SELECT
         1/0
     FROM #query_store_plan AS qsp
-    WHERE qsqv.parent_query_id = qsp.query_id
+    WHERE qsqv.query_variant_query_id = qsp.query_id
 )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -4545,7 +4545,7 @@ FROM
         has_query_store_hints = 
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
         has_plan_variants = 
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.parent_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
                  ELSE
         N''
                  END +
@@ -4703,7 +4703,7 @@ FROM
         has_query_store_hints = 
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
         has_plan_variants = 
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.parent_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
                  ELSE
         N''
                  END +
@@ -4865,7 +4865,7 @@ FROM
         has_query_store_hints = 
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
         has_plan_variants = 
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.parent_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
                  ELSE
         N''
                  END +
@@ -4989,7 +4989,7 @@ FROM
         has_query_store_hints = 
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
         has_plan_variants = 
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.parent_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
                  ELSE
         N''
                  END +
