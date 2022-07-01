@@ -510,12 +510,12 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    all_plan_ids varchar(max),
+    all_plan_ids varchar(MAX),
     plan_group_id bigint NULL,
     engine_version nvarchar(32) NULL,
     compatibility_level smallint NOT NULL,
     query_plan_hash binary(8) NOT NULL,
-    query_plan nvarchar(max) NULL,
+    query_plan nvarchar(MAX) NULL,
     is_online_index_plan bit NOT NULL,
     is_trivial_plan bit NOT NULL,
     is_parallel_plan bit NOT NULL,
@@ -930,12 +930,12 @@ DECLARE
     @procedure_name_quoted sysname,
     @collation sysname,
     @new bit,
-    @sql nvarchar(max),
-    @isolation_level nvarchar(max),
+    @sql nvarchar(MAX),
+    @isolation_level nvarchar(MAX),
     @parameters nvarchar(200),
     @plans_top bigint,
     @nc10 nvarchar(2),
-    @where_clause nvarchar(max),
+    @where_clause nvarchar(MAX),
     @procedure_exists bit,
     @query_store_exists bit,
     @query_store_waits_enabled bit,
@@ -944,9 +944,9 @@ DECLARE
     @string_split_ints nvarchar(1500),
     @string_split_strings nvarchar(1500),
     @current_table nvarchar(100),
-    @troubleshoot_insert nvarchar(max),
-    @troubleshoot_update nvarchar(max),
-    @troubleshoot_info nvarchar(max),
+    @troubleshoot_insert nvarchar(MAX),
+    @troubleshoot_update nvarchar(MAX),
+    @troubleshoot_info nvarchar(MAX),
     @rc bigint;
 
 /*
@@ -1573,7 +1573,7 @@ OPTION(RECOMPILE);' + @nc10;
     BEGIN
        RAISERROR('Query Store wait stats are not enabled for database %s', 11, 1, @database_name_quoted) WITH NOWAIT;
        RETURN;
-    END
+    END;
 
 END; /*End wait stats checks*/
 
@@ -2943,10 +2943,7 @@ SELECT
         (
             @where_clause,
             1,
-            LEN
-            (
-                @where_clause
-            ) - 1
+            LEN(@where_clause) - 1
         );
 
 /*
@@ -3025,7 +3022,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End gathering plan ids*/
 
 /*
 This gets the runtime stats for the plans we care about
@@ -3207,7 +3204,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting runtime stats*/
 
 /*
 This gets context info and settings
@@ -3281,7 +3278,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End geting context settings*/
 
 /*
 This gets the query plans we're after
@@ -3425,7 +3422,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting query plans*/
 
 /*
 This gets some query information
@@ -3550,7 +3547,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting query details*/
 
 /*
 This gets the query text for them!
@@ -3627,7 +3624,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting query text*/
 
 /*
 Here we try to get some data from the "plan cache"
@@ -3727,8 +3724,9 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting runtime stats*/
 
+/*Only update if we got anything*/
 IF @rc > 0
 BEGIN
 
@@ -3793,7 +3791,7 @@ BEGIN
 
     END;
 
-END;
+END; /*End updating runtime stats*/
 
 /*
 Let's check on settings, etc.
@@ -3923,7 +3921,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting query store settings*/
 
 /*
 If wait stats are available, we'll grab them here
@@ -4025,7 +4023,7 @@ OPTION(RECOMPILE);' + @nc10;
 
     END;
 
-END;
+END; /*End getting wait stats*/
 
 /*
 Update things to get the context settings for each query
@@ -4282,7 +4280,7 @@ FROM
     END + N' DESC
             )';
 
-    END;
+    END; /*End expert mode 1, format output 0 columns*/
 
     /*
     Do we want to format things?
@@ -4387,7 +4385,7 @@ FROM
                  THEN
         CONVERT
         (
-            nvarchar(max),
+            nvarchar(MAX),
         N'
         avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
         total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),
@@ -4429,7 +4427,7 @@ FROM
     END + N' DESC
             )';
 
-    END;
+    END; /*End expert mode = 1, format output = 1*/
 
     /*
     For non-experts only!
@@ -4538,7 +4536,7 @@ FROM
     END + N' DESC
             )';
 
-    END;
+    END; /*End expert mode = 0, format output = 0*/
 
     /*
     Formatted but not still not expert output
@@ -4647,7 +4645,7 @@ FROM
     END + N' DESC
             )';
 
-    END;
+    END; /*End expert mode = 0, format output = 1*/
 
     /*
     Add on the from and stuff
@@ -4743,7 +4741,7 @@ FROM
                 )
     ) AS w';
 
-    END;
+    END; /*End format output = 0 wait stats query*/
 
     IF
       (
@@ -4789,7 +4787,7 @@ FROM
                 )
     ) AS w';
 
-    END;
+    END; /*End format output = 1 wait stats query*/
 
     SELECT
         @sql += N'
@@ -4846,7 +4844,7 @@ OPTION(RECOMPILE);' + @nc10;
     EXEC sys.sp_executesql
         @sql;
 
-END;
+END; /*End runtime stats main query*/
 ELSE
     BEGIN
         SELECT
@@ -4936,7 +4934,7 @@ BEGIN
         ORDER BY x.query_id
         OPTION(RECOMPILE);
 
-    END;
+    END; /*End compilation stats query*/
     ELSE
     BEGIN
         SELECT
@@ -4983,7 +4981,7 @@ BEGIN
         ORDER BY qsq.query_id
         OPTION(RECOMPILE);
 
-    END;
+    END; /*End resource stats query*/
     ELSE
     BEGIN
         SELECT
@@ -5096,7 +5094,7 @@ BEGIN
             ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
             OPTION(RECOMPILE);
 
-        END;
+        END; /*End unformatted wait stats*/
         ELSE
         BEGIN
             SELECT
@@ -5110,7 +5108,7 @@ BEGIN
                     END;
         END;
 
-    END;
+    END; /*End wait stats queries*/
 
     SELECT
         @current_table = 'selecting query store options',
@@ -5168,7 +5166,7 @@ BEGIN
     EXEC sys.sp_executesql
         @sql;
 
-END;
+END; /*End expert mode format output = 0*/
 
 /*
 Return special things, formatted
@@ -5272,7 +5270,7 @@ BEGIN
         ORDER BY x.query_id
         OPTION(RECOMPILE);
 
-    END;
+    END; /*End query store query, format output = 1*/
     ELSE
     BEGIN
         SELECT
@@ -5331,7 +5329,7 @@ BEGIN
         ORDER BY qsq.query_id
         OPTION(RECOMPILE);
 
-    END;
+    END; /*End resource stats, format output = 1*/
     ELSE
     BEGIN
         SELECT
@@ -5451,7 +5449,7 @@ BEGIN
 
         END;
 
-    END;
+    END; /*End wait stats, format output = 1*/
     ELSE
     BEGIN
         SELECT
@@ -5538,7 +5536,7 @@ BEGIN
     EXEC sys.sp_executesql
         @sql;
 
-END;
+END; /*End expert mode = 1, format output = 1*/
 
 SELECT
     x.all_done,
@@ -5586,6 +5584,8 @@ FROM
 ORDER BY x.sort;
 
 END TRY
+
+/*Error handling!*/
 BEGIN CATCH
 
     /*
@@ -5643,10 +5643,22 @@ BEGIN
             @include_plan_ids,
         include_query_ids =
             @include_query_ids,
+        include_query_hashes = 
+            @include_query_hashes,
+        include_plan_hashes = 
+            @include_plan_hashes,
+        include_sql_handles = 
+            @include_sql_handles,
         ignore_plan_ids =
             @ignore_plan_ids,
         ignore_query_ids =
             @ignore_query_ids,
+        ignore_query_hashes = 
+            @ignore_query_hashes,
+        ignore_plan_hashes = 
+            @ignore_plan_hashes,
+        ignore_sql_handles = 
+            @ignore_sql_handles,
         query_text_search =
             @query_text_search,
         wait_filter =
@@ -5668,7 +5680,7 @@ BEGIN
 
     SELECT
         parameter_type =
-            'declared_parameters',
+            'declared_variables',
         azure =
             @azure,
         engine =
@@ -5685,7 +5697,7 @@ BEGIN
             @collation,
         new =
             @new,
-        [sql] =
+        sql =
             @sql,
          len_sql =
              LEN(@sql),
@@ -5705,8 +5717,14 @@ BEGIN
             @query_store_exists,
         query_store_waits_enabled =
             @query_store_waits_enabled,
-        [string_split_ints] =
+        sql_2022_views = 
+            @sql_2022_views,
+        ags_present = 
+            @ags_present,
+        string_split_ints =
             @string_split_ints,
+        string_split_strings =
+            @string_split_strings,
         current_table =
             @current_table,
         troubleshoot_insert =
@@ -5810,6 +5828,72 @@ BEGIN
        (
            SELECT
                1/0
+           FROM #include_query_hashes AS iqh
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#include_query_hashes',
+            iqh.*
+        FROM #include_query_hashes AS iqh
+        ORDER BY iqh.query_hash
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#include_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #include_plan_hashes AS iph
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#include_plan_hashes',
+            iph.*
+        FROM #include_plan_hashes AS iph
+        ORDER BY iph.plan_hash
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#include_plan_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #include_sql_handles AS ish
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#include_sql_handles',
+            ish.*
+        FROM #include_sql_handles AS ish
+        ORDER BY ish.sql_handle
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#include_sql_handles is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
            FROM #ignore_plan_ids AS ipi
        )
     BEGIN
@@ -5848,6 +5932,72 @@ BEGIN
         SELECT
             result =
                 '#ignore_query_ids is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #ignore_query_hashes AS iqh
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#ignore_query_hashes',
+            iqh.*
+        FROM #ignore_query_hashes AS iqh
+        ORDER BY iqh.query_hash
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#ignore_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #ignore_plan_hashes AS iph
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#ignore_plan_hashes',
+            iph.*
+        FROM #ignore_plan_hashes AS iph
+        ORDER BY iph.plan_hash
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#ignore_plan_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #ignore_sql_handles AS ish
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#ignore_sql_handles',
+            ish.*
+        FROM #ignore_sql_handles AS ish
+        ORDER BY ish.sql_handle
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#ignore_sql_handles is empty';
     END;
 
     IF EXISTS
@@ -6099,6 +6249,116 @@ BEGIN
        (
           SELECT
               1/0
+          FROM #query_store_plan_feedback AS qspf
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#query_store_plan_feedback',
+            qspf.*
+        FROM #query_store_plan_feedback AS qspf
+        ORDER BY qspf.plan_feedback_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#query_store_query_hints is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #query_store_query_hints AS qsqh
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#query_store_query_hints',
+            qsqh.*
+        FROM #query_store_query_hints AS qsqh
+        ORDER BY qsqh.query_hint_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#query_store_query_hints is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #query_store_query_variant AS qsqv
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#query_store_query_variant',
+            qsqv.*
+        FROM #query_store_query_variant AS qsqv
+        ORDER BY qsqv.query_variant_query_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#query_store_query_variant is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #query_store_replicas AS qsr
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#query_store_replicas',
+            qsr.*
+        FROM #query_store_replicas AS qsr
+        ORDER BY qsr.replica_group_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#query_store_replicas is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #query_store_plan_forcing_locations AS qspfl
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#query_store_plan_forcing_locations',
+            qspfl.*
+        FROM #query_store_plan_forcing_locations AS qspfl
+        ORDER BY qspfl.plan_forcing_location_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#query_store_plan_forcing_locations is empty';
+    END;  
+    
+    IF EXISTS
+       (
+          SELECT
+              1/0
           FROM #troubleshoot_performance AS qcs
        )
     BEGIN
@@ -6117,14 +6377,11 @@ BEGIN
                 '#troubleshoot_performance is empty';
     END;
 
-    RETURN;
+    RETURN; /*Stop doing anything, I guess*/
 
-END;
+END; /*End debug*/
 
-RETURN;
+RETURN; /*Yeah sure why not?*/
 
-END;
-/*
-Final End
-*/
+END;/*Final End*/
 GO
