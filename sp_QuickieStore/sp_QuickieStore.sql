@@ -45,7 +45,8 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-CREATE OR ALTER PROCEDURE dbo.sp_QuickieStore
+CREATE OR ALTER PROCEDURE 
+    dbo.sp_QuickieStore
 (
     @database_name sysname = NULL,
     @sort_order varchar(20) = 'cpu',
@@ -403,7 +404,7 @@ Hold query hashes for plans we want
 CREATE TABLE
     #include_query_hashes
 (
-    query_hash binary(8) PRIMARY KEY
+    query_hash varchar(131) PRIMARY KEY
 );
 
 /*
@@ -412,7 +413,7 @@ Hold plan hashes for plans we want
 CREATE TABLE
     #include_plan_hashes
 (
-    plan_hash binary(8) PRIMARY KEY
+    plan_hash varchar(131) PRIMARY KEY
 );
 
 /*
@@ -421,7 +422,7 @@ Hold query hashes for ignored plans
 CREATE TABLE
     #ignore_query_hashes
 (
-    query_hash binary(8) PRIMARY KEY
+    query_hash varchar(131) PRIMARY KEY
 );
 
 /*
@@ -430,7 +431,7 @@ Hold plan hashes for ignored plans
 CREATE TABLE
     #ignore_plan_hashes
 (
-    plan_hash binary(8) PRIMARY KEY
+    plan_hash varchar(131) PRIMARY KEY
 );
 
 /*
@@ -439,7 +440,7 @@ Hold sql handles for plans we want
 CREATE TABLE
     #include_sql_handles
 (
-    sql_handle varbinary(64) PRIMARY KEY
+    sql_handle varchar(131) PRIMARY KEY
 );
 
 /*
@@ -448,7 +449,7 @@ Hold sql handles for ignored plans
 CREATE TABLE
     #ignore_sql_handles
 (
-    sql_handle varbinary(64) PRIMARY KEY
+    sql_handle varchar(131) PRIMARY KEY
 );
 
 /*
@@ -1038,13 +1039,14 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @current_table = N'',
     @string_split_ints = N'
     SELECT DISTINCT
-        LTRIM
-        (
-            RTRIM
+        ids = 
+            LTRIM
             (
-                ids.ids
+                RTRIM
+                (
+                    ids.ids
+                )
             )
-        ) AS ids
     FROM
     (
         SELECT
@@ -1081,13 +1083,14 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     OPTION(RECOMPILE);',
     @string_split_strings = N'
     SELECT DISTINCT
-        LTRIM
-        (
-            RTRIM
+        ids = 
+            LTRIM
             (
-                ids.ids
+                RTRIM
+                (
+                    ids.ids
+                )
             )
-        ) AS ids
     FROM
     (
         SELECT
@@ -2785,7 +2788,7 @@ BEGIN
 SELECT TOP (@top)
     qsws.plan_id
 FROM  ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-WHERE qsws.execution_type = 0
+WHERE 1 = 1
 AND   qsws.wait_category = ' +
 CASE @wait_filter
      WHEN 'cpu' THEN N'1'
@@ -4117,6 +4120,353 @@ JOIN #query_context_settings AS qcs
     ON qsq.context_settings_id = qcs.context_settings_id
 OPTION(RECOMPILE);
 
+IF @sql_2022_views = 1
+BEGIN
+
+    /*query_store_plan_feedback*/
+    SELECT
+        @current_table = 'inserting #query_store_plan_feedback',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+
+    END;
+
+    SELECT
+        @sql += N'
+SELECT 
+    qspf.plan_feedback_id,
+    qspf.plan_id,
+    qspf.feature_desc,
+    qspf.feedback_data,
+    qspf.state_desc,
+    qspf.create_time,
+    qspf.last_updated_time 
+FROM ' + @database_name_quoted + N'.sys.query_store_plan_feedback AS qspf
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_plan AS qsp
+    WHERE qspf.plan_id = qsp.plan_id
+)
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+    INSERT
+        #query_store_plan_feedback WITH(TABLOCK)
+    (
+        plan_feedback_id,
+        plan_id,
+        feature_desc,
+        feedback_data,
+        state_desc,
+        create_time,
+        last_updated_time
+    )
+    EXEC sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+
+    END;
+
+    /*query_store_query_variant*/
+    SELECT
+        @current_table = 'inserting #query_store_query_variant',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+
+    END;
+
+    SELECT
+        @sql += N'
+SELECT 
+    qsqv.query_variant_query_id,
+    qsqv.parent_query_id,
+    qsqv.dispatcher_plan_id 
+FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_plan AS qsp
+    WHERE qsqv.parent_query_id = qsp.query_id
+)
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+    INSERT
+        #query_store_query_variant WITH(TABLOCK)
+    (
+        query_variant_query_id,
+        parent_query_id,
+        dispatcher_plan_id 
+    )
+    EXEC sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+
+    END;
+
+    /*query_store_query_hints*/
+    SELECT
+        @current_table = 'inserting #query_store_query_hints',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+
+    END;
+
+    SELECT
+        @sql += N'
+SELECT 
+    qsqh.query_hint_id,
+    qsqh.query_id,
+    qsqh.query_hint_text,
+    qsqh.last_query_hint_failure_reason_desc,
+    qsqh.query_hint_failure_count,
+    qsqh.source_desc
+FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_plan AS qsp
+    WHERE qsqh.query_id = qsp.query_id
+)
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+    INSERT
+        #query_store_query_hints WITH(TABLOCK)
+    (
+        query_hint_id,
+        query_id,
+        query_hint_text,
+        last_query_hint_failure_reason_desc,
+        query_hint_failure_count,
+        source_desc
+    )
+    EXEC sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+
+    END;
+
+    IF @ags_present = 1
+    BEGIN
+    
+        /*query_store_plan_forcing_locations*/
+        SELECT
+            @current_table = 'inserting #query_store_plan_forcing_locations',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+    
+        END;
+    
+        SELECT
+            @sql += N'
+SELECT 
+    qspfl.plan_forcing_location_id,
+    qspfl.query_id,
+    qspfl.plan_id,
+    qspfl.replica_group_id 
+FROM ' + @database_name_quoted + N'.query_store_plan_forcing_locations AS qspfl
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE qspfl.query_id = qsp.query_id
+          AND   qspfl.plan_id = qsp.plan_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+    
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    
+        INSERT
+            #query_store_plan_forcing_locations WITH(TABLOCK)
+        (
+            plan_forcing_location_id,
+            query_id,
+            plan_id,
+            replica_group_id 
+        )
+        EXEC sys.sp_executesql
+            @sql;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+    
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+    
+        END;
+    
+        /*query_store_replicas*/
+        SELECT
+            @current_table = 'inserting #query_store_replicas',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+    
+        END;
+    
+        SELECT
+            @sql += N'
+SELECT 
+    qsr.replica_group_id,
+    qsr.role_type,
+    qsr.replica_name
+FROM ' + @database_name_quoted + N'.sys.query_store_replicas AS qsr
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan_forcing_locations AS qspfl
+          WHERE qspfl.replica_group_id = qsr.replica_group_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+    
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    
+        INSERT
+            #query_store_replicas WITH(TABLOCK)
+        (
+            replica_group_id,
+            role_type,
+            replica_name
+        )
+        EXEC sys.sp_executesql
+            @sql;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+    
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+    
+        END;
+    
+    END; /*End AG queries*/
+
+END; /*End SQL 2022 views*/
+
 /*
 This is where we start returning results
 */
@@ -4177,7 +4527,22 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        qsp.compatibility_level,
+        qsp.compatibility_level,'
+        +
+            CASE @sql_2022_views
+                 WHEN 1 
+                 THEN
+        N'
+        has_query_feedback = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+        has_query_store_hints = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+        has_plan_variants = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.parent_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+                 ELSE
+        N''
+                 END +
+        N'
         query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
@@ -4320,7 +4685,22 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        qsp.compatibility_level,
+        qsp.compatibility_level,'
+        +
+            CASE @sql_2022_views
+                 WHEN 1 
+                 THEN
+        N'
+        has_query_feedback = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+        has_query_store_hints = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+        has_plan_variants = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.parent_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+                 ELSE
+        N''
+                 END +
+        N'
         query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
@@ -4467,7 +4847,22 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        qsp.compatibility_level,
+        qsp.compatibility_level,'
+        +
+            CASE @sql_2022_views
+                 WHEN 1 
+                 THEN
+        N'
+        has_query_feedback = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+        has_query_store_hints = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+        has_plan_variants = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.parent_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+                 ELSE
+        N''
+                 END +
+        N'
         query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
@@ -4576,7 +4971,22 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        qsp.compatibility_level,
+        qsp.compatibility_level,'
+        +
+            CASE @sql_2022_views
+                 WHEN 1 
+                 THEN
+        N'
+        has_query_feedback = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+        has_query_store_hints = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+        has_plan_variants = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.parent_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+                 ELSE
+        N''
+                 END +
+        N'
         query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
@@ -4866,7 +5276,89 @@ BEGIN
        (
            SELECT
                1/0
-            FROM #query_store_query
+           FROM #query_store_plan_feedback AS qspf
+       )
+    BEGIN
+        
+        SELECT
+            @current_table = 'selecting plan feedback';
+
+        SELECT
+            qspf.plan_feedback_id,
+            qspf.plan_id,
+            qspf.feature_desc,
+            qspf.feedback_data,
+            qspf.state_desc,
+            qspf.create_time,
+            qspf.last_updated_time
+        FROM #query_store_plan_feedback AS qspf
+        ORDER BY qspf.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE 
+    BEGIN 
+        SELECT
+            result = '#query_store_plan_feedback is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_store_query_hints AS qsqh
+       )
+    BEGIN
+        
+        SELECT
+            @current_table = 'selecting query hints';
+
+        SELECT
+            qsqh.query_hint_id,
+            qsqh.query_id,
+            qsqh.query_hint_text,
+            qsqh.last_query_hint_failure_reason_desc,
+            qsqh.query_hint_failure_count,
+            qsqh.source_desc
+        FROM #query_store_query_hints AS qsqh
+        ORDER BY qsqh.query_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE 
+    BEGIN 
+        SELECT
+            result = '#query_store_query_hints is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_store_query_variant AS qsqv
+       )
+    BEGIN
+        
+        SELECT
+            @current_table = 'selecting query variants';
+
+        SELECT
+            qsqv.query_variant_query_id,
+            qsqv.parent_query_id,
+            qsqv.dispatcher_plan_id
+        FROM #query_store_query_variant AS qsqv
+        ORDER BY qsqv.parent_query_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE 
+    BEGIN 
+        SELECT
+            result = '#query_store_query_variant is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+            FROM #query_store_query AS qsq
        )
     BEGIN
 
@@ -4996,7 +5488,7 @@ BEGIN
            (
                SELECT
                    1/0
-                FROM #query_store_wait_stats
+                FROM #query_store_wait_stats AS qsws
            )
         BEGIN
 
@@ -5110,6 +5602,39 @@ BEGIN
 
     END; /*End wait stats queries*/
 
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_store_replicas AS qsr
+           JOIN #query_store_plan_forcing_locations AS qspfl
+               ON qsr.replica_group_id = qspfl.replica_group_id
+       )
+    BEGIN
+
+    SELECT
+        @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
+
+    SELECT 
+        qsr.replica_group_id, 
+        qsr.role_type, 
+        qsr.replica_name,
+        qspfl.plan_forcing_location_id,
+        qspfl.query_id,
+        qspfl.plan_id,
+        qspfl.replica_group_id 
+    FROM #query_store_replicas AS qsr
+    JOIN #query_store_plan_forcing_locations AS qspfl
+        ON qsr.replica_group_id = qspfl.replica_group_id
+    ORDER BY qsr.replica_group_id;
+
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result = 'Availability Group information is empty';
+    END;
+
     SELECT
         @current_table = 'selecting query store options',
         @sql = N'';
@@ -5180,12 +5705,93 @@ BEGIN
 
     IF EXISTS
        (
-          SELECT
-              1/0
-          FROM #query_store_query
+           SELECT
+               1/0
+           FROM #query_store_plan_feedback AS qspf
        )
     BEGIN
+        
+        SELECT
+            @current_table = 'selecting plan feedback';
 
+        SELECT
+            qspf.plan_feedback_id,
+            qspf.plan_id,
+            qspf.feature_desc,
+            qspf.feedback_data,
+            qspf.state_desc,
+            qspf.create_time,
+            qspf.last_updated_time
+        FROM #query_store_plan_feedback AS qspf
+        ORDER BY qspf.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE 
+    BEGIN 
+        SELECT
+            result = '#query_store_plan_feedback is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_store_query_hints AS qsqh
+       )
+    BEGIN
+        
+        SELECT
+            @current_table = 'selecting query hints';
+
+        SELECT
+            qsqh.query_hint_id,
+            qsqh.query_id,
+            qsqh.query_hint_text,
+            qsqh.last_query_hint_failure_reason_desc,
+            qsqh.query_hint_failure_count,
+            qsqh.source_desc
+        FROM #query_store_query_hints AS qsqh
+        ORDER BY qsqh.query_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE 
+    BEGIN 
+        SELECT
+            result = '#query_store_query_hints is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_store_query_variant AS qsqv
+       )
+    BEGIN
+        
+        SELECT
+            @current_table = 'selecting query variants';
+
+        SELECT
+            qsqv.query_variant_query_id,
+            qsqv.parent_query_id,
+            qsqv.dispatcher_plan_id
+        FROM #query_store_query_variant AS qsqv
+        ORDER BY qsqv.parent_query_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE 
+    BEGIN 
+        SELECT
+            result = '#query_store_query_variant is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #query_store_query AS qsq
+       )
+    BEGIN
         SELECT
             @current_table = 'selecting compilation stats';
 
@@ -5344,7 +5950,7 @@ BEGIN
            (
                SELECT
                    1/0
-                FROM #query_store_wait_stats
+                FROM #query_store_wait_stats AS qsws
            )
         BEGIN
 
@@ -5469,6 +6075,39 @@ BEGIN
                     THEN ' because you have it disabled in your Query Store options'
                     ELSE ' for the queries in the results'
                 END;
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_store_replicas AS qsr
+           JOIN #query_store_plan_forcing_locations AS qspfl
+               ON qsr.replica_group_id = qspfl.replica_group_id
+       )
+    BEGIN
+
+    SELECT
+        @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
+
+    SELECT 
+        qsr.replica_group_id, 
+        qsr.role_type, 
+        qsr.replica_name,
+        qspfl.plan_forcing_location_id,
+        qspfl.query_id,
+        qspfl.plan_id,
+        qspfl.replica_group_id 
+    FROM #query_store_replicas AS qsr
+    JOIN #query_store_plan_forcing_locations AS qspfl
+        ON qsr.replica_group_id = qspfl.replica_group_id
+    ORDER BY qsr.replica_group_id;
+
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result = 'Availability Group information is empty';
     END;
 
     SELECT
@@ -5731,7 +6370,7 @@ BEGIN
             @troubleshoot_insert,
         troubleshoot_update =
             @troubleshoot_update,
-        xml_info =
+        troubleshoot_info =
             @troubleshoot_info,
         rc =
             @rc;
