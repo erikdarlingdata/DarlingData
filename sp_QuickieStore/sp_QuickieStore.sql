@@ -168,7 +168,7 @@ BEGIN
                 WHEN '@version' THEN 'OUTPUT; for support'
                 WHEN '@version_date' THEN 'OUTPUT; for support'
                 WHEN '@help' THEN 'how you got here'
-                WHEN '@debug' THEN 'prints dynamic sql (including statement length), parameter and variable values, and raw temp table contents'
+                WHEN '@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN '@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
             END,
         valid_inputs =
@@ -187,12 +187,12 @@ BEGIN
                 WHEN '@include_query_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN '@include_query_hashes' THEN 'a string; comma separated for multiple hashes'
                 WHEN '@include_plan_hashes' THEN 'a string; comma separated for multiple hashes'
-                WHEN '@include_sql_handles' THEN 'a string; comma separated for multiple hashes'
+                WHEN '@include_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN '@ignore_plan_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN '@ignore_query_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN '@ignore_query_hashes' THEN 'a string; comma separated for multiple hashes'
                 WHEN '@ignore_plan_hashes' THEN 'a string; comma separated for multiple hashes'
-                WHEN '@ignore_sql_handles' THEN 'a string; comma separated for multiple hashes'
+                WHEN '@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN '@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN '@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN '@expert_mode' THEN '0 or 1'
@@ -206,7 +206,7 @@ BEGIN
         defaults =
             CASE
                 ap.name
-                WHEN '@database_name' THEN 'NULL'
+                WHEN '@database_name' THEN 'NULL; current non-system database name if NULL'
                 WHEN '@sort_order' THEN 'cpu'
                 WHEN '@top' THEN '10'
                 WHEN '@start_date' THEN 'the last 24 hours'
@@ -229,8 +229,8 @@ BEGIN
                 WHEN '@wait_filter' THEN 'NULL'
                 WHEN '@expert_mode' THEN '0'
                 WHEN '@format_output' THEN '0'
-                WHEN '@version' THEN 'none; output'
-                WHEN '@version_date' THEN 'none; output'
+                WHEN '@version' THEN 'none; OUTPUT'
+                WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0'
                 WHEN '@debug' THEN '0'
                 WHEN '@troubleshoot_performance' THEN '0'
@@ -405,7 +405,13 @@ CREATE TABLE
     #include_query_hashes
 (
     query_hash_s varchar(131),
-    query_hash AS CONVERT(binary(8), query_hash_s, 1) PERSISTED NOT NULL PRIMARY KEY
+    query_hash AS 
+        CONVERT
+        (
+            binary(8), 
+            query_hash_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -415,7 +421,13 @@ CREATE TABLE
     #include_plan_hashes
 (
     plan_hash_s varchar(131),
-    plan_hash AS CONVERT(binary(8), plan_hash_s, 1) PERSISTED NOT NULL PRIMARY KEY
+    plan_hash AS 
+        CONVERT
+        (
+            binary(8), 
+            plan_hash_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -425,7 +437,13 @@ CREATE TABLE
     #ignore_query_hashes
 (
     query_hash_s varchar(131),
-    query_hash AS CONVERT(binary(8), query_hash_s, 1) PERSISTED NOT NULL PRIMARY KEY
+    query_hash AS 
+        CONVERT
+        (
+            binary(8), 
+            query_hash_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -435,7 +453,13 @@ CREATE TABLE
     #ignore_plan_hashes
 (
     plan_hash_s varchar(131),
-    plan_hash AS CONVERT(binary(8), plan_hash_s, 1) PERSISTED NOT NULL PRIMARY KEY
+    plan_hash AS 
+        CONVERT
+        (
+            binary(8), 
+            plan_hash_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -445,7 +469,13 @@ CREATE TABLE
     #include_sql_handles
 (
     sql_handle_s varchar(131),
-    sql_handle AS CONVERT(varbinary(64), sql_handle_s, 1) PERSISTED NOT NULL PRIMARY KEY
+    sql_handle AS 
+        CONVERT
+        (
+            varbinary(64), 
+            sql_handle_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -455,7 +485,13 @@ CREATE TABLE
     #ignore_sql_handles
 (
     sql_handle_s varchar(131),
-    sql_handle AS CONVERT(varbinary(64), sql_handle_s, 1) PERSISTED NOT NULL PRIMARY KEY
+    sql_handle AS 
+        CONVERT
+        (
+            varbinary(64), 
+            sql_handle_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
 );
 
 /*
@@ -529,7 +565,6 @@ CREATE TABLE
     is_forced_plan bit NOT NULL,
     is_natively_compiled bit NOT NULL,
     force_failure_count bigint NOT NULL,
-    last_force_failure_reason int NOT NULL,
     last_force_failure_reason_desc nvarchar(128) NULL,
     count_compiles bigint NULL,
     initial_compile_start_time datetimeoffset(7) NOT NULL,
@@ -537,7 +572,6 @@ CREATE TABLE
     last_execution_time datetimeoffset(7) NULL,
     avg_compile_duration_ms float NULL,
     last_compile_duration_ms bigint NULL,
-    plan_forcing_type int NULL,
     plan_forcing_type_desc nvarchar(60) NULL
 );
 
@@ -576,7 +610,6 @@ CREATE TABLE
     batch_sql_handle varbinary(64) NULL,
     query_hash binary(8) NOT NULL,
     is_internal_query bit NOT NULL,
-    query_parameterization_type tinyint NOT NULL,
     query_parameterization_type_desc nvarchar(60) NULL,
     initial_compile_start_time datetimeoffset(7) NOT NULL,
     last_compile_start_time datetimeoffset(7) NULL,
@@ -700,8 +733,10 @@ CREATE TABLE
                         SECOND,
                         first_execution_time,
                         last_execution_time
-                    ), 0
-                ), 0
+                    ), 
+                    0
+                ), 
+                0
         ),
     avg_duration_ms float NULL,
     last_duration_ms bigint NOT NULL,
@@ -3216,80 +3251,6 @@ BEGIN
 END; /*End getting runtime stats*/
 
 /*
-This gets context info and settings
-*/
-SELECT
-    @current_table = 'inserting #query_context_settings',
-    @sql = @isolation_level;
-
-IF @troubleshoot_performance = 1
-BEGIN
-
-    EXEC sys.sp_executesql
-        @troubleshoot_insert,
-      N'@current_table nvarchar(100)',
-        @current_table;
-
-    SET STATISTICS XML ON;
-
-END;
-
-SELECT
-    @sql += N'
-SELECT
-    context_settings_id,
-    set_options,
-    language_id,
-    date_format,
-    date_first,
-    status,
-    required_cursor_options,
-    acceptable_cursor_options,
-    merge_action_type,
-    default_schema_id,
-    is_replication_specific,
-    is_contained
-FROM ' + @database_name_quoted + N'.sys.query_context_settings;';
-
-INSERT
-    #query_context_settings WITH(TABLOCK)
-(
-    context_settings_id,
-    set_options,
-    language_id,
-    date_format,
-    date_first,
-    status,
-    required_cursor_options,
-    acceptable_cursor_options,
-    merge_action_type,
-    default_schema_id,
-    is_replication_specific,
-    is_contained
-)
-EXEC sys.sp_executesql
-    @sql;
-
-IF @troubleshoot_performance = 1
-BEGIN
-
-    SET STATISTICS XML OFF;
-
-    EXEC sys.sp_executesql
-        @troubleshoot_update,
-      N'@current_table nvarchar(100)',
-        @current_table;
-
-    EXEC sys.sp_executesql
-        @troubleshoot_info,
-      N'@sql nvarchar(max),
-        @current_table nvarchar(100)',
-        @sql,
-        @current_table;
-
-END; /*End geting context settings*/
-
-/*
 This gets the query plans we're after
 */
 SELECT
@@ -3340,7 +3301,6 @@ SELECT
     qsp.is_forced_plan,
     qsp.is_natively_compiled,
     qsp.force_failure_count,
-    qsp.last_force_failure_reason,
     qsp.last_force_failure_reason_desc,
     qsp.count_compiles,
     qsp.initial_compile_start_time,
@@ -3353,7 +3313,6 @@ IF @new = 1
 BEGIN
     SELECT
         @sql += N'
-    qsp.plan_forcing_type,
     qsp.plan_forcing_type_desc';
 END;
 
@@ -3398,7 +3357,6 @@ INSERT
     is_forced_plan,
     is_natively_compiled,
     force_failure_count,
-    last_force_failure_reason,
     last_force_failure_reason_desc,
     count_compiles,
     initial_compile_start_time,
@@ -3406,7 +3364,6 @@ INSERT
     last_execution_time,
     avg_compile_duration_ms,
     last_compile_duration_ms,
-    plan_forcing_type,
     plan_forcing_type_desc
 )
 EXEC sys.sp_executesql
@@ -3462,7 +3419,6 @@ SELECT
     qsq.batch_sql_handle,
     qsq.query_hash,
     qsq.is_internal_query,
-    qsq.query_parameterization_type,
     qsq.query_parameterization_type_desc,
     qsq.initial_compile_start_time,
     qsq.last_compile_start_time,
@@ -3509,7 +3465,6 @@ INSERT
     batch_sql_handle,
     query_hash,
     is_internal_query,
-    query_parameterization_type,
     query_parameterization_type_desc,
     initial_compile_start_time,
     last_compile_start_time,
@@ -4033,6 +3988,91 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
 END; /*End getting wait stats*/
+
+/*
+This gets context info and settings
+*/
+SELECT
+    @current_table = 'inserting #query_context_settings',
+    @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    SET STATISTICS XML ON;
+
+END;
+
+SELECT
+    @sql += N'
+SELECT
+    context_settings_id,
+    set_options,
+    language_id,
+    date_format,
+    date_first,
+    status,
+    required_cursor_options,
+    acceptable_cursor_options,
+    merge_action_type,
+    default_schema_id,
+    is_replication_specific,
+    is_contained
+FROM ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_runtime_stats AS qsrs
+    JOIN #query_store_plan AS qsp
+        ON qsrs.plan_id = qsp.plan_id
+    JOIN #query_store_query AS qsq
+        ON qsp.query_id = qsq.query_id
+    WHERE qsq.context_settings_id = qcs.context_settings_id
+);';
+
+INSERT
+    #query_context_settings WITH(TABLOCK)
+(
+    context_settings_id,
+    set_options,
+    language_id,
+    date_format,
+    date_first,
+    status,
+    required_cursor_options,
+    acceptable_cursor_options,
+    merge_action_type,
+    default_schema_id,
+    is_replication_specific,
+    is_contained
+)
+EXEC sys.sp_executesql
+    @sql;
+
+IF @troubleshoot_performance = 1
+BEGIN
+
+    SET STATISTICS XML OFF;
+
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXEC sys.sp_executesql
+        @troubleshoot_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+
+END; /*End geting context settings*/
 
 /*
 Update things to get the context settings for each query
