@@ -41,7 +41,8 @@ IF OBJECT_ID('dbo.sp_PressureDetector') IS  NULL
     EXEC ('CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
 GO
 
-ALTER PROCEDURE dbo.sp_PressureDetector 
+ALTER PROCEDURE 
+    dbo.sp_PressureDetector 
 (
     @what_to_check nvarchar(6) = N'both',    
     @skip_plan_xml bit = 0,
@@ -58,8 +59,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
 SELECT 
-    @version = '2.40', 
-    @version_date = '20220401';
+    @version = '2.50', 
+    @version_date = '20220701';
 
 
 IF @help = 1
@@ -73,8 +74,11 @@ BEGIN
            'hi, i''m sp_PressureDetector!' UNION ALL
     SELECT 'you got me from https://www.erikdarlingdata.com/sp_pressuredetector/' UNION ALL
     SELECT 'i''m a lightweight tool for monitoring cpu and memory pressure' UNION ALL
-    SELECT 'i''ll tell you how many worker threads and how much memory you have available' UNION ALL
-    SELECT 'and show you any running queries that are using cpu and memory';
+    SELECT 'i''ll tell you: ' UNION ALL
+    SELECT ' * what''s currently consuming memory on your server' UNION ALL
+    SELECT ' * wait stats relevant to cpu, memory, and disk' UNION ALL
+    SELECT ' * how many worker threads and how much memory you have available' UNION ALL
+    SELECT ' * running queries that are using cpu and memory';
 
     /*
     Parameters
@@ -106,8 +110,8 @@ BEGIN
                 ap.name
                 WHEN '@what_to_check' THEN 'both'
                 WHEN '@skip_plan_xml' THEN '1'
-                WHEN '@version' THEN 'none'
-                WHEN '@version_date' THEN 'none'
+                WHEN '@version' THEN 'none; OUTPUT'
+                WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0'
             END
     FROM sys.all_parameters AS ap
@@ -596,6 +600,12 @@ END;
         /*Resource semaphore info*/
         SELECT  
             deqrs.resource_semaphore_id,
+            total_physical_memory_mb = 
+                (
+                    SELECT 
+                            CEILING(dosm.total_physical_memory_kb / 1024.)
+                    FROM sys.dm_os_sys_memory AS dosm
+                ),
             max_server_memory = 
                 (
                     SELECT 
