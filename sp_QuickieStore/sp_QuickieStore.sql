@@ -197,8 +197,8 @@ BEGIN
                 WHEN '@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN '@expert_mode' THEN '0 or 1'
                 WHEN '@format_output' THEN '0 or 1'
-                WHEN '@version' THEN 'none; output'
-                WHEN '@version_date' THEN 'none; output'
+                WHEN '@version' THEN 'none; OUTPUT'
+                WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0 or 1'
                 WHEN '@debug' THEN '0 or 1'
                 WHEN '@troubleshoot_performance' THEN '0 or 1'
@@ -287,12 +287,14 @@ BEGIN
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Hints (2022+, expert mode only): lists hints applied to queries from automated feedback mechanisms' UNION ALL    
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Replicas (2022+, expert mode only): lists plans forced on AG replicas' UNION ALL
+    SELECT 'Query Variants (2022+, expert mode only): lists plan variants from the Parameter Sensitive Plan feedback mechanism' UNION ALL    
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Waits By Query (2017+, expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Waits Total (2017+, expert mode only): total wait stats for the chosen date range only' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Query Replicas (2022+, expert mode only): lists plans forced on AG replicas' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Options (expert mode only): details about current query store configuration';
 
@@ -304,7 +306,7 @@ BEGIN
            'frigid shortcomings:'  UNION ALL
     SELECT 'you need to be on at least SQL Server 2016 SP2, 2017 CU3, or any higher version to run this' UNION ALL
     SELECT 'if you''re on azure sql db then you''ll need to be in compat level 130' UNION ALL
-    SELECT 'i do not currently support synapse or edge or other memes';
+    SELECT 'i do not currently support synapse or edge or other memes, and azure sql db support is not guaranteed';
 
     /*
     License to F5
@@ -1376,7 +1378,7 @@ IF @query_store_exists = 0
     END;
 
 /*
-If you specified a procedure name, we need to figure out if ithere are any plans for it available
+If you specified a procedure name, we need to figure out if there are any plans for it available
 */
 IF @procedure_name IS NOT NULL
 BEGIN
