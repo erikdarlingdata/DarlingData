@@ -178,13 +178,14 @@ END;
             SELECT
                 @reserved_worker_count_out = 
                     SUM(deqmg.reserved_worker_count)
-            FROM sys.dm_exec_query_memory_grants AS deqmg;
+            FROM sys.dm_exec_query_memory_grants AS deqmg
+            OPTION(MAXDOP 1, RECOMPILE);
             ',
         @cpu_details nvarchar(MAX) = N'',
         @cpu_details_output xml = N'',
         @cpu_details_columns nvarchar(MAX) = N'SELECT ',
         @cpu_details_select nvarchar(MAX) = N'SELECT @cpu_details_output = ( ',
-        @cpu_details_from nvarchar(MAX) = N' FROM sys.dm_os_sys_info AS osi FOR XML PATH(''cpu_details''), TYPE );';
+        @cpu_details_from nvarchar(MAX) = N' FROM sys.dm_os_sys_info AS osi FOR XML PATH(''cpu_details''), TYPE ) OPTION(MAXDOP 1, RECOMPILE);';
 
     /*
     Check to see if the DAC is enabled.
@@ -689,7 +690,8 @@ END;
                           N'hyperthread_ratio',
                           N'softnuma_configuration_desc'     
                       )
-            ) AS ac;
+            ) AS ac
+            OPTION(MAXDOP 1, RECOMPILE);
             
             SELECT
                 @cpu_details = 
