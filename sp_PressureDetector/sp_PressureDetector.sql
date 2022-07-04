@@ -179,7 +179,12 @@ END;
                 @reserved_worker_count_out = 
                     SUM(deqmg.reserved_worker_count)
             FROM sys.dm_exec_query_memory_grants AS deqmg;
-            ';
+            ',
+        @cpu_details nvarchar(MAX) = N'',
+        @cpu_details_output xml = N'',
+        @cpu_details_columns nvarchar(MAX) = N'SELECT ',
+        @cpu_details_select nvarchar(MAX) = N'SELECT @cpu_details_output = ( ',
+        @cpu_details_from nvarchar(MAX) = N' FROM sys.dm_os_sys_info AS osi FOR XML PATH(''cpu_details''), TYPE );';
 
     /*
     Check to see if the DAC is enabled.
@@ -649,11 +654,63 @@ END;
             EXEC sys.sp_executesql
                 @reserved_worker_count,
               N'@reserved_worker_count_out varchar(10) OUTPUT',
-                @reserved_worker_count_out OUTPUT;
-        END
+                @reserved_worker_count_out OUTPUT;        
+        END;
+
+            SELECT 
+                @cpu_details_columns += N'' +
+                    CASE 
+                        WHEN ac.name = N'socket_count'
+                        THEN N'osi.socket_count, '
+                        WHEN ac.name = N'numa_node_count'
+                        THEN N'osi.socket_count, '
+                        WHEN ac.name = N'cpu_count'
+                        THEN N'osi.cpu_count, '
+                        WHEN ac.name = N'cores_per_socket'
+                        THEN N'osi.cores_per_socket, '
+                        WHEN ac.name = N'hyperthread_ratio'
+                        THEN N'osi.hyperthread_ratio, '
+                        WHEN ac.name = N'softnuma_configuration_desc'
+                        THEN N'osi.softnuma_configuration_desc, '
+                        ELSE N'SELECT x = 1'
+                    END
+            FROM 
+            (
+                SELECT
+                    ac.name
+                FROM sys.all_columns AS ac
+                WHERE ac.object_id = OBJECT_ID('sys.dm_os_sys_info')
+                AND   ac.name IN
+                      (
+                          N'socket_count',
+                          N'numa_node_count',
+                          N'cpu_count',
+                          N'cores_per_socket',
+                          N'hyperthread_ratio',
+                          N'softnuma_configuration_desc'     
+                      )
+            ) AS ac;
+            
+            SELECT
+                @cpu_details = 
+                    @cpu_details_select + 
+                    SUBSTRING
+                    (
+                        @cpu_details_columns,
+                        1,
+                        LEN(@cpu_details_columns) -1
+                    ) +
+                    @cpu_details_from;
+            
+            EXEC sys.sp_executesql
+                @cpu_details,
+              N'@cpu_details_output xml OUTPUT',
+                @cpu_details_output OUTPUT;
 
         /*Thread usage*/
         SELECT
+            cpu_details_output = 
+                @cpu_details_output,
             total_threads = 
                 MAX(osi.max_workers_count),
             used_threads = 
@@ -676,6 +733,8 @@ END;
                 SUM(dos.work_queue_count),
             current_workers = 
                 SUM(dos.current_workers_count),
+            avg_runnable_tasks_count = 
+                AVG(dos.runnable_tasks_count),
             high_runnable_percent = 
                 MAX(ISNULL(r.high_runnable_percent, 0))
         FROM sys.dm_os_schedulers AS dos
@@ -886,3 +945,4 @@ END;
     END;
 
 END;
+GO
