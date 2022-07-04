@@ -24,7 +24,7 @@ GO
 ██████╔╝███████╗   ██║   ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
 ╚═════╝ ╚══════╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
-Copyright 2021 Darling Data, LLC
+Copyright 2022 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -131,7 +131,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2021 Darling Data, LLC
+Copyright 2022 Darling Data, LLC
 
 https://www.erikdarlingdata.com/
 
@@ -175,6 +175,8 @@ END;
         @cool_new_columns bit = 0,
         @reserved_worker_count_out nvarchar(10) = N'0',
         @reserved_worker_count nvarchar(MAX) = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
             SELECT
                 @reserved_worker_count_out = 
                     SUM(deqmg.reserved_worker_count)
@@ -183,7 +185,7 @@ END;
             ',
         @cpu_details nvarchar(MAX) = N'',
         @cpu_details_output xml = N'',
-        @cpu_details_columns nvarchar(MAX) = N'SELECT ',
+        @cpu_details_columns nvarchar(MAX) = N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SELECT ',
         @cpu_details_select nvarchar(MAX) = N'SELECT @cpu_details_output = ( ',
         @cpu_details_from nvarchar(MAX) = N' FROM sys.dm_os_sys_info AS osi FOR XML PATH(''cpu_details''), TYPE ) OPTION(MAXDOP 1, RECOMPILE);';
 
@@ -673,7 +675,7 @@ END;
                         THEN N'osi.hyperthread_ratio, '
                         WHEN ac.name = N'softnuma_configuration_desc'
                         THEN N'osi.softnuma_configuration_desc, '
-                        ELSE N'SELECT x = 1'
+                        ELSE N''
                     END
             FROM 
             (
