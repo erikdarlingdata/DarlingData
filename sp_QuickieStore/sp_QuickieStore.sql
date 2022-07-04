@@ -319,7 +319,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2021 Darling Data, LLC
+Copyright 2022 Darling Data, LLC
 
 https://www.erikdarlingdata.com/
 
@@ -1642,7 +1642,8 @@ WHERE ao.name IN
           N'query_store_query_variant',
           N'query_store_replicas',
           N'query_store_plan_forcing_locations'
-      );
+      )
+OPTION(RECOMPILE);
 
 /*
 See if AGs are a thing so we can skip the checks for replica stuff
@@ -1658,7 +1659,8 @@ SELECT
                  )
             THEN 1
             ELSE 0
-        END;
+        END
+OPTION(RECOMPILE);
 
 /*
 Get filters ready, or whatever
@@ -4036,7 +4038,8 @@ WHERE EXISTS
     JOIN #query_store_query AS qsq
         ON qsp.query_id = qsq.query_id
     WHERE qsq.context_settings_id = qcs.context_settings_id
-);';
+)
+OPTION(RECOMPILE);';
 
 INSERT
     #query_context_settings WITH(TABLOCK)
@@ -4763,7 +4766,8 @@ FROM
             END + 
         CONVERT
         (
-            nvarchar(MAX), N'
+            nvarchar(MAX), 
+            N'
         qsrs.first_execution_time,
         qsrs.last_execution_time,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
@@ -6155,7 +6159,8 @@ BEGIN
     FROM #query_store_replicas AS qsr
     JOIN #query_store_plan_forcing_locations AS qspfl
         ON qsr.replica_group_id = qspfl.replica_group_id
-    ORDER BY qsr.replica_group_id;
+    ORDER BY qsr.replica_group_id
+    OPTION(RECOMPILE);
 
     END;
     ELSE
