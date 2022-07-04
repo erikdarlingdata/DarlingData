@@ -4760,7 +4760,10 @@ FROM
         w.top_waits,'
                  ELSE
         N''
-            END + N'
+            END + 
+        CONVERT
+        (
+            nvarchar(MAX), N'
         qsrs.first_execution_time,
         qsrs.last_execution_time,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
@@ -4808,6 +4811,7 @@ FROM
         last_rowcount = FORMAT(qsrs.last_rowcount, ''N0''),
         min_rowcount = FORMAT(qsrs.min_rowcount, ''N0''),
         max_rowcount = FORMAT(qsrs.max_rowcount, ''N0''),'
+        )
         +
             CASE @new
                  WHEN 1
@@ -5297,6 +5301,7 @@ OPTION(RECOMPILE);' + @nc10;
         PRINT LEN(@sql);
         PRINT SUBSTRING(@sql, 0, 4000);
         PRINT SUBSTRING(@sql, 4000, 8000);
+        PRINT SUBSTRING(@sql, 8000, 16000);
     END;
 
 
