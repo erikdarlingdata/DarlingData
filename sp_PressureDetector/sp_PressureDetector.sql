@@ -47,6 +47,7 @@ ALTER PROCEDURE
     @what_to_check nvarchar(6) = N'both',    
     @skip_plan_xml bit = 0,
     @help bit = 0,
+    @debug bit = 0,
     @version varchar(5) = NULL OUTPUT,
     @version_date datetime = NULL OUTPUT
 )
@@ -175,19 +176,37 @@ END;
         @cool_new_columns bit = 0,
         @reserved_worker_count_out nvarchar(10) = N'0',
         @reserved_worker_count nvarchar(MAX) = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-            SELECT
-                @reserved_worker_count_out = 
-                    SUM(deqmg.reserved_worker_count)
-            FROM sys.dm_exec_query_memory_grants AS deqmg
-            OPTION(MAXDOP 1, RECOMPILE);
+SELECT
+    @reserved_worker_count_out = 
+        SUM(deqmg.reserved_worker_count)
+FROM sys.dm_exec_query_memory_grants AS deqmg
+OPTION(MAXDOP 1, RECOMPILE);
             ',
         @cpu_details nvarchar(MAX) = N'',
         @cpu_details_output xml = N'',
-        @cpu_details_columns nvarchar(MAX) = N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SELECT ',
-        @cpu_details_select nvarchar(MAX) = N'SELECT @cpu_details_output = ( ',
-        @cpu_details_from nvarchar(MAX) = N' FROM sys.dm_os_sys_info AS osi FOR XML PATH(''cpu_details''), TYPE ) OPTION(MAXDOP 1, RECOMPILE);';
+        @cpu_details_columns nvarchar(MAX) = 
+            N'',
+        @cpu_details_select nvarchar(MAX) = 
+N'
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; 
+
+SELECT 
+    @cpu_details_output = 
+        ( 
+            SELECT 
+                offline_cpus = 
+                    (SELECT COUNT_BIG(*) FROM sys.dm_os_schedulers dos WHERE dos.is_online = 0), 
+',
+        @cpu_details_from nvarchar(MAX) = 
+            N' 
+            FROM sys.dm_os_sys_info AS osi 
+            FOR XML 
+                PATH(''cpu_details''), 
+                TYPE 
+        ) 
+OPTION(MAXDOP 1, RECOMPILE);';
 
     /*
     Check to see if the DAC is enabled.
@@ -375,6 +394,8 @@ END;
         OPTION(MAXDOP 1, RECOMPILE);
         ';
         
+        IF @debug = 1 BEGIN PRINT @pool_sql; END;
+
         EXEC sys.sp_executesql
             @pool_sql;
 
@@ -602,6 +623,8 @@ END;
         OPTION(MAXDOP 1, RECOMPILE);
         ';
 
+        IF @debug = 1 BEGIN PRINT @mem_sql; END;
+
         EXEC sys.sp_executesql 
             @mem_sql;
         
@@ -654,6 +677,8 @@ END;
 
         IF @helpful_new_columns = 1
         BEGIN        
+            IF @debug = 1 BEGIN PRINT @reserved_worker_count; END;
+            
             EXEC sys.sp_executesql
                 @reserved_worker_count,
               N'@reserved_worker_count_out varchar(10) OUTPUT',
@@ -664,17 +689,17 @@ END;
                 @cpu_details_columns += N'' +
                     CASE 
                         WHEN ac.name = N'socket_count'
-                        THEN N'osi.socket_count, '
+                        THEN N'                osi.socket_count, ' + NCHAR(10)
                         WHEN ac.name = N'numa_node_count'
-                        THEN N'osi.socket_count, '
+                        THEN N'                osi.socket_count, ' + NCHAR(10)
                         WHEN ac.name = N'cpu_count'
-                        THEN N'osi.cpu_count, '
+                        THEN N'                osi.cpu_count, ' + NCHAR(10)
                         WHEN ac.name = N'cores_per_socket'
-                        THEN N'osi.cores_per_socket, '
+                        THEN N'                osi.cores_per_socket, ' + NCHAR(10)
                         WHEN ac.name = N'hyperthread_ratio'
-                        THEN N'osi.hyperthread_ratio, '
+                        THEN N'                osi.hyperthread_ratio, ' + NCHAR(10)
                         WHEN ac.name = N'softnuma_configuration_desc'
-                        THEN N'osi.softnuma_configuration_desc, '
+                        THEN N'                osi.softnuma_configuration_desc, ' + NCHAR(10)
                         ELSE N''
                     END
             FROM 
@@ -702,9 +727,11 @@ END;
                     (
                         @cpu_details_columns,
                         1,
-                        LEN(@cpu_details_columns) -1
+                        LEN(@cpu_details_columns) -3
                     ) +
                     @cpu_details_from;
+
+            IF @debug = 1 BEGIN PRINT @cpu_details; END;
             
             EXEC sys.sp_executesql
                 @cpu_details,
@@ -943,6 +970,9 @@ END;
         OPTION(MAXDOP 1, RECOMPILE);'
           END
               );
+        
+        IF @debug = 1 BEGIN PRINT SUBSTRING(@cpu_sql, 0, 4000); PRINT SUBSTRING(@cpu_sql, 4000, 8000); END;
+        
         EXEC sys.sp_executesql 
             @cpu_sql;
     
