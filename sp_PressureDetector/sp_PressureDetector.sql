@@ -666,8 +666,8 @@ OPTION(MAXDOP 1, RECOMPILE);';
             deqrs.forced_grant_count,
             deqrs.pool_id
         FROM sys.dm_exec_query_resource_semaphores AS deqrs
-        WHERE deqrs.resource_semaphore_id = 0
-        AND   deqrs.pool_id > 1
+        WHERE (deqrs.resource_semaphore_id = 0
+                 OR deqrs.pool_id > 1)
         OPTION(MAXDOP 1, RECOMPILE);
         
     END;

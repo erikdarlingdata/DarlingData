@@ -319,33 +319,39 @@ END;
 
 BEGIN TRY
 
-CREATE TABLE #drop_commands 
+CREATE TABLE 
+    #drop_commands 
 ( 
     id integer IDENTITY PRIMARY KEY, 
     drop_command nvarchar(1000) 
 );
 
-CREATE TABLE #user_waits
+CREATE TABLE 
+    #user_waits
 (
     wait_type nvarchar(60)
 );
 
-CREATE TABLE #papers_please
+CREATE TABLE 
+    #papers_please
 (
     ahem sysname
 );
 
-CREATE TABLE #human_events_xml_internal 
+CREATE TABLE 
+    #human_events_xml_internal 
 (
     human_events_xml xml
 );  
 
-CREATE TABLE #wait
+CREATE TABLE 
+    #wait
 (
     wait_type sysname
 );
 
-CREATE TABLE #human_events_worker
+CREATE TABLE 
+    #human_events_worker
 (
     id integer NOT NULL PRIMARY KEY IDENTITY,
     event_type sysname NOT NULL,
@@ -359,13 +365,15 @@ CREATE TABLE #human_events_worker
     output_table nvarchar(400) NOT NULL
 );
 
-CREATE UNIQUE NONCLUSTERED INDEX no_dupes 
+CREATE UNIQUE NONCLUSTERED INDEX 
+    no_dupes 
 ON #human_events_worker 
     (output_table) 
 WITH 
     (IGNORE_DUP_KEY = ON);
 
-CREATE TABLE #view_check 
+CREATE TABLE 
+    #view_check 
 (
     id integer PRIMARY KEY IDENTITY, 
     view_name sysname NOT NULL, 
@@ -373,8 +381,21 @@ CREATE TABLE #view_check
     output_database sysname NOT NULL DEFAULT N'',
     output_schema sysname NOT NULL DEFAULT N'',
     output_table sysname NOT NULL DEFAULT N'',
-    view_converted AS CONVERT(nvarchar(MAX), view_definition), 
-    view_converted_length AS DATALENGTH(CONVERT(nvarchar(MAX), view_definition))
+    view_converted AS 
+        CONVERT
+        (
+            nvarchar(MAX), 
+            view_definition
+        ), 
+    view_converted_length AS 
+        DATALENGTH
+        (
+            CONVERT
+            (
+                nvarchar(MAX), 
+                view_definition
+            )
+        )
 );
 
 
@@ -530,8 +551,8 @@ BEGIN
         drop_command
     )
     SELECT 
-        N'DROP EVENT SESSION '  
-        + ses.name + 
+        N'DROP EVENT SESSION ' +
+        ses.name + 
         N' ON DATABASE;'
     FROM sys.database_event_sessions AS ses
     LEFT JOIN sys.dm_xe_database_sessions AS dxe
@@ -551,7 +572,8 @@ IF EXISTS
 BEGIN 
     RAISERROR(N'Found old sessions, dropping those.', 0, 1) WITH NOWAIT;
     
-    DECLARE drop_cursor CURSOR 
+    DECLARE 
+        drop_cursor CURSOR 
         LOCAL STATIC FOR
     
     SELECT  
@@ -559,8 +581,10 @@ BEGIN
     FROM #drop_commands;
     
     OPEN drop_cursor;
-    FETCH NEXT FROM drop_cursor 
-        INTO @drop_old_sql;
+    
+    FETCH NEXT 
+    FROM drop_cursor 
+    INTO @drop_old_sql;
     
     WHILE @@FETCH_STATUS = 0
     BEGIN             
@@ -646,7 +670,8 @@ WITH
 /* azure can't create on server, just database */
 SET @session_sql = 
     N'
-CREATE EVENT SESSION ' + @session_name +
+CREATE EVENT SESSION ' + 
+@session_name +
     CASE 
         WHEN @azure = 0
         THEN N'
@@ -1019,7 +1044,11 @@ RAISERROR(N'Checking for unsanitary inputs', 0, 1) WITH NOWAIT;
             (@output_database_name),
             (@output_schema_name)
     ) AS pp (ahem)
-    WHERE pp.ahem NOT IN (N'', N'dbo')
+    WHERE pp.ahem NOT IN 
+          (
+              N'', 
+              N'dbo'
+          )
     OPTION(RECOMPILE);
 
     IF EXISTS
@@ -3316,9 +3345,9 @@ WHILE 1 = 1
             
                     IF @debug = 1
                     BEGIN 
-                        PRINT SUBSTRING(@view_sql, 0, 4000);
-                        PRINT SUBSTRING(@view_sql, 4000, 8000);
-                        PRINT SUBSTRING(@view_sql, 8000, 12000);
+                        PRINT SUBSTRING(@view_sql, 0,     4000);
+                        PRINT SUBSTRING(@view_sql, 4000,  8000);
+                        PRINT SUBSTRING(@view_sql, 8000,  12000);
                         PRINT SUBSTRING(@view_sql, 12000, 16000);
                         PRINT SUBSTRING(@view_sql, 16000, 20000);
                         PRINT SUBSTRING(@view_sql, 20000, 24000);
@@ -3408,7 +3437,7 @@ WHILE 1 = 1
                     )
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
-            AND hew.is_table_created = 1
+            AND   hew.is_table_created = 1
             OPTION(RECOMPILE);
         
             IF OBJECT_ID(@object_name_check) IS NOT NULL
