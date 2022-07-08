@@ -5330,86 +5330,89 @@ IF
   )
 BEGIN
 
-    IF EXISTS
-       (
-           SELECT
-               1/0
-           FROM #query_store_plan_feedback AS qspf
-       )
+    IF @sql_2022_views = 1
     BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_plan_feedback AS qspf
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting plan feedback';
         
-        SELECT
-            @current_table = 'selecting plan feedback';
-
-        SELECT
-            qspf.plan_feedback_id,
-            qspf.plan_id,
-            qspf.feature_desc,
-            qspf.feedback_data,
-            qspf.state_desc,
-            qspf.create_time,
-            qspf.last_updated_time
-        FROM #query_store_plan_feedback AS qspf
-        ORDER BY qspf.plan_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE 
-    BEGIN 
-        SELECT
-            result = '#query_store_plan_feedback is empty';
-    END;
-
-    IF EXISTS
-       (
-           SELECT
-               1/0
-           FROM #query_store_query_hints AS qsqh
-       )
-    BEGIN
+            SELECT
+                qspf.plan_feedback_id,
+                qspf.plan_id,
+                qspf.feature_desc,
+                qspf.feedback_data,
+                qspf.state_desc,
+                qspf.create_time,
+                qspf.last_updated_time
+            FROM #query_store_plan_feedback AS qspf
+            ORDER BY qspf.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_plan_feedback is empty';
+        END;
         
-        SELECT
-            @current_table = 'selecting query hints';
-
-        SELECT
-            qsqh.query_hint_id,
-            qsqh.query_id,
-            qsqh.query_hint_text,
-            qsqh.last_query_hint_failure_reason_desc,
-            qsqh.query_hint_failure_count,
-            qsqh.source_desc
-        FROM #query_store_query_hints AS qsqh
-        ORDER BY qsqh.query_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE 
-    BEGIN 
-        SELECT
-            result = '#query_store_query_hints is empty';
-    END;
-
-    IF EXISTS
-       (
-           SELECT
-               1/0
-           FROM #query_store_query_variant AS qsqv
-       )
-    BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_query_hints AS qsqh
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting query hints';
         
-        SELECT
-            @current_table = 'selecting query variants';
-
-        SELECT
-            qsqv.query_variant_query_id,
-            qsqv.parent_query_id,
-            qsqv.dispatcher_plan_id
-        FROM #query_store_query_variant AS qsqv
-        ORDER BY qsqv.parent_query_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE 
-    BEGIN 
-        SELECT
-            result = '#query_store_query_variant is empty';
+            SELECT
+                qsqh.query_hint_id,
+                qsqh.query_id,
+                qsqh.query_hint_text,
+                qsqh.last_query_hint_failure_reason_desc,
+                qsqh.query_hint_failure_count,
+                qsqh.source_desc
+            FROM #query_store_query_hints AS qsqh
+            ORDER BY qsqh.query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_query_hints is empty';
+        END;
+        
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_query_variant AS qsqv
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting query variants';
+        
+            SELECT
+                qsqv.query_variant_query_id,
+                qsqv.parent_query_id,
+                qsqv.dispatcher_plan_id
+            FROM #query_store_query_variant AS qsqv
+            ORDER BY qsqv.parent_query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_query_variant is empty';
+        END;
     END;
 
     IF EXISTS
@@ -5651,46 +5654,63 @@ BEGIN
                 result =
                     '#query_store_wait_stats is empty' +
                     CASE
-                        WHEN (@product_version = 13
-                                AND @azure = 0)
+                        WHEN (      
+                                    @product_version = 13
+                                AND @azure = 0
+                             )
                         THEN ' because it''s not available < 2017'
-                        ELSE ''
+                        WHEN EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #database_query_store_options AS dqso
+                                 WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                             )
+                        THEN ' because you have it disabled in your Query Store options'
+                        ELSE ' for the queries in the results'
                     END;
         END;
 
     END; /*End wait stats queries*/
 
-    IF EXISTS
-       (
-           SELECT
-               1/0
-           FROM #query_store_replicas AS qsr
-           JOIN #query_store_plan_forcing_locations AS qspfl
-               ON qsr.replica_group_id = qspfl.replica_group_id
-       )
+    IF 
+    (
+           @sql_2022_views = 1
+       AND @ags_present = 1
+    )
     BEGIN
-
-    SELECT
-        @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
-
-    SELECT 
-        qsr.replica_group_id, 
-        qsr.role_type, 
-        qsr.replica_name,
-        qspfl.plan_forcing_location_id,
-        qspfl.query_id,
-        qspfl.plan_id,
-        qspfl.replica_group_id 
-    FROM #query_store_replicas AS qsr
-    JOIN #query_store_plan_forcing_locations AS qspfl
-        ON qsr.replica_group_id = qspfl.replica_group_id
-    ORDER BY qsr.replica_group_id;
-
-    END;
-    ELSE
-    BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_replicas AS qsr
+               JOIN #query_store_plan_forcing_locations AS qspfl
+                   ON qsr.replica_group_id = qspfl.replica_group_id
+           )
+        BEGIN
+        
         SELECT
-            result = 'Availability Group information is empty';
+            @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
+        
+        SELECT 
+            qsr.replica_group_id, 
+            qsr.role_type, 
+            qsr.replica_name,
+            qspfl.plan_forcing_location_id,
+            qspfl.query_id,
+            qspfl.plan_id,
+            qspfl.replica_group_id 
+        FROM #query_store_replicas AS qsr
+        JOIN #query_store_plan_forcing_locations AS qspfl
+            ON qsr.replica_group_id = qspfl.replica_group_id
+        ORDER BY qsr.replica_group_id;
+        
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result = 'Availability Group information is empty';
+        END;
     END;
 
     SELECT
@@ -5761,86 +5781,89 @@ IF
   )
 BEGIN
 
-    IF EXISTS
-       (
-           SELECT
-               1/0
-           FROM #query_store_plan_feedback AS qspf
-       )
+    IF @sql_2022_views = 1
     BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_plan_feedback AS qspf
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting plan feedback';
         
-        SELECT
-            @current_table = 'selecting plan feedback';
-
-        SELECT
-            qspf.plan_feedback_id,
-            qspf.plan_id,
-            qspf.feature_desc,
-            qspf.feedback_data,
-            qspf.state_desc,
-            qspf.create_time,
-            qspf.last_updated_time
-        FROM #query_store_plan_feedback AS qspf
-        ORDER BY qspf.plan_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE 
-    BEGIN 
-        SELECT
-            result = '#query_store_plan_feedback is empty';
-    END;
-
-    IF EXISTS
-       (
-           SELECT
-               1/0
-           FROM #query_store_query_hints AS qsqh
-       )
-    BEGIN
+            SELECT
+                qspf.plan_feedback_id,
+                qspf.plan_id,
+                qspf.feature_desc,
+                qspf.feedback_data,
+                qspf.state_desc,
+                qspf.create_time,
+                qspf.last_updated_time
+            FROM #query_store_plan_feedback AS qspf
+            ORDER BY qspf.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_plan_feedback is empty';
+        END;
         
-        SELECT
-            @current_table = 'selecting query hints';
-
-        SELECT
-            qsqh.query_hint_id,
-            qsqh.query_id,
-            qsqh.query_hint_text,
-            qsqh.last_query_hint_failure_reason_desc,
-            qsqh.query_hint_failure_count,
-            qsqh.source_desc
-        FROM #query_store_query_hints AS qsqh
-        ORDER BY qsqh.query_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE 
-    BEGIN 
-        SELECT
-            result = '#query_store_query_hints is empty';
-    END;
-
-    IF EXISTS
-       (
-           SELECT
-               1/0
-           FROM #query_store_query_variant AS qsqv
-       )
-    BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_query_hints AS qsqh
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting query hints';
         
-        SELECT
-            @current_table = 'selecting query variants';
-
-        SELECT
-            qsqv.query_variant_query_id,
-            qsqv.parent_query_id,
-            qsqv.dispatcher_plan_id
-        FROM #query_store_query_variant AS qsqv
-        ORDER BY qsqv.parent_query_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE 
-    BEGIN 
-        SELECT
-            result = '#query_store_query_variant is empty';
+            SELECT
+                qsqh.query_hint_id,
+                qsqh.query_id,
+                qsqh.query_hint_text,
+                qsqh.last_query_hint_failure_reason_desc,
+                qsqh.query_hint_failure_count,
+                qsqh.source_desc
+            FROM #query_store_query_hints AS qsqh
+            ORDER BY qsqh.query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_query_hints is empty';
+        END;
+        
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_query_variant AS qsqv
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting query variants';
+        
+            SELECT
+                qsqv.query_variant_query_id,
+                qsqv.parent_query_id,
+                qsqv.dispatcher_plan_id
+            FROM #query_store_query_variant AS qsqv
+            ORDER BY qsqv.parent_query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_query_variant is empty';
+        END;
     END;
 
     IF EXISTS
@@ -6120,8 +6143,10 @@ BEGIN
             result =
                 '#query_store_wait_stats is empty' +
                 CASE
-                    WHEN (@product_version = 13
-                            AND @azure = 0)
+                    WHEN (      
+                                @product_version = 13
+                            AND @azure = 0
+                         )
                     THEN ' because it''s not available < 2017'
                     WHEN EXISTS
                          (
@@ -6135,38 +6160,45 @@ BEGIN
                 END;
     END;
 
-    IF EXISTS
-       (
-           SELECT
-               1/0
-           FROM #query_store_replicas AS qsr
-           JOIN #query_store_plan_forcing_locations AS qspfl
-               ON qsr.replica_group_id = qspfl.replica_group_id
-       )
+    IF
+    (
+            @sql_2022_views = 1
+        AND @ags_present = 1
+    )
     BEGIN
-
-    SELECT
-        @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-
-    SELECT 
-        qsr.replica_group_id, 
-        qsr.role_type, 
-        qsr.replica_name,
-        qspfl.plan_forcing_location_id,
-        qspfl.query_id,
-        qspfl.plan_id,
-        qspfl.replica_group_id 
-    FROM #query_store_replicas AS qsr
-    JOIN #query_store_plan_forcing_locations AS qspfl
-        ON qsr.replica_group_id = qspfl.replica_group_id
-    ORDER BY qsr.replica_group_id
-    OPTION(RECOMPILE);
-
-    END;
-    ELSE
-    BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_replicas AS qsr
+               JOIN #query_store_plan_forcing_locations AS qspfl
+                   ON qsr.replica_group_id = qspfl.replica_group_id
+           )
+        BEGIN
+        
         SELECT
-            result = 'Availability Group information is empty';
+            @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
+        
+        SELECT 
+            qsr.replica_group_id, 
+            qsr.role_type, 
+            qsr.replica_name,
+            qspfl.plan_forcing_location_id,
+            qspfl.query_id,
+            qspfl.plan_id,
+            qspfl.replica_group_id 
+        FROM #query_store_replicas AS qsr
+        JOIN #query_store_plan_forcing_locations AS qspfl
+            ON qsr.replica_group_id = qspfl.replica_group_id
+        ORDER BY qsr.replica_group_id
+        OPTION(RECOMPILE);
+        
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result = 'Availability Group information is empty';
+        END;
     END;
 
     SELECT
@@ -6921,7 +6953,23 @@ BEGIN
     BEGIN
         SELECT
             result =
-                '#query_store_wait_stats is empty';
+                '#query_store_wait_stats is empty' +
+                CASE
+                    WHEN (      
+                                @product_version = 13
+                            AND @azure = 0
+                         )
+                    THEN ' because it''s not available < 2017'
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #database_query_store_options AS dqso
+                             WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                         )
+                    THEN ' because you have it disabled in your Query Store options'
+                    ELSE ' for the queries in the results'
+                END;
     END;
 
     IF EXISTS
@@ -6946,115 +6994,121 @@ BEGIN
                 '#query_context_settings is empty';
     END;
 
-    IF EXISTS
-       (
-          SELECT
-              1/0
-          FROM #query_store_plan_feedback AS qspf
-       )
+    IF @sql_2022_views = 1
     BEGIN
-        SELECT
-            table_name =
-                '#query_store_plan_feedback',
-            qspf.*
-        FROM #query_store_plan_feedback AS qspf
-        ORDER BY qspf.plan_feedback_id
-        OPTION(RECOMPILE);
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #query_store_plan_feedback AS qspf
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#query_store_plan_feedback',
+                qspf.*
+            FROM #query_store_plan_feedback AS qspf
+            ORDER BY qspf.plan_feedback_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#query_store_query_hints is empty';
+        END;
+        
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #query_store_query_hints AS qsqh
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#query_store_query_hints',
+                qsqh.*
+            FROM #query_store_query_hints AS qsqh
+            ORDER BY qsqh.query_hint_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#query_store_query_hints is empty';
+        END;
+        
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #query_store_query_variant AS qsqv
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#query_store_query_variant',
+                qsqv.*
+            FROM #query_store_query_variant AS qsqv
+            ORDER BY qsqv.query_variant_query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#query_store_query_variant is empty';
+        END;
+        
+        IF @ags_present = 1
+        BEGIN
+            IF EXISTS
+               (
+                  SELECT
+                      1/0
+                  FROM #query_store_replicas AS qsr
+               )
+            BEGIN
+                SELECT
+                    table_name =
+                        '#query_store_replicas',
+                    qsr.*
+                FROM #query_store_replicas AS qsr
+                ORDER BY qsr.replica_group_id
+                OPTION(RECOMPILE);
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    result =
+                        '#query_store_replicas is empty';
+            END;
+            
+            IF EXISTS
+               (
+                  SELECT
+                      1/0
+                  FROM #query_store_plan_forcing_locations AS qspfl
+               )
+            BEGIN
+                SELECT
+                    table_name =
+                        '#query_store_plan_forcing_locations',
+                    qspfl.*
+                FROM #query_store_plan_forcing_locations AS qspfl
+                ORDER BY qspfl.plan_forcing_location_id
+                OPTION(RECOMPILE);
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    result =
+                        '#query_store_plan_forcing_locations is empty';
+            END;
+        END;
     END;
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#query_store_query_hints is empty';
-    END;
-
-    IF EXISTS
-       (
-          SELECT
-              1/0
-          FROM #query_store_query_hints AS qsqh
-       )
-    BEGIN
-        SELECT
-            table_name =
-                '#query_store_query_hints',
-            qsqh.*
-        FROM #query_store_query_hints AS qsqh
-        ORDER BY qsqh.query_hint_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#query_store_query_hints is empty';
-    END;
-
-    IF EXISTS
-       (
-          SELECT
-              1/0
-          FROM #query_store_query_variant AS qsqv
-       )
-    BEGIN
-        SELECT
-            table_name =
-                '#query_store_query_variant',
-            qsqv.*
-        FROM #query_store_query_variant AS qsqv
-        ORDER BY qsqv.query_variant_query_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#query_store_query_variant is empty';
-    END;
-
-    IF EXISTS
-       (
-          SELECT
-              1/0
-          FROM #query_store_replicas AS qsr
-       )
-    BEGIN
-        SELECT
-            table_name =
-                '#query_store_replicas',
-            qsr.*
-        FROM #query_store_replicas AS qsr
-        ORDER BY qsr.replica_group_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#query_store_replicas is empty';
-    END;
-
-    IF EXISTS
-       (
-          SELECT
-              1/0
-          FROM #query_store_plan_forcing_locations AS qspfl
-       )
-    BEGIN
-        SELECT
-            table_name =
-                '#query_store_plan_forcing_locations',
-            qspfl.*
-        FROM #query_store_plan_forcing_locations AS qspfl
-        ORDER BY qspfl.plan_forcing_location_id
-        OPTION(RECOMPILE);
-    END;
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#query_store_plan_forcing_locations is empty';
-    END;  
     
     IF EXISTS
        (
