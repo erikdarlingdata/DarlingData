@@ -3324,7 +3324,6 @@ IF @new = 0
 BEGIN
     SELECT
         @sql += N'
-    NULL,
     NULL';
 END;
 
