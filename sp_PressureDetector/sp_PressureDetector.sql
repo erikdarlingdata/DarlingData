@@ -24,7 +24,7 @@ GO
 ██████╔╝███████╗   ██║   ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
 ╚═════╝ ╚══════╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
-Copyright 2021 Darling Data, LLC
+Copyright 2022 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -41,11 +41,13 @@ IF OBJECT_ID('dbo.sp_PressureDetector') IS  NULL
     EXEC ('CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
 GO
 
-ALTER PROCEDURE dbo.sp_PressureDetector 
+ALTER PROCEDURE 
+    dbo.sp_PressureDetector 
 (
     @what_to_check nvarchar(6) = N'both',    
     @skip_plan_xml bit = 0,
     @help bit = 0,
+    @debug bit = 0,
     @version varchar(5) = NULL OUTPUT,
     @version_date datetime = NULL OUTPUT
 )
@@ -58,8 +60,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
 SELECT 
-    @version = '2.40', 
-    @version_date = '20220401';
+    @version = '2.50', 
+    @version_date = '20220701';
 
 
 IF @help = 1
@@ -73,8 +75,11 @@ BEGIN
            'hi, i''m sp_PressureDetector!' UNION ALL
     SELECT 'you got me from https://www.erikdarlingdata.com/sp_pressuredetector/' UNION ALL
     SELECT 'i''m a lightweight tool for monitoring cpu and memory pressure' UNION ALL
-    SELECT 'i''ll tell you how many worker threads and how much memory you have available' UNION ALL
-    SELECT 'and show you any running queries that are using cpu and memory';
+    SELECT 'i''ll tell you: ' UNION ALL
+    SELECT ' * what''s currently consuming memory on your server' UNION ALL
+    SELECT ' * wait stats relevant to cpu, memory, and disk' UNION ALL
+    SELECT ' * how many worker threads and how much memory you have available' UNION ALL
+    SELECT ' * running queries that are using cpu and memory';
 
     /*
     Parameters
@@ -106,8 +111,8 @@ BEGIN
                 ap.name
                 WHEN '@what_to_check' THEN 'both'
                 WHEN '@skip_plan_xml' THEN '1'
-                WHEN '@version' THEN 'none'
-                WHEN '@version_date' THEN 'none'
+                WHEN '@version' THEN 'none; OUTPUT'
+                WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0'
             END
     FROM sys.all_parameters AS ap
@@ -127,7 +132,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2021 Darling Data, LLC
+Copyright 2022 Darling Data, LLC
 
 https://www.erikdarlingdata.com/
 
@@ -171,11 +176,37 @@ END;
         @cool_new_columns bit = 0,
         @reserved_worker_count_out nvarchar(10) = N'0',
         @reserved_worker_count nvarchar(MAX) = N'
-            SELECT
-                @reserved_worker_count_out = 
-                    SUM(deqmg.reserved_worker_count)
-            FROM sys.dm_exec_query_memory_grants AS deqmg;
-            ';
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+SELECT
+    @reserved_worker_count_out = 
+        SUM(deqmg.reserved_worker_count)
+FROM sys.dm_exec_query_memory_grants AS deqmg
+OPTION(MAXDOP 1, RECOMPILE);
+            ',
+        @cpu_details nvarchar(MAX) = N'',
+        @cpu_details_output xml = N'',
+        @cpu_details_columns nvarchar(MAX) = 
+            N'',
+        @cpu_details_select nvarchar(MAX) = 
+N'
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; 
+
+SELECT 
+    @cpu_details_output = 
+        ( 
+            SELECT 
+                offline_cpus = 
+                    (SELECT COUNT_BIG(*) FROM sys.dm_os_schedulers dos WHERE dos.is_online = 0), 
+',
+        @cpu_details_from nvarchar(MAX) = 
+            N' 
+            FROM sys.dm_os_sys_info AS osi 
+            FOR XML 
+                PATH(''cpu_details''), 
+                TYPE 
+        ) 
+OPTION(MAXDOP 1, RECOMPILE);';
 
     /*
     Check to see if the DAC is enabled.
@@ -363,6 +394,8 @@ END;
         OPTION(MAXDOP 1, RECOMPILE);
         ';
         
+        IF @debug = 1 BEGIN PRINT @pool_sql; END;
+
         EXEC sys.sp_executesql
             @pool_sql;
 
@@ -590,12 +623,20 @@ END;
         OPTION(MAXDOP 1, RECOMPILE);
         ';
 
+        IF @debug = 1 BEGIN PRINT @mem_sql; END;
+
         EXEC sys.sp_executesql 
             @mem_sql;
         
         /*Resource semaphore info*/
         SELECT  
             deqrs.resource_semaphore_id,
+            total_physical_memory_mb = 
+                (
+                    SELECT 
+                            CEILING(dosm.total_physical_memory_kb / 1024.)
+                    FROM sys.dm_os_sys_memory AS dosm
+                ),
             max_server_memory = 
                 (
                     SELECT 
@@ -625,8 +666,8 @@ END;
             deqrs.forced_grant_count,
             deqrs.pool_id
         FROM sys.dm_exec_query_resource_semaphores AS deqrs
-        WHERE deqrs.resource_semaphore_id = 0
-        AND   deqrs.pool_id > 1
+        WHERE (deqrs.resource_semaphore_id = 0
+                 OR deqrs.pool_id > 1)
         OPTION(MAXDOP 1, RECOMPILE);
         
     END;
@@ -636,14 +677,71 @@ END;
 
         IF @helpful_new_columns = 1
         BEGIN        
+            IF @debug = 1 BEGIN PRINT @reserved_worker_count; END;
+            
             EXEC sys.sp_executesql
                 @reserved_worker_count,
               N'@reserved_worker_count_out varchar(10) OUTPUT',
-                @reserved_worker_count_out OUTPUT;
-        END
+                @reserved_worker_count_out OUTPUT;        
+        END;
+
+            SELECT 
+                @cpu_details_columns += N'' +
+                    CASE 
+                        WHEN ac.name = N'socket_count'
+                        THEN N'                osi.socket_count, ' + NCHAR(10)
+                        WHEN ac.name = N'numa_node_count'
+                        THEN N'                osi.socket_count, ' + NCHAR(10)
+                        WHEN ac.name = N'cpu_count'
+                        THEN N'                osi.cpu_count, ' + NCHAR(10)
+                        WHEN ac.name = N'cores_per_socket'
+                        THEN N'                osi.cores_per_socket, ' + NCHAR(10)
+                        WHEN ac.name = N'hyperthread_ratio'
+                        THEN N'                osi.hyperthread_ratio, ' + NCHAR(10)
+                        WHEN ac.name = N'softnuma_configuration_desc'
+                        THEN N'                osi.softnuma_configuration_desc, ' + NCHAR(10)
+                        ELSE N''
+                    END
+            FROM 
+            (
+                SELECT
+                    ac.name
+                FROM sys.all_columns AS ac
+                WHERE ac.object_id = OBJECT_ID('sys.dm_os_sys_info')
+                AND   ac.name IN
+                      (
+                          N'socket_count',
+                          N'numa_node_count',
+                          N'cpu_count',
+                          N'cores_per_socket',
+                          N'hyperthread_ratio',
+                          N'softnuma_configuration_desc'     
+                      )
+            ) AS ac
+            OPTION(MAXDOP 1, RECOMPILE);
+            
+            SELECT
+                @cpu_details = 
+                    @cpu_details_select + 
+                    SUBSTRING
+                    (
+                        @cpu_details_columns,
+                        1,
+                        LEN(@cpu_details_columns) -3
+                    ) +
+                    @cpu_details_from;
+
+            IF @debug = 1 BEGIN PRINT @cpu_details; END;
+            
+            EXEC sys.sp_executesql
+                @cpu_details,
+              N'@cpu_details_output xml OUTPUT',
+                @cpu_details_output OUTPUT;
 
         /*Thread usage*/
         SELECT
+            cpu_details_output = 
+                @cpu_details_output,
             total_threads = 
                 MAX(osi.max_workers_count),
             used_threads = 
@@ -666,6 +764,8 @@ END;
                 SUM(dos.work_queue_count),
             current_workers = 
                 SUM(dos.current_workers_count),
+            avg_runnable_tasks_count = 
+                AVG(dos.runnable_tasks_count),
             high_runnable_percent = 
                 MAX(ISNULL(r.high_runnable_percent, 0))
         FROM sys.dm_os_schedulers AS dos
@@ -870,9 +970,13 @@ END;
         OPTION(MAXDOP 1, RECOMPILE);'
           END
               );
+        
+        IF @debug = 1 BEGIN PRINT SUBSTRING(@cpu_sql, 0, 4000); PRINT SUBSTRING(@cpu_sql, 4000, 8000); END;
+        
         EXEC sys.sp_executesql 
             @cpu_sql;
     
     END;
 
 END;
+GO

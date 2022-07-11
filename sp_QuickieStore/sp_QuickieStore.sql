@@ -45,7 +45,8 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-CREATE OR ALTER PROCEDURE dbo.sp_QuickieStore
+CREATE OR ALTER PROCEDURE 
+    dbo.sp_QuickieStore
 (
     @database_name sysname = NULL,
     @sort_order varchar(20) = 'cpu',
@@ -60,6 +61,12 @@ CREATE OR ALTER PROCEDURE dbo.sp_QuickieStore
     @include_query_ids nvarchar(4000) = NULL,
     @ignore_plan_ids nvarchar(4000) = NULL,
     @ignore_query_ids nvarchar(4000) = NULL,
+    @include_query_hashes nvarchar(4000) = NULL,
+    @include_plan_hashes nvarchar(4000) = NULL,
+    @include_sql_handles nvarchar(4000) = NULL,
+    @ignore_query_hashes nvarchar(4000) = NULL,
+    @ignore_plan_hashes nvarchar(4000) = NULL,
+    @ignore_sql_handles nvarchar(4000) = NULL,
     @query_text_search nvarchar(4000) = NULL,
     @wait_filter varchar(20) = NULL,
     @expert_mode bit = 0,
@@ -105,8 +112,8 @@ END;
 These are for your outputs.
 */
 SELECT 
-    @version = '1.92', 
-    @version_date = '20211101';
+    @version = '2.22', 
+    @version_date = '20220701';
 
 /*
 Helpful section! For help.
@@ -146,8 +153,14 @@ BEGIN
                 WHEN '@procedure_name' THEN 'the name of the programmable object you''re searching for'
                 WHEN '@include_plan_ids' THEN 'a list of plan ids to search for'
                 WHEN '@include_query_ids' THEN 'a list of query ids to search for'
+                WHEN '@include_query_hashes' THEN 'a list of query hashes to search for'
+                WHEN '@include_plan_hashes' THEN 'a list of query plan hashes to search for'
+                WHEN '@include_sql_handles' THEN 'a list of sql handles to search for'
                 WHEN '@ignore_plan_ids' THEN 'a list of plan ids to ignore'
                 WHEN '@ignore_query_ids' THEN 'a list of query ids to ignore'
+                WHEN '@ignore_query_hashes' THEN 'a list of query hashes to ignore'
+                WHEN '@ignore_plan_hashes' THEN 'a list of query plan hashes to ignore'
+                WHEN '@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN '@query_text_search' THEN 'query text to search for'
                 WHEN '@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN '@expert_mode' THEN 'returns additional columns and results'
@@ -155,7 +168,7 @@ BEGIN
                 WHEN '@version' THEN 'OUTPUT; for support'
                 WHEN '@version_date' THEN 'OUTPUT; for support'
                 WHEN '@help' THEN 'how you got here'
-                WHEN '@debug' THEN 'prints dynamic sql (including statement length), parameter and variable values, and raw temp table contents'
+                WHEN '@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN '@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
             END,
         valid_inputs =
@@ -172,14 +185,20 @@ BEGIN
                 WHEN '@procedure_name' THEN 'a valid programmable object in your database'
                 WHEN '@include_plan_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN '@include_query_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN '@include_query_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN '@include_plan_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN '@include_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN '@ignore_plan_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN '@ignore_query_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN '@ignore_query_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN '@ignore_plan_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN '@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN '@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN '@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN '@expert_mode' THEN '0 or 1'
                 WHEN '@format_output' THEN '0 or 1'
-                WHEN '@version' THEN 'none'
-                WHEN '@version_date' THEN 'none'
+                WHEN '@version' THEN 'none; OUTPUT'
+                WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0 or 1'
                 WHEN '@debug' THEN '0 or 1'
                 WHEN '@troubleshoot_performance' THEN '0 or 1'
@@ -187,7 +206,7 @@ BEGIN
         defaults =
             CASE
                 ap.name
-                WHEN '@database_name' THEN 'NULL'
+                WHEN '@database_name' THEN 'NULL; current non-system database name if NULL'
                 WHEN '@sort_order' THEN 'cpu'
                 WHEN '@top' THEN '10'
                 WHEN '@start_date' THEN 'the last 24 hours'
@@ -198,14 +217,20 @@ BEGIN
                 WHEN '@procedure_name' THEN 'NULL'
                 WHEN '@include_plan_ids' THEN 'NULL'
                 WHEN '@include_query_ids' THEN 'NULL'
+                WHEN '@include_query_hashes' THEN 'NULL'
+                WHEN '@include_plan_hashes' THEN 'NULL'
+                WHEN '@include_sql_handles' THEN 'NULL'
                 WHEN '@ignore_plan_ids' THEN 'NULL'
                 WHEN '@ignore_query_ids' THEN 'NULL'
+                WHEN '@ignore_query_hashes' THEN 'NULL'
+                WHEN '@ignore_plan_hashes' THEN 'NULL'
+                WHEN '@ignore_sql_handles' THEN 'NULL'
                 WHEN '@query_text_search' THEN 'NULL'
                 WHEN '@wait_filter' THEN 'NULL'
                 WHEN '@expert_mode' THEN '0'
                 WHEN '@format_output' THEN '0'
-                WHEN '@version' THEN 'none'
-                WHEN '@version_date' THEN 'none'
+                WHEN '@version' THEN 'none; OUTPUT'
+                WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0'
                 WHEN '@debug' THEN '0'
                 WHEN '@troubleshoot_performance' THEN '0'
@@ -220,21 +245,29 @@ BEGIN
     OPTION(RECOMPILE);
 
     /*
-    Wait categories
+    Wait categories: Only 2017+
     */
-
-    SELECT
-        wait_categories =
-           'cpu (1): SOS_SCHEDULER_YIELD' UNION ALL
-    SELECT 'lock (3): LCK_M_%' UNION ALL
-    SELECT 'latch (4): LATCH_%' UNION ALL
-    SELECT 'buffer latch (5): PAGELATCH_%' UNION ALL
-    SELECT 'buffer io (6): PAGEIOLATCH_%' UNION ALL
-    SELECT 'log io (14): LOGMGR, LOGBUFFER, LOGMGR_RESERVE_APPEND, LOGMGR_FLUSH, LOGMGR_PMM_LOG, CHKPT, WRITELOG' UNION ALL
-    SELECT 'network io (15): ASYNC_NETWORK_IO, NET_WAITFOR_PACKET, PROXY_NETWORK_IO, EXTERNAL_SCRIPT_NETWORK_IOF' UNION ALL
-    SELECT 'parallelism (16): CXPACKET, EXCHANGE, HT%, BMP%, BP%' UNION ALL
-    SELECT 'memory (17): RESOURCE_SEMAPHORE, CMEMTHREAD, CMEMPARTITIONED, EE_PMOLOCK, MEMORY_ALLOCATION_EXT, RESERVED_MEMORY_ALLOCATION_EXT, MEMORY_GRANT_UPDATE';
-
+    IF EXISTS
+    (
+        SELECT 
+            1/0 
+        FROM sys.all_objects AS ao 
+        WHERE ao.name = N'query_store_wait_stats'
+    )
+    BEGIN
+        SELECT
+            wait_categories =
+               'cpu (1): SOS_SCHEDULER_YIELD' UNION ALL
+        SELECT 'lock (3): LCK_M_%' UNION ALL
+        SELECT 'latch (4): LATCH_%' UNION ALL
+        SELECT 'buffer latch (5): PAGELATCH_%' UNION ALL
+        SELECT 'buffer io (6): PAGEIOLATCH_%' UNION ALL
+        SELECT 'log io (14): LOGMGR, LOGBUFFER, LOGMGR_RESERVE_APPEND, LOGMGR_FLUSH, LOGMGR_PMM_LOG, CHKPT, WRITELOG' UNION ALL
+        SELECT 'network io (15): ASYNC_NETWORK_IO, NET_WAITFOR_PACKET, PROXY_NETWORK_IO, EXTERNAL_SCRIPT_NETWORK_IOF' UNION ALL
+        SELECT 'parallelism (16): CXPACKET, EXCHANGE, HT%, BMP%, BP%' UNION ALL
+        SELECT 'memory (17): RESOURCE_SEMAPHORE, CMEMTHREAD, CMEMPARTITIONED, EE_PMOLOCK, MEMORY_ALLOCATION_EXT, RESERVED_MEMORY_ALLOCATION_EXT, MEMORY_GRANT_UPDATE';
+    END;
+    
     /*
     Results
     */
@@ -248,12 +281,20 @@ BEGIN
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Resource Stats (expert mode only): data from dm_exec_query_stats, when available' UNION ALL
     SELECT 'query store does not currently track some details about memory grants and thread usage' UNION ALL
-    SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL
+    SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL    
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Waits By Query(expert mode only): information about query duration and logged wait stats' UNION ALL
+    SELECT 'Query Store Plan Feedback (2022+, expert mode only): Lists queries that have been adjusted based on automated feedback mechanisms' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Query Store Hints (2022+, expert mode only): lists hints applied to queries from automated feedback mechanisms' UNION ALL    
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Query Variants (2022+, expert mode only): lists plan variants from the Parameter Sensitive Plan feedback mechanism' UNION ALL    
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Query Store Waits By Query (2017+, expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Waits Total(expert mode only): total wait stats for the chosen date range only' UNION ALL
+    SELECT 'Query Store Waits Total (2017+, expert mode only): total wait stats for the chosen date range only' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'Query Replicas (2022+, expert mode only): lists plans forced on AG replicas' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Options (expert mode only): details about current query store configuration';
 
@@ -265,7 +306,7 @@ BEGIN
            'frigid shortcomings:'  UNION ALL
     SELECT 'you need to be on at least SQL Server 2016 SP2, 2017 CU3, or any higher version to run this' UNION ALL
     SELECT 'if you''re on azure sql db then you''ll need to be in compat level 130' UNION ALL
-    SELECT 'i do not currently support synapse or edge or other memes';
+    SELECT 'i do not currently support synapse or edge or other memes, and azure sql db support is not guaranteed';
 
     /*
     License to F5
@@ -278,7 +319,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2021 Darling Data, LLC
+Copyright 2022 Darling Data, LLC
 
 https://www.erikdarlingdata.com/
 
@@ -297,7 +338,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     RETURN;
 
-END;
+END; /*End @help section*/
 
 /*
 These are the tables that we'll use to grab data from query store
@@ -360,6 +401,102 @@ CREATE TABLE
 );
 
 /*
+Hold query hashes for plans we want
+*/
+CREATE TABLE
+    #include_query_hashes
+(
+    query_hash_s varchar(131),
+    query_hash AS 
+        CONVERT
+        (
+            binary(8), 
+            query_hash_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
+);
+
+/*
+Hold plan hashes for plans we want
+*/
+CREATE TABLE
+    #include_plan_hashes
+(
+    plan_hash_s varchar(131),
+    plan_hash AS 
+        CONVERT
+        (
+            binary(8), 
+            plan_hash_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
+);
+
+/*
+Hold query hashes for ignored plans
+*/
+CREATE TABLE
+    #ignore_query_hashes
+(
+    query_hash_s varchar(131),
+    query_hash AS 
+        CONVERT
+        (
+            binary(8), 
+            query_hash_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
+);
+
+/*
+Hold plan hashes for ignored plans
+*/
+CREATE TABLE
+    #ignore_plan_hashes
+(
+    plan_hash_s varchar(131),
+    plan_hash AS 
+        CONVERT
+        (
+            binary(8), 
+            plan_hash_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
+);
+
+/*
+Hold sql handles for plans we want
+*/
+CREATE TABLE
+    #include_sql_handles
+(
+    sql_handle_s varchar(131),
+    sql_handle AS 
+        CONVERT
+        (
+            varbinary(64), 
+            sql_handle_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
+);
+
+/*
+Hold sql handles for ignored plans
+*/
+CREATE TABLE
+    #ignore_sql_handles
+(
+    sql_handle_s varchar(131),
+    sql_handle AS 
+        CONVERT
+        (
+            varbinary(64), 
+            sql_handle_s, 
+            1
+        ) PERSISTED NOT NULL PRIMARY KEY
+);
+
+/*
 Hold plan_ids for matching query text
 */
 CREATE TABLE
@@ -418,19 +555,18 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    all_plan_ids varchar(max),
+    all_plan_ids varchar(MAX),
     plan_group_id bigint NULL,
     engine_version nvarchar(32) NULL,
     compatibility_level smallint NOT NULL,
     query_plan_hash binary(8) NOT NULL,
-    query_plan nvarchar(max) NULL,
+    query_plan nvarchar(MAX) NULL,
     is_online_index_plan bit NOT NULL,
     is_trivial_plan bit NOT NULL,
     is_parallel_plan bit NOT NULL,
     is_forced_plan bit NOT NULL,
     is_natively_compiled bit NOT NULL,
     force_failure_count bigint NOT NULL,
-    last_force_failure_reason int NOT NULL,
     last_force_failure_reason_desc nvarchar(128) NULL,
     count_compiles bigint NULL,
     initial_compile_start_time datetimeoffset(7) NOT NULL,
@@ -438,7 +574,6 @@ CREATE TABLE
     last_execution_time datetimeoffset(7) NULL,
     avg_compile_duration_ms float NULL,
     last_compile_duration_ms bigint NULL,
-    plan_forcing_type int NULL,
     plan_forcing_type_desc nvarchar(60) NULL
 );
 
@@ -477,7 +612,6 @@ CREATE TABLE
     batch_sql_handle varbinary(64) NULL,
     query_hash binary(8) NOT NULL,
     is_internal_query bit NOT NULL,
-    query_parameterization_type tinyint NOT NULL,
     query_parameterization_type_desc nvarchar(60) NULL,
     initial_compile_start_time datetimeoffset(7) NOT NULL,
     last_compile_start_time datetimeoffset(7) NULL,
@@ -601,8 +735,10 @@ CREATE TABLE
                         SECOND,
                         first_execution_time,
                         last_execution_time
-                    ), 0
-                ), 0
+                    ), 
+                    0
+                ), 
+                0
         ),
     avg_duration_ms float NULL,
     last_duration_ms bigint NOT NULL,
@@ -677,7 +813,7 @@ CREATE TABLE
 );
 
 /*
-Wait Stats, When Available
+Wait Stats, When Available (2017+)
 */
 CREATE TABLE
     #query_store_wait_stats
@@ -709,6 +845,69 @@ CREATE TABLE
     default_schema_id int NOT NULL,
     is_replication_specific bit NOT NULL,
     is_contained varbinary(1) NULL
+);
+
+/*
+Feed me Seymour
+*/
+CREATE TABLE
+    #query_store_plan_feedback
+(
+    plan_feedback_id bigint,
+    plan_id bigint,
+    feature_desc nvarchar(120),
+    feedback_data nvarchar(MAX),
+    state_desc nvarchar(120),
+    create_time datetimeoffset(7),
+    last_updated_time datetimeoffset(7)    
+);
+
+/*
+America's Most Hinted
+*/
+CREATE TABLE
+    #query_store_query_hints
+(
+    query_hint_id bigint,
+    query_id bigint,
+    query_hint_text nvarchar(MAX),
+    last_query_hint_failure_reason_desc nvarchar(256),
+    query_hint_failure_count bigint,
+    source_desc nvarchar(256)
+);
+
+/*
+Variant? Deviant? You decide!
+*/
+CREATE TABLE
+    #query_store_query_variant
+(
+    query_variant_query_id bigint,
+    parent_query_id bigint,
+    dispatcher_plan_id bigint
+);
+
+/*
+Replicants
+*/
+CREATE TABLE
+    #query_store_replicas
+(
+    replica_group_id bigint,
+    role_type smallint,
+    replica_name nvarchar(1288)
+);
+
+/*
+Location, location, location
+*/
+CREATE TABLE
+    #query_store_plan_forcing_locations
+(
+    plan_forcing_location_id bigint,
+    query_id bigint,
+    plan_id bigint,
+    replica_group_id bigint
 );
 
 /*
@@ -775,20 +974,23 @@ DECLARE
     @procedure_name_quoted sysname,
     @collation sysname,
     @new bit,
-    @sql nvarchar(max),
-    @isolation_level nvarchar(max),
+    @sql nvarchar(MAX),
+    @isolation_level nvarchar(MAX),
     @parameters nvarchar(200),
     @plans_top bigint,
     @nc10 nvarchar(2),
-    @where_clause nvarchar(max),
+    @where_clause nvarchar(MAX),
     @procedure_exists bit,
     @query_store_exists bit,
     @query_store_waits_enabled bit,
-    @string_split nvarchar(1500),
+    @sql_2022_views bit,
+    @ags_present bit,
+    @string_split_ints nvarchar(1500),
+    @string_split_strings nvarchar(1500),
     @current_table nvarchar(100),
-    @troubleshoot_insert nvarchar(max),
-    @troubleshoot_update nvarchar(max),
-    @troubleshoot_info nvarchar(max),
+    @troubleshoot_insert nvarchar(MAX),
+    @troubleshoot_update nvarchar(MAX),
+    @troubleshoot_info nvarchar(MAX),
     @rc bigint;
 
 /*
@@ -875,16 +1077,19 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @procedure_exists = 0,
     @query_store_exists = 0,
     @query_store_waits_enabled = 0,
+    @sql_2022_views = 0,
+    @ags_present = 0,
     @current_table = N'',
-    @string_split = N'
+    @string_split_ints = N'
     SELECT DISTINCT
-        LTRIM
-        (
-            RTRIM
+        ids = 
+            LTRIM
             (
-                ids.ids
+                RTRIM
+                (
+                    ids.ids
+                )
             )
-        ) AS ids
     FROM
     (
         SELECT
@@ -893,6 +1098,50 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                     (
                         ''(./text())[1]'',
                         ''bigint''
+                    )
+        FROM
+        (
+            SELECT
+                ids =
+                    CONVERT
+                    (
+                        xml,
+                        ''<x>'' +
+                        REPLACE
+                        (
+                            REPLACE
+                            (
+                                @ids,
+                                '','',
+                                ''</x><x>''
+                            ),
+                            '' '',
+                            ''''
+                        ) +
+                        ''</x>''
+                    ).query(''.'')
+        ) AS ids
+            CROSS APPLY ids.nodes(''x'') AS x (x)
+    ) AS ids
+    OPTION(RECOMPILE);',
+    @string_split_strings = N'
+    SELECT DISTINCT
+        ids = 
+            LTRIM
+            (
+                RTRIM
+                (
+                    ids.ids
+                )
+            )
+    FROM
+    (
+        SELECT
+            ids =
+                x.x.value
+                    (
+                        ''(./text())[1]'',
+                        ''varchar(131)''
                     )
         FROM
         (
@@ -980,6 +1229,18 @@ SELECT
         NULLIF(@ignore_plan_ids, ''),
     @ignore_query_ids =
         NULLIF(@ignore_query_ids, ''),
+    @include_query_hashes = 
+        NULLIF(@include_query_hashes, ''),
+    @include_plan_hashes = 
+        NULLIF(@include_plan_hashes, ''),
+    @include_sql_handles = 
+        NULLIF(@include_sql_handles, ''),
+    @ignore_query_hashes =
+        NULLIF(@ignore_query_hashes, ''),
+    @ignore_plan_hashes =
+        NULLIF(@ignore_plan_hashes, ''),
+    @ignore_sql_handles =
+        NULLIF(@ignore_sql_handles, ''),
     @wait_filter =
         NULLIF(@wait_filter, ''),
     @format_output =
@@ -1117,7 +1378,7 @@ IF @query_store_exists = 0
     END;
 
 /*
-If you specified a procedure name, we need to figure out if it's there
+If you specified a procedure name, we need to figure out if there are any plans for it available
 */
 IF @procedure_name IS NOT NULL
 BEGIN
@@ -1190,7 +1451,7 @@ Check that you spelled everything correctly and you''re in the right database',
                        11, 1, @procedure_name, @database_name) WITH NOWAIT;
         RETURN;
     END;
-END;
+END; /*End procedure existence checking*/
 
 /*
 Some things are version dependent.
@@ -1242,6 +1503,9 @@ BEGIN
        @sort_order = N'cpu';
 END;
 
+/*
+Wait stats aren't in Query Store until 2017, so we can't do that on television
+*/
 IF
 (
     @wait_filter IS NOT NULL
@@ -1252,6 +1516,9 @@ BEGIN
    RETURN;
 END;
 
+/*
+Make sure the wait filter is valid
+*/
 IF 
 (
     @new = 1
@@ -1279,10 +1546,13 @@ BEGIN
    RETURN;
 END;
 
+/*
+One last check: wait stat capture can be enabled or disabled in settings
+*/
 IF
 (
     @wait_filter IS NOT NULL
-      AND @new = 1
+      OR @new = 1
 )
 BEGIN
 
@@ -1349,10 +1619,48 @@ OPTION(RECOMPILE);' + @nc10;
     BEGIN
        RAISERROR('Query Store wait stats are not enabled for database %s', 11, 1, @database_name_quoted) WITH NOWAIT;
        RETURN;
-    END
+    END;
 
-END;
+END; /*End wait stats checks*/
 
+/*
+See if our cool new 2022 views exist. 
+May have to tweak this if views aren't present in some cloudy situations.
+*/
+SELECT
+    @sql_2022_views = 
+        CASE 
+            WHEN COUNT_BIG(*) = 5
+            THEN 1
+            ELSE 0 
+        END
+FROM sys.all_objects AS ao
+WHERE ao.name IN 
+      (
+          N'query_store_plan_feedback',
+          N'query_store_query_hints',
+          N'query_store_query_variant',
+          N'query_store_replicas',
+          N'query_store_plan_forcing_locations'
+      )
+OPTION(RECOMPILE);
+
+/*
+See if AGs are a thing so we can skip the checks for replica stuff
+*/
+SELECT
+    @ags_present = 
+        CASE 
+            WHEN EXISTS 
+                 (
+                     SELECT 
+                         1/0
+                     FROM sys.availability_groups AS ag
+                 )
+            THEN 1
+            ELSE 0
+        END
+OPTION(RECOMPILE);
 
 /*
 Get filters ready, or whatever
@@ -1389,6 +1697,10 @@ BEGIN
         @where_clause += N'AND   qsrs.avg_duration >= (@duration_ms * 1000.)' + @nc10;
 END;
 
+/*
+In this section we set up the filter if someone's searching for
+a single stored procedure in Query Store. 
+*/
 IF
   (
       @procedure_name IS NOT NULL
@@ -1462,10 +1774,10 @@ OPTION(RECOMPILE);' + @nc10;
             WHERE pp.plan_id = qsrs.plan_id
         )'  + @nc10;
 
-END;
+END; /*End procedure filter table population*/
 
 /*
-This section filters query or plan ids
+This section filters query or plan ids, both inclusive and exclusive
 */
 IF
   (
@@ -1488,7 +1800,7 @@ BEGIN
             plan_id
         )
         EXEC sys.sp_executesql
-            @string_split,
+            @string_split_ints,
           N'@ids nvarchar(4000)',
             @include_plan_ids;
 
@@ -1501,7 +1813,7 @@ BEGIN
          WHERE idi.plan_id = qsrs.plan_id
       )' + @nc10;
 
-    END;
+    END; /*End include plan ids*/
 
     IF @ignore_plan_ids IS NOT NULL
     BEGIN
@@ -1515,7 +1827,7 @@ BEGIN
             plan_id
         )
         EXEC sys.sp_executesql
-            @string_split,
+            @string_split_ints,
           N'@ids nvarchar(4000)',
             @ignore_plan_ids;
 
@@ -1528,7 +1840,7 @@ BEGIN
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
 
-    END;
+    END; /*End ignore plan ids*/
 
     IF @include_query_ids IS NOT NULL
     BEGIN
@@ -1543,7 +1855,7 @@ BEGIN
             query_id
         )
         EXEC sys.sp_executesql
-            @string_split,
+            @string_split_ints,
           N'@ids nvarchar(4000)',
             @include_query_ids;
 
@@ -1605,6 +1917,16 @@ OPTION(RECOMPILE);' + @nc10;
 
         END;
 
+        /*
+        This section of code confused me when I came back to it,
+        so I'm going to add a note here about why I do this:
+        
+        If @include_plan_ids is NULL at this point, it's because
+        the user didn't populate the parameter. 
+        
+        We need to do this because it's how we figure 
+        out which plans to keep in the main query
+        */
         IF @include_plan_ids IS NULL
         BEGIN
             SELECT
@@ -1617,7 +1939,7 @@ OPTION(RECOMPILE);' + @nc10;
           )' + @nc10;
         END;
 
-    END;
+    END; /*End include query ids*/
 
     IF @ignore_query_ids IS NOT NULL
     BEGIN
@@ -1632,7 +1954,7 @@ OPTION(RECOMPILE);' + @nc10;
             query_id
         )
         EXEC sys.sp_executesql
-            @string_split,
+            @string_split_ints,
           N'@ids nvarchar(4000)',
             @ignore_query_ids;
 
@@ -1694,6 +2016,16 @@ OPTION(RECOMPILE);' + @nc10;
 
         END;
 
+        /*
+        This section of code confused me when I came back to it,
+        so I'm going to add a note here about why I do this:
+        
+        If @ignore_plan_ids is NULL at this point, it's because
+        the user didn't populate the parameter. 
+        
+        We need to do this because it's how we figure 
+        out which plans to keep in the main query
+        */
         IF @ignore_plan_ids IS NULL
         BEGIN
         SELECT
@@ -1705,9 +2037,658 @@ OPTION(RECOMPILE);' + @nc10;
                  WHERE idi.plan_id = qsrs.plan_id
               )' + @nc10;
           END;
-    END;
+    END; /*End ignore query ids*/
 
-END;
+END; /*End query and plan id filtering*/
+
+/*
+This section filters query or plan hashes
+*/
+IF
+  (
+         @include_query_hashes IS NOT NULL
+      OR @include_plan_hashes  IS NOT NULL
+      OR @include_sql_handles  IS NOT NULL
+      OR @ignore_query_hashes  IS NOT NULL
+      OR @ignore_plan_hashes   IS NOT NULL
+      OR @ignore_sql_handles   IS NOT NULL
+  )
+BEGIN
+
+    IF @include_query_hashes IS NOT NULL
+    BEGIN
+
+        SELECT
+            @current_table = 'inserting #include_query_hashes',
+            @sql = @isolation_level;
+
+        INSERT
+            #include_query_hashes WITH(TABLOCK)
+            (
+                query_hash_s
+            )
+        EXEC sys.sp_executesql
+            @string_split_strings,
+          N'@ids nvarchar(4000)',
+            @include_query_hashes;
+
+        SELECT
+            @current_table = 'inserting #include_plan_ids for included query hashes';
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+
+        END;
+
+        SELECT
+            @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          WHERE qsq.query_id = qsp.query_id
+          AND   EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #include_query_hashes AS iqh
+                    WHERE iqh.query_hash = qsq.query_hash
+                )
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+        INSERT
+            #include_plan_ids
+            (
+                plan_id
+            )
+        EXEC sys.sp_executesql
+            @sql;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            SET STATISTICS XML OFF;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+
+        END;
+
+        /*
+        This section of code confused me when I came back to it,
+        so I'm going to add a note here about why I do this:
+        
+        If @include_plan_ids is NULL at this point, it's because
+        the user didn't populate the parameter. 
+        
+        We need to do this because it's how we figure 
+        out which plans to keep in the main query
+        */
+        IF @include_plan_ids IS NULL
+        BEGIN
+            SELECT
+               @where_clause += N'AND   EXISTS
+          (
+             SELECT
+                1/0
+             FROM #include_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
+        END;
+
+    END; /*End include query hashes*/
+
+    IF @ignore_query_hashes IS NOT NULL
+    BEGIN
+
+        SELECT
+            @current_table = 'inserting #ignore_query_hashes',
+            @sql = @isolation_level;
+
+        INSERT
+            #ignore_query_hashes WITH(TABLOCK)
+        (
+            query_hash_s
+        )
+        EXEC sys.sp_executesql
+            @string_split_strings,
+          N'@ids nvarchar(4000)',
+            @ignore_query_hashes;
+
+        SELECT
+            @current_table = 'inserting #ignore_plan_ids for ignored query hashes';
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+
+        END;
+
+        SELECT
+            @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          WHERE qsq.query_id = qsp.query_id
+          AND   EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #ignore_query_hashes AS iqh
+                    WHERE iqh.query_hash = qsq.query_hash
+                )
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+        INSERT
+            #ignore_plan_ids
+            (
+                plan_id
+            )
+        EXEC sys.sp_executesql
+            @sql;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            SET STATISTICS XML OFF;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+
+        END;
+
+        /*
+        This section of code confused me when I came back to it,
+        so I'm going to add a note here about why I do this:
+        
+        If @ignore_plan_ids is NULL at this point, it's because
+        the user didn't populate the parameter. 
+        
+        We need to do this because it's how we figure 
+        out which plans to keep in the main query
+        */
+        IF @ignore_plan_ids IS NULL
+        BEGIN
+        SELECT
+               @where_clause += N'AND   NOT EXISTS
+              (
+                 SELECT
+                    1/0
+                 FROM #ignore_plan_ids AS idi
+                 WHERE idi.plan_id = qsrs.plan_id
+              )' + @nc10;
+          END;
+    END; /*End ignore query hashes*/
+   
+    IF @include_plan_hashes IS NOT NULL
+    BEGIN
+
+        SELECT
+            @current_table = 'inserting #include_plan_hashes',
+            @sql = @isolation_level;
+
+        INSERT
+            #include_plan_hashes WITH(TABLOCK)
+            (
+                plan_hash_s
+            )
+        EXEC sys.sp_executesql
+            @string_split_strings,
+          N'@ids nvarchar(4000)',
+            @include_plan_hashes;
+
+        SELECT
+            @current_table = 'inserting #include_plan_ids for included plan hashes';
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+
+        END;
+
+        SELECT
+            @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #include_plan_hashes AS iph
+          WHERE iph.plan_hash = qsp.query_plan_hash
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+        INSERT
+            #include_plan_ids
+            (
+                plan_id
+            )
+        EXEC sys.sp_executesql
+            @sql;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            SET STATISTICS XML OFF;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+
+        END;
+
+        /*
+        This section of code confused me when I came back to it,
+        so I'm going to add a note here about why I do this:
+        
+        If @include_plan_ids is NULL at this point, it's because
+        the user didn't populate the parameter. 
+        
+        We need to do this because it's how we figure 
+        out which plans to keep in the main query
+        */
+        IF @include_plan_ids IS NULL
+        BEGIN
+            SELECT
+               @where_clause += N'AND   EXISTS
+          (
+             SELECT
+                1/0
+             FROM #include_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
+        END;
+
+    END; /*End include plan hashes*/
+
+    IF @ignore_plan_hashes IS NOT NULL
+    BEGIN
+
+        SELECT
+            @current_table = 'inserting #ignore_plan_hashes',
+            @sql = @isolation_level;
+
+        INSERT
+            #ignore_plan_hashes WITH(TABLOCK)
+        (
+            plan_hash_s
+        )
+        EXEC sys.sp_executesql
+            @string_split_strings,
+          N'@ids nvarchar(4000)',
+            @ignore_plan_hashes;
+
+        SELECT
+            @current_table = 'inserting #ignore_plan_ids for ignored query hashes';
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+
+        END;
+
+        SELECT
+            @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #ignore_plan_hashes AS iph
+          WHERE iph.plan_hash = qsp.query_plan_hash
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+        INSERT
+            #ignore_plan_ids
+            (
+                plan_id
+            )
+        EXEC sys.sp_executesql
+            @sql;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            SET STATISTICS XML OFF;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+
+        END;
+
+        /*
+        This section of code confused me when I came back to it,
+        so I'm going to add a note here about why I do this:
+        
+        If @ignore_plan_ids is NULL at this point, it's because
+        the user didn't populate the parameter. 
+        
+        We need to do this because it's how we figure 
+        out which plans to keep in the main query
+        */
+        IF @ignore_plan_ids IS NULL
+        BEGIN
+        SELECT
+               @where_clause += N'AND   NOT EXISTS
+              (
+                 SELECT
+                    1/0
+                 FROM #ignore_plan_ids AS idi
+                 WHERE idi.plan_id = qsrs.plan_id
+              )' + @nc10;
+          END;
+    END; /*End ignore plan hashes*/
+
+    IF @include_sql_handles IS NOT NULL
+    BEGIN
+
+        SELECT
+            @current_table = 'inserting #include_sql_handles',
+            @sql = @isolation_level;
+
+        INSERT
+            #include_sql_handles WITH(TABLOCK)
+            (
+                sql_handle_s
+            )
+        EXEC sys.sp_executesql
+            @string_split_strings,
+          N'@ids nvarchar(4000)',
+            @include_sql_handles;
+
+        SELECT
+            @current_table = 'inserting #include_sql_handles for included sql handles';
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+
+        END;
+
+        SELECT
+            @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          WHERE qsp.query_id = qsq.query_id
+          AND EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                  WHERE qsqt.query_text_id = qsq.query_text_id
+                  AND   EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #include_sql_handles AS ish
+                            WHERE ish.sql_handle = qsqt.statement_sql_handle                        
+                        )
+              )
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+        INSERT
+            #include_plan_ids
+            (
+                plan_id
+            )
+        EXEC sys.sp_executesql
+            @sql;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            SET STATISTICS XML OFF;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+
+        END;
+
+        /*
+        This section of code confused me when I came back to it,
+        so I'm going to add a note here about why I do this:
+        
+        If @include_plan_ids is NULL at this point, it's because
+        the user didn't populate the parameter. 
+        
+        We need to do this because it's how we figure 
+        out which plans to keep in the main query
+        */
+        IF @include_plan_ids IS NULL
+        BEGIN
+            SELECT
+               @where_clause += N'AND   EXISTS
+          (
+             SELECT
+                1/0
+             FROM #include_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
+        END;
+
+    END; /*End include plan hashes*/
+
+    IF @ignore_sql_handles IS NOT NULL
+    BEGIN
+
+        SELECT
+            @current_table = 'inserting #ignore_sql_handles',
+            @sql = @isolation_level;
+
+        INSERT
+            #ignore_sql_handles WITH(TABLOCK)
+        (
+            sql_handle_s
+        )
+        EXEC sys.sp_executesql
+            @string_split_strings,
+          N'@ids nvarchar(4000)',
+            @ignore_sql_handles;
+
+        SELECT
+            @current_table = 'inserting #ignore_plan_ids for ignored sql handles';
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+
+        END;
+
+        SELECT
+            @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          WHERE qsp.query_id = qsq.query_id
+          AND EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                  WHERE qsqt.query_text_id = qsq.query_text_id
+                  AND   EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #ignore_sql_handles AS ish
+                            WHERE ish.sql_handle = qsqt.statement_sql_handle                        
+                        )
+              )
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+        INSERT
+            #ignore_plan_ids
+            (
+                plan_id
+            )
+        EXEC sys.sp_executesql
+            @sql;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+
+            SET STATISTICS XML OFF;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+
+        END;
+
+        /*
+        This section of code confused me when I came back to it,
+        so I'm going to add a note here about why I do this:
+        
+        If @ignore_plan_ids is NULL at this point, it's because
+        the user didn't populate the parameter. 
+        
+        We need to do this because it's how we figure 
+        out which plans to keep in the main query
+        */
+        IF @ignore_plan_ids IS NULL
+        BEGIN
+        SELECT
+               @where_clause += N'AND   NOT EXISTS
+              (
+                 SELECT
+                    1/0
+                 FROM #ignore_plan_ids AS idi
+                 WHERE idi.plan_id = qsrs.plan_id
+              )' + @nc10;
+          END;
+    END; /*End ignore plan hashes*/
+
+END; /*End hash and handle filtering*/
 
 IF @query_text_search IS NOT NULL
 BEGIN
@@ -1852,7 +2833,7 @@ BEGIN
 SELECT TOP (@top)
     qsws.plan_id
 FROM  ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-WHERE qsws.execution_type = 0
+WHERE 1 = 1
 AND   qsws.wait_category = ' +
 CASE @wait_filter
      WHEN 'cpu' THEN N'1'
@@ -2010,10 +2991,7 @@ SELECT
         (
             @where_clause,
             1,
-            LEN
-            (
-                @where_clause
-            ) - 1
+            LEN(@where_clause) - 1
         );
 
 /*
@@ -2040,7 +3018,7 @@ SELECT
 SELECT TOP (@top)
     qsrs.plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-WHERE qsrs.execution_type = 0
+WHERE 1 = 1
 ' + @where_clause
   + N'
 GROUP BY qsrs.plan_id
@@ -2092,7 +3070,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End gathering plan ids*/
 
 /*
 This gets the runtime stats for the plans we care about
@@ -2209,7 +3187,7 @@ CROSS APPLY
         qsrs.*
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     WHERE qsrs.plan_id = dp.plan_id
-    AND   qsrs.execution_type = 0
+    AND   1 = 1
     ' + @where_clause
   + N'
 ORDER BY ' +
@@ -2274,81 +3252,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
-
-/*
-This gets context info and settings
-*/
-SELECT
-    @current_table = 'inserting #query_context_settings',
-    @sql = @isolation_level;
-
-IF @troubleshoot_performance = 1
-BEGIN
-
-    EXEC sys.sp_executesql
-        @troubleshoot_insert,
-      N'@current_table nvarchar(100)',
-        @current_table;
-
-    SET STATISTICS XML ON;
-
-END;
-
-SELECT
-    @sql += N'
-SELECT
-    context_settings_id,
-    set_options,
-    language_id,
-    date_format,
-    date_first,
-    status,
-    required_cursor_options,
-    acceptable_cursor_options,
-    merge_action_type,
-    default_schema_id,
-    is_replication_specific,
-    is_contained
-FROM ' + @database_name_quoted + N'.sys.query_context_settings;';
-
-INSERT
-    #query_context_settings WITH(TABLOCK)
-(
-    context_settings_id,
-    set_options,
-    language_id,
-    date_format,
-    date_first,
-    status,
-    required_cursor_options,
-    acceptable_cursor_options,
-    merge_action_type,
-    default_schema_id,
-    is_replication_specific,
-    is_contained
-)
-EXEC sys.sp_executesql
-    @sql;
-
-IF @troubleshoot_performance = 1
-BEGIN
-
-    SET STATISTICS XML OFF;
-
-    EXEC sys.sp_executesql
-        @troubleshoot_update,
-      N'@current_table nvarchar(100)',
-        @current_table;
-
-    EXEC sys.sp_executesql
-        @troubleshoot_info,
-      N'@sql nvarchar(max),
-        @current_table nvarchar(100)',
-        @sql,
-        @current_table;
-
-END;
+END; /*End getting runtime stats*/
 
 /*
 This gets the query plans we're after
@@ -2401,7 +3305,6 @@ SELECT
     qsp.is_forced_plan,
     qsp.is_natively_compiled,
     qsp.force_failure_count,
-    qsp.last_force_failure_reason,
     qsp.last_force_failure_reason_desc,
     qsp.count_compiles,
     qsp.initial_compile_start_time,
@@ -2414,7 +3317,6 @@ IF @new = 1
 BEGIN
     SELECT
         @sql += N'
-    qsp.plan_forcing_type,
     qsp.plan_forcing_type_desc';
 END;
 
@@ -2422,7 +3324,6 @@ IF @new = 0
 BEGIN
     SELECT
         @sql += N'
-    NULL,
     NULL';
 END;
 
@@ -2459,7 +3360,6 @@ INSERT
     is_forced_plan,
     is_natively_compiled,
     force_failure_count,
-    last_force_failure_reason,
     last_force_failure_reason_desc,
     count_compiles,
     initial_compile_start_time,
@@ -2467,7 +3367,6 @@ INSERT
     last_execution_time,
     avg_compile_duration_ms,
     last_compile_duration_ms,
-    plan_forcing_type,
     plan_forcing_type_desc
 )
 EXEC sys.sp_executesql
@@ -2492,7 +3391,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting query plans*/
 
 /*
 This gets some query information
@@ -2523,7 +3422,6 @@ SELECT
     qsq.batch_sql_handle,
     qsq.query_hash,
     qsq.is_internal_query,
-    qsq.query_parameterization_type,
     qsq.query_parameterization_type_desc,
     qsq.initial_compile_start_time,
     qsq.last_compile_start_time,
@@ -2570,7 +3468,6 @@ INSERT
     batch_sql_handle,
     query_hash,
     is_internal_query,
-    query_parameterization_type,
     query_parameterization_type_desc,
     initial_compile_start_time,
     last_compile_start_time,
@@ -2617,7 +3514,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting query details*/
 
 /*
 This gets the query text for them!
@@ -2694,7 +3591,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting query text*/
 
 /*
 Here we try to get some data from the "plan cache"
@@ -2794,8 +3691,9 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting runtime stats*/
 
+/*Only update if we got anything*/
 IF @rc > 0
 BEGIN
 
@@ -2860,7 +3758,7 @@ BEGIN
 
     END;
 
-END;
+END; /*End updating runtime stats*/
 
 /*
 Let's check on settings, etc.
@@ -2990,7 +3888,7 @@ BEGIN
         @sql,
         @current_table;
 
-END;
+END; /*End getting query store settings*/
 
 /*
 If wait stats are available, we'll grab them here
@@ -3047,8 +3945,8 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
     WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
     AND   qsws.plan_id = qsrs.plan_id
-    AND   qsws.execution_type = 0
     AND   qsws.wait_category > 0
+    AND   qsws.min_query_wait_time_ms > 0
     ORDER BY qsws.avg_query_wait_time_ms DESC
 ) AS qsws
 GROUP BY
@@ -3092,7 +3990,93 @@ OPTION(RECOMPILE);' + @nc10;
 
     END;
 
+END; /*End getting wait stats*/
+
+/*
+This gets context info and settings
+*/
+SELECT
+    @current_table = 'inserting #query_context_settings',
+    @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    SET STATISTICS XML ON;
+
 END;
+
+SELECT
+    @sql += N'
+SELECT
+    context_settings_id,
+    set_options,
+    language_id,
+    date_format,
+    date_first,
+    status,
+    required_cursor_options,
+    acceptable_cursor_options,
+    merge_action_type,
+    default_schema_id,
+    is_replication_specific,
+    is_contained
+FROM ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_runtime_stats AS qsrs
+    JOIN #query_store_plan AS qsp
+        ON qsrs.plan_id = qsp.plan_id
+    JOIN #query_store_query AS qsq
+        ON qsp.query_id = qsq.query_id
+    WHERE qsq.context_settings_id = qcs.context_settings_id
+)
+OPTION(RECOMPILE);';
+
+INSERT
+    #query_context_settings WITH(TABLOCK)
+(
+    context_settings_id,
+    set_options,
+    language_id,
+    date_format,
+    date_first,
+    status,
+    required_cursor_options,
+    acceptable_cursor_options,
+    merge_action_type,
+    default_schema_id,
+    is_replication_specific,
+    is_contained
+)
+EXEC sys.sp_executesql
+    @sql;
+
+IF @troubleshoot_performance = 1
+BEGIN
+
+    SET STATISTICS XML OFF;
+
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXEC sys.sp_executesql
+        @troubleshoot_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+
+END; /*End geting context settings*/
 
 /*
 Update things to get the context settings for each query
@@ -3186,6 +4170,353 @@ JOIN #query_context_settings AS qcs
     ON qsq.context_settings_id = qcs.context_settings_id
 OPTION(RECOMPILE);
 
+IF @sql_2022_views = 1
+BEGIN
+
+    /*query_store_plan_feedback*/
+    SELECT
+        @current_table = 'inserting #query_store_plan_feedback',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+
+    END;
+
+    SELECT
+        @sql += N'
+SELECT 
+    qspf.plan_feedback_id,
+    qspf.plan_id,
+    qspf.feature_desc,
+    qspf.feedback_data,
+    qspf.state_desc,
+    qspf.create_time,
+    qspf.last_updated_time 
+FROM ' + @database_name_quoted + N'.sys.query_store_plan_feedback AS qspf
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_plan AS qsp
+    WHERE qspf.plan_id = qsp.plan_id
+)
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+    INSERT
+        #query_store_plan_feedback WITH(TABLOCK)
+    (
+        plan_feedback_id,
+        plan_id,
+        feature_desc,
+        feedback_data,
+        state_desc,
+        create_time,
+        last_updated_time
+    )
+    EXEC sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+
+    END;
+
+    /*query_store_query_variant*/
+    SELECT
+        @current_table = 'inserting #query_store_query_variant',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+
+    END;
+
+    SELECT
+        @sql += N'
+SELECT 
+    qsqv.query_variant_query_id,
+    qsqv.parent_query_id,
+    qsqv.dispatcher_plan_id 
+FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_plan AS qsp
+    WHERE qsqv.query_variant_query_id = qsp.query_id
+)
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+    INSERT
+        #query_store_query_variant WITH(TABLOCK)
+    (
+        query_variant_query_id,
+        parent_query_id,
+        dispatcher_plan_id 
+    )
+    EXEC sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+
+    END;
+
+    /*query_store_query_hints*/
+    SELECT
+        @current_table = 'inserting #query_store_query_hints',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+
+    END;
+
+    SELECT
+        @sql += N'
+SELECT 
+    qsqh.query_hint_id,
+    qsqh.query_id,
+    qsqh.query_hint_text,
+    qsqh.last_query_hint_failure_reason_desc,
+    qsqh.query_hint_failure_count,
+    qsqh.source_desc
+FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
+WHERE EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_store_plan AS qsp
+    WHERE qsqh.query_id = qsp.query_id
+)
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+    INSERT
+        #query_store_query_hints WITH(TABLOCK)
+    (
+        query_hint_id,
+        query_id,
+        query_hint_text,
+        last_query_hint_failure_reason_desc,
+        query_hint_failure_count,
+        source_desc
+    )
+    EXEC sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+
+    END;
+
+    IF @ags_present = 1
+    BEGIN
+    
+        /*query_store_plan_forcing_locations*/
+        SELECT
+            @current_table = 'inserting #query_store_plan_forcing_locations',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+    
+        END;
+    
+        SELECT
+            @sql += N'
+SELECT 
+    qspfl.plan_forcing_location_id,
+    qspfl.query_id,
+    qspfl.plan_id,
+    qspfl.replica_group_id 
+FROM ' + @database_name_quoted + N'.query_store_plan_forcing_locations AS qspfl
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE qspfl.query_id = qsp.query_id
+          AND   qspfl.plan_id = qsp.plan_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+    
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    
+        INSERT
+            #query_store_plan_forcing_locations WITH(TABLOCK)
+        (
+            plan_forcing_location_id,
+            query_id,
+            plan_id,
+            replica_group_id 
+        )
+        EXEC sys.sp_executesql
+            @sql;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+    
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+    
+        END;
+    
+        /*query_store_replicas*/
+        SELECT
+            @current_table = 'inserting #query_store_replicas',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+    
+        END;
+    
+        SELECT
+            @sql += N'
+SELECT 
+    qsr.replica_group_id,
+    qsr.role_type,
+    qsr.replica_name
+FROM ' + @database_name_quoted + N'.sys.query_store_replicas AS qsr
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan_forcing_locations AS qspfl
+          WHERE qspfl.replica_group_id = qsr.replica_group_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+    
+        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    
+        INSERT
+            #query_store_replicas WITH(TABLOCK)
+        (
+            replica_group_id,
+            role_type,
+            replica_name
+        )
+        EXEC sys.sp_executesql
+            @sql;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+    
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+    
+        END;
+    
+    END; /*End AG queries*/
+
+END; /*End SQL 2022 views*/
+
 /*
 This is where we start returning results
 */
@@ -3199,7 +4530,7 @@ BEGIN
 
     SELECT
         @sql = @isolation_level,
-        @current_table = 'selecting #query_store_wait_stats';
+        @current_table = 'selecting final results';
 
     SELECT
         @sql += N'
@@ -3219,18 +4550,51 @@ FROM
     BEGIN
 
         SELECT
-            @sql += N'
+            @sql += 
+            N'
     SELECT
         source =
             ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
-        qsp.all_plan_ids,
+        qsp.all_plan_ids,'
+        +
+            CASE
+                WHEN @include_plan_hashes IS NOT NULL
+                THEN
+        N'
+        qsp.query_plan_hash,'
+                WHEN @include_query_hashes IS NOT NULL
+                THEN
+        N'
+        qsq.query_hash,'
+                WHEN @include_sql_handles IS NOT NULL
+                THEN
+        N'
+        qsqt.statement_sql_handle,'
+                ELSE
+        N''
+            END + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        qsp.compatibility_level,
-        query_plan = TRY_CONVERT(XML, qsp.query_plan),'
+        qsp.compatibility_level,'
+        +
+            CASE @sql_2022_views
+                 WHEN 1 
+                 THEN
+        N'
+        has_query_feedback = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+        has_query_store_hints = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+        has_plan_variants = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+                 ELSE
+        N''
+                 END +
+        N'
+        query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
                  WHEN 1
@@ -3332,7 +4696,7 @@ FROM
     END + N' DESC
             )';
 
-    END;
+    END; /*End expert mode 1, format output 0 columns*/
 
     /*
     Do we want to format things?
@@ -3351,12 +4715,44 @@ FROM
             ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
-        qsp.all_plan_ids,
+        qsp.all_plan_ids,'
+        +
+            CASE
+                WHEN @include_plan_hashes IS NOT NULL
+                THEN
+        N'
+        qsp.query_plan_hash,'
+                WHEN @include_query_hashes IS NOT NULL
+                THEN
+        N'
+        qsq.query_hash,'
+                WHEN @include_sql_handles IS NOT NULL
+                THEN
+        N'
+        qsqt.statement_sql_handle,'
+                ELSE
+        N''
+            END + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        qsp.compatibility_level,
-        query_plan = TRY_CONVERT(XML, qsp.query_plan),'
+        qsp.compatibility_level,'
+        +
+            CASE @sql_2022_views
+                 WHEN 1 
+                 THEN
+        N'
+        has_query_feedback = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+        has_query_store_hints = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+        has_plan_variants = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+                 ELSE
+        N''
+                 END +
+        N'
+        query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
                  WHEN 1
@@ -3366,7 +4762,11 @@ FROM
         w.top_waits,'
                  ELSE
         N''
-            END + N'
+            END + 
+        CONVERT
+        (
+            nvarchar(MAX), 
+            N'
         qsrs.first_execution_time,
         qsrs.last_execution_time,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
@@ -3414,13 +4814,14 @@ FROM
         last_rowcount = FORMAT(qsrs.last_rowcount, ''N0''),
         min_rowcount = FORMAT(qsrs.min_rowcount, ''N0''),
         max_rowcount = FORMAT(qsrs.max_rowcount, ''N0''),'
+        )
         +
             CASE @new
                  WHEN 1
                  THEN
         CONVERT
         (
-            nvarchar(max),
+            nvarchar(MAX),
         N'
         avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
         total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),
@@ -3462,7 +4863,7 @@ FROM
     END + N' DESC
             )';
 
-    END;
+    END; /*End expert mode = 1, format output = 1*/
 
     /*
     For non-experts only!
@@ -3481,12 +4882,44 @@ FROM
             ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
-        qsp.all_plan_ids,
+        qsp.all_plan_ids,'
+        +
+            CASE
+                WHEN @include_plan_hashes IS NOT NULL
+                THEN
+        N'
+        qsp.query_plan_hash,'
+                WHEN @include_query_hashes IS NOT NULL
+                THEN
+        N'
+        qsq.query_hash,'
+                WHEN @include_sql_handles IS NOT NULL
+                THEN
+        N'
+        qsqt.statement_sql_handle,'
+                ELSE
+        N''
+            END + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        qsp.compatibility_level,
-        query_plan = TRY_CONVERT(XML, qsp.query_plan),'
+        qsp.compatibility_level,'
+        +
+            CASE @sql_2022_views
+                 WHEN 1 
+                 THEN
+        N'
+        has_query_feedback = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+        has_query_store_hints = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+        has_plan_variants = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+                 ELSE
+        N''
+                 END +
+        N'
+        query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
                  WHEN 1
@@ -3554,7 +4987,7 @@ FROM
     END + N' DESC
             )';
 
-    END;
+    END; /*End expert mode = 0, format output = 0*/
 
     /*
     Formatted but not still not expert output
@@ -3573,12 +5006,44 @@ FROM
             ''runtime_stats'',
         qsp.query_id,
         qsrs.plan_id,
-        qsp.all_plan_ids,
+        qsp.all_plan_ids,'
+        +
+            CASE
+                WHEN @include_plan_hashes IS NOT NULL
+                THEN
+        N'
+        qsp.query_plan_hash,'
+                WHEN @include_query_hashes IS NOT NULL
+                THEN
+        N'
+        qsq.query_hash,'
+                WHEN @include_sql_handles IS NOT NULL
+                THEN
+        N'
+        qsqt.statement_sql_handle,'
+                ELSE
+        N''
+            END + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        qsp.compatibility_level,
-        query_plan = TRY_CONVERT(XML, qsp.query_plan),'
+        qsp.compatibility_level,'
+        +
+            CASE @sql_2022_views
+                 WHEN 1 
+                 THEN
+        N'
+        has_query_feedback = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+        has_query_store_hints = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+        has_plan_variants = 
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+                 ELSE
+        N''
+                 END +
+        N'
+        query_plan = TRY_CAST(qsp.query_plan AS XML),'
         +
             CASE @new
                  WHEN 1
@@ -3646,7 +5111,7 @@ FROM
     END + N' DESC
             )';
 
-    END;
+    END; /*End expert mode = 0, format output = 1*/
 
     /*
     Add on the from and stuff
@@ -3742,7 +5207,7 @@ FROM
                 )
     ) AS w';
 
-    END;
+    END; /*End format output = 0 wait stats query*/
 
     IF
       (
@@ -3788,7 +5253,7 @@ FROM
                 )
     ) AS w';
 
-    END;
+    END; /*End format output = 1 wait stats query*/
 
     SELECT
         @sql += N'
@@ -3839,13 +5304,14 @@ OPTION(RECOMPILE);' + @nc10;
         PRINT LEN(@sql);
         PRINT SUBSTRING(@sql, 0, 4000);
         PRINT SUBSTRING(@sql, 4000, 8000);
+        PRINT SUBSTRING(@sql, 8000, 16000);
     END;
 
 
     EXEC sys.sp_executesql
         @sql;
 
-END;
+END; /*End runtime stats main query*/
 ELSE
     BEGIN
         SELECT
@@ -3863,11 +5329,96 @@ IF
   )
 BEGIN
 
+    IF @sql_2022_views = 1
+    BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_plan_feedback AS qspf
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting plan feedback';
+        
+            SELECT
+                qspf.plan_feedback_id,
+                qspf.plan_id,
+                qspf.feature_desc,
+                qspf.feedback_data,
+                qspf.state_desc,
+                qspf.create_time,
+                qspf.last_updated_time
+            FROM #query_store_plan_feedback AS qspf
+            ORDER BY qspf.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_plan_feedback is empty';
+        END;
+        
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_query_hints AS qsqh
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting query hints';
+        
+            SELECT
+                qsqh.query_hint_id,
+                qsqh.query_id,
+                qsqh.query_hint_text,
+                qsqh.last_query_hint_failure_reason_desc,
+                qsqh.query_hint_failure_count,
+                qsqh.source_desc
+            FROM #query_store_query_hints AS qsqh
+            ORDER BY qsqh.query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_query_hints is empty';
+        END;
+        
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_query_variant AS qsqv
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting query variants';
+        
+            SELECT
+                qsqv.query_variant_query_id,
+                qsqv.parent_query_id,
+                qsqv.dispatcher_plan_id
+            FROM #query_store_query_variant AS qsqv
+            ORDER BY qsqv.parent_query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_query_variant is empty';
+        END;
+    END;
+
     IF EXISTS
        (
            SELECT
                1/0
-            FROM #query_store_query
+            FROM #query_store_query AS qsq
        )
     BEGIN
 
@@ -3935,7 +5486,7 @@ BEGIN
         ORDER BY x.query_id
         OPTION(RECOMPILE);
 
-    END;
+    END; /*End compilation stats query*/
     ELSE
     BEGIN
         SELECT
@@ -3982,7 +5533,7 @@ BEGIN
         ORDER BY qsq.query_id
         OPTION(RECOMPILE);
 
-    END;
+    END; /*End resource stats query*/
     ELSE
     BEGIN
         SELECT
@@ -3997,7 +5548,7 @@ BEGIN
            (
                SELECT
                    1/0
-                FROM #query_store_wait_stats
+                FROM #query_store_wait_stats AS qsws
            )
         BEGIN
 
@@ -4095,20 +5646,70 @@ BEGIN
             ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
             OPTION(RECOMPILE);
 
-        END;
+        END; /*End unformatted wait stats*/
         ELSE
         BEGIN
             SELECT
                 result =
                     '#query_store_wait_stats is empty' +
                     CASE
-                        WHEN (@product_version = 13
-                                AND @azure = 0)
+                        WHEN (      
+                                    @product_version = 13
+                                AND @azure = 0
+                             )
                         THEN ' because it''s not available < 2017'
-                        ELSE ''
+                        WHEN EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #database_query_store_options AS dqso
+                                 WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                             )
+                        THEN ' because you have it disabled in your Query Store options'
+                        ELSE ' for the queries in the results'
                     END;
         END;
 
+    END; /*End wait stats queries*/
+
+    IF 
+    (
+           @sql_2022_views = 1
+       AND @ags_present = 1
+    )
+    BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_replicas AS qsr
+               JOIN #query_store_plan_forcing_locations AS qspfl
+                   ON qsr.replica_group_id = qspfl.replica_group_id
+           )
+        BEGIN
+        
+        SELECT
+            @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
+        
+        SELECT 
+            qsr.replica_group_id, 
+            qsr.role_type, 
+            qsr.replica_name,
+            qspfl.plan_forcing_location_id,
+            qspfl.query_id,
+            qspfl.plan_id,
+            qspfl.replica_group_id 
+        FROM #query_store_replicas AS qsr
+        JOIN #query_store_plan_forcing_locations AS qspfl
+            ON qsr.replica_group_id = qspfl.replica_group_id
+        ORDER BY qsr.replica_group_id;
+        
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result = 'Availability Group information is empty';
+        END;
     END;
 
     SELECT
@@ -4167,7 +5768,7 @@ BEGIN
     EXEC sys.sp_executesql
         @sql;
 
-END;
+END; /*End expert mode format output = 0*/
 
 /*
 Return special things, formatted
@@ -4179,14 +5780,98 @@ IF
   )
 BEGIN
 
+    IF @sql_2022_views = 1
+    BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_plan_feedback AS qspf
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting plan feedback';
+        
+            SELECT
+                qspf.plan_feedback_id,
+                qspf.plan_id,
+                qspf.feature_desc,
+                qspf.feedback_data,
+                qspf.state_desc,
+                qspf.create_time,
+                qspf.last_updated_time
+            FROM #query_store_plan_feedback AS qspf
+            ORDER BY qspf.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_plan_feedback is empty';
+        END;
+        
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_query_hints AS qsqh
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting query hints';
+        
+            SELECT
+                qsqh.query_hint_id,
+                qsqh.query_id,
+                qsqh.query_hint_text,
+                qsqh.last_query_hint_failure_reason_desc,
+                qsqh.query_hint_failure_count,
+                qsqh.source_desc
+            FROM #query_store_query_hints AS qsqh
+            ORDER BY qsqh.query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_query_hints is empty';
+        END;
+        
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_query_variant AS qsqv
+           )
+        BEGIN
+            
+            SELECT
+                @current_table = 'selecting query variants';
+        
+            SELECT
+                qsqv.query_variant_query_id,
+                qsqv.parent_query_id,
+                qsqv.dispatcher_plan_id
+            FROM #query_store_query_variant AS qsqv
+            ORDER BY qsqv.parent_query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE 
+        BEGIN 
+            SELECT
+                result = '#query_store_query_variant is empty';
+        END;
+    END;
+
     IF EXISTS
        (
           SELECT
               1/0
-          FROM #query_store_query
+          FROM #query_store_query AS qsq
        )
     BEGIN
-
         SELECT
             @current_table = 'selecting compilation stats';
 
@@ -4271,7 +5956,7 @@ BEGIN
         ORDER BY x.query_id
         OPTION(RECOMPILE);
 
-    END;
+    END; /*End query store query, format output = 1*/
     ELSE
     BEGIN
         SELECT
@@ -4330,7 +6015,7 @@ BEGIN
         ORDER BY qsq.query_id
         OPTION(RECOMPILE);
 
-    END;
+    END; /*End resource stats, format output = 1*/
     ELSE
     BEGIN
         SELECT
@@ -4345,7 +6030,7 @@ BEGIN
            (
                SELECT
                    1/0
-                FROM #query_store_wait_stats
+                FROM #query_store_wait_stats AS qsws
            )
         BEGIN
 
@@ -4450,15 +6135,17 @@ BEGIN
 
         END;
 
-    END;
+    END; /*End wait stats, format output = 1*/
     ELSE
     BEGIN
         SELECT
             result =
                 '#query_store_wait_stats is empty' +
                 CASE
-                    WHEN (@product_version = 13
-                            AND @azure = 0)
+                    WHEN (      
+                                @product_version = 13
+                            AND @azure = 0
+                         )
                     THEN ' because it''s not available < 2017'
                     WHEN EXISTS
                          (
@@ -4470,6 +6157,47 @@ BEGIN
                     THEN ' because you have it disabled in your Query Store options'
                     ELSE ' for the queries in the results'
                 END;
+    END;
+
+    IF
+    (
+            @sql_2022_views = 1
+        AND @ags_present = 1
+    )
+    BEGIN
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #query_store_replicas AS qsr
+               JOIN #query_store_plan_forcing_locations AS qspfl
+                   ON qsr.replica_group_id = qspfl.replica_group_id
+           )
+        BEGIN
+        
+        SELECT
+            @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
+        
+        SELECT 
+            qsr.replica_group_id, 
+            qsr.role_type, 
+            qsr.replica_name,
+            qspfl.plan_forcing_location_id,
+            qspfl.query_id,
+            qspfl.plan_id,
+            qspfl.replica_group_id 
+        FROM #query_store_replicas AS qsr
+        JOIN #query_store_plan_forcing_locations AS qspfl
+            ON qsr.replica_group_id = qspfl.replica_group_id
+        ORDER BY qsr.replica_group_id
+        OPTION(RECOMPILE);
+        
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result = 'Availability Group information is empty';
+        END;
     END;
 
     SELECT
@@ -4537,7 +6265,7 @@ BEGIN
     EXEC sys.sp_executesql
         @sql;
 
-END;
+END; /*End expert mode = 1, format output = 1*/
 
 SELECT
     x.all_done,
@@ -4585,6 +6313,8 @@ FROM
 ORDER BY x.sort;
 
 END TRY
+
+/*Error handling!*/
 BEGIN CATCH
 
     /*
@@ -4592,7 +6322,10 @@ BEGIN CATCH
     */
     IF @current_table IS NOT NULL
     BEGIN
-        RAISERROR ('error while %s', 11, 1, @current_table) WITH NOWAIT;
+        DECLARE 
+            @em tinyint = @expert_mode,
+            @fo tinyint = @format_output;
+        RAISERROR('error while %s with @expert mode = %i and format_output = %i', 11, 1, @current_table, @em, @fo) WITH NOWAIT;
     END;
 
         /*
@@ -4600,7 +6333,7 @@ BEGIN CATCH
         */
     IF @sql IS NOT NULL
     BEGIN
-        RAISERROR ('offending query:', 10, 1) WITH NOWAIT;
+        RAISERROR('offending query:', 10, 1) WITH NOWAIT;
         RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
     END;
 
@@ -4642,10 +6375,22 @@ BEGIN
             @include_plan_ids,
         include_query_ids =
             @include_query_ids,
+        include_query_hashes = 
+            @include_query_hashes,
+        include_plan_hashes = 
+            @include_plan_hashes,
+        include_sql_handles = 
+            @include_sql_handles,
         ignore_plan_ids =
             @ignore_plan_ids,
         ignore_query_ids =
             @ignore_query_ids,
+        ignore_query_hashes = 
+            @ignore_query_hashes,
+        ignore_plan_hashes = 
+            @ignore_plan_hashes,
+        ignore_sql_handles = 
+            @ignore_sql_handles,
         query_text_search =
             @query_text_search,
         wait_filter =
@@ -4667,7 +6412,7 @@ BEGIN
 
     SELECT
         parameter_type =
-            'declared_parameters',
+            'declared_variables',
         azure =
             @azure,
         engine =
@@ -4684,7 +6429,7 @@ BEGIN
             @collation,
         new =
             @new,
-        [sql] =
+        sql =
             @sql,
          len_sql =
              LEN(@sql),
@@ -4704,15 +6449,21 @@ BEGIN
             @query_store_exists,
         query_store_waits_enabled =
             @query_store_waits_enabled,
-        [string_split] =
-            @string_split,
+        sql_2022_views = 
+            @sql_2022_views,
+        ags_present = 
+            @ags_present,
+        string_split_ints =
+            @string_split_ints,
+        string_split_strings =
+            @string_split_strings,
         current_table =
             @current_table,
         troubleshoot_insert =
             @troubleshoot_insert,
         troubleshoot_update =
             @troubleshoot_update,
-        xml_info =
+        troubleshoot_info =
             @troubleshoot_info,
         rc =
             @rc;
@@ -4809,6 +6560,72 @@ BEGIN
        (
            SELECT
                1/0
+           FROM #include_query_hashes AS iqh
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#include_query_hashes',
+            iqh.*
+        FROM #include_query_hashes AS iqh
+        ORDER BY iqh.query_hash
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#include_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #include_plan_hashes AS iph
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#include_plan_hashes',
+            iph.*
+        FROM #include_plan_hashes AS iph
+        ORDER BY iph.plan_hash
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#include_plan_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #include_sql_handles AS ish
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#include_sql_handles',
+            ish.*
+        FROM #include_sql_handles AS ish
+        ORDER BY ish.sql_handle
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#include_sql_handles is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
            FROM #ignore_plan_ids AS ipi
        )
     BEGIN
@@ -4847,6 +6664,72 @@ BEGIN
         SELECT
             result =
                 '#ignore_query_ids is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #ignore_query_hashes AS iqh
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#ignore_query_hashes',
+            iqh.*
+        FROM #ignore_query_hashes AS iqh
+        ORDER BY iqh.query_hash
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#ignore_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #ignore_plan_hashes AS iph
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#ignore_plan_hashes',
+            iph.*
+        FROM #ignore_plan_hashes AS iph
+        ORDER BY iph.plan_hash
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#ignore_plan_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #ignore_sql_handles AS ish
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#ignore_sql_handles',
+            ish.*
+        FROM #ignore_sql_handles AS ish
+        ORDER BY ish.sql_handle
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#ignore_sql_handles is empty';
     END;
 
     IF EXISTS
@@ -5069,7 +6952,23 @@ BEGIN
     BEGIN
         SELECT
             result =
-                '#query_store_wait_stats is empty';
+                '#query_store_wait_stats is empty' +
+                CASE
+                    WHEN (      
+                                @product_version = 13
+                            AND @azure = 0
+                         )
+                    THEN ' because it''s not available < 2017'
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #database_query_store_options AS dqso
+                             WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                         )
+                    THEN ' because you have it disabled in your Query Store options'
+                    ELSE ' for the queries in the results'
+                END;
     END;
 
     IF EXISTS
@@ -5094,6 +6993,122 @@ BEGIN
                 '#query_context_settings is empty';
     END;
 
+    IF @sql_2022_views = 1
+    BEGIN
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #query_store_plan_feedback AS qspf
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#query_store_plan_feedback',
+                qspf.*
+            FROM #query_store_plan_feedback AS qspf
+            ORDER BY qspf.plan_feedback_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#query_store_query_hints is empty';
+        END;
+        
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #query_store_query_hints AS qsqh
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#query_store_query_hints',
+                qsqh.*
+            FROM #query_store_query_hints AS qsqh
+            ORDER BY qsqh.query_hint_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#query_store_query_hints is empty';
+        END;
+        
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #query_store_query_variant AS qsqv
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#query_store_query_variant',
+                qsqv.*
+            FROM #query_store_query_variant AS qsqv
+            ORDER BY qsqv.query_variant_query_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#query_store_query_variant is empty';
+        END;
+        
+        IF @ags_present = 1
+        BEGIN
+            IF EXISTS
+               (
+                  SELECT
+                      1/0
+                  FROM #query_store_replicas AS qsr
+               )
+            BEGIN
+                SELECT
+                    table_name =
+                        '#query_store_replicas',
+                    qsr.*
+                FROM #query_store_replicas AS qsr
+                ORDER BY qsr.replica_group_id
+                OPTION(RECOMPILE);
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    result =
+                        '#query_store_replicas is empty';
+            END;
+            
+            IF EXISTS
+               (
+                  SELECT
+                      1/0
+                  FROM #query_store_plan_forcing_locations AS qspfl
+               )
+            BEGIN
+                SELECT
+                    table_name =
+                        '#query_store_plan_forcing_locations',
+                    qspfl.*
+                FROM #query_store_plan_forcing_locations AS qspfl
+                ORDER BY qspfl.plan_forcing_location_id
+                OPTION(RECOMPILE);
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    result =
+                        '#query_store_plan_forcing_locations is empty';
+            END;
+        END;
+    END;
+    
     IF EXISTS
        (
           SELECT
@@ -5116,14 +7131,11 @@ BEGIN
                 '#troubleshoot_performance is empty';
     END;
 
-    RETURN;
+    RETURN; /*Stop doing anything, I guess*/
 
-END;
+END; /*End debug*/
 
-RETURN;
+RETURN; /*Yeah sure why not?*/
 
-END;
-/*
-Final End
-*/
+END;/*Final End*/
 GO

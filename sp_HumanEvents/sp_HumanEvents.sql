@@ -29,7 +29,8 @@ IF OBJECT_ID('dbo.sp_HumanEvents') IS  NULL
    END;
 GO
 
-ALTER PROCEDURE [dbo].[sp_HumanEvents]
+ALTER PROCEDURE 
+    dbo.sp_HumanEvents
 ( 
     @event_type sysname = N'query',
     @query_duration_ms integer = 500,
@@ -69,8 +70,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT 
-    @version = '2.92', 
-    @version_date = '20211101';
+    @version = '3.33', 
+    @version_date = '20220701';
 
 IF @help = 1
 BEGIN
@@ -296,7 +297,7 @@ BEGIN
     RAISERROR(N'
 MIT License
 
-Copyright 2020 Darling Data, LLC 
+Copyright 2022 Darling Data, LLC 
 
 https://www.erikdarlingdata.com/
 
@@ -318,33 +319,39 @@ END;
 
 BEGIN TRY
 
-CREATE TABLE #drop_commands 
+CREATE TABLE 
+    #drop_commands 
 ( 
     id integer IDENTITY PRIMARY KEY, 
     drop_command nvarchar(1000) 
 );
 
-CREATE TABLE #user_waits
+CREATE TABLE 
+    #user_waits
 (
     wait_type nvarchar(60)
 );
 
-CREATE TABLE #papers_please
+CREATE TABLE 
+    #papers_please
 (
     ahem sysname
 );
 
-CREATE TABLE #human_events_xml_internal 
+CREATE TABLE 
+    #human_events_xml_internal 
 (
     human_events_xml xml
 );  
 
-CREATE TABLE #wait
+CREATE TABLE 
+    #wait
 (
     wait_type sysname
 );
 
-CREATE TABLE #human_events_worker
+CREATE TABLE 
+    #human_events_worker
 (
     id integer NOT NULL PRIMARY KEY IDENTITY,
     event_type sysname NOT NULL,
@@ -358,13 +365,15 @@ CREATE TABLE #human_events_worker
     output_table nvarchar(400) NOT NULL
 );
 
-CREATE UNIQUE NONCLUSTERED INDEX no_dupes 
+CREATE UNIQUE NONCLUSTERED INDEX 
+    no_dupes 
 ON #human_events_worker 
     (output_table) 
 WITH 
     (IGNORE_DUP_KEY = ON);
 
-CREATE TABLE #view_check 
+CREATE TABLE 
+    #view_check 
 (
     id integer PRIMARY KEY IDENTITY, 
     view_name sysname NOT NULL, 
@@ -372,8 +381,21 @@ CREATE TABLE #view_check
     output_database sysname NOT NULL DEFAULT N'',
     output_schema sysname NOT NULL DEFAULT N'',
     output_table sysname NOT NULL DEFAULT N'',
-    view_converted AS CONVERT(nvarchar(MAX), view_definition), 
-    view_converted_length AS DATALENGTH(CONVERT(nvarchar(MAX), view_definition))
+    view_converted AS 
+        CONVERT
+        (
+            nvarchar(MAX), 
+            view_definition
+        ), 
+    view_converted_length AS 
+        DATALENGTH
+        (
+            CONVERT
+            (
+                nvarchar(MAX), 
+                view_definition
+            )
+        )
 );
 
 
@@ -516,8 +538,8 @@ BEGIN
     LEFT JOIN sys.dm_xe_sessions AS dxe
         ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents%'
-    AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR      dxe.create_time IS NULL ) 
+    AND   (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+      OR    dxe.create_time IS NULL) 
     OPTION(RECOMPILE);
 END;
 
@@ -529,15 +551,15 @@ BEGIN
         drop_command
     )
     SELECT 
-        N'DROP EVENT SESSION '  
-        + ses.name + 
+        N'DROP EVENT SESSION ' +
+        ses.name + 
         N' ON DATABASE;'
     FROM sys.database_event_sessions AS ses
     LEFT JOIN sys.dm_xe_database_sessions AS dxe
         ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents%'
-    AND   ( dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR      dxe.create_time IS NULL ) 
+    AND   (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+      OR     dxe.create_time IS NULL) 
     OPTION(RECOMPILE);
 END;
 
@@ -550,7 +572,8 @@ IF EXISTS
 BEGIN 
     RAISERROR(N'Found old sessions, dropping those.', 0, 1) WITH NOWAIT;
     
-    DECLARE drop_cursor CURSOR 
+    DECLARE 
+        drop_cursor CURSOR 
         LOCAL STATIC FOR
     
     SELECT  
@@ -558,8 +581,10 @@ BEGIN
     FROM #drop_commands;
     
     OPEN drop_cursor;
-    FETCH NEXT FROM drop_cursor 
-        INTO @drop_old_sql;
+    
+    FETCH NEXT 
+    FROM drop_cursor 
+    INTO @drop_old_sql;
     
     WHILE @@FETCH_STATUS = 0
     BEGIN             
@@ -645,7 +670,8 @@ WITH
 /* azure can't create on server, just database */
 SET @session_sql = 
     N'
-CREATE EVENT SESSION ' + @session_name +
+CREATE EVENT SESSION ' + 
+@session_name +
     CASE 
         WHEN @azure = 0
         THEN N'
@@ -798,9 +824,9 @@ RAISERROR(N'Checking query duration filter', 0, 1) WITH NOWAIT;
    ignore compile and recompile because this is a filter on query compilation time 🙄 */
 IF 
 ( 
-    LOWER(@event_type) LIKE N'%quer%' 
-      AND @event_type NOT LIKE N'%comp%'
-      AND @gimme_danger = 0 
+        LOWER(@event_type) LIKE N'%quer%' 
+    AND @event_type NOT LIKE N'%comp%'
+    AND @gimme_danger = 0 
 )
       AND 
 (
@@ -818,8 +844,8 @@ END;
 RAISERROR(N'Checking wait duration filter', 0, 1) WITH NOWAIT;
 IF 
 ( 
-    LOWER(@event_type) LIKE N'%wait%' 
-      AND @gimme_danger = 0 
+        LOWER(@event_type) LIKE N'%wait%' 
+    AND @gimme_danger = 0 
 )
       AND 
 (   @wait_duration_ms < 10 
@@ -836,8 +862,8 @@ END;
 RAISERROR(N'Checking block duration filter', 0, 1) WITH NOWAIT;
 IF 
 ( 
-    LOWER(@event_type) LIKE N'%lock%' 
-      AND @gimme_danger = 0 
+        LOWER(@event_type) LIKE N'%lock%' 
+    AND @gimme_danger = 0 
 )
       AND 
 (
@@ -892,7 +918,11 @@ FROM
 (
     SELECT 
         wait_type = 
-            x.x.value('(./text())[1]', 'nvarchar(60)')
+            x.x.value
+                (
+                    '(./text())[1]', 
+                    'nvarchar(60)'
+                )
     FROM 
     ( 
       SELECT 
@@ -979,7 +1009,7 @@ If someone is passing in non-blank values, let's try to limit our SQL injection 
 */
 IF 
 ( 
-    @client_app_name <> N''
+       @client_app_name <> N''
     OR @client_hostname <> N''
     OR @database_name <> N''
     OR @session_id <> N''
@@ -1014,7 +1044,11 @@ RAISERROR(N'Checking for unsanitary inputs', 0, 1) WITH NOWAIT;
             (@output_database_name),
             (@output_schema_name)
     ) AS pp (ahem)
-    WHERE pp.ahem NOT IN (N'', N'dbo')
+    WHERE pp.ahem NOT IN 
+          (
+              N'', 
+              N'dbo'
+          )
     OPTION(RECOMPILE);
 
     IF EXISTS
@@ -1049,7 +1083,7 @@ END;
 RAISERROR(N'Avoiding disappointment', 0, 1) WITH NOWAIT;
 IF 
 ( 
-    @wait_type <> N'' 
+        @wait_type <> N'' 
     AND @wait_type <> N'ALL' 
     AND LOWER(@event_type) NOT LIKE N'%wait%' 
 )
@@ -1065,7 +1099,7 @@ RAISERROR(N'Are we trying to filter for a blocking session?', 0, 1) WITH NOWAIT;
 /* blocking events need a database name to resolve objects */
 IF 
 ( 
-    LOWER(@event_type) LIKE N'%lock%' 
+        LOWER(@event_type) LIKE N'%lock%' 
     AND DB_ID(@database_name) IS NULL 
     AND @object_name <> N'' 
 )
@@ -1077,7 +1111,7 @@ END;
 /* but could we resolve the object name? */
 IF 
 ( 
-    LOWER(@event_type) LIKE N'%lock%' 
+        LOWER(@event_type) LIKE N'%lock%' 
     AND @object_name <> N'' 
     AND OBJECT_ID(@fully_formed_babby) IS NULL 
 )
@@ -1123,7 +1157,7 @@ END;
 RAISERROR(N'If there''s a session id filter, is it valid?', 0, 1) WITH NOWAIT;
 IF
 (
-    LOWER(@session_id) NOT LIKE N'%sample%' 
+        LOWER(@session_id) NOT LIKE N'%sample%' 
     AND @session_id LIKE '%[^0-9]%' 
     AND LOWER(@session_id) <> N''
 )
@@ -1137,7 +1171,7 @@ END;
 RAISERROR(N'No dividing by zero', 0, 1) WITH NOWAIT;
 IF 
 (
-    @sample_divisor < 2 
+        @sample_divisor < 2 
     AND LOWER(@session_id) LIKE N'%sample%'
 )
 BEGIN
@@ -1156,7 +1190,7 @@ BEGIN
     /* I really don't want this running for more than 10 minutes right now. */
     IF 
     ( 
-        @seconds_sample > 600 
+            @seconds_sample > 600 
         AND @gimme_danger = 0 
     )
     BEGIN
@@ -1245,7 +1279,7 @@ BEGIN
             COUNT_BIG(*) 
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.schemas AS s
     WHERE s.name = ' + QUOTENAME(@output_schema_name, '''') + N' 
-    OPTION (RECOMPILE);',
+    OPTION(RECOMPILE);',
         @s_params  = 
             N'@is_out integer OUTPUT';
     
@@ -1266,10 +1300,10 @@ END;
 RAISERROR(N'Is output database OR schema filled in?', 0, 1) WITH NOWAIT;
 IF 
 (
-    LEN(@output_database_name + @output_schema_name) > 0
+        LEN(@output_database_name + @output_schema_name) > 0
     AND @output_schema_name <> N'dbo'
-    AND ( @output_database_name  = N'' 
-    OR      @output_schema_name = N'' )
+    AND (@output_database_name  = N'' 
+      OR @output_schema_name = N'')
 )
 BEGIN
     IF @output_database_name = N''
@@ -1317,7 +1351,7 @@ We want the session to get set up
 RAISERROR(N'Do we skip to the GOTO and log tables?', 0, 1) WITH NOWAIT;
 IF 
 ( 
-    @output_database_name <> N''
+        @output_database_name <> N''
     AND @output_schema_name <> N''
     AND @cleanup = 0 
 )
@@ -1333,7 +1367,7 @@ END;
 RAISERROR(N'Do we skip to the GOTO and cleanup?', 0, 1) WITH NOWAIT;
 IF 
 ( 
-    @output_database_name <> N''
+        @output_database_name <> N''
     AND @output_schema_name <> N''
     AND @cleanup = 1 
 )
@@ -1586,7 +1620,8 @@ BEGIN
                 0, 
                 8000
             ) + 
-            N')';
+            N')'
+    OPTION(RECOMPILE);
 END; 
 
 /* End individual filters */
@@ -1801,25 +1836,31 @@ IF @azure = 0
 BEGIN
     SELECT 
         @x = 
-            CONVERT(xml, t.target_data)
+            CONVERT
+            (
+                xml, 
+                t.target_data
+            )
     FROM sys.dm_xe_session_targets AS t
     JOIN sys.dm_xe_sessions AS s
         ON s.address = t.event_session_address
     WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer'
-    OPTION (RECOMPILE);
+    AND   t.target_name = N'ring_buffer';
 END;
 ELSE
 BEGIN
     SELECT 
         @x = 
-            CONVERT(xml, t.target_data)
+            CONVERT
+            (
+                xml, 
+                t.target_data
+            )
     FROM sys.dm_xe_database_session_targets AS t
     JOIN sys.dm_xe_database_sessions AS s
         ON s.address = t.event_session_address
     WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer'
-    OPTION (RECOMPILE);
+    AND   t.target_name = N'ring_buffer';
 END;
 
 
@@ -1828,7 +1869,7 @@ SELECT
         e.x.query('.')
 INTO   #human_events_xml
 FROM   @x.nodes('/RingBufferTarget/event') AS e(x)
-OPTION (RECOMPILE);
+OPTION(RECOMPILE);
 
 
 IF @debug = 1
@@ -1845,48 +1886,51 @@ BEGIN;
          WITH queries AS 
          (
             SELECT 
-                DATEADD
-                (
-                    MINUTE, 
-                    DATEDIFF
+                event_time = 
+                    DATEADD
                     (
                         MINUTE, 
-                        GETUTCDATE(), 
-                        SYSDATETIME()
-                    ), 
-                    c.value('@timestamp', 'datetime2')
-                ) AS event_time,
-                c.value('@name', 'nvarchar(256)') AS event_type,
-                c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)') AS database_name,                
-                c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)') AS object_name,
-                c.value('(action[@name="sql_text"]/value)[1]', 'nvarchar(MAX)') AS sql_text,
-                c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)') AS statement,
-                c.query('(data[@name="showplan_xml"]/value/*)[1]') AS showplan_xml,
-                c.value('(data[@name="cpu_time"]/value)[1]', 'bigint') / 1000. AS cpu_ms,
-               (c.value('(data[@name="logical_reads"]/value)[1]', 'bigint') * 8) / 1024. AS logical_reads,
-               (c.value('(data[@name="physical_reads"]/value)[1]', 'bigint') * 8) / 1024. AS physical_reads,
-                c.value('(data[@name="duration"]/value)[1]', 'bigint') / 1000. AS duration_ms,
-               (c.value('(data[@name="writes"]/value)[1]', 'bigint') * 8) / 1024. AS writes,
-               (c.value('(data[@name="spills"]/value)[1]', 'bigint') * 8) / 1024. AS spills_mb,
-                c.value('(data[@name="row_count"]/value)[1]', 'bigint') AS row_count,
-                c.value('(data[@name="estimated_rows"]/value)[1]', 'bigint') AS estimated_rows,
-                c.value('(data[@name="dop"]/value)[1]', 'int') AS dop,
-                c.value('(data[@name="serial_ideal_memory_kb"]/value)[1]', 'bigint') / 1024. AS serial_ideal_memory_mb,
-                c.value('(data[@name="requested_memory_kb"]/value)[1]', 'bigint') / 1024. AS requested_memory_mb,
-                c.value('(data[@name="used_memory_kb"]/value)[1]', 'bigint') / 1024. AS used_memory_mb,
-                c.value('(data[@name="ideal_memory_kb"]/value)[1]', 'bigint') / 1024. AS ideal_memory_mb,
-                c.value('(data[@name="granted_memory_kb"]/value)[1]', 'bigint') / 1024. AS granted_memory_mb,
-                CONVERT
-                (
-                    binary(8), 
-                    c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'bigint')
-                ) AS query_plan_hash_signed,
-                CONVERT
-                (
-                    binary(8), 
-                    c.value('(action[@name="query_hash_signed"]/value)[1]', 'bigint')
-                ) AS query_hash_signed,
-                c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)') AS plan_handle
+                        DATEDIFF
+                        (
+                            MINUTE, 
+                            GETUTCDATE(), 
+                            SYSDATETIME()
+                        ), 
+                        c.value('@timestamp', 'datetime2')
+                    ),
+                event_type = c.value('@name', 'nvarchar(256)'),
+                database_name = c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)'),                
+                object_name = c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)'),
+                sql_text = c.value('(action[@name="sql_text"]/value)[1]', 'nvarchar(MAX)'),
+                statement = c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)'),
+                showplan_xml = c.query('(data[@name="showplan_xml"]/value/*)[1]'),
+                cpu_ms = c.value('(data[@name="cpu_time"]/value)[1]', 'bigint') / 1000.,
+                logical_reads = (c.value('(data[@name="logical_reads"]/value)[1]', 'bigint') * 8) / 1024.,
+                physical_reads = (c.value('(data[@name="physical_reads"]/value)[1]', 'bigint') * 8) / 1024.,
+                duration_ms = c.value('(data[@name="duration"]/value)[1]', 'bigint') / 1000.,
+                writes = (c.value('(data[@name="writes"]/value)[1]', 'bigint') * 8) / 1024.,
+                spills_mb = (c.value('(data[@name="spills"]/value)[1]', 'bigint') * 8) / 1024.,
+                row_count = c.value('(data[@name="row_count"]/value)[1]', 'bigint'),
+                estimated_rows = c.value('(data[@name="estimated_rows"]/value)[1]', 'bigint'),
+                dop = c.value('(data[@name="dop"]/value)[1]', 'int'),
+                serial_ideal_memory_mb = c.value('(data[@name="serial_ideal_memory_kb"]/value)[1]', 'bigint') / 1024.,
+                requested_memory_mb = c.value('(data[@name="requested_memory_kb"]/value)[1]', 'bigint') / 1024.,
+                used_memory_mb = c.value('(data[@name="used_memory_kb"]/value)[1]', 'bigint') / 1024.,
+                ideal_memory_mb = c.value('(data[@name="ideal_memory_kb"]/value)[1]', 'bigint') / 1024.,
+                granted_memory_mb = c.value('(data[@name="granted_memory_kb"]/value)[1]', 'bigint') / 1024.,
+                query_plan_hash_signed = 
+                    CONVERT
+                    (
+                        binary(8), 
+                        c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'bigint')
+                    ),
+                query_hash_signed = 
+                    CONVERT
+                    (
+                        binary(8), 
+                        c.value('(action[@name="query_hash_signed"]/value)[1]', 'bigint')
+                    ),
+                plan_handle = c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)')
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(action[@name="query_hash_signed"]/value[. != 0])') = 1
@@ -1895,9 +1939,9 @@ BEGIN;
              q.*
          INTO #queries
          FROM queries AS q
-         OPTION (RECOMPILE);
+         OPTION(RECOMPILE);
          
-         IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION (RECOMPILE); END;
+         IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION(RECOMPILE); END;
 
          /* Add attribute StatementId to query plan if it is missing (versions before 2019) */
          WITH XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
@@ -1908,7 +1952,7 @@ BEGIN;
          CROSS APPLY 
          (
              SELECT TOP (1)
-                 q2.statement AS statement_text
+                 statement_text = q2.statement
              FROM #queries AS q2
              WHERE q1.query_hash_signed = q2.query_hash_signed
              AND   q1.query_plan_hash_signed = q2.query_plan_hash_signed
@@ -1917,7 +1961,7 @@ BEGIN;
          ) AS q2
          WHERE q1.showplan_xml IS NOT NULL
          AND   q1.showplan_xml.exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementId') = 0
-         OPTION (RECOMPILE);
+         OPTION(RECOMPILE);
          
          /* Add attribute StatementText to query plan if it is missing (all versions) */
          WITH XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
@@ -1928,7 +1972,7 @@ BEGIN;
          CROSS APPLY 
          (
              SELECT TOP (1)
-                 q2.statement AS statement_text
+                 statement_text = q2.statement
              FROM #queries AS q2
              WHERE q1.query_hash_signed = q2.query_hash_signed
              AND   q1.query_plan_hash_signed = q2.query_plan_hash_signed
@@ -1937,34 +1981,34 @@ BEGIN;
          ) AS q2
          WHERE q1.showplan_xml IS NOT NULL 
          AND   q1.showplan_xml.exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementText') = 0
-         OPTION (RECOMPILE);
+         OPTION(RECOMPILE);
 
          WITH query_agg AS 
          (
             SELECT 
                 q.query_plan_hash_signed,
                 q.query_hash_signed,
-                CONVERT(varbinary(64), NULL) AS plan_handle,
+                plan_handle = CONVERT(varbinary(64), NULL),
                 /*totals*/
-                ISNULL(q.cpu_ms, 0.) AS total_cpu_ms,
-                ISNULL(q.logical_reads, 0.) AS total_logical_reads,
-                ISNULL(q.physical_reads, 0.) AS total_physical_reads,
-                ISNULL(q.duration_ms, 0.) AS total_duration_ms,
-                ISNULL(q.writes, 0.) AS total_writes,
-                ISNULL(q.spills_mb, 0.) AS total_spills_mb,
-                NULL AS total_used_memory_mb,
-                NULL AS total_granted_memory_mb,
-                ISNULL(q.row_count, 0.) AS total_rows,
+                total_cpu_ms = ISNULL(q.cpu_ms, 0.),
+                total_logical_reads = ISNULL(q.logical_reads, 0.),
+                total_physical_reads = ISNULL(q.physical_reads, 0.),
+                total_duration_ms = ISNULL(q.duration_ms, 0.),
+                total_writes = ISNULL(q.writes, 0.),
+                total_spills_mb = ISNULL(q.spills_mb, 0.),
+                total_used_memory_mb = NULL,
+                total_granted_memory_mb = NULL,
+                total_rows = ISNULL(q.row_count, 0.),
                 /*averages*/
-                ISNULL(q.cpu_ms, 0.) AS avg_cpu_ms,
-                ISNULL(q.logical_reads, 0.) AS avg_logical_reads,
-                ISNULL(q.physical_reads, 0.) AS avg_physical_reads,
-                ISNULL(q.duration_ms, 0.) AS avg_duration_ms,
-                ISNULL(q.writes, 0.) AS avg_writes,
-                ISNULL(q.spills_mb, 0.) AS avg_spills_mb,
-                NULL AS avg_used_memory_mb,
-                NULL AS avg_granted_memory_mb,
-                ISNULL(q.row_count, 0) AS avg_rows                    
+                avg_cpu_ms = ISNULL(q.cpu_ms, 0.),
+                avg_logical_reads = ISNULL(q.logical_reads, 0.),
+                avg_physical_reads = ISNULL(q.physical_reads, 0.),
+                avg_duration_ms = ISNULL(q.duration_ms, 0.),
+                avg_writes = ISNULL(q.writes, 0.),
+                avg_spills_mb = ISNULL(q.spills_mb, 0.),
+                avg_used_memory_mb = NULL,
+                avg_granted_memory_mb = NULL,
+                avg_rows = ISNULL(q.row_count, 0)                    
             FROM #queries AS q
             WHERE q.event_type <> N'query_post_execution_showplan'
             
@@ -1975,58 +2019,59 @@ BEGIN;
                 q.query_hash_signed,
                 q.plan_handle,
                 /*totals*/
-                NULL AS total_cpu_ms,
-                NULL AS total_logical_reads,
-                NULL AS total_physical_reads,
-                NULL AS total_duration_ms,
-                NULL AS total_writes,
-                NULL AS total_spills_mb,                        
-                ISNULL(q.used_memory_mb, 0.) AS total_used_memory_mb,
-                ISNULL(q.granted_memory_mb, 0.) AS total_granted_memory_mb,
-                NULL AS total_rows,
+                total_cpu_ms = NULL,
+                total_logical_reads = NULL,
+                total_physical_reads = NULL,
+                total_duration_ms = NULL,
+                total_writes = NULL,
+                total_spills_mb = NULL,                        
+                total_used_memory_mb = ISNULL(q.used_memory_mb, 0.),
+                total_granted_memory_mb = ISNULL(q.granted_memory_mb, 0.),
+                total_rows = NULL,
                 /*averages*/
-                NULL AS avg_cpu_ms,
-                NULL AS avg_logical_reads,
-                NULL AS avg_physical_reads,
-                NULL AS avg_duration_ms,
-                NULL AS avg_writes,
-                NULL AS avg_spills_mb,
-                ISNULL(q.used_memory_mb, 0.) AS avg_used_memory_mb,
-                ISNULL(q.granted_memory_mb, 0.) AS avg_granted_memory_mb,
-                NULL AS avg_rows                    
+                avg_cpu_ms = NULL,
+                avg_logical_reads = NULL,
+                avg_physical_reads = NULL,
+                avg_duration_ms = NULL,
+                avg_writes = NULL,
+                avg_spills_mb = NULL,
+                avg_used_memory_mb = ISNULL(q.used_memory_mb, 0.),
+                avg_granted_memory_mb = ISNULL(q.granted_memory_mb, 0.),
+                avg_rows = NULL                     
             FROM #queries AS q
             WHERE q.event_type = N'query_post_execution_showplan'        
          )
          SELECT 
              qa.query_plan_hash_signed,
              qa.query_hash_signed,
-             MAX(qa.plan_handle) AS plan_handle,
-             SUM(qa.total_cpu_ms) AS total_cpu_ms,
-             SUM(qa.total_logical_reads) AS total_logical_reads_mb,
-             SUM(qa.total_physical_reads) AS total_physical_reads_mb,
-             SUM(qa.total_duration_ms) AS total_duration_ms,
-             SUM(qa.total_writes) AS total_writes_mb,
-             SUM(qa.total_spills_mb) AS total_spills_mb,
-             SUM(qa.total_used_memory_mb) AS total_used_memory_mb,
-             SUM(qa.total_granted_memory_mb) AS total_granted_memory_mb,
-             SUM(qa.total_rows) AS total_rows,
-             AVG(qa.avg_cpu_ms) AS avg_cpu_ms,
-             AVG(qa.avg_logical_reads) AS avg_logical_reads_mb,
-             AVG(qa.avg_physical_reads) AS avg_physical_reads_mb,
-             AVG(qa.avg_duration_ms) AS avg_duration_ms,
-             AVG(qa.avg_writes) AS avg_writes_mb,
-             AVG(qa.avg_spills_mb) AS avg_spills_mb,
-             AVG(qa.avg_used_memory_mb) AS avg_used_memory_mb,
-             AVG(qa.avg_granted_memory_mb) AS avg_granted_memory_mb,
-             AVG(qa.avg_rows) AS avg_rows,
-             COUNT(qa.plan_handle) AS executions
+             plan_handle = MAX(qa.plan_handle),
+             total_cpu_ms = SUM(qa.total_cpu_ms),
+             total_logical_reads_mb = SUM(qa.total_logical_reads),
+             total_physical_reads_mb = SUM(qa.total_physical_reads),
+             total_duration_ms = SUM(qa.total_duration_ms),
+             total_writes_mb = SUM(qa.total_writes),
+             total_spills_mb = SUM(qa.total_spills_mb),
+             total_used_memory_mb = SUM(qa.total_used_memory_mb),
+             total_granted_memory_mb = SUM(qa.total_granted_memory_mb),
+             total_rows = SUM(qa.total_rows),
+             avg_cpu_ms = AVG(qa.avg_cpu_ms),
+             avg_logical_reads_mb = AVG(qa.avg_logical_reads),
+             avg_physical_reads_mb = AVG(qa.avg_physical_reads),
+             avg_duration_ms = AVG(qa.avg_duration_ms),
+             avg_writes_mb = AVG(qa.avg_writes),
+             avg_spills_mb = AVG(qa.avg_spills_mb),
+             avg_used_memory_mb = AVG(qa.avg_used_memory_mb),
+             avg_granted_memory_mb = AVG(qa.avg_granted_memory_mb),
+             avg_rows = AVG(qa.avg_rows),
+             executions = COUNT_BIG(qa.plan_handle)
          INTO #totals
          FROM query_agg AS qa
          GROUP BY 
              qa.query_plan_hash_signed,
-             qa.query_hash_signed;
+             qa.query_hash_signed
+         OPTION(RECOMPILE);
          
-         IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION (RECOMPILE); END;
+         IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION(RECOMPILE); END;
 
          WITH query_results AS
          (
@@ -2147,7 +2192,7 @@ BEGIN;
                    WHEN N'avg memory' THEN q.avg_granted_memory_mb
                    ELSE N'cpu'
               END DESC
-         OPTION (RECOMPILE);
+         OPTION(RECOMPILE);
 END;
 
 
@@ -2157,30 +2202,31 @@ BEGIN
 IF @compile_events = 1
     BEGIN
             SELECT 
-                DATEADD
-                (
-                    MINUTE, 
-                    DATEDIFF
+                event_time = 
+                    DATEADD
                     (
                         MINUTE, 
-                        GETUTCDATE(), 
-                        SYSDATETIME()
-                    ), 
-                    c.value('@timestamp', 'datetime2')
-                ) AS event_time,
-                c.value('@name', 'nvarchar(256)') AS event_type,
-                c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)') AS database_name,                
-                c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)') AS object_name,
-                c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)') AS statement_text,
-                c.value('(data[@name="cpu_time"]/value)[1]', 'bigint') compile_cpu_ms,
-                c.value('(data[@name="duration"]/value)[1]', 'bigint') compile_duration_ms
+                        DATEDIFF
+                        (
+                            MINUTE, 
+                            GETUTCDATE(), 
+                            SYSDATETIME()
+                        ), 
+                        c.value('@timestamp', 'datetime2')
+                    ),
+                event_type = c.value('@name', 'nvarchar(256)'),
+                database_name = c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)'),                
+                object_name = c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)'),
+                statement_text = c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)'),
+                compile_cpu_ms = c.value('(data[@name="cpu_time"]/value)[1]', 'bigint'),
+                compile_duration_ms = c.value('(data[@name="duration"]/value)[1]', 'bigint')
             INTO #compiles_1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 1
             AND   c.exist('@name[.= "sql_statement_post_compile"]') = 1
             ORDER BY event_time
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
 
             ALTER TABLE #compiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
 
@@ -2190,18 +2236,18 @@ IF @compile_events = 1
             (
                 SELECT 
                     statement_text_checksum,
-                    COUNT_BIG(*) AS total_compiles,
-                    SUM(compile_cpu_ms) AS total_compile_cpu,
-                    AVG(compile_cpu_ms) AS avg_compile_cpu,
-                    MAX(compile_cpu_ms) AS max_compile_cpu,
-                    SUM(compile_duration_ms) AS total_compile_duration,
-                    AVG(compile_duration_ms) AS avg_compile_duration,
-                    MAX(compile_duration_ms) AS max_compile_duration
+                    total_compiles = COUNT_BIG(*),
+                    total_compile_cpu = SUM(compile_cpu_ms),
+                    avg_compile_cpu = AVG(compile_cpu_ms),
+                    max_compile_cpu = MAX(compile_cpu_ms),
+                    total_compile_duration = SUM(compile_duration_ms),
+                    avg_compile_duration = AVG(compile_duration_ms),
+                    max_compile_duration = MAX(compile_duration_ms)
                 FROM #compiles_1
                 GROUP BY statement_text_checksum 
             )
             SELECT 
-                N'total compiles' AS pattern,
+                pattern = N'total compiles',
                 k.object_name,
                 k.statement_text,
                 c.total_compiles,
@@ -2228,26 +2274,27 @@ IF @compile_events = 1
 IF @compile_events = 0
     BEGIN
             SELECT 
-                DATEADD
-                (
-                    MINUTE, 
-                    DATEDIFF
+                event_time = 
+                    DATEADD
                     (
                         MINUTE, 
-                        GETUTCDATE(), 
-                        SYSDATETIME()
-                    ), 
-                    c.value('@timestamp', 'datetime2')
-                ) AS event_time,
-                c.value('@name', 'nvarchar(256)') AS event_type,
-                c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)') AS database_name,                
-                c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)') AS object_name,
-                c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)') AS statement_text
+                        DATEDIFF
+                        (
+                            MINUTE, 
+                            GETUTCDATE(), 
+                            SYSDATETIME()
+                        ), 
+                        c.value('@timestamp', 'datetime2')
+                    ),
+                event_type = c.value('@name', 'nvarchar(256)'),
+                database_name = c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)'),                
+                object_name = c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)'),
+                statement_text = c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)')
             INTO #compiles_0
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             ORDER BY event_time
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
 
             IF @debug = 1 BEGIN SELECT N'#compiles_0' AS table_name, * FROM #compiles_0 AS c OPTION(RECOMPILE); END;
 
@@ -2266,40 +2313,41 @@ IF @compile_events = 0
 IF @parameterization_events  = 1
     BEGIN
             SELECT 
-                DATEADD
-                (
-                    MINUTE, 
-                    DATEDIFF
+                event_time = 
+                    DATEADD
                     (
                         MINUTE, 
-                        GETUTCDATE(), 
-                        SYSDATETIME()
-                    ), 
-                    c.value('@timestamp', 'datetime2')
-                ) AS event_time,
-                c.value('@name', 'nvarchar(256)') AS event_type,
-                c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)') AS database_name,                
-                c.value('(action[@name="sql_text"]/value)[1]', 'nvarchar(MAX)') AS sql_text,
-                c.value('(data[@name="compile_cpu_time"]/value)[1]', 'bigint') / 1000. AS compile_cpu_time_ms,
-                c.value('(data[@name="compile_duration"]/value)[1]', 'bigint') / 1000. AS compile_duration_ms,
-                c.value('(data[@name="query_param_type"]/value)[1]', 'int') AS query_param_type,
-                c.value('(data[@name="is_cached"]/value)[1]', 'bit') AS is_cached,
-                c.value('(data[@name="is_recompiled"]/value)[1]', 'bit') AS is_recompiled,
-                c.value('(data[@name="compile_code"]/text)[1]', 'nvarchar(256)') AS compile_code,                  
-                c.value('(data[@name="has_literals"]/value)[1]', 'bit') AS has_literals,
-                c.value('(data[@name="is_parameterizable"]/value)[1]', 'bit') AS is_parameterizable,
-                c.value('(data[@name="parameterized_values_count"]/value)[1]', 'bigint') AS parameterized_values_count,
-                c.value('xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])', 'binary(8)') AS query_plan_hash,
-                c.value('xs:hexBinary((data[@name="query_hash"]/value/text())[1])', 'binary(8)') AS query_hash,
-                c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)') AS plan_handle, 
-                c.value('xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])', 'varbinary(64)') AS statement_sql_hash
+                        DATEDIFF
+                        (
+                            MINUTE, 
+                            GETUTCDATE(), 
+                            SYSDATETIME()
+                        ), 
+                        c.value('@timestamp', 'datetime2')
+                    ),
+                event_type = c.value('@name', 'nvarchar(256)'),
+                database_name = c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)'),                
+                sql_text = c.value('(action[@name="sql_text"]/value)[1]', 'nvarchar(MAX)'),
+                compile_cpu_time_ms = c.value('(data[@name="compile_cpu_time"]/value)[1]', 'bigint') / 1000.,
+                compile_duration_ms = c.value('(data[@name="compile_duration"]/value)[1]', 'bigint') / 1000.,
+                query_param_type = c.value('(data[@name="query_param_type"]/value)[1]', 'int'),
+                is_cached = c.value('(data[@name="is_cached"]/value)[1]', 'bit'),
+                is_recompiled = c.value('(data[@name="is_recompiled"]/value)[1]', 'bit'),
+                compile_code = c.value('(data[@name="compile_code"]/text)[1]', 'nvarchar(256)'),                  
+                has_literals = c.value('(data[@name="has_literals"]/value)[1]', 'bit'),
+                is_parameterizable = c.value('(data[@name="is_parameterizable"]/value)[1]', 'bit'),
+                parameterized_values_count = c.value('(data[@name="parameterized_values_count"]/value)[1]', 'bigint'),
+                query_plan_hash = c.value('xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])', 'binary(8)'),
+                query_hash = c.value('xs:hexBinary((data[@name="query_hash"]/value/text())[1])', 'binary(8)'),
+                plan_handle = c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)'), 
+                statement_sql_hash = c.value('xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])', 'varbinary(64)')
             INTO #parameterization
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('@name[. = "query_parameterization_data"]') = 1
             AND   c.exist('(data[@name="is_recompiled"]/value[. = "false"])') = 1
             ORDER BY event_time
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
 
             IF @debug = 1 BEGIN SELECT N'#parameterization' AS table_name, * FROM #parameterization AS p OPTION(RECOMPILE); END;
 
@@ -2308,21 +2356,21 @@ IF @parameterization_events  = 1
                 SELECT 
                     database_name,
                     query_hash,
-                    COUNT_BIG(*) AS total_compiles,
-                    COUNT(DISTINCT query_plan_hash) AS plan_count,
-                    SUM(compile_cpu_time_ms) AS total_compile_cpu,
-                    AVG(compile_cpu_time_ms) AS avg_compile_cpu,
-                    MAX(compile_cpu_time_ms) AS max_compile_cpu,
-                    SUM(compile_duration_ms) AS total_compile_duration,
-                    AVG(compile_duration_ms) AS avg_compile_duration,
-                    MAX(compile_duration_ms) AS max_compile_duration
+                    total_compiles = COUNT_BIG(*),
+                    plan_count = COUNT_BIG(DISTINCT query_plan_hash),
+                    total_compile_cpu = SUM(compile_cpu_time_ms),
+                    avg_compile_cpu = AVG(compile_cpu_time_ms),
+                    max_compile_cpu = MAX(compile_cpu_time_ms),
+                    total_compile_duration = SUM(compile_duration_ms),
+                    avg_compile_duration = AVG(compile_duration_ms),
+                    max_compile_duration = MAX(compile_duration_ms)
                 FROM #parameterization
                 GROUP BY 
                     database_name, 
                     query_hash
                )
                SELECT 
-                   N'parameterization opportunities' AS pattern,
+                   pattern = N'parameterization opportunities',
                    c.database_name,
                    k.sql_text,
                    k.is_parameterizable,
@@ -2362,30 +2410,31 @@ BEGIN
 IF @compile_events = 1
     BEGIN
             SELECT 
-                DATEADD
-                (
-                    MINUTE, 
-                    DATEDIFF
+                event_time = 
+                    DATEADD
                     (
                         MINUTE, 
-                        GETUTCDATE(), 
-                        SYSDATETIME()
-                    ), 
-                    c.value('@timestamp', 'datetime2')
-                ) AS event_time,
-                c.value('@name', 'nvarchar(256)') AS event_type,
-                c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)') AS database_name,                
-                c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)') AS object_name,
-                c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)') AS recompile_cause,
-                c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)') AS statement_text,
-                c.value('(data[@name="cpu_time"]/value)[1]', 'bigint') AS recompile_cpu_ms,
-                c.value('(data[@name="duration"]/value)[1]', 'bigint') AS recompile_duration_ms
+                        DATEDIFF
+                        (
+                            MINUTE, 
+                            GETUTCDATE(), 
+                            SYSDATETIME()
+                        ), 
+                        c.value('@timestamp', 'datetime2')
+                    ),
+                event_type = c.value('@name', 'nvarchar(256)'),
+                database_name = c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)'),                
+                object_name = c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)'),
+                recompile_cause = c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)'),
+                statement_text = c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)'),
+                recompile_cpu_ms = c.value('(data[@name="cpu_time"]/value)[1]', 'bigint'),
+                recompile_duration_ms = c.value('(data[@name="duration"]/value)[1]', 'bigint')
             INTO #recompiles_1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 0
             ORDER BY event_time
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
 
             ALTER TABLE #recompiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
 
@@ -2395,18 +2444,18 @@ IF @compile_events = 1
             (
                 SELECT 
                     statement_text_checksum,
-                    COUNT_BIG(*) AS total_recompiles,
-                    SUM(recompile_cpu_ms) AS total_recompile_cpu,
-                    AVG(recompile_cpu_ms) AS avg_recompile_cpu,
-                    MAX(recompile_cpu_ms) AS max_recompile_cpu,
-                    SUM(recompile_duration_ms) AS total_recompile_duration,
-                    AVG(recompile_duration_ms) AS avg_recompile_duration,
-                    MAX(recompile_duration_ms) AS max_recompile_duration
+                    total_recompiles = COUNT_BIG(*),
+                    total_recompile_cpu = SUM(recompile_cpu_ms),
+                    avg_recompile_cpu = AVG(recompile_cpu_ms),
+                    max_recompile_cpu = MAX(recompile_cpu_ms),
+                    total_recompile_duration = SUM(recompile_duration_ms),
+                    avg_recompile_duration = AVG(recompile_duration_ms),
+                    max_recompile_duration = MAX(recompile_duration_ms)
                 FROM #recompiles_1
                 GROUP BY statement_text_checksum 
             )
             SELECT 
-                N'total recompiles' AS pattern,
+                pattern = N'total recompiles',
                 k.recompile_cause,
                 k.object_name,
                 k.statement_text,
@@ -2433,27 +2482,28 @@ IF @compile_events = 1
 IF @compile_events = 0
     BEGIN
             SELECT 
-                DATEADD
-                (
-                    MINUTE, 
-                    DATEDIFF
+                event_time = 
+                    DATEADD
                     (
                         MINUTE, 
-                        GETUTCDATE(), 
-                        SYSDATETIME()
-                    ), 
-                    c.value('@timestamp', 'datetime2')
-                ) AS event_time,
-                c.value('@name', 'nvarchar(256)') AS event_type,
-                c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)') AS database_name,                
-                c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)') AS object_name,
-                c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)') AS recompile_cause,
-                c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)') AS statement_text
+                        DATEDIFF
+                        (
+                            MINUTE, 
+                            GETUTCDATE(), 
+                            SYSDATETIME()
+                        ), 
+                        c.value('@timestamp', 'datetime2')
+                    ),
+                event_type = c.value('@name', 'nvarchar(256)'),
+                database_name = c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)'),                
+                object_name = c.value('(data[@name="object_name"]/value)[1]', 'nvarchar(256)'),
+                recompile_cause = c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)'),
+                statement_text = c.value('(data[@name="statement"]/value)[1]', 'nvarchar(MAX)')
             INTO #recompiles_0
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             ORDER BY event_time
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
 
             IF @debug = 1 BEGIN SELECT N'#recompiles_0' AS table_name, * FROM #recompiles_0 AS r OPTION(RECOMPILE); END;
 
@@ -2477,45 +2527,49 @@ BEGIN;
          WITH waits AS 
          (
              SELECT 
-                 DATEADD
-                 (
-                     MINUTE, 
-                     DATEDIFF
+                 event_time = 
+                     DATEADD
                      (
                          MINUTE, 
-                         GETUTCDATE(), 
-                         SYSDATETIME()
-                     ), 
-                     c.value('@timestamp', 'datetime2')
-                 ) AS event_time,
-                 c.value('@name', 'nvarchar(256)') AS event_type,
-                 c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)') AS database_name,                
-                 c.value('(data[@name="wait_type"]/text)[1]', 'nvarchar(256)') AS wait_type,
-                 c.value('(data[@name="duration"]/value)[1]', 'bigint')  AS duration_ms,
-                 c.value('(data[@name="signal_duration"]/value)[1]', 'bigint') AS signal_duration_ms,
-                 CASE 
-                     WHEN @v = 11 
-                     THEN N'Not Available < 2014' 
-                     ELSE c.value('(data[@name="wait_resource"]/value)[1]', 'nvarchar(256)') 
-                 END AS wait_resource,
-                 CONVERT
-                 (
-                     binary(8), 
-                     c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'bigint')
-                 ) AS query_plan_hash_signed,
-                 CONVERT
-                 (
-                     binary(8), 
-                     c.value('(action[@name="query_hash_signed"]/value)[1]', 'bigint')
-                 ) AS query_hash_signed,
-                 c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)') AS plan_handle
+                         DATEDIFF
+                         (
+                             MINUTE, 
+                             GETUTCDATE(), 
+                             SYSDATETIME()
+                         ), 
+                         c.value('@timestamp', 'datetime2')
+                     ),
+                 event_type = c.value('@name', 'nvarchar(256)'),
+                 database_name = c.value('(action[@name="database_name"]/value)[1]', 'nvarchar(256)'),                
+                 wait_type = c.value('(data[@name="wait_type"]/text)[1]', 'nvarchar(256)'),
+                 duration_ms = c.value('(data[@name="duration"]/value)[1]', 'bigint') ,
+                 signal_duration_ms = c.value('(data[@name="signal_duration"]/value)[1]', 'bigint'),
+                 wait_resource = 
+                     CASE 
+                         WHEN @v = 11 
+                         THEN N'Not Available < 2014' 
+                         ELSE c.value('(data[@name="wait_resource"]/value)[1]', 'nvarchar(256)') 
+                     END,
+                query_plan_hash_signed = 
+                    CONVERT
+                    (
+                        binary(8), 
+                        c.value('(action[@name="query_plan_hash_signed"]/value)[1]', 'bigint')
+                    ),
+                 query_hash_signed = 
+                     CONVERT
+                     (
+                         binary(8), 
+                         c.value('(action[@name="query_hash_signed"]/value)[1]', 'bigint')
+                     ),
+                 plan_handle = c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)')
              FROM 
              (
                  SELECT TOP (2147483647) 
                      xet.human_events_xml
                  FROM #human_events_xml AS xet
-                 WHERE ( xet.human_events_xml.exist('(//event/data[@name="duration"]/value[. > 0])') = 1 
-                 OR        @gimme_danger = 1 )
+                 WHERE (xet.human_events_xml.exist('(//event/data[@name="duration"]/value[. > 0])') = 1 
+                   OR      @gimme_danger = 1)
              ) AS c
              OUTER APPLY c.human_events_xml.nodes('//event') AS oa(c)
              )
@@ -2525,52 +2579,59 @@ BEGIN;
              FROM waits AS w
              OPTION(RECOMPILE);
             
-            IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa OPTION (RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa OPTION(RECOMPILE); END;
 
             SELECT 
-                N'total waits' AS wait_pattern,
-                MIN(wa.event_time) AS min_event_time,
-                MAX(wa.event_time) AS max_event_time,
+                wait_pattern = N'total waits',
+                min_event_time = MIN(wa.event_time),
+                max_event_time = MAX(wa.event_time),
                 wa.wait_type,
-                COUNT_BIG(*) AS total_waits,
-                SUM(wa.duration_ms) AS sum_duration_ms,
-                SUM(wa.signal_duration_ms) AS sum_signal_duration_ms,
-                SUM(wa.duration_ms) / COUNT_BIG(*) AS avg_ms_per_wait
+                total_waits = COUNT_BIG(*),
+                sum_duration_ms = SUM(wa.duration_ms),
+                sum_signal_duration_ms = SUM(wa.signal_duration_ms),
+                avg_ms_per_wait = SUM(wa.duration_ms) / COUNT_BIG(*)
             FROM #waits_agg AS wa
             GROUP BY wa.wait_type
             ORDER BY sum_duration_ms DESC
-            OPTION (RECOMPILE);            
+            OPTION(RECOMPILE);            
 
             SELECT 
-                N'total waits by database' AS wait_pattern,
-                MIN(wa.event_time) AS min_event_time,
-                MAX(wa.event_time) AS max_event_time,
+                wait_pattern = N'total waits by database',
+                min_event_time = MIN(wa.event_time),
+                max_event_time = MAX(wa.event_time),
                 wa.database_name,
                 wa.wait_type,
-                COUNT_BIG(*) AS total_waits,
-                SUM(wa.duration_ms) AS sum_duration_ms,
-                SUM(wa.signal_duration_ms) AS sum_signal_duration_ms,
-                SUM(wa.duration_ms) / COUNT_BIG(*) AS avg_ms_per_wait
+                total_waits = COUNT_BIG(*),
+                sum_duration_ms = SUM(wa.duration_ms),
+                sum_signal_duration_ms = SUM(wa.signal_duration_ms),
+                avg_ms_per_wait = SUM(wa.duration_ms) / COUNT_BIG(*)
             FROM #waits_agg AS wa
             GROUP BY 
                 wa.database_name, 
                 wa.wait_type
             ORDER BY sum_duration_ms DESC
-            OPTION (RECOMPILE); 
+            OPTION(RECOMPILE); 
 
             WITH plan_waits AS 
             (
                 SELECT 
-                    N'total waits by query and database' AS wait_pattern,
-                    MIN(wa.event_time) AS min_event_time,
-                    MAX(wa.event_time) AS max_event_time,
+                    wait_pattern = 
+                        N'total waits by query and database',
+                    min_event_time = 
+                        MIN(wa.event_time),
+                    max_event_time = 
+                        MAX(wa.event_time),
                     wa.database_name,
                     wa.wait_type,
-                    COUNT_BIG(*) AS total_waits,
+                    total_waits = 
+                        COUNT_BIG(*),
                     wa.plan_handle,
-                    SUM(wa.duration_ms) AS sum_duration_ms,
-                    SUM(wa.signal_duration_ms) AS sum_signal_duration_ms,
-                    SUM(wa.duration_ms) / COUNT_BIG(*) AS avg_ms_per_wait
+                    sum_duration_ms = 
+                        SUM(wa.duration_ms),
+                    sum_signal_duration_ms = 
+                        SUM(wa.signal_duration_ms),
+                    avg_ms_per_wait = 
+                        SUM(wa.duration_ms) / COUNT_BIG(*)
                 FROM #waits_agg AS wa
                 GROUP BY 
                     wa.database_name,
@@ -2593,7 +2654,7 @@ BEGIN;
             OUTER APPLY sys.dm_exec_query_plan(pw.plan_handle) AS qp
             OUTER APPLY sys.dm_exec_sql_text(pw.plan_handle) AS st
             ORDER BY pw.sum_duration_ms DESC
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
 END;
 
 
@@ -2601,92 +2662,94 @@ IF LOWER(@event_type) LIKE N'%lock%'
 BEGIN
 
             SELECT 
-                DATEADD
-                (
-                    MINUTE, 
-                    DATEDIFF
+                event_time = 
+                    DATEADD
                     (
                         MINUTE, 
-                        GETUTCDATE(), 
-                        SYSDATETIME()
-                    ), 
-                    c.value('@timestamp', 'datetime2')
-                ) AS event_time,        
-                DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'int')) AS database_name,
-                c.value('(data[@name="database_id"]/value)[1]', 'int') AS database_id,
-                c.value('(data[@name="object_id"]/value)[1]', 'int') AS object_id,
-                c.value('(data[@name="transaction_id"]/value)[1]', 'bigint') AS transaction_id,
-                c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)') AS resource_owner_type,
-                c.value('(//@monitorLoop)[1]', 'int') AS monitor_loop,
-                bd.value('(process/@spid)[1]', 'int') AS spid,
-                bd.value('(process/@ecid)[1]', 'int') AS ecid,
-                bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)') AS query_text,
-                bd.value('(process/@waittime)[1]', 'bigint') AS wait_time,
-                bd.value('(process/@transactionname)[1]', 'nvarchar(256)') AS transaction_name,
-                bd.value('(process/@lasttranstarted)[1]', 'datetime2') AS last_transaction_started,
-                bd.value('(process/@waitresource)[1]', 'nvarchar(100)') AS wait_resource,
-                bd.value('(process/@lockMode)[1]', 'nvarchar(10)') AS lock_mode,
-                bd.value('(process/@status)[1]', 'nvarchar(10)') AS status,
-                bd.value('(process/@priority)[1]', 'int') AS priority,
-                bd.value('(process/@trancount)[1]', 'int') AS transaction_count,
-                bd.value('(process/@clientapp)[1]', 'nvarchar(256)') AS client_app,
-                bd.value('(process/@hostname)[1]', 'nvarchar(256)') AS host_name,
-                bd.value('(process/@loginname)[1]', 'nvarchar(256)') AS login_name,
-                bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)') AS isolation_level,
-                bd.value('(process/executionStack/frame/@sqlhandle)[1]', 'nvarchar(100)') AS sqlhandle,
-                'blocked' AS activity,
-                c.query('.') AS blocked_process_report
+                        DATEDIFF
+                        (
+                            MINUTE, 
+                            GETUTCDATE(), 
+                            SYSDATETIME()
+                        ), 
+                        c.value('@timestamp', 'datetime2')
+                    ),        
+                database_name = DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'int')),
+                database_id = c.value('(data[@name="database_id"]/value)[1]', 'int'),
+                object_id = c.value('(data[@name="object_id"]/value)[1]', 'int'),
+                transaction_id = c.value('(data[@name="transaction_id"]/value)[1]', 'bigint'),
+                resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
+                monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
+                spid = bd.value('(process/@spid)[1]', 'int'),
+                ecid = bd.value('(process/@ecid)[1]', 'int'),
+                query_text = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+                wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
+                transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
+                last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
+                wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+                lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
+                status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
+                priority = bd.value('(process/@priority)[1]', 'int'),
+                transaction_count = bd.value('(process/@trancount)[1]', 'int'),
+                client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
+                host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
+                login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
+                isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
+                sqlhandle = bd.value('(process/executionStack/frame/@sqlhandle)[1]', 'nvarchar(260)'),
+                activity = 'blocked',
+                blocked_process_report = c.query('.')
             INTO #blocked
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa OPTION (RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
 
             SELECT 
-                DATEADD
-                (
-                    MINUTE, 
-                    DATEDIFF
+                event_time = 
+                    DATEADD
                     (
                         MINUTE, 
-                        GETUTCDATE(), 
-                        SYSDATETIME()
-                    ), 
-                    c.value('@timestamp', 'datetime2')
-                ) AS event_time,        
-                DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'int')) AS database_name,
-                c.value('(data[@name="database_id"]/value)[1]', 'int') AS database_id,
-                c.value('(data[@name="object_id"]/value)[1]', 'int') AS object_id,
-                c.value('(data[@name="transaction_id"]/value)[1]', 'bigint') AS transaction_id,
-                c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)') AS resource_owner_type,
-                c.value('(//@monitorLoop)[1]', 'int') AS monitor_loop,
-                bg.value('(process/@spid)[1]', 'int') AS spid,
-                bg.value('(process/@ecid)[1]', 'int') AS ecid,
-                bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)') AS query_text,
-                CONVERT(int, NULL) AS wait_time,
-                CONVERT(nvarchar(256), NULL) AS transaction_name,
-                CONVERT(datetime2, NULL) AS last_transaction_started,
-                CONVERT(nvarchar(100), NULL) AS wait_resource,
-                CONVERT(nvarchar(10), NULL) AS lock_mode,
-                bg.value('(process/@status)[1]', 'nvarchar(10)') AS status,
-                bg.value('(process/@priority)[1]', 'int') AS priority,
-                bg.value('(process/@trancount)[1]', 'int') AS transaction_count,
-                bg.value('(process/@clientapp)[1]', 'nvarchar(256)') AS client_app,
-                bg.value('(process/@hostname)[1]', 'nvarchar(256)') AS host_name,
-                bg.value('(process/@loginname)[1]', 'nvarchar(256)') AS login_name,
-                bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)') AS isolation_level,
-                CONVERT(nvarchar(100), NULL) AS sqlhandle,
-                'blocking' AS activity,
-                c.query('.') AS blocked_process_report
+                        DATEDIFF
+                        (
+                            MINUTE, 
+                            GETUTCDATE(), 
+                            SYSDATETIME()
+                        ), 
+                        c.value('@timestamp', 'datetime2')
+                    ),        
+                database_name = DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'int')),
+                database_id = c.value('(data[@name="database_id"]/value)[1]', 'int'),
+                object_id = c.value('(data[@name="object_id"]/value)[1]', 'int'),
+                transaction_id = c.value('(data[@name="transaction_id"]/value)[1]', 'bigint'),
+                resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
+                monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
+                spid = bg.value('(process/@spid)[1]', 'int'),
+                ecid = bg.value('(process/@ecid)[1]', 'int'),
+                query_text = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+                wait_time = CONVERT(int, NULL),
+                transaction_name = CONVERT(nvarchar(256), NULL),
+                last_transaction_started = CONVERT(datetime2, NULL),
+                wait_resource = CONVERT(nvarchar(100), NULL),
+                lock_mode = CONVERT(nvarchar(10), NULL),
+                status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
+                priority = bg.value('(process/@priority)[1]', 'int'),
+                transaction_count = bg.value('(process/@trancount)[1]', 'int'),
+                client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
+                host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
+                login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
+                isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
+                sqlhandle = CONVERT(nvarchar(260), NULL),
+                activity = 'blocking',
+                blocked_process_report = c.query('.')
             INTO #blocking
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa OPTION (RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
 
 
             SELECT TOP (2147483647)
@@ -2794,7 +2857,7 @@ WHILE 1 = 1
             ON dxs.name = ses.name
         WHERE ses.name LIKE N'keeper_HumanEvents_%'
         AND   dxs.create_time IS NULL
-        OPTION (RECOMPILE);
+        OPTION(RECOMPILE);
     END;
     ELSE
     BEGIN
@@ -2825,7 +2888,7 @@ WHILE 1 = 1
             ON dxs.name = ses.name
         WHERE ses.name LIKE N'keeper_HumanEvents_%'
         AND   dxs.create_time IS NULL
-        OPTION (RECOMPILE);
+        OPTION(RECOMPILE);
     END;
 
     IF LEN(@the_sleeper_must_awaken) > 0
@@ -2876,7 +2939,7 @@ WHILE 1 = 1
                 ON r.name = s.name
             WHERE s.name LIKE N'keeper_HumanEvents_%'
             AND   r.create_time IS NOT NULL
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
         END;
         ELSE
         BEGIN
@@ -2908,7 +2971,7 @@ WHILE 1 = 1
                 ON r.name = s.name
             WHERE s.name LIKE N'keeper_HumanEvents_%'
             AND   r.create_time IS NOT NULL
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
         END;
 
         /*If we're getting compiles, and the parameterization event is available*/
@@ -2948,7 +3011,7 @@ WHILE 1 = 1
                 output_table + N'_parameterization'
             FROM #human_events_worker 
             WHERE event_type LIKE N'keeper_HumanEvents_compiles%'
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
         END;
 
         /*Update this column for when we see if we need to create views.*/
@@ -2972,7 +3035,7 @@ WHILE 1 = 1
         WHERE hew.event_type_short = N''
         OPTION(RECOMPILE);
 
-        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker OPTION (RECOMPILE); END;
+        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker OPTION(RECOMPILE); END;
 
     END;
 
@@ -2994,7 +3057,7 @@ WHILE 1 = 1
                 MAX(hew.id)
         FROM #human_events_worker AS hew
         WHERE hew.is_table_created = 0
-        OPTION (RECOMPILE);
+        OPTION(RECOMPILE);
         
         RAISERROR(N'While, while, while...', 0, 1) WITH NOWAIT;
         WHILE @min_id <= @max_id
@@ -3011,7 +3074,7 @@ WHILE 1 = 1
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
             AND   hew.is_table_created = 0
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
         
             IF OBJECT_ID(@object_name_check) IS NULL
             BEGIN
@@ -3074,7 +3137,7 @@ WHILE 1 = 1
                 SET is_table_created = 1 
             WHERE id = @min_id 
             AND is_table_created = 0 
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
@@ -3130,7 +3193,7 @@ WHILE 1 = 1
             
             /* These binary values are the view definitions. If I didn't do this, I would have been adding >50k lines of code in here. */
             INSERT #view_check (view_name, view_definition)
-            SELECT N'HumanEvents_Blocking', 0x4300520045004100540045002000560049004500570020005B00640062006F005D002E005B00480075006D0061006E004500760065006E00740073005F0042006C006F0063006B0069006E0067005D000D000A00410053000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400370029000D000A00200020002000200020002000200020002000200020006B006800650062002E006500760065006E0074005F00740069006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E00640061007400610062006100730065005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0063006F006E00740065006E00740069006F00750073005F006F0062006A006500630074002C000D000A00200020002000200020002000200020002000200020006B006800650062002E00610063007400690076006900740079002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0073007000690064002C000D000A00200020002000200020002000200020002000200020006B006800650062002E00710075006500720079005F0074006500780074002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0077006100690074005F00740069006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E007300740061007400750073002C000D000A00200020002000200020002000200020002000200020006B006800650062002E00690073006F006C006100740069006F006E005F006C006500760065006C002C000D000A00200020002000200020002000200020002000200020006B006800650062002E006C006100730074005F007400720061006E00730061006300740069006F006E005F0073007400610072007400650064002C000D000A00200020002000200020002000200020002000200020006B006800650062002E007400720061006E00730061006300740069006F006E005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E006C006F0063006B005F006D006F00640065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E007000720069006F0072006900740079002C000D000A00200020002000200020002000200020002000200020006B006800650062002E007400720061006E00730061006300740069006F006E005F0063006F0075006E0074002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0063006C00690065006E0074005F006100700070002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0068006F00730074005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E006C006F00670069006E005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0062006C006F0063006B00650064005F00700072006F0063006500730073005F007200650070006F00720074000D000A00460052004F004D002000640062006F002E006B00650065007000650072005F00480075006D0061006E004500760065006E00740073005F0062006C006F0063006B0069006E00670020004100530020006B006800650062000D000A004F00520044004500520020004200590020006B006800650062002E006500760065006E0074005F00740069006D0065002C000D000A00200020002000200020002000200020002000430041005300450020005700480045004E0020006B006800650062002E006100630074006900760069007400790020003D002000270062006C006F0063006B0069006E006700270020005400480045004E00200031000D000A002000200020002000200020002000200020002000200020002000200045004C0053004500200039003900390020000D000A0020002000200020002000200020002000200045004E0044000D000A00200020002000200020002000200020002000;
+            SELECT N'HumanEvents_Blocking', 0x4300520045004100540045002000560049004500570020005B00640062006F005D002E005B00480075006D0061006E004500760065006E00740073005F0042006C006F0063006B0069006E0067005D000D000A00410053000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400370029000D000A00200020002000200020002000200020002000200020006B006800650062002E006500760065006E0074005F00740069006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E00640061007400610062006100730065005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0063006F006E00740065006E00740069006F00750073005F006F0062006A006500630074002C000D000A00200020002000200020002000200020002000200020006B006800650062002E00610063007400690076006900740079002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0073007000690064002C000D000A00200020002000200020002000200020002000200020006B006800650062002E00710075006500720079005F0074006500780074002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0077006100690074005F00740069006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E007300740061007400750073002C000D000A00200020002000200020002000200020002000200020006B006800650062002E00690073006F006C006100740069006F006E005F006C006500760065006C002C000D000A00200020002000200020002000200020002000200020006B006800650062002E006C006100730074005F007400720061006E00730061006300740069006F006E005F0073007400610072007400650064002C000D000A00200020002000200020002000200020002000200020006B006800650062002E007400720061006E00730061006300740069006F006E005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E006C006F0063006B005F006D006F00640065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E007000720069006F0072006900740079002C000D000A00200020002000200020002000200020002000200020006B006800650062002E007400720061006E00730061006300740069006F006E005F0063006F0075006E0074002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0063006C00690065006E0074005F006100700070002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0068006F00730074005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E006C006F00670069006E005F006E0061006D0065002C000D000A00200020002000200020002000200020002000200020006B006800650062002E0062006C006F0063006B00650064005F00700072006F0063006500730073005F007200650070006F00720074000D000A00460052004F004D0020005B007200650070006C006100630065005F006D0065005D0020004100530020006B006800650062000D000A004F00520044004500520020004200590020006B006800650062002E006500760065006E0074005F00740069006D0065002C000D000A00200020002000200020002000200020002000430041005300450020005700480045004E0020006B006800650062002E006100630074006900760069007400790020003D002000270062006C006F0063006B0069006E006700270020005400480045004E00200031000D000A002000200020002000200020002000200020002000200020002000200045004C0053004500200039003900390020000D000A0020002000200020002000200020002000200045004E0044003B00;
             INSERT #view_check (view_name, view_definition)
             SELECT N'HumanEvents_CompilesByDatabaseAndObject', 0x0D000A000D000A00430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F0043006F006D00700069006C0065007300420079004400610074006100620061007300650041006E0064004F0062006A006500630074000D000A00410053000D000A002000200020002000530045004C00450043005400200054004F005000280020003200310034003700340038003300360034003800200029000D000A00200020002000200020002000200020002000200020004D0049004E0028006500760065006E0074005F00740069006D006500290020004100530020006D0069006E005F006500760065006E0074005F00740069006D0065002C000D000A00200020002000200020002000200020002000200020004D004100580028006500760065006E0074005F00740069006D006500290020004100530020006D00610078005F006500760065006E0074005F00740069006D0065002C000D000A0020002000200020002000200020002000200020002000640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020002000200020002000200020002000430041005300450020005700480045004E0020006F0062006A006500630074005F006E0061006D00650020003D0020004E00270027000D000A0020002000200020002000200020002000200020002000200020002000200020005400480045004E0020004E0027004E002F00410027000D000A0020002000200020002000200020002000200020002000200020002000200045004C005300450020006F0062006A006500630074005F006E0061006D0065000D000A002000200020002000200020002000200020002000200045004E00440020004100530020006F0062006A006500630074005F006E0061006D0065002C000D000A002000200020002000200020002000200020002000200043004F0055004E0054005F0042004900470028002A002900200041005300200074006F00740061006C005F0063006F006D00700069006C00650073002C000D000A0020002000200020002000200020002000200020002000530055004D00280063006F006D00700069006C0065005F006300700075005F006D0073002900200041005300200074006F00740061006C005F0063006F006D00700069006C0065005F006300700075002C000D000A0020002000200020002000200020002000200020002000410056004700280063006F006D00700069006C0065005F006300700075005F006D007300290020004100530020006100760067005F0063006F006D00700069006C0065005F006300700075002C000D000A00200020002000200020002000200020002000200020004D0041005800280063006F006D00700069006C0065005F006300700075005F006D007300290020004100530020006D00610078005F0063006F006D00700069006C0065005F006300700075002C000D000A0020002000200020002000200020002000200020002000530055004D00280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D0073002900200041005300200074006F00740061006C005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A0020002000200020002000200020002000200020002000410056004700280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D007300290020004100530020006100760067005F0063006F006D00700069006C0065005F006400750072006100740069006F006E002C000D000A00200020002000200020002000200020002000200020004D0041005800280063006F006D00700069006C0065005F006400750072006100740069006F006E005F006D007300290020004100530020006D00610078005F0063006F006D00700069006C0065005F006400750072006100740069006F006E000D000A002000200020002000460052004F004D0020005B007200650070006C006100630065005F006D0065005D000D000A002000200020002000470052004F00550050002000420059002000640061007400610062006100730065005F006E0061006D0065002C0020006F0062006A006500630074005F006E0061006D0065000D000A0020002000200020004F005200440045005200200042005900200074006F00740061006C005F0063006F006D00700069006C0065007300200044004500530043003B000D000A00
             WHERE @compile_events = 1;
@@ -3260,7 +3323,8 @@ WHILE 1 = 1
                             )
                     FROM #view_check AS vc
                     WHERE vc.id = @min_id
-                    AND   vc.output_table <> N'';
+                    AND   vc.output_table <> N''
+                    OPTION(RECOMPILE);
                 
                     IF OBJECT_ID(@object_name_check) IS NOT NULL
                     BEGIN
@@ -3281,9 +3345,9 @@ WHILE 1 = 1
             
                     IF @debug = 1
                     BEGIN 
-                        PRINT SUBSTRING(@view_sql, 0, 4000);
-                        PRINT SUBSTRING(@view_sql, 4000, 8000);
-                        PRINT SUBSTRING(@view_sql, 8000, 12000);
+                        PRINT SUBSTRING(@view_sql, 0,     4000);
+                        PRINT SUBSTRING(@view_sql, 4000,  8000);
+                        PRINT SUBSTRING(@view_sql, 8000,  12000);
                         PRINT SUBSTRING(@view_sql, 12000, 16000);
                         PRINT SUBSTRING(@view_sql, 16000, 20000);
                         PRINT SUBSTRING(@view_sql, 20000, 24000);
@@ -3322,6 +3386,7 @@ WHILE 1 = 1
                     SET 
                         is_view_created = 1 
                 OPTION(RECOMPILE);
+                
                 SET @view_tracker = 1;        
         END;
     END;
@@ -3344,7 +3409,7 @@ WHILE 1 = 1
             @max_id = MAX(hew.id)
         FROM #human_events_worker AS hew
         WHERE hew.is_table_created = 1
-        OPTION (RECOMPILE);
+        OPTION(RECOMPILE);
 
         WHILE @min_id <= @max_id
         BEGIN
@@ -3372,7 +3437,8 @@ WHILE 1 = 1
                     )
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
-            AND hew.is_table_created = 1;
+            AND   hew.is_table_created = 1
+            OPTION(RECOMPILE);
         
             IF OBJECT_ID(@object_name_check) IS NOT NULL
             BEGIN
@@ -3493,7 +3559,7 @@ FROM
             CONVERT
             (
                 varbinary(64), 
-                bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(100)'')
+                bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)'')
             ) AS sqlhandle,
             c.query(''.'') AS process_report
         FROM #human_events_xml_internal AS xet
@@ -3561,7 +3627,7 @@ WHERE NOT EXISTS
     AND   x.loginname = x2.login_name
 )
 AND x.x = 1
-OPTION (RECOMPILE);
+OPTION(RECOMPILE);
 
 UPDATE x2
     SET 
@@ -3595,7 +3661,7 @@ JOIN
     AND   x.clientapp = x2.client_app
     AND   x.hostname = x2.host_name
     AND   x.loginname = x2.login_name
-OPTION (RECOMPILE);
+OPTION(RECOMPILE);
 '
                        WHEN @event_type_check LIKE N'%quer%' /*Queries!*/
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 + 
@@ -3693,7 +3759,7 @@ AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 0 '
         END + N'
 AND c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY event_time
-OPTION (RECOMPILE);'
+OPTION(RECOMPILE);'
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%' /*Compiles!*/
                        THEN N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + @nc10 + 
                             N'( server_name, event_time,  event_type,  ' + @nc10 +
@@ -3735,7 +3801,7 @@ AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 1 '
 AND   c.exist(''@name[.= "sql_statement_post_compile"]'') = 1
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY event_time
-OPTION (RECOMPILE);' + @nc10
+OPTION(RECOMPILE);' + @nc10
                             + CASE WHEN @parameterization_events = 1 /*The query_parameterization_data XE is only 2017+*/
                                    THEN 
                             @nc10 + 
@@ -3778,7 +3844,7 @@ WHERE c.exist(''@name[.= "query_parameterization_data"]'') = 1
 AND   c.exist(''(data[@name="is_recompiled"]/value[. = "false"])'') = 1
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY event_time
-OPTION (RECOMPILE);'
+OPTION(RECOMPILE);'
                                    ELSE N'' 
                               END  
                        ELSE N''
@@ -3789,7 +3855,11 @@ OPTION (RECOMPILE);'
             BEGIN
                 SELECT 
                     @x = 
-                        CONVERT(xml, t.target_data)
+                        CONVERT
+                        (
+                            xml, 
+                            t.target_data
+                        )
                 FROM   sys.dm_xe_session_targets AS t
                 JOIN   sys.dm_xe_sessions AS s
                     ON s.address = t.event_session_address
@@ -3800,7 +3870,11 @@ OPTION (RECOMPILE);'
             BEGIN
                 SELECT 
                     @x = 
-                        CONVERT(xml, t.target_data)
+                        CONVERT
+                        (
+                            xml, 
+                            t.target_data
+                        )
                 FROM   sys.dm_xe_database_session_targets AS t
                 JOIN   sys.dm_xe_database_sessions AS s
                     ON s.address = t.event_session_address
@@ -3814,10 +3888,11 @@ OPTION (RECOMPILE);'
                 human_events_xml
             )            
             SELECT 
-                e.x.query('.') AS human_events_xml
+                human_events_xml = 
+                    e.x.query('.')
             FROM @x.nodes('/RingBufferTarget/event') AS e(x)
             WHERE e.x.exist('@timestamp[. > sql:variable("@date_filter")]') = 1
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
             
             IF @debug = 1
             BEGIN 
@@ -3852,10 +3927,10 @@ OPTION (RECOMPILE);'
                         END 
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
-            OPTION (RECOMPILE);
+            OPTION(RECOMPILE);
             
-            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew OPTION (RECOMPILE); END;
-            IF @debug = 1 BEGIN SELECT N'#human_events_xml_internal' AS table_name, * FROM #human_events_xml_internal AS hew OPTION (RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#human_events_xml_internal' AS table_name, * FROM #human_events_xml_internal AS hew OPTION(RECOMPILE); END;
 
             /*Clear the table out between runs*/
             TRUNCATE TABLE #human_events_xml_internal;
@@ -3915,9 +3990,9 @@ BEGIN
                                           (-1 * @delete_retention_days
                                       ), 
                                       SYSDATETIME())
-                OPTION (RECOMPILE); ' + @nc10
+                OPTION(RECOMPILE); ' + @nc10
         FROM #human_events_worker AS hew
-        OPTION (RECOMPILE);
+        OPTION(RECOMPILE);
         
         IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;
         
@@ -3954,7 +4029,8 @@ BEGIN
     FROM sys.server_event_sessions AS ses  
     LEFT JOIN sys.dm_xe_sessions AS dxs  
         ON dxs.name = ses.name  
-    WHERE ses.name LIKE N'%HumanEvents_%';  
+    WHERE ses.name LIKE N'%HumanEvents_%'
+    OPTION(RECOMPILE);  
         
     EXEC sys.sp_executesql 
         @cleanup_sessions;  
@@ -3976,7 +4052,8 @@ BEGIN
                     ''; '' + 
                     NCHAR(10)
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
-            WHERE s.name LIKE ''' + '%HumanEvents%' + N''';';
+            WHERE s.name LIKE ''' + '%HumanEvents%' + N'''
+            OPTION(RECOMPILE);';
     
     EXEC sys.sp_executesql 
         @cleanup_tables, 
@@ -4007,7 +4084,8 @@ BEGIN
                     ''; '' + 
                     NCHAR(10)
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
-            WHERE v.name LIKE ''' + '%HumanEvents%' + N''';';
+            WHERE v.name LIKE ''' + '%HumanEvents%' + N'''
+            OPTION(RECOMPILE);';
     
     EXEC sys.sp_executesql 
         @cleanup_views, 
@@ -4036,8 +4114,8 @@ BEGIN CATCH
         ROLLBACK TRANSACTION;
               
         /*Only try to drop a session if we're not outputting*/
-        IF ( @output_database_name = N''
-              AND @output_schema_name = N'' )
+        IF (@output_database_name = N''
+              AND @output_schema_name = N'')
         BEGIN
             IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
             RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
