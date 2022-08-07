@@ -11,18 +11,18 @@ DROP TABLE IF EXISTS
 CREATE TABLE 
     dbo.logger
 (
-  run_hash uniqueidentifier,
-  run_date datetime,
-  user_name sysname,
-  cpu_time_ms decimal(18,2),
-  total_elapsed_time_ms decimal(18,2),
-  physical_reads_mb decimal(18,2),
-  logical_reads_mb decimal(18,2),
-  writes_mb decimal(18,2),
-  statement_text nvarchar(MAX),
-  execution_text nvarchar(MAX),
-  query_plan xml,
-  is_final bit DEFAULT 0,
+    run_hash uniqueidentifier,
+    run_date datetime,
+    user_name sysname,
+    cpu_time_ms decimal(18,2),
+    total_elapsed_time_ms decimal(18,2),
+    physical_reads_mb decimal(18,2),
+    logical_reads_mb decimal(18,2),
+    writes_mb decimal(18,2),
+    statement_text nvarchar(MAX),
+    execution_text nvarchar(MAX),
+    query_plan xml,
+    is_final bit DEFAULT 0,
   CONSTRAINT loggerino PRIMARY KEY (run_hash) 
 );
 GO 
