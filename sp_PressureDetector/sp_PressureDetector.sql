@@ -100,6 +100,7 @@ BEGIN
                 WHEN '@version' THEN 'OUTPUT; for support'
                 WHEN '@version_date' THEN 'OUTPUT; for support'
                 WHEN '@help' THEN 'how you got here'
+				WHEN '@debug' THEN 'prints dynamic sql'
             END,
         valid_inputs =
             CASE
@@ -109,6 +110,7 @@ BEGIN
                 WHEN '@version' THEN 'none'
                 WHEN '@version_date' THEN 'none'
                 WHEN '@help' THEN '0 or 1'
+				WHEN '@debug' THEN '0 or 1'
             END,
         defaults =
             CASE
@@ -118,6 +120,7 @@ BEGIN
                 WHEN '@version' THEN 'none; OUTPUT'
                 WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0'
+				WHEN '@debug' THEN '0'
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o
