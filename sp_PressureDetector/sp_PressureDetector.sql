@@ -31,13 +31,17 @@ For usage and licensing details, run:
 EXEC sp_PressureDetector
     @help = 1;
 
+For working through errors:
+EXEC sp_PressureDetector
+    @debug = 1;
+
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData                                                                   
 
 */
 
 
-IF OBJECT_ID('dbo.sp_PressureDetector') IS  NULL
+IF OBJECT_ID('dbo.sp_PressureDetector') IS NULL
     EXEC ('CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
 GO
 
@@ -96,6 +100,7 @@ BEGIN
                 WHEN '@version' THEN 'OUTPUT; for support'
                 WHEN '@version_date' THEN 'OUTPUT; for support'
                 WHEN '@help' THEN 'how you got here'
+				WHEN '@debug' THEN 'prints dynamic sql'
             END,
         valid_inputs =
             CASE
@@ -105,6 +110,7 @@ BEGIN
                 WHEN '@version' THEN 'none'
                 WHEN '@version_date' THEN 'none'
                 WHEN '@help' THEN '0 or 1'
+				WHEN '@debug' THEN '0 or 1'
             END,
         defaults =
             CASE
@@ -114,6 +120,7 @@ BEGIN
                 WHEN '@version' THEN 'none; OUTPUT'
                 WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0'
+				WHEN '@debug' THEN '0'
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o

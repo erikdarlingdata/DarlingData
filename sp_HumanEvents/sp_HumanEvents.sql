@@ -21,9 +21,24 @@ GO
 ██╔══╝  ╚██╗ ██╔╝██╔══╝  ██║╚██╗██║   ██║   ╚════██║
 ███████╗ ╚████╔╝ ███████╗██║ ╚████║   ██║   ███████║
 ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝
+
+Copyright 2022 Darling Data, LLC
+https://www.erikdarlingdata.com/
+
+For usage and licensing details, run:
+EXEC sp_HumanEvents
+    @help = 1;
+
+For working through errors:
+EXEC sp_HumanEvents
+    @debug = 1;
+
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData    
+
 */
 
-IF OBJECT_ID('dbo.sp_HumanEvents') IS  NULL
+IF OBJECT_ID('dbo.sp_HumanEvents') IS NULL
    BEGIN
        EXEC ('CREATE PROCEDURE dbo.sp_HumanEvents AS RETURN 138;');
    END;
@@ -1867,8 +1882,8 @@ END;
 SELECT 
     human_events_xml = 
         e.x.query('.')
-INTO   #human_events_xml
-FROM   @x.nodes('/RingBufferTarget/event') AS e(x)
+INTO #human_events_xml
+FROM @x.nodes('/RingBufferTarget/event') AS e(x)
 OPTION(RECOMPILE);
 
 
