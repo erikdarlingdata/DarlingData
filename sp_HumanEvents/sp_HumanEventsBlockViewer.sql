@@ -361,7 +361,7 @@ END;
                     bg.*, 
                     OBJECT_NAME
                     (
-                        object_id, 
+                        bg.object_id, 
                         bg.database_id
                     ) AS contentious_object 
                     FROM #blocking AS bg
@@ -372,7 +372,7 @@ END;
                     bd.*, 
                     OBJECT_NAME
                     (
-                        object_id, 
+                        bd.object_id, 
                         bd.database_id
                     ) AS contentious_object 
                 FROM #blocked AS bd
