@@ -84,8 +84,9 @@ BEGIN
     SELECT
         introduction = 
 		    'hi, i''m sp_HumanEventsBlockViewer!' UNION ALL
-	SELECT  'you can use me in conjunction with sp_HumanEvents to quickly parse a blocking event session' UNION ALL
+	SELECT  'you can use me in conjunction with sp_HumanEvents to quickly parse the sqlserver.blocked_process_report event' UNION ALL
 	SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
+	SELECT  'it will also work with another extended event session using the ring buffer as a target to capture blocking' UNION ALL
 	SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
 	SELECT  'from your loving sql server consultant, erik darling: erikdarlingdata.com';
 
@@ -166,7 +167,7 @@ DECLARE
         END,
     @x xml = NULL;
 
-/*Look to see if the session exists*/
+/*Look to see if the session exists and is running*/
 IF @azure = 0
 BEGIN
     IF NOT EXISTS
@@ -177,9 +178,10 @@ BEGIN
         LEFT JOIN sys.dm_xe_sessions AS dxs 
             ON dxs.name = ses.name
         WHERE ses.name = @session_name
+		AND   dxs.create_time IS NOT NULL
     )
     BEGIN
-        RAISERROR('A session with the name %s does not exist.', 0, 1, @session_name) WITH NOWAIT;
+        RAISERROR('A session with the name %s does not exist or is not currently active.', 0, 1, @session_name) WITH NOWAIT;
         RETURN;
     END;
 END;
@@ -193,9 +195,10 @@ BEGIN
         LEFT JOIN sys.dm_xe_database_sessions AS dxs 
             ON dxs.name = ses.name
         WHERE ses.name = @session_name
+		AND   dxs.create_time IS NOT NULL
     )
     BEGIN
-        RAISERROR('A session with the name %s does not exist.', 0, 1, @session_name) WITH NOWAIT;
+        RAISERROR('A session with the name %s does not exist or is not currently active.', 0, 1, @session_name) WITH NOWAIT;
         RETURN;
     END;
 END;
@@ -233,15 +236,14 @@ BEGIN
 END;
 
 SELECT 
-    human_events_xml = 
-        e.x.query('.')
-INTO   #blocking_xml
-FROM   @x.nodes('/RingBufferTarget/event') AS e(x)
+    human_events_xml = e.x.query('.')
+INTO #blocking_xml
+FROM @x.nodes('/RingBufferTarget/event') AS e(x)
 OPTION(RECOMPILE);
 
 IF @debug = 1
 BEGIN
-    SELECT table_name = N'#human_events_xml', bx.* FROM #blocking_xml AS bx;
+    SELECT table_name = N'#blocking_xml', bx.* FROM #blocking_xml AS bx;
 END;
 
             SELECT 
@@ -278,7 +280,6 @@ END;
                 host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
                 login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
                 isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-                sqlhandle = bd.value('(process/executionStack/frame/@sqlhandle)[1]', 'nvarchar(260)'),
                 activity = 'blocked',
                 blocked_process_report = c.query('.')
             INTO #blocked
@@ -287,7 +288,7 @@ END;
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
             OPTION(RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
 
             SELECT 
                 event_time = 
@@ -323,7 +324,6 @@ END;
                 host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
                 login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
                 isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-                sqlhandle = CONVERT(nvarchar(260), NULL),
                 activity = 'blocking',
                 blocked_process_report = c.query('.')
             INTO #blocking
@@ -332,14 +332,16 @@ END;
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
             OPTION(RECOMPILE);
 
-            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
 
             SELECT TOP (2147483647)
                 kheb.event_time,
                 kheb.database_name,
                 kheb.contentious_object,
                 kheb.activity,
+				kheb.monitor_loop,
                 kheb.spid,
+				kheb.ecid,
                 kheb.query_text,
                 kheb.wait_time,
                 kheb.status,
