@@ -193,10 +193,8 @@ OPTION(MAXDOP 1, RECOMPILE);
             ',
         @cpu_details nvarchar(MAX) = N'',
         @cpu_details_output xml = N'',
-        @cpu_details_columns nvarchar(MAX) = 
-            N'',
-        @cpu_details_select nvarchar(MAX) = 
-N'
+        @cpu_details_columns nvarchar(MAX) = N'',
+        @cpu_details_select nvarchar(MAX) = N'
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; 
 
 SELECT 
@@ -206,8 +204,7 @@ SELECT
                 offline_cpus = 
                     (SELECT COUNT_BIG(*) FROM sys.dm_os_schedulers dos WHERE dos.is_online = 0), 
 ',
-        @cpu_details_from nvarchar(MAX) = 
-            N' 
+        @cpu_details_from nvarchar(MAX) = N' 
             FROM sys.dm_os_sys_info AS osi 
             FOR XML 
                 PATH(''cpu_details''), 
@@ -314,6 +311,8 @@ OPTION(MAXDOP 1, RECOMPILE);';
                     THEN N'Query scheduling'
                     WHEN N'THREADPOOL' 
                     THEN N'Worker thread exhaustion'
+					WHEN N'CMEMTHREAD' 
+					THEN N'Tasks waiting on memory objects'
                 END,
             hours_wait_time = 
                 CONVERT
@@ -384,6 +383,7 @@ OPTION(MAXDOP 1, RECOMPILE);';
                   /*Memory*/
                   N'RESOURCE_SEMAPHORE', --Queries waiting to get memory to run
                   N'RESOURCE_SEMAPHORE_QUERY_COMPILE', --Queries waiting to get memory to compile
+				  N'CMEMTHREAD', --Tasks waiting on memory objects
                   /*Parallelism*/
                   N'CXPACKET', --Parallelism
                   N'CXCONSUMER', --Parallelism
@@ -393,7 +393,8 @@ OPTION(MAXDOP 1, RECOMPILE);';
                   N'SOS_SCHEDULER_YIELD', --Query scheduling
                   N'THREADPOOL' --Worker thread exhaustion
               )
-        ORDER BY dows.wait_time_ms DESC
+        ORDER BY 
+		    dows.wait_time_ms DESC
         OPTION(MAXDOP 1, RECOMPILE);
 
     /*Memory Grant info*/
@@ -697,7 +698,7 @@ OPTION(MAXDOP 1, RECOMPILE);';
                         WHEN ac.name = N'socket_count'
                         THEN N'                osi.socket_count, ' + NCHAR(10)
                         WHEN ac.name = N'numa_node_count'
-                        THEN N'                osi.socket_count, ' + NCHAR(10)
+                        THEN N'                osi.numa_node_count, ' + NCHAR(10)
                         WHEN ac.name = N'cpu_count'
                         THEN N'                osi.cpu_count, ' + NCHAR(10)
                         WHEN ac.name = N'cores_per_socket'
