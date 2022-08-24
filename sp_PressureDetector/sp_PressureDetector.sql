@@ -275,6 +275,126 @@ OPTION(MAXDOP 1, RECOMPILE);';
         END;
     END;
 
+        /*
+        Look at wait stats related to CPU memory, disk, and query performance
+        */
+        SELECT
+            hours_uptime =
+                (
+                    SELECT 
+                        DATEDIFF
+                        (
+                            HOUR, 
+                            osi.sqlserver_start_time, 
+                            SYSDATETIME()
+                        )
+                    FROM sys.dm_os_sys_info AS osi
+                ),
+            dows.wait_type,
+            description = 
+                CASE 
+                    dows.wait_type
+                    WHEN N'PAGEIOLATCH_SH' 
+                    THEN N'Selects reading pages from disk into memory'
+                    WHEN N'PAGEIOLATCH_EX'
+                    THEN N'Modifications reading pages from disk into memory'
+                    WHEN N'RESOURCE_SEMAPHORE' 
+                    THEN N'Queries waiting to get memory to run'
+                    WHEN N'RESOURCE_SEMAPHORE_QUERY_COMPILE' 
+                    THEN N'Queries waiting to get memory to compile'
+                    WHEN N'CXPACKET' 
+                    THEN N'Parallelism'
+                    WHEN N'CXCONSUMER' 
+                    THEN N'Parallelism'
+                    WHEN N'CXSYNC_PORT' 
+                    THEN N'Parallelism'
+                    WHEN N'CXSYNC_CONSUMER' 
+                    THEN N'Parallelism'
+                    WHEN N'SOS_SCHEDULER_YIELD' 
+                    THEN N'Query scheduling'
+                    WHEN N'THREADPOOL' 
+                    THEN N'Worker thread exhaustion'
+                END,
+            hours_wait_time = 
+                CONVERT
+                (
+                    numeric(38, 9), 
+                    dows.wait_time_ms / 
+                        (1000. * 60. * 60.)
+                ),
+            hours_signal_wait_time = 
+                CONVERT
+                (
+                    numeric(38, 9), 
+                    dows.signal_wait_time_ms / 
+                        (1000. * 60. * 60.)
+                ),
+            waiting_tasks_count = 
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30), 
+                        CONVERT
+                        (
+                            money,
+                            dows.waiting_tasks_count
+                        ), 
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            avg_ms_per_wait = 
+                ISNULL
+                (
+                   CONVERT
+                   (
+                       numeric(38, 9), 
+                       dows.wait_time_ms / 
+                           NULLIF
+                           (
+                               1. * 
+                               dows.waiting_tasks_count, 0.
+                           )
+                    ), 
+                    0.
+                ),
+            avg_signal_ms_per_wait = 
+                ISNULL
+                (
+                   CONVERT
+                   (
+                       numeric(38, 9), 
+                       dows.signal_wait_time_ms / 
+                           NULLIF
+                           (
+                               1. * 
+                               dows.waiting_tasks_count, 0.
+                           )
+                    ), 
+                    0.
+                )
+        FROM sys.dm_os_wait_stats AS dows
+        WHERE dows.wait_type IN 
+              (
+                  /*Disk*/
+                  N'PAGEIOLATCH_SH', --Selects reading pages from disk into memory
+                  N'PAGEIOLATCH_EX', --Modifications reading pages from disk into memory
+                  /*Memory*/
+                  N'RESOURCE_SEMAPHORE', --Queries waiting to get memory to run
+                  N'RESOURCE_SEMAPHORE_QUERY_COMPILE', --Queries waiting to get memory to compile
+                  /*Parallelism*/
+                  N'CXPACKET', --Parallelism
+                  N'CXCONSUMER', --Parallelism
+                  N'CXSYNC_PORT', --Parallelism
+                  N'CXSYNC_CONSUMER', --Parallelism
+                  /*CPU*/
+                  N'SOS_SCHEDULER_YIELD', --Query scheduling
+                  N'THREADPOOL' --Worker thread exhaustion
+              )
+        ORDER BY dows.wait_time_ms DESC
+        OPTION(MAXDOP 1, RECOMPILE);
 
     /*Memory Grant info*/
     IF @what_to_check IN (N'both', N'memory')
@@ -405,127 +525,6 @@ OPTION(MAXDOP 1, RECOMPILE);';
 
         EXEC sys.sp_executesql
             @pool_sql;
-
-        /*
-        Look at wait stats related to memory, disk, and query performance
-        */
-        SELECT
-            hours_uptime =
-                (
-                    SELECT 
-                        DATEDIFF
-                        (
-                            HOUR, 
-                            osi.sqlserver_start_time, 
-                            SYSDATETIME()
-                        )
-                    FROM sys.dm_os_sys_info AS osi
-                ),
-            dows.wait_type,
-            description = 
-                CASE 
-                    dows.wait_type
-                    WHEN N'PAGEIOLATCH_SH' 
-                    THEN N'Selects reading pages from disk into memory'
-                    WHEN N'PAGEIOLATCH_EX'
-                    THEN N'Modifications reading pages from disk into memory'
-                    WHEN N'RESOURCE_SEMAPHORE' 
-                    THEN N'Queries waiting to get memory to run'
-                    WHEN N'RESOURCE_SEMAPHORE_QUERY_COMPILE' 
-                    THEN N'Queries waiting to get memory to compile'
-                    WHEN N'CXPACKET' 
-                    THEN N'Parallelism'
-                    WHEN N'CXCONSUMER' 
-                    THEN N'Parallelism'
-                    WHEN N'CXSYNC_PORT' 
-                    THEN N'Parallelism'
-                    WHEN N'CXSYNC_CONSUMER' 
-                    THEN N'Parallelism'
-                    WHEN N'SOS_SCHEDULER_YIELD' 
-                    THEN N'Query scheduling'
-                    WHEN N'THREADPOOL' 
-                    THEN N'Worker thread exhaustion'
-                END,
-            hours_wait_time = 
-                CONVERT
-                (
-                    numeric(38, 9), 
-                    dows.wait_time_ms / 
-                        (1000. * 60. * 60.)
-                ),
-            hours_signal_wait_time = 
-                CONVERT
-                (
-                    numeric(38, 9), 
-                    dows.signal_wait_time_ms / 
-                        (1000. * 60. * 60.)
-                ),
-            waiting_tasks_count = 
-                REPLACE
-                (
-                    CONVERT
-                    (
-                        nvarchar(30), 
-                        CONVERT
-                        (
-                            money,
-                            dows.waiting_tasks_count
-                        ), 
-                        1
-                    ),
-                N'.00',
-                N''
-                ),
-            avg_ms_per_wait = 
-                ISNULL
-                (
-                   CONVERT
-                   (
-                       numeric(38, 9), 
-                       dows.wait_time_ms / 
-                           NULLIF
-                           (
-                               1. * 
-                               dows.waiting_tasks_count, 0.
-                           )
-                    ), 
-                    0.
-                ),
-            avg_signal_ms_per_wait = 
-                ISNULL
-                (
-                   CONVERT
-                   (
-                       numeric(38, 9), 
-                       dows.signal_wait_time_ms / 
-                           NULLIF
-                           (
-                               1. * 
-                               dows.waiting_tasks_count, 0.
-                           )
-                    ), 
-                    0.
-                )
-        FROM sys.dm_os_wait_stats AS dows
-        WHERE dows.wait_type IN 
-              (
-                  /*Disk*/
-                  N'PAGEIOLATCH_SH', --Selects reading pages from disk into memory
-                  N'PAGEIOLATCH_EX', --Modifications reading pages from disk into memory
-                  /*Memory*/
-                  N'RESOURCE_SEMAPHORE', --Queries waiting to get memory to run
-                  N'RESOURCE_SEMAPHORE_QUERY_COMPILE', --Queries waiting to get memory to compile
-                  /*Parallelism*/
-                  N'CXPACKET', --Parallelism
-                  N'CXCONSUMER', --Parallelism
-                  N'CXSYNC_PORT', --Parallelism
-                  N'CXSYNC_CONSUMER', --Parallelism
-                  /*CPU*/
-                  N'SOS_SCHEDULER_YIELD', --Query scheduling
-                  N'THREADPOOL' --Worker thread exhaustion
-              )
-        ORDER BY dows.wait_time_ms DESC
-        OPTION(MAXDOP 1, RECOMPILE);
 
         /*
         Track down queries currently asking for memory grants
