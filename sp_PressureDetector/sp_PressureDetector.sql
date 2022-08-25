@@ -621,10 +621,10 @@ OPTION(MAXDOP 1, RECOMPILE);';
             deqmg.queue_id,
             deqmg.wait_order,
             deqmg.is_next_candidate,
-            wait_time_s = 
+            wait_time_seconds = 
                 (deqmg.wait_time_ms / 1000.),
             waits.wait_type,
-            wait_duration_s = 
+            wait_duration_seconds = 
                 (waits.wait_duration_ms / 1000.),
             deqmg.dop,'
             + CASE 
@@ -663,10 +663,10 @@ OPTION(MAXDOP 1, RECOMPILE);';
             total_physical_memory_mb = 
                 (
                     SELECT 
-                            CEILING(dosm.total_physical_memory_kb / 1024.)
+                        CEILING(dosm.total_physical_memory_kb / 1024.)
                     FROM sys.dm_os_sys_memory AS dosm
                 ),
-            max_server_memory = 
+            max_server_memory_mb = 
                 (
                     SELECT 
                         CONVERT
@@ -913,9 +913,9 @@ OPTION(MAXDOP 1, RECOMPILE);';
             der.status,
             der.blocking_session_id,
             der.wait_type,
-            der.wait_time,
+            der.wait_time_ms,
             der.wait_resource,
-            der.cpu_time,
+            der.cpu_time_ms,
             der.total_elapsed_time,
             der.reads,
             der.writes,
