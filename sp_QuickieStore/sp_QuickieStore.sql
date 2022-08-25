@@ -25,7 +25,7 @@ GO
 ███████║   ██║   ╚██████╔╝██║  ██║███████╗██╗
 ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝
 
-Copyright 2021 Darling Data, LLC
+Copyright 2022 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
