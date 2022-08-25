@@ -100,7 +100,7 @@ BEGIN
                 WHEN '@version' THEN 'OUTPUT; for support'
                 WHEN '@version_date' THEN 'OUTPUT; for support'
                 WHEN '@help' THEN 'how you got here'
-				WHEN '@debug' THEN 'prints dynamic sql'
+                WHEN '@debug' THEN 'prints dynamic sql'
             END,
         valid_inputs =
             CASE
@@ -110,7 +110,7 @@ BEGIN
                 WHEN '@version' THEN 'none'
                 WHEN '@version_date' THEN 'none'
                 WHEN '@help' THEN '0 or 1'
-				WHEN '@debug' THEN '0 or 1'
+                WHEN '@debug' THEN '0 or 1'
             END,
         defaults =
             CASE
@@ -120,7 +120,7 @@ BEGIN
                 WHEN '@version' THEN 'none; OUTPUT'
                 WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0'
-				WHEN '@debug' THEN '0'
+                WHEN '@debug' THEN '0'
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o
@@ -176,11 +176,55 @@ END;
                 ELSE 0
             END,
         @pool_sql nvarchar(MAX) = N'',
-        @pages_kb bit = 0,
+        @pages_kb bit = 
+            CASE
+                WHEN 
+                (
+                    SELECT
+                        COUNT_BIG(*)
+                    FROM sys.all_columns AS ac 
+                    WHERE ac.object_id = OBJECT_ID(N'sys.dm_os_memory_clerks')
+                    AND   ac.name = N'pages_kb'
+                ) = 1 
+                THEN 1
+                ELSE 0
+            END,
         @mem_sql nvarchar(MAX) = N'',
-        @helpful_new_columns bit = 0,
+        @helpful_new_columns bit = 
+            CASE 
+                WHEN 
+                (
+                    SELECT 
+                        COUNT_BIG(*)
+                    FROM sys.all_columns AS ac 
+                    WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_memory_grants')
+                    AND   ac.name IN 
+                          (
+                              N'reserved_worker_count', 
+                              N'used_worker_count'
+                          ) 
+                ) = 2
+                THEN 1
+                ELSE 0
+            END,
         @cpu_sql nvarchar(MAX) = N'',
-        @cool_new_columns bit = 0,
+        @cool_new_columns bit = 
+            CASE
+                WHEN
+                (
+                    SELECT 
+                        COUNT_BIG(*)
+                    FROM sys.all_columns AS ac 
+                    WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_requests')
+                    AND ac.name IN 
+                        (
+                            N'dop', 
+                            N'parallel_worker_count'
+                        ) 
+                ) = 2
+                THEN 1
+                ELSE 0
+            END,
         @reserved_worker_count_out nvarchar(10) = N'0',
         @reserved_worker_count nvarchar(MAX) = N'
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -203,7 +247,7 @@ SELECT
             SELECT 
                 offline_cpus = 
                     (SELECT COUNT_BIG(*) FROM sys.dm_os_schedulers dos WHERE dos.is_online = 0), 
-',
+        ',
         @cpu_details_from nvarchar(MAX) = N' 
             FROM sys.dm_os_sys_info AS osi 
             FOR XML 
@@ -311,8 +355,8 @@ OPTION(MAXDOP 1, RECOMPILE);';
                     THEN N'Query scheduling'
                     WHEN N'THREADPOOL' 
                     THEN N'Worker thread exhaustion'
-					WHEN N'CMEMTHREAD' 
-					THEN N'Tasks waiting on memory objects'
+                    WHEN N'CMEMTHREAD' 
+                    THEN N'Tasks waiting on memory objects'
                 END,
             hours_wait_time = 
                 CONVERT
@@ -383,7 +427,7 @@ OPTION(MAXDOP 1, RECOMPILE);';
                   /*Memory*/
                   N'RESOURCE_SEMAPHORE', --Queries waiting to get memory to run
                   N'RESOURCE_SEMAPHORE_QUERY_COMPILE', --Queries waiting to get memory to compile
-				  N'CMEMTHREAD', --Tasks waiting on memory objects
+                  N'CMEMTHREAD', --Tasks waiting on memory objects
                   /*Parallelism*/
                   N'CXPACKET', --Parallelism
                   N'CXCONSUMER', --Parallelism
@@ -394,23 +438,12 @@ OPTION(MAXDOP 1, RECOMPILE);';
                   N'THREADPOOL' --Worker thread exhaustion
               )
         ORDER BY 
-		    dows.wait_time_ms DESC
+            dows.wait_time_ms DESC
         OPTION(MAXDOP 1, RECOMPILE);
 
     /*Memory Grant info*/
     IF @what_to_check IN (N'both', N'memory')
     BEGIN   
-        IF
-        (
-            SELECT
-                COUNT_BIG(*)
-            FROM sys.all_columns AS ac 
-            WHERE ac.object_id = OBJECT_ID(N'sys.dm_os_memory_clerks')
-            AND   ac.name = N'pages_kb'
-        ) = 1    
-        BEGIN
-            SET @pages_kb = 1;
-        END;
     
         /*
         See buffer pool size, along with stolen memory
@@ -529,18 +562,7 @@ OPTION(MAXDOP 1, RECOMPILE);';
 
         /*
         Track down queries currently asking for memory grants
-        */
-        IF 
-        (
-            SELECT 
-                COUNT_BIG(*)
-            FROM sys.all_columns AS ac 
-            WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_memory_grants')
-            AND   ac.name IN (N'reserved_worker_count', N'used_worker_count') 
-        ) = 2
-        BEGIN
-            SET @helpful_new_columns = 1;
-        END;    
+        */   
         
         SET @mem_sql += N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -688,7 +710,7 @@ OPTION(MAXDOP 1, RECOMPILE);';
             
             EXEC sys.sp_executesql
                 @reserved_worker_count,
-              N'@reserved_worker_count_out varchar(10) OUTPUT',
+              N'@reserved_worker_count_out nvarchar(10) OUTPUT',
                 @reserved_worker_count_out OUTPUT;        
         END;
 
@@ -835,21 +857,6 @@ OPTION(MAXDOP 1, RECOMPILE);';
         
         
         /*Figure out who's using a lot of CPU*/    
-        IF 
-        (
-            SELECT 
-                COUNT_BIG(*)
-            FROM sys.all_columns AS ac 
-            WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_requests')
-            AND ac.name IN 
-                (
-                    N'dop', 
-                    N'parallel_worker_count'
-                ) 
-        ) = 2
-        BEGIN
-            SET @cool_new_columns = 1;
-        END;
         
         SET @cpu_sql += N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
