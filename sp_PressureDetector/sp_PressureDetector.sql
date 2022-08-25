@@ -648,7 +648,9 @@ OPTION(MAXDOP 1, RECOMPILE);';
         OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
         OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest
         WHERE deqmg.session_id <> @@SPID
-        ORDER BY requested_memory_mb DESC
+        ORDER BY 
+		    requested_memory_mb DESC,
+			deqmg.request_time
         OPTION(MAXDOP 1, RECOMPILE);
         ';
 
@@ -913,9 +915,9 @@ OPTION(MAXDOP 1, RECOMPILE);';
             der.status,
             der.blocking_session_id,
             der.wait_type,
-            der.wait_time_ms,
+            wait_time_ms = der.wait_time,
             der.wait_resource,
-            der.cpu_time_ms,
+            cpu_time_ms = der.cpu_time,
             der.total_elapsed_time,
             der.reads,
             der.writes,
@@ -958,9 +960,13 @@ OPTION(MAXDOP 1, RECOMPILE);';
                 END'
             + CASE 
                   WHEN @cool_new_columns = 1
-                  THEN N',
+                  THEN CONVERT
+				       (
+					       nvarchar(MAX), 
+						   N',
             der.dop,
             der.parallel_worker_count'
+			           )
                   ELSE N''
               END
             + CONVERT
