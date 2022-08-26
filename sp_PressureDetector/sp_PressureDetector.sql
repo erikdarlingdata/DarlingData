@@ -918,7 +918,7 @@ OPTION(MAXDOP 1, RECOMPILE);';
             wait_time_ms = der.wait_time,
             der.wait_resource,
             cpu_time_ms = der.cpu_time,
-            der.total_elapsed_time,
+            total_elapsed_time_ms = der.total_elapsed_time,
             der.reads,
             der.writes,
             der.logical_reads,
