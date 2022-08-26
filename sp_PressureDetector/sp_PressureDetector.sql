@@ -621,10 +621,10 @@ OPTION(MAXDOP 1, RECOMPILE);';
             deqmg.queue_id,
             deqmg.wait_order,
             deqmg.is_next_candidate,
-            wait_time_s = 
+            wait_time_seconds = 
                 (deqmg.wait_time_ms / 1000.),
             waits.wait_type,
-            wait_duration_s = 
+            wait_duration_seconds = 
                 (waits.wait_duration_ms / 1000.),
             deqmg.dop,'
             + CASE 
@@ -648,7 +648,9 @@ OPTION(MAXDOP 1, RECOMPILE);';
         OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
         OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest
         WHERE deqmg.session_id <> @@SPID
-        ORDER BY requested_memory_mb DESC
+        ORDER BY 
+		    requested_memory_mb DESC,
+			deqmg.request_time
         OPTION(MAXDOP 1, RECOMPILE);
         ';
 
@@ -663,10 +665,10 @@ OPTION(MAXDOP 1, RECOMPILE);';
             total_physical_memory_mb = 
                 (
                     SELECT 
-                            CEILING(dosm.total_physical_memory_kb / 1024.)
+                        CEILING(dosm.total_physical_memory_kb / 1024.)
                     FROM sys.dm_os_sys_memory AS dosm
                 ),
-            max_server_memory = 
+            max_server_memory_mb = 
                 (
                     SELECT 
                         CONVERT
@@ -913,9 +915,9 @@ OPTION(MAXDOP 1, RECOMPILE);';
             der.status,
             der.blocking_session_id,
             der.wait_type,
-            der.wait_time,
+            wait_time_ms = der.wait_time,
             der.wait_resource,
-            der.cpu_time,
+            cpu_time_ms = der.cpu_time,
             der.total_elapsed_time,
             der.reads,
             der.writes,
@@ -958,9 +960,13 @@ OPTION(MAXDOP 1, RECOMPILE);';
                 END'
             + CASE 
                   WHEN @cool_new_columns = 1
-                  THEN N',
+                  THEN CONVERT
+				       (
+					       nvarchar(MAX), 
+						   N',
             der.dop,
             der.parallel_worker_count'
+			           )
                   ELSE N''
               END
             + CONVERT
