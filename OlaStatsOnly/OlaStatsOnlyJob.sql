@@ -18,7 +18,7 @@ If you're using a version older than that, I feel sorry for your mother.
 Ola's scripts and licensing information is available here: 
  * https://github.com/olahallengren/sql-server-maintenance-solution
 
-Copyright (c) 2021 Darling Data, LLC
+Copyright (c) 2022 Darling Data, LLC
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -62,7 +62,7 @@ BEGIN
 
 END;
 
-EXEC @ReturnCode =  msdb.dbo.sp_add_job 
+EXEC @ReturnCode = msdb.dbo.sp_add_job 
         @job_name = N'IndexOptimize - STATISTICS_ONLY', 
 		@enabled = 1, 
 		@notify_level_eventlog = 0, 
