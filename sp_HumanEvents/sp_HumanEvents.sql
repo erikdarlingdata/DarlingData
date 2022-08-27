@@ -941,7 +941,7 @@ FROM
     FROM 
     ( 
       SELECT 
-          wait_type =  
+          wait_type = 
               CONVERT
               (
                   xml, 
@@ -3095,7 +3095,7 @@ WHILE 1 = 1
             BEGIN
             RAISERROR(N'Generating create table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;
                 SELECT 
-                    @table_sql =  
+                    @table_sql = 
                         CASE 
                             WHEN @event_type_check LIKE N'%wait%'
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
@@ -3459,7 +3459,7 @@ WHILE 1 = 1
             BEGIN
             RAISERROR(N'Generating insert table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;
                 SELECT 
-                    @table_sql =  
+                    @table_sql = 
                         CASE 
                         WHEN @event_type_check LIKE N'%wait%' /*Wait stats!*/
                         THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 + 
