@@ -49,7 +49,8 @@ IF NOT EXISTS
 BEGIN
 
     EXEC @ReturnCode = msdb.dbo.sp_add_category 
-        @class = N'JOB', @type = N'LOCAL', 
+        @class = N'JOB', 
+		@type = N'LOCAL', 
         @name = N'Data Collector';
     
     IF (@@ERROR <> 0 OR @ReturnCode <> 0) 
@@ -58,7 +59,8 @@ BEGIN
 END;
 
 
-EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name = N'Log sp_WhoIsActive To A Daily Table', 
+EXEC @ReturnCode =  msdb.dbo.sp_add_job 
+        @job_name = N'Log sp_WhoIsActive To A Daily Table', 
         @enabled = 1, 
         @notify_level_eventlog = 0, 
         @notify_level_email = 0, 
