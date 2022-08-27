@@ -162,7 +162,7 @@ Create the table for logging.
 IF OBJECT_ID(@destination_table) IS NULL
 BEGIN;
 
-    EXEC dbo.sp_WhoIsActive
+    EXEC sp_WhoIsActive
         @get_transaction_info = 1,
         @get_outer_command = 1,
         @get_plans = 1,
@@ -190,7 +190,7 @@ END;
 /*
 This logs to the table.
 */
-EXEC dbo.sp_WhoIsActive
+EXEC sp_WhoIsActive
     @get_transaction_info = 1,
     @get_outer_command = 1,
     @get_plans = 1,
