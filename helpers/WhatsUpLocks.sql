@@ -1,5 +1,7 @@
 /*
-Copyright (c) 2020 Darling Data, LLC
+https://github.com/erikdarlingdata/DarlingData
+
+Copyright (c) 2022 Darling Data, LLC
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -19,7 +21,8 @@ IF OBJECT_ID('dbo.WhatsUpLocks') IS NULL
 BEGIN
     DECLARE 
         @fsql nvarchar(MAX) = N'
-    CREATE FUNCTION WhatsUpLocks()
+    CREATE FUNCTION 
+	    dbo.WhatsUpLocks()
     RETURNS TABLE
     AS 
     RETURN
@@ -31,7 +34,8 @@ BEGIN
 END;
 GO 
 
-ALTER FUNCTION dbo.WhatsUpLocks
+ALTER FUNCTION 
+    dbo.WhatsUpLocks
 (
     @spid int
 )
