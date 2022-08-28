@@ -1,4 +1,5 @@
-CREATE OR ALTER FUNCTION dbo.PrincipalPayment_Inline
+CREATE OR ALTER FUNCTION 
+    dbo.PrincipalPayment_Inline
 (
     @Rate float,
     @Period int,
@@ -10,6 +11,10 @@ CREATE OR ALTER FUNCTION dbo.PrincipalPayment_Inline
 RETURNS table
 AS
 RETURN
+/*
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData 
+*/
     SELECT
         PrincipalPayment = 
             (

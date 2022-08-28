@@ -1,4 +1,5 @@
-CREATE OR ALTER FUNCTION dbo.NumberOfYears_Inline
+CREATE OR ALTER FUNCTION 
+    dbo.NumberOfYears_Inline
 (
     @Rate float,
     @NumberPayments float,
@@ -8,10 +9,13 @@ CREATE OR ALTER FUNCTION dbo.NumberOfYears_Inline
     @PaymentsPerYear float,
     @Type int
 )
-RETURNS table
+RETURNS TABLE
 AS
 RETURN
-
+/*
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData 
+*/
     SELECT 
         NumberOfYears = 
             CONVERT

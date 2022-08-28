@@ -1,7 +1,8 @@
 /* This version relies on a Numbers table */
 /* https://www.mssqltips.com/sqlservertip/4176/the-sql-server-numbers-table-explained--part-1/ */
 
-CREATE FUNCTION dbo.get_numbers
+CREATE FUNCTION 
+    dbo.get_numbers
 (
     @string nvarchar(4000)
 )
@@ -9,7 +10,9 @@ RETURNS table
 WITH SCHEMABINDING
 AS
 /*
-Copyright (c) 2020 Darling Data, LLC
+https://github.com/erikdarlingdata/DarlingData
+
+Copyright (c) 2022 Darling Data, LLC
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
@@ -56,7 +59,8 @@ GO
 /*User requested code (probably) originates here, from Jeff Moden*/
 /* https://sqlservercentral.com/articles/the-numbers-or-tally-table-what-it-is-and-how-it-replaces-a-loop-1 */
 
-CREATE FUNCTION dbo.get_numbers_cte
+CREATE FUNCTION 
+    dbo.get_numbers_cte
 (
     @string nvarchar(4000)
 )
@@ -64,7 +68,9 @@ RETURNS table
 WITH SCHEMABINDING
 AS
 /*
-Copyright (c) 2020 Darling Data, LLC
+https://github.com/erikdarlingdata/DarlingData
+
+Copyright (c) 2022 Darling Data, LLC
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

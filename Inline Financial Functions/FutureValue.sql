@@ -1,4 +1,5 @@
-CREATE OR ALTER FUNCTION dbo.FutureValue_Inline
+CREATE OR ALTER FUNCTION 
+    dbo.FutureValue_Inline
 (
     @Rate float,
     @Periods int,
@@ -9,7 +10,10 @@ CREATE OR ALTER FUNCTION dbo.FutureValue_Inline
 RETURNS table
 AS    
 RETURN
-
+/*
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData 
+*/
     WITH pre AS
     (
         SELECT
@@ -17,8 +21,8 @@ RETURN
                ISNULL(@Type, 0),
             Value = 
                ISNULL(@Value, 0),
-            Term 
-                = POWER(1 + @Rate, @Periods)
+            Term =
+               POWER(1 + @Rate, @Periods)
 
     ),
         post AS 

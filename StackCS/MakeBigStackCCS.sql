@@ -1,7 +1,13 @@
 /*
 MIT License
 
-Copyright (c) 2019 Erik Darling Data
+Copyright (c) 2022 Erik Darling Data
+
+https://www.erikdarlingdata.com/
+
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData    
+
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -27,9 +33,17 @@ SOFTWARE.
 
 Example executions
 
-EXEC dbo.make_big_stack_cs @loops = 25, @truncate_tables = 1, @count_when_done = 1, @rebuild_when_done = 1;
+EXEC dbo.make_big_stack_cs 
+    @loops = 25, 
+    @truncate_tables = 1, 
+    @count_when_done = 1, 
+    @rebuild_when_done = 1;
 
-EXEC dbo.make_big_stack_cs @loops = 25, @truncate_tables = 0, @count_when_done = 1, @rebuild_when_done = 1;
+EXEC dbo.make_big_stack_cs 
+    @loops = 25, 
+    @truncate_tables = 0, 
+    @count_when_done = 1, 
+    @rebuild_when_done = 1;
 
 */
 
@@ -37,11 +51,14 @@ EXEC dbo.make_big_stack_cs @loops = 25, @truncate_tables = 0, @count_when_done =
 /*Assumes this database exists and has the right tables in it.*/
 USE StackOverflowCS;
 /*Just to be sure*/
-ALTER DATABASE StackOverflowCS SET RECOVERY SIMPLE;
+ALTER DATABASE 
+    StackOverflowCS 
+SET RECOVERY SIMPLE;
 GO 
 
 /*Creating a temporary proc for now*/
-CREATE OR ALTER PROCEDURE dbo.make_big_stack_cs
+CREATE OR ALTER PROCEDURE 
+    dbo.make_big_stack_cs
 (
    @loops int = 1,
    @truncate_tables bit = 1,
@@ -140,11 +157,11 @@ WHILE @i <= @loops
 
         INSERT 
             StackOverflowCS.dbo.Posts WITH (TABLOCKX)
-            (
-                Id, AcceptedAnswerId, AnswerCount, ClosedDate, CommentCount, CommunityOwnedDate, 
-                CreationDate, FavoriteCount, LastActivityDate, LastEditDate, LastEditorDisplayName,
-                LastEditorUserId, OwnerUserId, ParentId, PostTypeId, Score, Tags, ViewCount
-            )
+        (
+            Id, AcceptedAnswerId, AnswerCount, ClosedDate, CommentCount, CommunityOwnedDate, 
+            CreationDate, FavoriteCount, LastActivityDate, LastEditDate, LastEditorDisplayName,
+            LastEditorUserId, OwnerUserId, ParentId, PostTypeId, Score, Tags, ViewCount
+        )
         SELECT  
             p.Id + @pmaxid, p.AcceptedAnswerId + @pmaxid, p.AnswerCount, p.ClosedDate, p.CommentCount, p.CommunityOwnedDate, 
             p.CreationDate, p.FavoriteCount, p.LastActivityDate, p.LastEditDate, p.LastEditorDisplayName,
@@ -164,9 +181,9 @@ WHILE @i <= @loops
 
         INSERT 
             StackOverflowCS.dbo.Badges WITH (TABLOCKX)
-            ( 
-                Id, Name, UserId, Date 
-            )
+        ( 
+            Id, Name, UserId, Date 
+        )
         SELECT 
             b.Id + @bmaxid, b.Name, b.UserId + @umaxid, b.Date
         FROM StackOverflow.dbo.Badges AS b;
@@ -184,9 +201,9 @@ WHILE @i <= @loops
 
         INSERT 
             StackOverflowCS.dbo.Comments WITH (TABLOCKX)
-            (
-                Id, CreationDate, PostId, Score, UserId
-            )
+        (
+            Id, CreationDate, PostId, Score, UserId
+        )
         SELECT 
             c.Id + @cmaxid, c.CreationDate, c.PostId + @pmaxid, c.Score, c.UserId + @umaxid
         FROM StackOverflow.dbo.Comments AS c;
@@ -204,9 +221,9 @@ WHILE @i <= @loops
 
         INSERT 
             StackOverflowCS.dbo.Votes WITH (TABLOCKX)
-            (
-                Id, PostId, UserId, BountyAmount, VoteTypeId, CreationDate
-            )
+        (
+            Id, PostId, UserId, BountyAmount, VoteTypeId, CreationDate
+        )
         SELECT 
             v.Id + @vmaxid, v.PostId + @pmaxid, v.UserId + @umaxid, 
             v.BountyAmount, v.VoteTypeId, v.CreationDate
