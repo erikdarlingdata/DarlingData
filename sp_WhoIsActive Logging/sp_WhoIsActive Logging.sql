@@ -13,7 +13,7 @@ https://github.com/amachanic/sp_whoisactive
 (C) 2007-2022, Adam Machanic
 
 If you get an error message that @get_memory_info
-isn''t a valid parameter, that''s a pretty good
+isn't a valid parameter, that's a pretty good
 sign you need to update.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
@@ -50,7 +50,7 @@ BEGIN
 
     EXEC @ReturnCode = msdb.dbo.sp_add_category 
         @class = N'JOB', 
-		@type = N'LOCAL', 
+	@type = N'LOCAL', 
         @name = N'Data Collector';
     
     IF (@@ERROR <> 0 OR @ReturnCode <> 0) 
