@@ -1,7 +1,12 @@
 /*
 MIT License
 
-Copyright (c) 2019 Erik Darling Data
+Copyright (c) 2022 Erik Darling Data
+
+https://www.erikdarlingdata.com/
+
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData   
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,7 +30,8 @@ SOFTWARE.
 USE master;
 GO
 
-CREATE DATABASE StackOverflowCS 
+CREATE DATABASE 
+    StackOverflowCS 
 CONTAINMENT = NONE
 ON PRIMARY
 (

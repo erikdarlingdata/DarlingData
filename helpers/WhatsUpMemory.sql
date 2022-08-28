@@ -1,5 +1,7 @@
 /*
-Copyright (c) 2020 Darling Data, LLC
+https://github.com/erikdarlingdata/DarlingData
+
+Copyright (c) 2022 Darling Data, LLC
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
@@ -21,8 +23,9 @@ IF OBJECT_ID('dbo.WhatsUpMemory') IS NULL
 BEGIN
     DECLARE 
         @vsql nvarchar(MAX) = N'
-    CREATE VIEW dbo.WhatsUpMemory
-        AS
+    CREATE VIEW 
+	    dbo.WhatsUpMemory
+    AS
     SELECT 
         x = 1;';
     
@@ -32,7 +35,8 @@ END;
 GO 
 
 
-ALTER VIEW dbo.WhatsUpMemory
+ALTER VIEW 
+    dbo.WhatsUpMemory
 AS
 SELECT TOP (2147483647)
     view_name = 

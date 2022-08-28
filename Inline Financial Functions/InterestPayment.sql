@@ -1,4 +1,5 @@
-CREATE OR ALTER FUNCTION dbo.InterestPayment_Inline
+CREATE OR ALTER FUNCTION 
+    dbo.InterestPayment_Inline
 (
     @Rate float,
     @Period int,
@@ -7,8 +8,12 @@ CREATE OR ALTER FUNCTION dbo.InterestPayment_Inline
     @Future float,
     @Type int
 )
-RETURNS table
+RETURNS TABLE
 AS
+/*
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData 
+*/
 RETURN
     WITH pre AS 
     (
