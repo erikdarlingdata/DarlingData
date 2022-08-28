@@ -50,7 +50,7 @@ BEGIN
 
     EXEC @ReturnCode = msdb.dbo.sp_add_category 
         @class = N'JOB', 
-	@type = N'LOCAL', 
+        @type = N'LOCAL', 
         @name = N'Data Collector';
     
     IF (@@ERROR <> 0 OR @ReturnCode <> 0) 
@@ -91,19 +91,19 @@ IF (@@ERROR <> 0 OR @ReturnCode <> 0)
 
 
 EXEC @ReturnCode = msdb.dbo.sp_add_jobstep 
-        @job_id = @jobId, 
-        @step_name = N'Log sp_WhoIsActive To A Daily Table', 
-        @step_id = 1, 
-        @cmdexec_success_code = 0, 
-        @on_success_action = 1, 
-        @on_success_step_id = 0, 
-        @on_fail_action = 2, 
-        @on_fail_step_id = 0, 
-        @retry_attempts = 0, 
-        @retry_interval = 0, 
-        @os_run_priority = 0, 
-        @subsystem = N'TSQL', 
-        @command = N'/*
+    @job_id = @jobId, 
+    @step_name = N'Log sp_WhoIsActive To A Daily Table', 
+    @step_id = 1, 
+    @cmdexec_success_code = 0, 
+    @on_success_action = 1, 
+    @on_success_step_id = 0, 
+    @on_fail_action = 2, 
+    @on_fail_step_id = 0, 
+    @retry_attempts = 0, 
+    @retry_interval = 0, 
+    @os_run_priority = 0, 
+    @subsystem = N'TSQL', 
+    @command = N'/*
 SQL Agent has some weird settings.
 This sets them to the correct ones.
 */
@@ -199,8 +199,8 @@ EXEC sp_WhoIsActive
     @find_block_leaders = 1,
     @get_memory_info = 1,
     @destination_table = @destination_table;', 
-        @database_name = N'master', 
-        @flags = 0;
+    @database_name = N'master', 
+    @flags = 0;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0) 
     GOTO QuitWithRollback;
@@ -213,19 +213,19 @@ IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
     
     EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule 
-            @job_id = @jobId, @name = N'Log sp_WhoIsActive To A Daily Table Every Minute', 
-            @enabled = 1, 
-            @freq_type = 4, 
-            @freq_interval = 1, 
-            @freq_subday_type = 4, 
-            @freq_subday_interval = 1, 
-            @freq_relative_interval = 0, 
-            @freq_recurrence_factor = 0, 
-            @active_start_date = @active_start_date, 
-            @active_end_date = 99991231, 
-            @active_start_time = 0, 
-            @active_end_time = 235959, 
-            @schedule_uid = N'eb778522-86e7-4c47-8f7c-efadc7e22f9d';
+        @job_id = @jobId, @name = N'Log sp_WhoIsActive To A Daily Table Every Minute', 
+        @enabled = 1, 
+        @freq_type = 4, 
+        @freq_interval = 1, 
+        @freq_subday_type = 4, 
+        @freq_subday_interval = 1, 
+        @freq_relative_interval = 0, 
+        @freq_recurrence_factor = 0, 
+        @active_start_date = @active_start_date, 
+        @active_end_date = 99991231, 
+        @active_start_time = 0, 
+        @active_end_time = 235959, 
+        @schedule_uid = N'eb778522-86e7-4c47-8f7c-efadc7e22f9d';
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0) 
     GOTO QuitWithRollback;
@@ -243,7 +243,7 @@ GOTO EndSave;
 
 QuitWithRollback:
     IF (@@TRANCOUNT > 0) 
-	    ROLLBACK TRANSACTION;
+        ROLLBACK TRANSACTION;
 
 EndSave:
 GO

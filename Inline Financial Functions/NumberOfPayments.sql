@@ -1,4 +1,5 @@
-CREATE OR ALTER FUNCTION NumberOfPayments_Inline
+CREATE OR ALTER FUNCTION 
+    dbo.NumberOfPayments_Inline
 (
     @Rate float,
     @Years float,
@@ -8,10 +9,13 @@ CREATE OR ALTER FUNCTION NumberOfPayments_Inline
     @PaymentsPerYear float,
     @Type int
 )
-RETURNS table
+RETURNS TABLE
 AS
 RETURN
-    
+/*
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData 
+*/    
     SELECT
         NumPayments =
             CONVERT

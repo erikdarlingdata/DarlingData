@@ -1,4 +1,5 @@
-CREATE OR ALTER FUNCTION dbo.EffectiveAnnualInterestRate_Inline
+CREATE OR ALTER FUNCTION 
+    dbo.EffectiveAnnualInterestRate_Inline
 (
     @Rate float,
     @Periods int
@@ -6,6 +7,10 @@ CREATE OR ALTER FUNCTION dbo.EffectiveAnnualInterestRate_Inline
 RETURNS table
 AS
 RETURN
+/*
+For support, head over to GitHub:
+https://github.com/erikdarlingdata/DarlingData 
+*/
     SELECT
         Rate =
             CONVERT
