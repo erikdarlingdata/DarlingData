@@ -129,7 +129,7 @@ BEGIN
         ON  ap.system_type_id = t.system_type_id
         AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_PressureDetector'
-    OPTION(RECOMPILE);
+    OPTION(MAXDOP 1, RECOMPILE);
 
     SELECT
         mit_license_yo =
@@ -669,7 +669,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 SELECT 
                     @database_size_out_gb = 
                         SUM(CONVERT(bigint, df.size)) * 8 / 1024 / 1024
-                FROM sys.database_files AS df;';
+                FROM sys.database_files AS df
+				OPTION(MAXDOP 1, RECOMPILE);';
         ELSE
             SELECT 
                 @database_size_out = N'
@@ -677,7 +678,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     @database_size_out_gb = 
                         SUM(CONVERT(bigint, mf.size)) * 8 / 1024 / 1024
                 FROM sys.master_files AS mf
-				WHERE mf.database_id > 4;';
+                WHERE mf.database_id > 4
+				OPTION(MAXDOP 1, RECOMPILE);';
         
         EXEC sys.sp_executesql
             @database_size_out,
@@ -686,14 +688,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         SELECT  
             deqrs.resource_semaphore_id,
+            total_database_size_gb = 
+                @database_size_out_gb,
             total_physical_memory_mb = 
                 (
                     SELECT 
-                        CEILING(dosm.total_physical_memory_kb / 1024.)
+                        CEILING
+                        (
+                            dosm.total_physical_memory_kb / 1024.
+                        )
                     FROM sys.dm_os_sys_memory AS dosm
                 ),
-            total_database_size_gb = 
-                @database_size_out_gb,
             max_server_memory_mb = 
                 (
                     SELECT 
@@ -723,8 +728,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
             deqrs.forced_grant_count,
             deqrs.pool_id
         FROM sys.dm_exec_query_resource_semaphores AS deqrs
-        WHERE (deqrs.resource_semaphore_id = 0
-                 OR deqrs.pool_id > 1)
         OPTION(MAXDOP 1, RECOMPILE);
         
     END;
@@ -880,7 +883,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             dowt.wait_type
         FROM sys.dm_os_waiting_tasks AS dowt
         WHERE dowt.wait_type = N'THREADPOOL'
-        ORDER BY dowt.wait_duration_ms DESC
+        ORDER BY 
+		    dowt.wait_duration_ms DESC
         OPTION(MAXDOP 1, RECOMPILE);
         
         
@@ -1008,11 +1012,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
         + CASE 
               WHEN @cool_new_columns = 1
               THEN N'
-        der.cpu_time DESC,
-        der.parallel_worker_count DESC
+            der.cpu_time DESC,
+            der.parallel_worker_count DESC
         OPTION(MAXDOP 1, RECOMPILE);'
               ELSE N'
-        der.cpu_time DESC
+            der.cpu_time DESC
         OPTION(MAXDOP 1, RECOMPILE);'
           END
               );
