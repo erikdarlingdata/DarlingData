@@ -676,7 +676,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 SELECT 
                     @database_size_out_gb = 
                         SUM(CONVERT(bigint, mf.size)) * 8 / 1024 / 1024
-                FROM sys.master_files AS mf;';
+                FROM sys.master_files AS mf
+				WHERE mf.database_id > 4;';
         
         EXEC sys.sp_executesql
             @database_size_out,
