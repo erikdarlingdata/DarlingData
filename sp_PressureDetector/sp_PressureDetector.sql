@@ -254,7 +254,9 @@ SELECT
                 PATH(''cpu_details''), 
                 TYPE 
         ) 
-OPTION(MAXDOP 1, RECOMPILE);';
+OPTION(MAXDOP 1, RECOMPILE);',
+        @database_size_out nvarchar(MAX) = N'',
+        @database_size_out_gb nvarchar(10) = N'0';
 
     /*
     Check to see if the DAC is enabled.
@@ -649,8 +651,8 @@ OPTION(MAXDOP 1, RECOMPILE);';
         OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest
         WHERE deqmg.session_id <> @@SPID
         ORDER BY 
-		    requested_memory_mb DESC,
-			deqmg.request_time
+            requested_memory_mb DESC,
+            deqmg.request_time
         OPTION(MAXDOP 1, RECOMPILE);
         ';
 
@@ -660,6 +662,27 @@ OPTION(MAXDOP 1, RECOMPILE);';
             @mem_sql;
         
         /*Resource semaphore info*/
+
+        IF OBJECT_ID('sys.master_files') IS NULL
+            SELECT 
+                @database_size_out = N'
+                SELECT 
+                    @database_size_out_gb = 
+                        SUM(CONVERT(bigint, df.size)) * 8 / 1024 / 1024
+                FROM sys.database_files AS df;';
+        ELSE
+            SELECT 
+                @database_size_out = N'
+                SELECT 
+                    @database_size_out_gb = 
+                        SUM(CONVERT(bigint, mf.size)) * 8 / 1024 / 1024
+                FROM sys.master_files AS mf;';
+        
+        EXEC sys.sp_executesql
+            @database_size_out,
+          N'@database_size_out_gb varchar(10) OUTPUT',
+            @database_size_out_gb OUTPUT;            
+
         SELECT  
             deqrs.resource_semaphore_id,
             total_physical_memory_mb = 
@@ -668,6 +691,8 @@ OPTION(MAXDOP 1, RECOMPILE);';
                         CEILING(dosm.total_physical_memory_kb / 1024.)
                     FROM sys.dm_os_sys_memory AS dosm
                 ),
+            total_database_size_gb = 
+                @database_size_out_gb,
             max_server_memory_mb = 
                 (
                     SELECT 
@@ -961,12 +986,12 @@ OPTION(MAXDOP 1, RECOMPILE);';
             + CASE 
                   WHEN @cool_new_columns = 1
                   THEN CONVERT
-				       (
-					       nvarchar(MAX), 
-						   N',
+                       (
+                           nvarchar(MAX), 
+                           N',
             der.dop,
             der.parallel_worker_count'
-			           )
+                       )
                   ELSE N''
               END
             + CONVERT
