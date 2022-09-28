@@ -46,7 +46,7 @@ https://github.com/erikdarlingdata/DarlingData
 */
 
 CREATE OR ALTER PROCEDURE 
-   dbo.sp_QuickieStore
+    dbo.sp_QuickieStore
 (
     @database_name sysname = NULL,
     @sort_order varchar(20) = 'cpu',
@@ -55,7 +55,7 @@ CREATE OR ALTER PROCEDURE
     @end_date datetime = NULL,
     @execution_count bigint = NULL,
     @duration_ms bigint = NULL,
-	@execution_type_desc nvarchar(60) = NULL,
+    @execution_type_desc nvarchar(60) = NULL,
     @procedure_schema sysname = NULL,
     @procedure_name sysname = NULL,
     @include_plan_ids nvarchar(4000) = NULL,
@@ -150,7 +150,7 @@ BEGIN
                 WHEN '@end_date' THEN 'the end date of your search'
                 WHEN '@execution_count' THEN 'the minimum number of executions a query must have'
                 WHEN '@duration_ms' THEN 'the minimum duration a query must have'
-				WHEN '@execution_type_desc' THEN 'the type of execution you want to filter'
+                WHEN '@execution_type_desc' THEN 'the type of execution you want to filter'
                 WHEN '@procedure_schema' THEN 'the schema of the procedure you''re searching for'
                 WHEN '@procedure_name' THEN 'the name of the programmable object you''re searching for'
                 WHEN '@include_plan_ids' THEN 'a list of plan ids to search for'
@@ -183,7 +183,7 @@ BEGIN
                 WHEN '@end_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN '@execution_count' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN '@duration_ms' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
-				WHEN '@execution_type_desc' THEN 'regular, aborted, exception'
+                WHEN '@execution_type_desc' THEN 'regular, aborted, exception'
                 WHEN '@procedure_schema' THEN 'a valid schema in your database'
                 WHEN '@procedure_name' THEN 'a valid programmable object in your database'
                 WHEN '@include_plan_ids' THEN 'a string; comma separated for multiple ids'
@@ -216,7 +216,7 @@ BEGIN
                 WHEN '@end_date' THEN 'NULL'
                 WHEN '@execution_count' THEN 'NULL'
                 WHEN '@duration_ms' THEN 'NULL'
-				WHEN '@execution_type_desc' THEN 'NULL'
+                WHEN '@execution_type_desc' THEN 'NULL'
                 WHEN '@procedure_schema' THEN 'NULL; dbo if NULL and procedure name is not NULL'
                 WHEN '@procedure_name' THEN 'NULL'
                 WHEN '@include_plan_ids' THEN 'NULL'
@@ -1070,7 +1070,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @end_date datetime,
           @execution_count bigint,
           @duration_ms bigint,
-		  @execution_type_desc nvarchar(60)',
+          @execution_type_desc nvarchar(60)',
     @plans_top =
         CASE
             WHEN @include_plan_ids IS NULL
@@ -3072,7 +3072,7 @@ EXEC sys.sp_executesql
     @end_date,
     @execution_count,
     @duration_ms,
-	@execution_type_desc;
+    @execution_type_desc;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -3255,7 +3255,7 @@ EXEC sys.sp_executesql
     @end_date,
     @execution_count,
     @duration_ms,
-	@execution_type_desc;
+    @execution_type_desc;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -6389,8 +6389,8 @@ BEGIN
             @execution_count,
         duration_ms =
             @duration_ms,
-		execution_type_desc =
-			@execution_type_desc,
+        execution_type_desc =
+            @execution_type_desc,
         procedure_schema =
             @procedure_schema,
         procedure_name =
