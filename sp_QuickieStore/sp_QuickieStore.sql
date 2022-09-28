@@ -1653,19 +1653,27 @@ OPTION(RECOMPILE);
 /*
 See if AGs are a thing so we can skip the checks for replica stuff
 */
-SELECT
-    @ags_present = 
-        CASE 
-            WHEN EXISTS 
-                 (
-                     SELECT 
-                         1/0
-                     FROM sys.availability_groups AS ag
-                 )
-            THEN 1
-            ELSE 0
-        END
-OPTION(RECOMPILE);
+IF (@azure = 1)
+BEGIN
+	SELECT
+		@ags_present = 0
+END
+ELSE
+BEGIN 
+	SELECT
+		@ags_present = 
+            CASE 
+                WHEN EXISTS 
+                        (
+                            SELECT 
+                                1/0
+                            FROM sys.availability_groups AS ag
+                        )
+                THEN 1
+                ELSE 0
+            END
+		OPTION(RECOMPILE);
+END
 
 /*
 Get filters ready, or whatever
