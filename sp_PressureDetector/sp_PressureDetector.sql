@@ -692,12 +692,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 @database_size_out_gb,
             total_physical_memory_mb = 
                 (
-                    SELECT 
-                        CEILING
-                        (
-                            dosm.total_physical_memory_kb / 1024.
-                        )
-                    FROM sys.dm_os_sys_memory AS dosm
+		    SELECT 
+		        SUM
+		        (
+			    domn.target_kb / 1024.
+		        )
+		    FROM sys.dm_os_memory_nodes AS domn
                 ),
             max_server_memory_mb = 
                 (
