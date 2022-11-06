@@ -83,12 +83,12 @@ BEGIN
 
     SELECT
         introduction = 
-		    'hi, i''m sp_HumanEventsBlockViewer!' UNION ALL
-	SELECT  'you can use me in conjunction with sp_HumanEvents to quickly parse the sqlserver.blocked_process_report event' UNION ALL
-	SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
-	SELECT  'it will also work with another extended event session using the ring buffer as a target to capture blocking' UNION ALL
-	SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
-	SELECT  'from your loving sql server consultant, erik darling: erikdarlingdata.com';
+            'hi, i''m sp_HumanEventsBlockViewer!' UNION ALL
+    SELECT  'you can use me in conjunction with sp_HumanEvents to quickly parse the sqlserver.blocked_process_report event' UNION ALL
+    SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
+    SELECT  'it will also work with another extended event session using the ring buffer as a target to capture blocking' UNION ALL
+    SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
+    SELECT  'from your loving sql server consultant, erik darling: erikdarlingdata.com';
 
     SELECT
         parameter_name =
@@ -101,15 +101,15 @@ BEGIN
                  WHEN '@version_date' THEN 'OUTPUT; for support'
                  WHEN '@help' THEN 'how you got here'
                  WHEN '@debug' THEN 'dumps raw temp table contents'
-			END,
-		valid_inputs =
+            END,
+        valid_inputs =
             CASE ap.name
                  WHEN '@session_name' THEN 'An Extended Event session name that is capturing the sqlserver.blocked_process_report'
                  WHEN '@version' THEN 'none; OUTPUT'
                  WHEN '@version_date' THEN 'none; OUTPUT'
                  WHEN '@help' THEN '0 or 1'
                  WHEN '@debug' THEN '0 or 1'
-			END,
+            END,
         defaults =
             CASE ap.name
                  WHEN '@session_name' THEN 'keeper_HumanEvents_blocking'
@@ -117,7 +117,7 @@ BEGIN
                  WHEN '@version_date' THEN 'none; OUTPUT'
                  WHEN '@help' THEN '0'
                  WHEN '@debug' THEN '0'
-			END
+            END
     FROM sys.all_parameters AS ap
     JOIN sys.all_objects AS o
         ON ap.object_id = o.object_id
@@ -165,7 +165,17 @@ DECLARE
             THEN 1
             ELSE 0
         END,
-    @x xml = NULL;
+    @x xml = NULL,
+    @target_type sysname = '',
+    @session_id int,
+    @target_session_id int,
+    @file_name nvarchar(4000);
+
+CREATE TABLE
+    #blocking_xml
+(
+    human_events_xml xml
+);
 
 /*Look to see if the session exists and is running*/
 IF @azure = 0
@@ -178,14 +188,14 @@ BEGIN
         LEFT JOIN sys.dm_xe_sessions AS dxs 
             ON dxs.name = ses.name
         WHERE ses.name = @session_name
-		AND   dxs.create_time IS NOT NULL
+        AND   dxs.create_time IS NOT NULL
     )
     BEGIN
         RAISERROR('A session with the name %s does not exist or is not currently active.', 0, 1, @session_name) WITH NOWAIT;
         RETURN;
     END;
 END;
-ELSE
+IF @azure = 1
 BEGIN
     IF NOT EXISTS
     (
@@ -195,7 +205,7 @@ BEGIN
         LEFT JOIN sys.dm_xe_database_sessions AS dxs 
             ON dxs.name = ses.name
         WHERE ses.name = @session_name
-		AND   dxs.create_time IS NOT NULL
+        AND   dxs.create_time IS NOT NULL
     )
     BEGIN
         RAISERROR('A session with the name %s does not exist or is not currently active.', 0, 1, @session_name) WITH NOWAIT;
@@ -203,47 +213,188 @@ BEGIN
     END;
 END;
 
-/* Dump whatever we got into a temp table */
+/*Figure out if we have a file or ring buffer target*/
 IF @azure = 0
 BEGIN
     SELECT 
+        @target_type = 
+            t.target_name
+    FROM sys.dm_xe_sessions AS s
+    JOIN sys.dm_xe_session_targets AS t
+      ON s.address = t.event_session_address
+    WHERE s.name = @session_name
+    OPTION(RECOMPILE);
+END;
+IF @azure = 1
+BEGIN
+    SELECT 
+        @target_type = 
+            t.target_name
+    FROM sys.dm_xe_database_sessions AS s
+    JOIN sys.dm_xe_database_session_targets AS t
+      ON s.address = t.event_session_address
+    WHERE s.name = @session_name
+    OPTION(RECOMPILE);
+END;
+
+/* Dump whatever we got into a temp table */
+IF (@azure = 0 AND @target_type = 'ring_buffer')
+BEGIN
+    SELECT 
         @x = 
-            CONVERT
+            TRY_CAST
             (
-                xml, 
                 t.target_data
+                AS xml
             )
     FROM sys.dm_xe_session_targets AS t
     JOIN sys.dm_xe_sessions AS s
         ON s.address = t.event_session_address
     WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer';
+    AND   t.target_name = N'ring_buffer'
+    OPTION(RECOMPILE);
 END;
-ELSE
+IF (@azure = 1 AND @target_type = 'ring_buffer')
 BEGIN
     SELECT 
         @x = 
-            CONVERT
+            TRY_CAST
             (
-                xml, 
                 t.target_data
+                AS xml
             )
     FROM sys.dm_xe_database_session_targets AS t
     JOIN sys.dm_xe_database_sessions AS s
         ON s.address = t.event_session_address
     WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer';
+    AND   t.target_name = N'ring_buffer'
+    OPTION(RECOMPILE);
 END;
 
-SELECT 
-    human_events_xml = e.x.query('.')
-INTO #blocking_xml
-FROM @x.nodes('/RingBufferTarget/event') AS e(x)
-OPTION(RECOMPILE);
+IF @target_type = 'event_file'
+BEGIN
+
+    
+    IF @azure = 0
+    BEGIN
+        SELECT
+            @session_id = t.event_session_id,
+            @target_session_id = t.target_id
+        FROM sys.server_event_session_targets t
+        JOIN sys.server_event_sessions s
+            ON s.event_session_id = t.event_session_id
+        WHERE t.name = @target_type 
+        AND   s.name = @session_name
+        OPTION(RECOMPILE);
+
+        SELECT
+            @file_name =
+                CASE 
+                    WHEN f.file_name LIKE '%.xel'
+                    THEN REPLACE(f.file_name, N'.xel', N'*.xel')
+                    ELSE f.file_name + N'*.xel'
+                END
+        FROM 
+        (
+            SELECT 
+                file_name = 
+                        CONVERT
+                        (
+                            nvarchar(4000),
+                            f.value
+                        )
+            FROM sys.server_event_session_fields AS f
+            WHERE f.event_session_id = @session_id
+            AND   f.object_id = @target_session_id
+            AND   f.name = N'filename'
+        ) AS f
+        OPTION(RECOMPILE);
+    END;
+    IF @azure = 1
+    BEGIN
+        SELECT
+            @session_id = t.event_session_id,
+            @target_session_id = t.target_id
+        FROM sys.dm_xe_database_session_targets t
+        JOIN sys.dm_xe_database_sessions s 
+            ON s.event_session_id = t.event_session_id
+        WHERE t.name = @target_type 
+        AND   s.name = @session_name
+        OPTION(RECOMPILE);
+
+        SELECT
+            @file_name =
+                CASE 
+                    WHEN f.file_name LIKE '%.xel'
+                    THEN REPLACE(f.file_name, N'.xel', N'*.xel')
+                    ELSE f.file_name + N'*.xel'
+                END
+        FROM 
+        (
+            SELECT 
+                file_name = 
+                        CONVERT
+                        (
+                            nvarchar(4000),
+                            f.value
+                        )
+            FROM sys.fserver_event_session_fields AS f
+            WHERE f.event_session_id = @session_id
+            AND   f.object_id = @target_session_id
+            AND   f.name = N'filename'
+        ) AS f
+        OPTION(RECOMPILE);
+    END;
+    
+    SELECT
+        @x = 
+            TRY_CAST
+            (
+                f.event_data
+                AS xml
+            )
+    FROM sys.fn_xe_file_target_read_file
+         (
+             @file_name, 
+             NULL, 
+             NULL, 
+             NULL
+         ) AS f
+    OPTION(RECOMPILE);
+END;
+
+
+IF @target_type = 'ring_buffer'
+BEGIN
+    INSERT
+        #blocking_xml
+    (
+        human_events_xml
+    )
+    SELECT 
+        human_events_xml = 
+                e.x.query('.')
+    FROM @x.nodes('/RingBufferTarget/event') AS e(x)
+    OPTION(RECOMPILE);
+END;
+
+IF @target_type = 'event_file'
+BEGIN
+    INSERT
+        #blocking_xml
+    (
+        human_events_xml
+    )
+    SELECT 
+        human_events_xml = 
+                e.x.query('.')
+    FROM @x.nodes('/event') AS e(x)
+    OPTION(RECOMPILE);
+END;
 
 IF @debug = 1
 BEGIN
-    SELECT table_name = N'#blocking_xml', bx.* FROM #blocking_xml AS bx;
+    SELECT table_name = N'#blocking_xml', bx.* FROM #blocking_xml AS bx OPTION(RECOMPILE);
 END;
 
             SELECT 
@@ -266,11 +417,12 @@ END;
                 resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
                 monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
                 spid = bd.value('(process/@spid)[1]', 'int'),
-                ecid = bd.value('(process/@ecid)[1]', 'int'),
+                ecid = bd.value('(process/@ecid)[1]', 'int'),            
                 query_text = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
                 wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
                 transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
                 last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
+                last_transaction_completed = CONVERT(datetime2, NULL),
                 wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
                 lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
                 status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
@@ -280,6 +432,9 @@ END;
                 host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
                 login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
                 isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
+                log_used = bd.value('(process/@logused)[1]', 'bigint'),
+                clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
+                clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
                 activity = 'blocked',
                 blocked_process_report = c.query('.')
             INTO #blocked
@@ -312,11 +467,12 @@ END;
                 spid = bg.value('(process/@spid)[1]', 'int'),
                 ecid = bg.value('(process/@ecid)[1]', 'int'),
                 query_text = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
-                wait_time = CONVERT(int, NULL),
-                transaction_name = CONVERT(nvarchar(256), NULL),
-                last_transaction_started = CONVERT(datetime2, NULL),
-                wait_resource = CONVERT(nvarchar(100), NULL),
-                lock_mode = CONVERT(nvarchar(10), NULL),
+                wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
+                transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(256)'),
+                last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
+                last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
+                wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+                lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
                 status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
                 priority = bg.value('(process/@priority)[1]', 'int'),
                 transaction_count = bg.value('(process/@trancount)[1]', 'int'),
@@ -324,6 +480,9 @@ END;
                 host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
                 login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
                 isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
+                log_used = bg.value('(process/@logused)[1]', 'bigint'),
+                clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+                clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
                 activity = 'blocking',
                 blocked_process_report = c.query('.')
             INTO #blocking
@@ -334,51 +493,99 @@ END;
 
             IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
 
-            SELECT TOP (2147483647)
+            SELECT
                 kheb.event_time,
                 kheb.database_name,
-                kheb.contentious_object,
+                contentious_object = 
+                    ISNULL
+                    (
+                        kheb.contentious_object, 
+                        N'Unresolved'
+                    ),
                 kheb.activity,
-				kheb.monitor_loop,
+                kheb.monitor_loop,
                 kheb.spid,
-				kheb.ecid,
-                kheb.query_text,
-                kheb.wait_time,
+                kheb.ecid,
+                query_text = 
+                    (
+                        SELECT 
+                            [processing-instruction(query)] = 
+                                kheb.query_text
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    ),
+                wait_time_ms = 
+                    kheb.wait_time,
                 kheb.status,
                 kheb.isolation_level,
-                kheb.last_transaction_started,
-                kheb.transaction_name,
-                kheb.wait_resource,
+                kheb.resource_owner_type,
                 kheb.lock_mode,
-                kheb.priority,
                 kheb.transaction_count,
+                kheb.transaction_name,
+                kheb.last_transaction_started,
+                kheb.last_transaction_completed,
+                client_option_1 = 
+                      SUBSTRING
+                      (    
+                          CASE WHEN kheb.clientoption1 & 0x20 = 0x20 THEN ', QUOTED IDENTIFIER ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x40 = 0x40 THEN ', ARITHABORT' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x800 = 0x800 THEN ', USER SET ARITHABORT' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x8000 = 0x8000 THEN ', NUMERIC ROUNDABORT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x10000 = 0x10000 THEN ', USER SET NUMERIC ROUNDABORT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x20000 = 0x20000 THEN ', SET XACT ABORT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x80000 = 0x80000 THEN ', NOCOUNT OFF' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x200000 = 0x200000 THEN ', NOCOUNT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x8000000 = 8000000 THEN ', USER SET QUOTED IDENTIFIER' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x20000000 = 0x20000000 THEN ', ANSI NULL DEFAULT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x40000000 = 0x40000000 THEN ', ANSI NULL DEFAULT OFF' ELSE '' END,
+                          3,
+                          8000
+                      ),
+                  client_option_2 = 
+                      SUBSTRING
+                      (
+                          CASE WHEN kheb.clientoption2 & 2 = 2 THEN ', IMPLICIT TRANSACTION' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 8 = 8 THEN ', ANSI WARNINGS' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x10 = 0x10 THEN ', ANSI PADDING' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x20 = 0x20 THEN ', ANSI NULLS' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x1000 = 0x1000 THEN ', USER CONCAT NULL YIELDS NULL' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x2000 = 0x2000 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x4000 = 0x4000 THEN ', USER ANSI NULLS' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x8000 = 0x8000 THEN ', USER ANSI WARNINGS' ELSE '' END,
+                          3,
+                          8000
+                      ),
+                kheb.wait_resource,
+                kheb.priority,
+                kheb.log_used,
                 kheb.client_app,
                 kheb.host_name,
                 kheb.login_name,
                 kheb.blocked_process_report
             FROM 
-            (
-                
+            (                
                 SELECT 
                     bg.*, 
-                    OBJECT_NAME
-                    (
-                        bg.object_id, 
-                        bg.database_id
-                    ) AS contentious_object 
-                    FROM #blocking AS bg
+                    contentious_object = 
+                        OBJECT_NAME
+                        (
+                            bg.object_id, 
+                            bg.database_id
+                        )
+                FROM #blocking AS bg
                 
                 UNION ALL 
                 
                 SELECT 
                     bd.*, 
-                    OBJECT_NAME
-                    (
-                        bd.object_id, 
-                        bd.database_id
-                    ) AS contentious_object 
-                FROM #blocked AS bd
-            
+                    contentious_object = 
+                        OBJECT_NAME
+                        (
+                            bd.object_id, 
+                            bd.database_id
+                        ) 
+                FROM #blocked AS bd           
             ) AS kheb
             ORDER BY 
                 kheb.event_time DESC,
