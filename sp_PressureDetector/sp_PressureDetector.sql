@@ -256,7 +256,9 @@ SELECT
         ) 
 OPTION(MAXDOP 1, RECOMPILE);',
         @database_size_out nvarchar(MAX) = N'',
-        @database_size_out_gb nvarchar(10) = N'0';
+        @database_size_out_gb nvarchar(10) = N'0',
+        @total_physical_memory_gb bigint,
+        @cpu_utilization xml = N'';
 
     /*
     Check to see if the DAC is enabled.
@@ -400,7 +402,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                            NULLIF
                            (
                                1. * 
-                               dows.waiting_tasks_count, 0.
+                               dows.waiting_tasks_count, 
+                               0.
                            )
                     ), 
                     0.
@@ -415,7 +418,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                            NULLIF
                            (
                                1. * 
-                               dows.waiting_tasks_count, 0.
+                               dows.waiting_tasks_count, 
+                               0.
                            )
                     ), 
                     0.
@@ -662,7 +666,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
             @mem_sql;
         
         /*Resource semaphore info*/
-
         IF OBJECT_ID('sys.master_files') IS NULL
             SELECT 
                 @database_size_out = N'
@@ -684,21 +687,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
         EXEC sys.sp_executesql
             @database_size_out,
           N'@database_size_out_gb varchar(10) OUTPUT',
-            @database_size_out_gb OUTPUT;            
+            @database_size_out_gb OUTPUT;       
+            
+        IF @azure = 0 
+        BEGIN 
+            SELECT 
+                @total_physical_memory_gb = 
+                    CEILING(dosm.total_physical_memory_kb / 1024.) 
+                FROM sys.dm_os_sys_memory AS dosm;
+        END;
+        IF @azure = 1
+        BEGIN
+            SELECT 
+                @total_physical_memory_gb =
+                    SUM(domn.target_kb / 1024.) 
+            FROM sys.dm_os_memory_nodes AS domn;
+        END;
 
         SELECT  
             deqrs.resource_semaphore_id,
             total_database_size_gb = 
                 @database_size_out_gb,
             total_physical_memory_mb = 
-                (
-                    SELECT 
-                        CEILING
-                        (
-                            dosm.total_physical_memory_kb / 1024.
-                        )
-                    FROM sys.dm_os_sys_memory AS dosm
-                ),
+                @total_physical_memory_gb,
             max_server_memory_mb = 
                 (
                     SELECT 
@@ -797,11 +808,61 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 @cpu_details,
               N'@cpu_details_output xml OUTPUT',
                 @cpu_details_output OUTPUT;
+            
+        SELECT
+            @cpu_utilization = 
+                x.cpu_utilization
+        FROM
+        (
+            SELECT
+                sample_time = 
+                    CONVERT(datetime, DATEADD(MILLISECOND, -1 * (inf.ms_ticks - t.timestamp), GETDATE())),
+                sqlserver_cpu_utilization = 
+                    t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int'),
+                other_process_cpu_utilization = 
+                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int')
+                     - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','int')),
+                total_cpu_utilization = 
+                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int'))
+            FROM sys.dm_os_sys_info AS inf
+            CROSS JOIN
+            (
+                SELECT
+                    dorb.timestamp,
+                    record = 
+                        CONVERT(xml, dorb.record)
+                FROM sys.dm_os_ring_buffers AS dorb
+                WHERE dorb.ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
+                AND   dorb.record LIKE N'%<SystemHealth>%'
+            ) AS t
+            WHERE t.record.exist('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization[. > 0])') = 1
+            ORDER BY
+                sample_time DESC
+            FOR XML 
+                PATH('cpu_utilization'),
+                TYPE
+        ) AS x (cpu_utilization)
+        OPTION(RECOMPILE);
+
+        IF @cpu_utilization IS NULL
+        BEGIN
+            SELECT
+                @cpu_utilization = 
+                (
+                    SELECT 
+                        N'No signficant CPU usage data available.'
+                    FOR XML 
+                        PATH(N'cpu_utilization'), 
+                        TYPE
+                );
+        END;
 
         /*Thread usage*/
         SELECT
             cpu_details_output = 
                 @cpu_details_output,
+            cpu_utilization = 
+                @cpu_utilization,
             total_threads = 
                 MAX(osi.max_workers_count),
             used_threads = 
