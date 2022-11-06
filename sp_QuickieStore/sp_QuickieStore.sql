@@ -1478,16 +1478,16 @@ END;
 Validate Sort Order
 */
 IF @sort_order NOT IN
-               (
-                   'cpu',
-                   'logical reads',
-                   'physical reads',
-                   'writes',
-                   'duration',
-                   'memory',
-                   'tempdb',
-                   'executions'
-               )
+   (
+       'cpu',
+       'logical reads',
+       'physical reads',
+       'writes',
+       'duration',
+       'memory',
+       'tempdb',
+       'executions'
+   )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
    SELECT
@@ -1500,7 +1500,7 @@ These columns are only available in 2017+
 IF
   (
       @sort_order = 'tempdb'
-        AND @new = 0
+      AND @new = 0
   )
 BEGIN
    RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
@@ -1514,7 +1514,7 @@ Wait stats aren't in Query Store until 2017, so we can't do that on television
 IF
 (
     @wait_filter IS NOT NULL
-      AND @new = 0
+    AND @new = 0
 )
 BEGIN
    RAISERROR('Query Store wait stats are not available prior to SQL Server 2017', 11, 1) WITH NOWAIT;
@@ -1527,24 +1527,24 @@ Make sure the wait filter is valid
 IF 
 (
     @new = 1
-      AND @wait_filter NOT IN
-                       (
-                           'cpu',
-                           'lock',
-                           'locks',
-                           'latch',
-                           'latches',
-                           'buffer latch',
-                           'buffer latches',
-                           'buffer io',
-                           'log',
-                           'log io',
-                           'network',
-                           'network io',
-                           'parallel',
-                           'parallelism',
-                           'memory'
-                       )
+    AND @wait_filter NOT IN
+        (
+            'cpu',
+            'lock',
+            'locks',
+            'latch',
+            'latches',
+            'buffer latch',
+            'buffer latches',
+            'buffer io',
+            'log',
+            'log io',
+            'network',
+            'network io',
+            'parallel',
+            'parallelism',
+            'memory'
+        )
 )
 BEGIN
    RAISERROR('The wait category (%s) you chose is invalid', 11, 1, @wait_filter) WITH NOWAIT;
