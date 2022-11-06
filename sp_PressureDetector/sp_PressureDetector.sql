@@ -320,132 +320,180 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
     END;
 
-        /*
-        Look at wait stats related to CPU memory, disk, and query performance
-        */
-        SELECT
-            hours_uptime =
-                (
-                    SELECT 
-                        DATEDIFF
-                        (
-                            HOUR, 
-                            osi.sqlserver_start_time, 
-                            SYSDATETIME()
-                        )
-                    FROM sys.dm_os_sys_info AS osi
-                ),
-            dows.wait_type,
-            description = 
-                CASE 
-                    dows.wait_type
-                    WHEN N'PAGEIOLATCH_SH' 
-                    THEN N'Selects reading pages from disk into memory'
-                    WHEN N'PAGEIOLATCH_EX'
-                    THEN N'Modifications reading pages from disk into memory'
-                    WHEN N'RESOURCE_SEMAPHORE' 
-                    THEN N'Queries waiting to get memory to run'
-                    WHEN N'RESOURCE_SEMAPHORE_QUERY_COMPILE' 
-                    THEN N'Queries waiting to get memory to compile'
-                    WHEN N'CXPACKET' 
-                    THEN N'Parallelism'
-                    WHEN N'CXCONSUMER' 
-                    THEN N'Parallelism'
-                    WHEN N'CXSYNC_PORT' 
-                    THEN N'Parallelism'
-                    WHEN N'CXSYNC_CONSUMER' 
-                    THEN N'Parallelism'
-                    WHEN N'SOS_SCHEDULER_YIELD' 
-                    THEN N'Query scheduling'
-                    WHEN N'THREADPOOL' 
-                    THEN N'Worker thread exhaustion'
-                    WHEN N'CMEMTHREAD' 
-                    THEN N'Tasks waiting on memory objects'
-                END,
-            hours_wait_time = 
+    /*
+    Look at wait stats related to CPU memory, disk, and query performance
+    */
+    SELECT
+        hours_uptime =
+            (
+                SELECT 
+                    DATEDIFF
+                    (
+                        HOUR, 
+                        osi.sqlserver_start_time, 
+                        SYSDATETIME()
+                    )
+                FROM sys.dm_os_sys_info AS osi
+            ),
+        dows.wait_type,
+        description = 
+            CASE                
+                WHEN dows.wait_type = N'PAGEIOLATCH_SH' 
+                THEN N'Selects reading pages from disk into memory'
+                WHEN dows.wait_type = N'PAGEIOLATCH_EX'
+                THEN N'Modifications reading pages from disk into memory'
+                WHEN dows.wait_type = N'RESOURCE_SEMAPHORE' 
+                THEN N'Queries waiting to get memory to run'
+                WHEN dows.wait_type = N'RESOURCE_SEMAPHORE_QUERY_COMPILE' 
+                THEN N'Queries waiting to get memory to compile'
+                WHEN dows.wait_type = N'CXPACKET' 
+                THEN N'Parallelism'
+                WHEN dows.wait_type = N'CXCONSUMER' 
+                THEN N'Parallelism'
+                WHEN dows.wait_type = N'CXSYNC_PORT' 
+                THEN N'Parallelism'
+                WHEN dows.wait_type = N'CXSYNC_CONSUMER' 
+                THEN N'Parallelism'
+                WHEN dows.wait_type = N'SOS_SCHEDULER_YIELD' 
+                THEN N'Query scheduling'
+                WHEN dows.wait_type = N'THREADPOOL' 
+                THEN N'Worker thread exhaustion'
+                WHEN dows.wait_type = N'CMEMTHREAD' 
+                THEN N'Tasks waiting on memory objects'
+                WHEN dows.wait_type = N'PAGELATCH_EX'
+                THEN N'Potential tempdb contention'
+                WHEN dows.wait_type = N'PAGELATCH_SH'
+                THEN N'Potential tempdb contention'
+                WHEN dows.wait_type = N'PAGELATCH_UP'
+                THEN N'Potential tempdb contention'
+                WHEN dows.wait_type LIKE N'LCK%'
+                THEN N'Queries being blocked'
+            END,
+        hours_wait_time = 
+            CONVERT
+            (
+                numeric(38, 9), 
+                dows.wait_time_ms / 
+                    (1000. * 60. * 60.)
+            ),
+        hours_signal_wait_time = 
+            CONVERT
+            (
+                numeric(38, 9), 
+                dows.signal_wait_time_ms / 
+                    (1000. * 60. * 60.)
+            ),
+        waiting_tasks_count = 
+            REPLACE
+            (
                 CONVERT
                 (
-                    numeric(38, 9), 
-                    dows.wait_time_ms / 
-                        (1000. * 60. * 60.)
-                ),
-            hours_signal_wait_time = 
-                CONVERT
-                (
-                    numeric(38, 9), 
-                    dows.signal_wait_time_ms / 
-                        (1000. * 60. * 60.)
-                ),
-            waiting_tasks_count = 
-                REPLACE
-                (
+                    nvarchar(30), 
                     CONVERT
                     (
-                        nvarchar(30), 
-                        CONVERT
+                        money,
+                        dows.waiting_tasks_count
+                    ), 
+                    1
+                ),
+            N'.00',
+            N''
+            ),
+        avg_ms_per_wait = 
+            ISNULL
+            (
+               CONVERT
+               (
+                   numeric(38, 9), 
+                   dows.wait_time_ms / 
+                       NULLIF
+                       (
+                           1. * 
+                           dows.waiting_tasks_count, 
+                           0.
+                       )
+                ), 
+                0.
+            )
+    FROM sys.dm_os_wait_stats AS dows
+    WHERE dows.waiting_tasks_count > 0
+    AND
+    (
+        dows.wait_type IN 
+             (
+                 /*Disk*/
+                 N'PAGEIOLATCH_SH', --Selects reading pages from disk into memory
+                 N'PAGEIOLATCH_EX', --Modifications reading pages from disk into memory
+                 /*Memory*/
+                 N'RESOURCE_SEMAPHORE', --Queries waiting to get memory to run
+                 N'RESOURCE_SEMAPHORE_QUERY_COMPILE', --Queries waiting to get memory to compile
+                 N'CMEMTHREAD', --Tasks waiting on memory objects
+                 /*Parallelism*/
+                 N'CXPACKET', --Parallelism
+                 N'CXCONSUMER', --Parallelism
+                 N'CXSYNC_PORT', --Parallelism
+                 N'CXSYNC_CONSUMER', --Parallelism
+                 /*CPU*/
+                 N'SOS_SCHEDULER_YIELD', --Query scheduling
+                 N'THREADPOOL', --Worker thread exhaustion
+                 /*tempdb (potentially)*/
+                 N'PAGELATCH_EX', --Potential contention
+                 N'PAGELATCH_SH', --Potential contention
+                 N'PAGELATCH_UP' --Potential contention
+             )
+        OR dows.wait_type LIKE N'LCK%' --Locking
+    )
+    ORDER BY 
+        dows.wait_time_ms DESC
+    OPTION(MAXDOP 1, RECOMPILE);
+
+    IF @azure = 0
+    BEGIN
+        SELECT 
+        tempdb_configuration = 
+            (
+                SELECT 
+                    total_data_files = 
+                        COUNT_BIG(*),
+                    min_size_mb = 
+                        (MIN(mf.size) * 8) / 1024,
+                    max_size_mb = 
+                        (MAX(mf.size) * 8) / 1024,
+                    min_growth_increment_mb = 
+                        MIN(mf.growth * 8) / 1024,
+                    max_growth_increment_mb = 
+                        MAX(mf.growth * 8) / 1024,
+                    scheduler_total_count =
                         (
-                            money,
-                            dows.waiting_tasks_count
-                        ), 
-                        1
-                    ),
-                N'.00',
-                N''
-                ),
-            avg_ms_per_wait = 
-                ISNULL
-                (
-                   CONVERT
-                   (
-                       numeric(38, 9), 
-                       dows.wait_time_ms / 
-                           NULLIF
-                           (
-                               1. * 
-                               dows.waiting_tasks_count, 
-                               0.
-                           )
-                    ), 
-                    0.
-                ),
-            avg_signal_ms_per_wait = 
-                ISNULL
-                (
-                   CONVERT
-                   (
-                       numeric(38, 9), 
-                       dows.signal_wait_time_ms / 
-                           NULLIF
-                           (
-                               1. * 
-                               dows.waiting_tasks_count, 
-                               0.
-                           )
-                    ), 
-                    0.
-                )
-        FROM sys.dm_os_wait_stats AS dows
-        WHERE dows.wait_type IN 
-              (
-                  /*Disk*/
-                  N'PAGEIOLATCH_SH', --Selects reading pages from disk into memory
-                  N'PAGEIOLATCH_EX', --Modifications reading pages from disk into memory
-                  /*Memory*/
-                  N'RESOURCE_SEMAPHORE', --Queries waiting to get memory to run
-                  N'RESOURCE_SEMAPHORE_QUERY_COMPILE', --Queries waiting to get memory to compile
-                  N'CMEMTHREAD', --Tasks waiting on memory objects
-                  /*Parallelism*/
-                  N'CXPACKET', --Parallelism
-                  N'CXCONSUMER', --Parallelism
-                  N'CXSYNC_PORT', --Parallelism
-                  N'CXSYNC_CONSUMER', --Parallelism
-                  /*CPU*/
-                  N'SOS_SCHEDULER_YIELD', --Query scheduling
-                  N'THREADPOOL' --Worker thread exhaustion
-              )
-        ORDER BY 
-            dows.wait_time_ms DESC
-        OPTION(MAXDOP 1, RECOMPILE);
+                            SELECT 
+                                i.scheduler_total_count
+                            FROM sys.dm_os_sys_info AS i
+                        )
+                FROM sys.master_files AS mf 
+                WHERE mf.database_id = 2
+                AND   mf.type = 0
+                FOR XML
+                    PATH('tempdb_configuration'),
+                    TYPE
+            ),
+        tempdb_space_used = 
+            (
+                SELECT
+                    free_space_gb = 
+                        ISNULL((SUM(d.unallocated_extent_page_count) * 8.) / 1024. / 1024., 0),
+                    user_objects_gb = 
+                        ISNULL((SUM(d.user_object_reserved_page_count) * 8.) / 1024. / 1024., 0),
+                    version_store_gb = 
+                        ISNULL((SUM(d.version_store_reserved_page_count) * 8.) / 1024. / 1024., 0),
+                    internal_objects_gb = 
+                        ISNULL((SUM(d.internal_object_reserved_page_count) * 8.) / 1024. / 1024., 0)
+                FROM tempdb.sys.dm_db_file_space_usage AS d
+                WHERE d.database_id = 2
+                FOR XML
+                    PATH('tempdb_space_used'),
+                    TYPE
+            );
+    END
 
     /*Memory Grant info*/
     IF @what_to_check IN (N'both', N'memory')
@@ -666,7 +714,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             @mem_sql;
         
         /*Resource semaphore info*/
-        IF OBJECT_ID('sys.master_files') IS NULL
+        IF @azure = 1
+        BEGIN
             SELECT 
                 @database_size_out = N'
                 SELECT 
@@ -674,7 +723,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         SUM(CONVERT(bigint, df.size)) * 8 / 1024 / 1024
                 FROM sys.database_files AS df
 				OPTION(MAXDOP 1, RECOMPILE);';
-        ELSE
+        END
+        IF @azure = 0
+        BEGIN
             SELECT 
                 @database_size_out = N'
                 SELECT 
@@ -683,6 +734,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FROM sys.master_files AS mf
                 WHERE mf.database_id > 4
 				OPTION(MAXDOP 1, RECOMPILE);';
+        END
         
         EXEC sys.sp_executesql
             @database_size_out,
