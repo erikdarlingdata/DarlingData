@@ -2781,6 +2781,7 @@ BEGIN
                     kheb.wait_time,
                 kheb.status,
                 kheb.isolation_level,
+                c.sql_handles,
                 kheb.resource_owner_type,
                 kheb.lock_mode,
                 kheb.transaction_count,
@@ -2850,7 +2851,30 @@ BEGIN
                             bd.database_id
                         ) 
                 FROM #blocked AS bd           
-            ) AS kheb;
+            ) AS kheb
+            CROSS APPLY 
+            (
+              SELECT 
+                  sql_handles = 
+                      STUFF
+                      (
+                          (
+                              SELECT DISTINCT
+                                  ',' +
+                                  RTRIM
+                                  (
+                                      n.c.value('@sqlhandle', 'varchar(130)')
+                                  )
+                              FROM kheb.blocked_process_report.nodes('//executionStack/frame') AS n(c)
+                              FOR XML
+                                  PATH(''),
+                                  TYPE
+                          ).value('./text()[1]', 'varchar(max)'),
+                          1,
+                          1,
+                          ''
+                      )                    
+             ) AS c;
 
             SELECT
                 b.*
