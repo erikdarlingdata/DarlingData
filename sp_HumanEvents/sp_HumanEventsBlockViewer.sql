@@ -69,7 +69,6 @@ ALTER PROCEDURE
 WITH RECOMPILE
 AS
 BEGIN
-
 SET STATISTICS XML OFF;
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -577,6 +576,7 @@ END;
                 kheb.client_app,
                 kheb.host_name,
                 kheb.login_name,
+                kheb.transaction_id,
                 kheb.blocked_process_report
             INTO #blocks
             FROM 
@@ -615,7 +615,9 @@ END;
                         ROW_NUMBER() OVER
                         (
                             PARTITION BY
-                                b.monitor_loop
+                                b.transaction_id,
+                                b.spid,
+                                b.ecid
                             ORDER BY
                                 b.event_time DESC
                         )
@@ -629,6 +631,4 @@ END;
                     THEN 1
                     ELSE 999 
                 END;
-
-
 END; --Final End
