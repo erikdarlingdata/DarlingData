@@ -450,50 +450,106 @@ OPTION(MAXDOP 1, RECOMPILE);',
     IF @azure = 0
     BEGIN
         SELECT 
-        tempdb_configuration = 
-            (
-                SELECT 
-                    total_data_files = 
-                        COUNT_BIG(*),
-                    min_size_mb = 
-                        (MIN(mf.size) * 8) / 1024,
-                    max_size_mb = 
-                        (MAX(mf.size) * 8) / 1024,
-                    min_growth_increment_mb = 
-                        MIN(mf.growth * 8) / 1024,
-                    max_growth_increment_mb = 
-                        MAX(mf.growth * 8) / 1024,
-                    scheduler_total_count =
-                        (
-                            SELECT 
-                                i.scheduler_total_count
-                            FROM sys.dm_os_sys_info AS i
-                        )
-                FROM sys.master_files AS mf 
-                WHERE mf.database_id = 2
-                AND   mf.type = 0
-                FOR XML
-                    PATH('tempdb_configuration'),
-                    TYPE
-            ),
-        tempdb_space_used = 
-            (
-                SELECT
-                    free_space_gb = 
-                        ISNULL((SUM(d.unallocated_extent_page_count) * 8.) / 1024. / 1024., 0),
-                    user_objects_gb = 
-                        ISNULL((SUM(d.user_object_reserved_page_count) * 8.) / 1024. / 1024., 0),
-                    version_store_gb = 
-                        ISNULL((SUM(d.version_store_reserved_page_count) * 8.) / 1024. / 1024., 0),
-                    internal_objects_gb = 
-                        ISNULL((SUM(d.internal_object_reserved_page_count) * 8.) / 1024. / 1024., 0)
-                FROM tempdb.sys.dm_db_file_space_usage AS d
-                WHERE d.database_id = 2
-                FOR XML
-                    PATH('tempdb_space_used'),
-                    TYPE
-            );
-    END
+            tempdb_info = 
+                (
+                    SELECT
+                        tempdb_configuration = 
+                            (
+                                SELECT 
+                                    total_data_files = 
+                                        COUNT_BIG(*),
+                                    min_size_mb = 
+                                        MIN(mf.size * 8) / 1024,
+                                    max_size_mb = 
+                                        MAX(mf.size * 8) / 1024,
+                                    min_growth_increment_mb = 
+                                        MIN(mf.growth * 8) / 1024,
+                                    max_growth_increment_mb = 
+                                        MAX(mf.growth * 8) / 1024,
+                                    scheduler_total_count =
+                                        (
+                                            SELECT 
+                                                i.scheduler_total_count
+                                            FROM sys.dm_os_sys_info AS i
+                                        )
+                                FROM sys.master_files AS mf 
+                                WHERE mf.database_id = 2
+                                AND   mf.type = 0
+                                FOR XML
+                                    PATH('tempdb_configuration'),
+                                    TYPE
+                            ),
+                        tempdb_space_used = 
+                            (
+                                SELECT
+                                    free_space_mb = 
+                                        SUM(d.unallocated_extent_page_count * 8) / 1024,
+                                    user_objects_mb = 
+                                        SUM(d.user_object_reserved_page_count * 8) / 1024,
+                                    version_store_mb = 
+                                        SUM(d.version_store_reserved_page_count * 8) / 1024,
+                                    internal_objects_mb = 
+                                        SUM(d.internal_object_reserved_page_count * 8) / 1024
+                                FROM tempdb.sys.dm_db_file_space_usage AS d
+                                WHERE d.database_id = 2
+                                FOR XML
+                                    PATH('tempdb_space_used'),
+                                    TYPE
+                            ),
+                        tempdb_query_activity = 
+                            (
+                                SELECT 
+                                    t.session_id,
+                                    tempdb_allocations_mb = 
+                                        SUM(t.tempdb_allocations * 8) / 1024,
+                                    tempdb_current_mb = 
+                                        SUM(t.tempdb_current * 8) / 1024
+                                FROM
+                                (
+                                    SELECT 
+                                        t.session_id,
+                                        tempdb_allocations = 
+                                            t.user_objects_alloc_page_count +
+                                            t.internal_objects_alloc_page_count,
+                                        tempdb_current = 
+                                            t.user_objects_alloc_page_count +
+                                            t.internal_objects_alloc_page_count -
+                                            t.user_objects_dealloc_page_count -
+                                            t.internal_objects_dealloc_page_count
+                                    FROM sys.dm_db_task_space_usage AS t
+                        
+                                    UNION ALL
+                        
+                                    SELECT
+                                        s.session_id,
+                                        tempdb_allocations = 
+                                            s.user_objects_alloc_page_count +
+                                            s.internal_objects_alloc_page_count,
+                                        tempdb_current = 
+                                            s.user_objects_alloc_page_count +
+                                            s.internal_objects_alloc_page_count -
+                                            s.user_objects_dealloc_page_count -
+                                            s.internal_objects_dealloc_page_count
+                                    FROM sys.dm_db_session_space_usage AS s
+                                ) AS t
+                                WHERE t.session_id > 50
+                                GROUP BY
+                                    t.session_id
+                                HAVING
+                                    (SUM(t.tempdb_allocations) * 8) / 1024 > 1
+                                ORDER BY
+                                    SUM(t.tempdb_allocations) DESC
+                                FOR XML
+                                    PATH('tempb_query_activity'),
+                                    TYPE
+                            
+                            )
+                        FOR XML
+                            PATH('tempdb'),
+                            TYPE
+                )
+                OPTION(RECOMPILE, MAXDOP 1);
+    END;
 
     /*Memory Grant info*/
     IF @what_to_check IN (N'both', N'memory')
@@ -722,8 +778,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     @database_size_out_gb = 
                         SUM(CONVERT(bigint, df.size)) * 8 / 1024 / 1024
                 FROM sys.database_files AS df
-				OPTION(MAXDOP 1, RECOMPILE);';
-        END
+                OPTION(MAXDOP 1, RECOMPILE);';
+        END;
         IF @azure = 0
         BEGIN
             SELECT 
@@ -733,8 +789,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         SUM(CONVERT(bigint, mf.size)) * 8 / 1024 / 1024
                 FROM sys.master_files AS mf
                 WHERE mf.database_id > 4
-				OPTION(MAXDOP 1, RECOMPILE);';
-        END
+                OPTION(MAXDOP 1, RECOMPILE);';
+        END;
         
         EXEC sys.sp_executesql
             @database_size_out,
@@ -894,7 +950,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 PATH('cpu_utilization'),
                 TYPE
         ) AS x (cpu_utilization)
-        OPTION(RECOMPILE);
+        OPTION(MAXDOP 1, RECOMPILE);
 
         IF @cpu_utilization IS NULL
         BEGIN
@@ -997,7 +1053,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         FROM sys.dm_os_waiting_tasks AS dowt
         WHERE dowt.wait_type = N'THREADPOOL'
         ORDER BY 
-		    dowt.wait_duration_ms DESC
+            dowt.wait_duration_ms DESC
         OPTION(MAXDOP 1, RECOMPILE);
         
         
