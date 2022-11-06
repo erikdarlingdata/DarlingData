@@ -578,6 +578,7 @@ END;
                 kheb.host_name,
                 kheb.login_name,
                 kheb.blocked_process_report
+            INTO #blocks
             FROM 
             (                
                 SELECT 
@@ -602,13 +603,32 @@ END;
                         ) 
                 FROM #blocked AS bd           
             ) AS kheb
+            OPTION(RECOMPILE);
+
+            SELECT
+                b.*
+            FROM
+            (
+                SELECT
+                    b.*,
+                    n = 
+                        ROW_NUMBER() OVER
+                        (
+                            PARTITION BY
+                                b.monitor_loop
+                            ORDER BY
+                                b.event_time DESC
+                        )
+                FROM #blocks AS b
+            ) AS b
+            WHERE b.n = 1
             ORDER BY 
-                kheb.event_time DESC,
+                b.event_time DESC,
                 CASE 
-                    WHEN kheb.activity = 'blocking' 
+                    WHEN b.activity = 'blocking' 
                     THEN 1
                     ELSE 999 
-                END
-            OPTION(RECOMPILE);
+                END;
+
 
 END; --Final End
