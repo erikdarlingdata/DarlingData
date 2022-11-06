@@ -165,11 +165,16 @@ DECLARE
             THEN 1
             ELSE 0
         END,
-    @x xml = NULL,
     @target_type sysname = '',
     @session_id int,
     @target_session_id int,
     @file_name nvarchar(4000);
+
+CREATE TABLE
+    #x
+(
+    x xml
+);
 
 CREATE TABLE
     #blocking_xml
@@ -239,9 +244,14 @@ END;
 
 /* Dump whatever we got into a temp table */
 IF (@azure = 0 AND @target_type = 'ring_buffer')
-BEGIN
+BEGIN   
+    INSERT
+        #x
+    (
+        x
+    )
     SELECT 
-        @x = 
+        x = 
             TRY_CAST
             (
                 t.target_data
@@ -251,13 +261,17 @@ BEGIN
     JOIN sys.dm_xe_sessions AS s
         ON s.address = t.event_session_address
     WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer'
-    OPTION(RECOMPILE);
+    AND   t.target_name = N'ring_buffer';
 END;
 IF (@azure = 1 AND @target_type = 'ring_buffer')
 BEGIN
+    INSERT
+        #x
+    (
+        x
+    )
     SELECT 
-        @x = 
+        x = 
             TRY_CAST
             (
                 t.target_data
@@ -267,14 +281,11 @@ BEGIN
     JOIN sys.dm_xe_database_sessions AS s
         ON s.address = t.event_session_address
     WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer'
-    OPTION(RECOMPILE);
+    AND   t.target_name = N'ring_buffer';
 END;
 
 IF @target_type = 'event_file'
-BEGIN
-
-    
+BEGIN   
     IF @azure = 0
     BEGIN
         SELECT
@@ -338,16 +349,21 @@ BEGIN
                             nvarchar(4000),
                             f.value
                         )
-            FROM sys.fserver_event_session_fields AS f
+            FROM sys.server_event_session_fields AS f
             WHERE f.event_session_id = @session_id
             AND   f.object_id = @target_session_id
             AND   f.name = N'filename'
         ) AS f
         OPTION(RECOMPILE);
     END;
-    
+
+    INSERT
+        #x
+    (
+        x
+    )    
     SELECT
-        @x = 
+        x = 
             TRY_CAST
             (
                 f.event_data
@@ -359,8 +375,7 @@ BEGIN
              NULL, 
              NULL, 
              NULL
-         ) AS f
-    OPTION(RECOMPILE);
+         ) AS f;
 END;
 
 
@@ -374,8 +389,8 @@ BEGIN
     SELECT 
         human_events_xml = 
                 e.x.query('.')
-    FROM @x.nodes('/RingBufferTarget/event') AS e(x)
-    OPTION(RECOMPILE);
+    FROM #x AS x
+    CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x);
 END;
 
 IF @target_type = 'event_file'
@@ -388,8 +403,8 @@ BEGIN
     SELECT 
         human_events_xml = 
                 e.x.query('.')
-    FROM @x.nodes('/event') AS e(x)
-    OPTION(RECOMPILE);
+    FROM #x AS x
+    CROSS APPLY x.x.nodes('/event') AS e(x);
 END;
 
 IF @debug = 1

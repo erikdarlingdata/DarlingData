@@ -76,7 +76,6 @@ ALTER PROCEDURE
     @debug bit = 0,
     @help bit = 0 
 )
-WITH RECOMPILE
 AS
 BEGIN
 
@@ -230,8 +229,7 @@ BEGIN
     JOIN sys.types AS t
         ON  ap.system_type_id = t.system_type_id
         AND ap.user_type_id = t.user_type_id
-    WHERE o.name = N'sp_HumanEvents'
-    OPTION(RECOMPILE);
+    WHERE o.name = N'sp_HumanEvents';
 
 
     /*Example calls*/
@@ -333,6 +331,12 @@ RETURN;
 END;
 
 BEGIN TRY
+
+CREATE TABLE
+    #x
+(
+    x xml
+);
 
 CREATE TABLE 
     #drop_commands 
@@ -477,7 +481,6 @@ DECLARE
     @requested_memory_mb_filter nvarchar(MAX) = N'',
     @compile_events bit = 0,
     @parameterization_events bit = 0,
-    @x xml,
     @fully_formed_babby nvarchar(1000) = N'',
     @s_out int,
     @s_sql nvarchar(MAX) = N'',
@@ -554,8 +557,7 @@ BEGIN
         ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents%'
     AND   (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-      OR    dxe.create_time IS NULL) 
-    OPTION(RECOMPILE);
+      OR    dxe.create_time IS NULL);
 END;
 
 IF @azure = 1
@@ -574,8 +576,7 @@ BEGIN
         ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents%'
     AND   (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-      OR     dxe.create_time IS NULL) 
-    OPTION(RECOMPILE);
+      OR     dxe.create_time IS NULL);
 END;
 
 IF EXISTS
@@ -962,8 +963,7 @@ FROM
     ) AS w 
     CROSS APPLY wait_type.nodes('x') AS x(x)
 ) AS waits
-WHERE @wait_type <> N'ALL'
-OPTION(RECOMPILE);
+WHERE @wait_type <> N'ALL';
 
 
 /*
@@ -995,8 +995,7 @@ RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT;
               FROM sys.dm_xe_map_values AS dxmv
               WHERE  dxmv.map_value COLLATE Latin1_General_BIN = uw.wait_type COLLATE Latin1_General_BIN
               AND    dxmv.name = N'wait_types'
-          )
-    OPTION(RECOMPILE);
+          );
     
     /* If we find any invalid waits, let people know */
     IF @@ROWCOUNT > 0    
@@ -1009,8 +1008,7 @@ RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT;
         
         SELECT 
             iw.invalid_waits
-        FROM #invalid_waits AS iw
-        OPTION(RECOMPILE);
+        FROM #invalid_waits AS iw;
         
         RAISERROR(N'Waidaminnithataintawait', 11, 1) WITH NOWAIT;
         RETURN;
@@ -1063,8 +1061,7 @@ RAISERROR(N'Checking for unsanitary inputs', 0, 1) WITH NOWAIT;
           (
               N'', 
               N'dbo'
-          )
-    OPTION(RECOMPILE);
+          );
 
     IF EXISTS
     (
@@ -1293,8 +1290,7 @@ BEGIN
         @is_out = 
             COUNT_BIG(*) 
     FROM ' + QUOTENAME(@output_database_name) + N'.sys.schemas AS s
-    WHERE s.name = ' + QUOTENAME(@output_schema_name, '''') + N' 
-    OPTION(RECOMPILE);',
+    WHERE s.name = ' + QUOTENAME(@output_schema_name, '''') + N';',
         @s_params  = 
             N'@is_out integer OUTPUT';
     
@@ -1550,8 +1546,7 @@ BEGIN
     SELECT 
         uw.wait_type
     FROM #user_waits AS uw
-    WHERE @wait_type <> N'all'
-    OPTION(RECOMPILE);
+    WHERE @wait_type <> N'all';
     
     /* This section creates a dynamic WHERE clause based on wait types
        The problem is that wait type IDs change frequently, which sucks. */
@@ -1635,8 +1630,7 @@ BEGIN
                 0, 
                 8000
             ) + 
-            N')'
-    OPTION(RECOMPILE);
+            N')';
 END; 
 
 /* End individual filters */
@@ -1849,8 +1843,13 @@ WAITFOR DELAY @waitfor;
 /* Dump whatever we got into a temp table */
 IF @azure = 0
 BEGIN
+    INSERT
+        #x
+    (
+        x
+    )    
     SELECT 
-        @x = 
+        x = 
             CONVERT
             (
                 xml, 
@@ -1864,8 +1863,13 @@ BEGIN
 END;
 ELSE
 BEGIN
+    INSERT
+        #x
+    (
+        x
+    )    
     SELECT 
-        @x = 
+        x = 
             CONVERT
             (
                 xml, 
@@ -1883,8 +1887,8 @@ SELECT
     human_events_xml = 
         e.x.query('.')
 INTO #human_events_xml
-FROM @x.nodes('/RingBufferTarget/event') AS e(x)
-OPTION(RECOMPILE);
+FROM #x AS x
+CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e;
 
 
 IF @debug = 1
@@ -1953,10 +1957,9 @@ BEGIN;
          SELECT 
              q.*
          INTO #queries
-         FROM queries AS q
-         OPTION(RECOMPILE);
+         FROM queries AS q;
          
-         IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q OPTION(RECOMPILE); END;
+         IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q; END;
 
          /* Add attribute StatementId to query plan if it is missing (versions before 2019) */
          WITH XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
@@ -1975,8 +1978,7 @@ BEGIN;
              ORDER BY q2.event_time DESC
          ) AS q2
          WHERE q1.showplan_xml IS NOT NULL
-         AND   q1.showplan_xml.exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementId') = 0
-         OPTION(RECOMPILE);
+         AND   q1.showplan_xml.exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementId') = 0;
          
          /* Add attribute StatementText to query plan if it is missing (all versions) */
          WITH XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
@@ -1995,8 +1997,7 @@ BEGIN;
              ORDER BY q2.event_time DESC
          ) AS q2
          WHERE q1.showplan_xml IS NOT NULL 
-         AND   q1.showplan_xml.exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementText') = 0
-         OPTION(RECOMPILE);
+         AND   q1.showplan_xml.exist('/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple/@StatementText') = 0;
 
          WITH query_agg AS 
          (
@@ -2083,10 +2084,9 @@ BEGIN;
          FROM query_agg AS qa
          GROUP BY 
              qa.query_plan_hash_signed,
-             qa.query_hash_signed
-         OPTION(RECOMPILE);
+             qa.query_hash_signed;
          
-         IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t OPTION(RECOMPILE); END;
+         IF @debug = 1 BEGIN SELECT N'#totals' AS table_name, * FROM #totals AS t; END;
 
          WITH query_results AS
          (
@@ -2206,8 +2206,7 @@ BEGIN;
                    WHEN N'avg spills' THEN q.avg_spills_mb
                    WHEN N'avg memory' THEN q.avg_granted_memory_mb
                    ELSE N'cpu'
-              END DESC
-         OPTION(RECOMPILE);
+              END DESC;
 END;
 
 
@@ -2240,12 +2239,11 @@ IF @compile_events = 1
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 1
             AND   c.exist('@name[.= "sql_statement_post_compile"]') = 1
-            ORDER BY event_time
-            OPTION(RECOMPILE);
+            ORDER BY event_time;
 
             ALTER TABLE #compiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
 
-            IF @debug = 1 BEGIN SELECT N'#compiles_1' AS table_name, * FROM #compiles_1 AS c OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#compiles_1' AS table_name, * FROM #compiles_1 AS c; END;
 
             WITH cbq AS 
             (
@@ -2281,8 +2279,7 @@ IF @compile_events = 1
                 WHERE c.statement_text_checksum = k.statement_text_checksum
                 ORDER BY k.event_time DESC
             ) AS k
-            ORDER BY c.total_compiles DESC
-            OPTION(RECOMPILE);
+            ORDER BY c.total_compiles DESC;
 
     END;
 
@@ -2308,10 +2305,9 @@ IF @compile_events = 0
             INTO #compiles_0
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            ORDER BY event_time
-            OPTION(RECOMPILE);
+            ORDER BY event_time;
 
-            IF @debug = 1 BEGIN SELECT N'#compiles_0' AS table_name, * FROM #compiles_0 AS c OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#compiles_0' AS table_name, * FROM #compiles_0 AS c; END;
 
             SELECT 
                 c.event_time,
@@ -2320,8 +2316,7 @@ IF @compile_events = 0
                 c.object_name,
                 c.statement_text
             FROM #compiles_0 AS c
-            ORDER BY c.event_time
-            OPTION(RECOMPILE);
+            ORDER BY c.event_time;
 
     END;
 
@@ -2361,10 +2356,9 @@ IF @parameterization_events  = 1
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('@name[. = "query_parameterization_data"]') = 1
             AND   c.exist('(data[@name="is_recompiled"]/value[. = "false"])') = 1
-            ORDER BY event_time
-            OPTION(RECOMPILE);
+            ORDER BY event_time;
 
-            IF @debug = 1 BEGIN SELECT N'#parameterization' AS table_name, * FROM #parameterization AS p OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#parameterization' AS table_name, * FROM #parameterization AS p; END;
 
             WITH cpq AS 
             (
@@ -2412,8 +2406,7 @@ IF @parameterization_events  = 1
                    WHERE k.query_hash = c.query_hash
                    ORDER BY k.event_time DESC
                ) AS k
-            ORDER BY c.total_compiles DESC
-            OPTION(RECOMPILE);
+            ORDER BY c.total_compiles DESC;
     END;
 
 END;
@@ -2448,12 +2441,11 @@ IF @compile_events = 1
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
             WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 0
-            ORDER BY event_time
-            OPTION(RECOMPILE);
+            ORDER BY event_time;
 
             ALTER TABLE #recompiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
 
-            IF @debug = 1 BEGIN SELECT N'#recompiles_1' AS table_name, * FROM #recompiles_1 AS r OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#recompiles_1' AS table_name, * FROM #recompiles_1 AS r; END;
 
             WITH cbq AS 
             (
@@ -2489,8 +2481,7 @@ IF @compile_events = 1
                 WHERE c.statement_text_checksum = k.statement_text_checksum
                 ORDER BY k.event_time DESC
             ) AS k
-            ORDER BY c.total_recompiles DESC
-            OPTION(RECOMPILE);
+            ORDER BY c.total_recompiles DESC;
 
     END;
 
@@ -2517,10 +2508,9 @@ IF @compile_events = 0
             INTO #recompiles_0
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            ORDER BY event_time
-            OPTION(RECOMPILE);
+            ORDER BY event_time;
 
-            IF @debug = 1 BEGIN SELECT N'#recompiles_0' AS table_name, * FROM #recompiles_0 AS r OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#recompiles_0' AS table_name, * FROM #recompiles_0 AS r; END;
 
             SELECT 
                 r.event_time,
@@ -2530,8 +2520,7 @@ IF @compile_events = 0
                 r.recompile_cause,
                 r.statement_text
             FROM #recompiles_0 AS r
-            ORDER BY r.event_time
-            OPTION(RECOMPILE);
+            ORDER BY r.event_time;
 
     END;
 END;
@@ -2591,10 +2580,9 @@ BEGIN;
              SELECT 
                  w.*
              INTO #waits_agg
-             FROM waits AS w
-             OPTION(RECOMPILE);
+             FROM waits AS w;
             
-            IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#waits_agg' AS table_name, * FROM #waits_agg AS wa; END;
 
             SELECT 
                 wait_pattern = N'total waits',
@@ -2607,8 +2595,7 @@ BEGIN;
                 avg_ms_per_wait = SUM(wa.duration_ms) / COUNT_BIG(*)
             FROM #waits_agg AS wa
             GROUP BY wa.wait_type
-            ORDER BY sum_duration_ms DESC
-            OPTION(RECOMPILE);            
+            ORDER BY sum_duration_ms DESC;            
 
             SELECT 
                 wait_pattern = N'total waits by database',
@@ -2624,8 +2611,7 @@ BEGIN;
             GROUP BY 
                 wa.database_name, 
                 wa.wait_type
-            ORDER BY sum_duration_ms DESC
-            OPTION(RECOMPILE); 
+            ORDER BY sum_duration_ms DESC; 
 
             WITH plan_waits AS 
             (
@@ -2668,8 +2654,7 @@ BEGIN;
             FROM plan_waits AS pw
             OUTER APPLY sys.dm_exec_query_plan(pw.plan_handle) AS qp
             OUTER APPLY sys.dm_exec_sql_text(pw.plan_handle) AS st
-            ORDER BY pw.sum_duration_ms DESC
-            OPTION(RECOMPILE);
+            ORDER BY pw.sum_duration_ms DESC;
 END;
 
 
@@ -2716,10 +2701,9 @@ BEGIN
             INTO #blocked
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
-            OPTION(RECOMPILE);
+            OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd);
 
-            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa; END;
 
             SELECT 
                 event_time = 
@@ -2761,10 +2745,9 @@ BEGIN
             INTO #blocking
             FROM #human_events_xml AS xet
             OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
-            OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
-            OPTION(RECOMPILE);
+            OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg);
 
-            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa; END;
 
 
             SELECT TOP (2147483647)
@@ -2816,8 +2799,7 @@ BEGIN
                          WHEN kheb.activity = 'blocking' 
                          THEN 1
                          ELSE 999 
-                     END
-            OPTION(RECOMPILE);
+                     END;
 
 END;
 
@@ -2871,8 +2853,7 @@ WHILE 1 = 1
         LEFT JOIN sys.dm_xe_sessions AS dxs
             ON dxs.name = ses.name
         WHERE ses.name LIKE N'keeper_HumanEvents_%'
-        AND   dxs.create_time IS NULL
-        OPTION(RECOMPILE);
+        AND   dxs.create_time IS NULL;
     END;
     ELSE
     BEGIN
@@ -2902,8 +2883,7 @@ WHILE 1 = 1
         LEFT JOIN sys.dm_xe_database_sessions AS dxs
             ON dxs.name = ses.name
         WHERE ses.name LIKE N'keeper_HumanEvents_%'
-        AND   dxs.create_time IS NULL
-        OPTION(RECOMPILE);
+        AND   dxs.create_time IS NULL;
     END;
 
     IF LEN(@the_sleeper_must_awaken) > 0
@@ -2953,8 +2933,7 @@ WHILE 1 = 1
             LEFT JOIN sys.dm_xe_sessions AS r 
                 ON r.name = s.name
             WHERE s.name LIKE N'keeper_HumanEvents_%'
-            AND   r.create_time IS NOT NULL
-            OPTION(RECOMPILE);
+            AND   r.create_time IS NOT NULL;
         END;
         ELSE
         BEGIN
@@ -2985,8 +2964,7 @@ WHILE 1 = 1
             LEFT JOIN sys.dm_xe_database_sessions AS r 
                 ON r.name = s.name
             WHERE s.name LIKE N'keeper_HumanEvents_%'
-            AND   r.create_time IS NOT NULL
-            OPTION(RECOMPILE);
+            AND   r.create_time IS NOT NULL;
         END;
 
         /*If we're getting compiles, and the parameterization event is available*/
@@ -3025,8 +3003,7 @@ WHILE 1 = 1
                 output_schema, 
                 output_table + N'_parameterization'
             FROM #human_events_worker 
-            WHERE event_type LIKE N'keeper_HumanEvents_compiles%'
-            OPTION(RECOMPILE);
+            WHERE event_type LIKE N'keeper_HumanEvents_compiles%';
         END;
 
         /*Update this column for when we see if we need to create views.*/
@@ -3047,10 +3024,9 @@ WHILE 1 = 1
                         ELSE N'?'
                     END    
         FROM #human_events_worker AS hew
-        WHERE hew.event_type_short = N''
-        OPTION(RECOMPILE);
+        WHERE hew.event_type_short = N'';
 
-        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker OPTION(RECOMPILE); END;
+        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker; END;
 
     END;
 
@@ -3071,8 +3047,7 @@ WHILE 1 = 1
             @max_id = 
                 MAX(hew.id)
         FROM #human_events_worker AS hew
-        WHERE hew.is_table_created = 0
-        OPTION(RECOMPILE);
+        WHERE hew.is_table_created = 0;
         
         RAISERROR(N'While, while, while...', 0, 1) WITH NOWAIT;
         WHILE @min_id <= @max_id
@@ -3088,8 +3063,7 @@ WHILE 1 = 1
                     hew.output_table
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
-            AND   hew.is_table_created = 0
-            OPTION(RECOMPILE);
+            AND   hew.is_table_created = 0;
         
             IF OBJECT_ID(@object_name_check) IS NULL
             BEGIN
@@ -3151,8 +3125,7 @@ WHILE 1 = 1
             UPDATE #human_events_worker 
                 SET is_table_created = 1 
             WHERE id = @min_id 
-            AND is_table_created = 0 
-            OPTION(RECOMPILE);
+            AND is_table_created = 0;
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
@@ -3249,8 +3222,7 @@ WHILE 1 = 1
             UPDATE #view_check 
                 SET 
                     output_database = @output_database_name, 
-                    output_schema = @output_schema_name 
-            OPTION(RECOMPILE);
+                    output_schema = @output_schema_name;
             
             RAISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT;
             UPDATE vc 
@@ -3260,8 +3232,7 @@ WHILE 1 = 1
             JOIN #human_events_worker AS hew
                 ON  vc.view_name LIKE N'%' + hew.event_type_short + N'%'
                 AND hew.is_table_created = 1
-                AND hew.is_view_created = 0
-            OPTION(RECOMPILE);
+                AND hew.is_view_created = 0;
         
             UPDATE vc 
                 SET 
@@ -3271,10 +3242,9 @@ WHILE 1 = 1
                 ON  vc.view_name = N'HumanEvents_Parameterization'
                 AND hew.output_table LIKE N'keeper_HumanEvents_compiles%'
                 AND hew.is_table_created = 1
-                AND hew.is_view_created = 0
-            OPTION(RECOMPILE);
+                AND hew.is_view_created = 0;
         
-            IF @debug = 1 BEGIN SELECT N'#view_check' AS table_name, * FROM #view_check AS vc OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#view_check' AS table_name, * FROM #view_check AS vc; END;
         
         END;
         
@@ -3296,8 +3266,7 @@ WHILE 1 = 1
                 WHERE vc.view_name LIKE N'%' + hew.event_type_short + N'%'
                 AND hew.is_table_created = 1
                 AND hew.is_view_created = 0
-            )
-            OPTION(RECOMPILE);
+            );
             
                 WHILE @min_id <= @max_id
                 BEGIN
@@ -3338,8 +3307,7 @@ WHILE 1 = 1
                             )
                     FROM #view_check AS vc
                     WHERE vc.id = @min_id
-                    AND   vc.output_table <> N''
-                    OPTION(RECOMPILE);
+                    AND   vc.output_table <> N'';
                 
                     IF OBJECT_ID(@object_name_check) IS NOT NULL
                     BEGIN
@@ -3399,8 +3367,7 @@ WHILE 1 = 1
             
                 UPDATE #human_events_worker 
                     SET 
-                        is_view_created = 1 
-                OPTION(RECOMPILE);
+                        is_view_created = 1;
                 
                 SET @view_tracker = 1;        
         END;
@@ -3423,8 +3390,7 @@ WHILE 1 = 1
             @min_id = MIN(hew.id), 
             @max_id = MAX(hew.id)
         FROM #human_events_worker AS hew
-        WHERE hew.is_table_created = 1
-        OPTION(RECOMPILE);
+        WHERE hew.is_table_created = 1;
 
         WHILE @min_id <= @max_id
         BEGIN
@@ -3452,8 +3418,7 @@ WHILE 1 = 1
                     )
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
-            AND   hew.is_table_created = 1
-            OPTION(RECOMPILE);
+            AND   hew.is_table_created = 1;
         
             IF OBJECT_ID(@object_name_check) IS NOT NULL
             BEGIN
@@ -3501,8 +3466,7 @@ END + N'        CONVERT
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''(data[@name="duration"]/value/text()[. > 0])'') = 1 
-AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-OPTION(RECOMPILE);'
+AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1;'
                         WHEN @event_type_check LIKE N'%lock%' /*Blocking!*/
                                                               /*To cut down on nonsense, I'm only inserting new blocking scenarios*/
                                                               /*Any existing blocking scenarios will update the blocking duration*/
@@ -3641,8 +3605,7 @@ WHERE NOT EXISTS
     AND   x.hostname = x2.host_name
     AND   x.loginname = x2.login_name
 )
-AND x.x = 1
-OPTION(RECOMPILE);
+AND x.x = 1;
 
 UPDATE x2
     SET 
@@ -3675,8 +3638,7 @@ JOIN
     AND   x.ecid = x2.ecid
     AND   x.clientapp = x2.client_app
     AND   x.hostname = x2.host_name
-    AND   x.loginname = x2.login_name
-OPTION(RECOMPILE);
+    AND   x.loginname = x2.login_name;
 '
                        WHEN @event_type_check LIKE N'%quer%' /*Queries!*/
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 + 
@@ -3732,8 +3694,7 @@ OPTION(RECOMPILE);
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-AND   c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1
-OPTION(RECOMPILE); '
+AND   c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '
                        WHEN @event_type_check LIKE N'%recomp%' /*Recompiles!*/
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 + 
                             N'( server_name, event_time,  event_type,  ' + @nc10 +
@@ -3773,8 +3734,7 @@ AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 0 '
              ELSE N''
         END + N'
 AND c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-ORDER BY event_time
-OPTION(RECOMPILE);'
+ORDER BY event_time;'
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%' /*Compiles!*/
                        THEN N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + @nc10 + 
                             N'( server_name, event_time,  event_type,  ' + @nc10 +
@@ -3815,8 +3775,7 @@ AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 1 '
         END + N'
 AND   c.exist(''@name[.= "sql_statement_post_compile"]'') = 1
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-ORDER BY event_time
-OPTION(RECOMPILE);' + @nc10
+ORDER BY event_time;' + @nc10
                             + CASE WHEN @parameterization_events = 1 /*The query_parameterization_data XE is only 2017+*/
                                    THEN 
                             @nc10 + 
@@ -3858,8 +3817,7 @@ OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''@name[.= "query_parameterization_data"]'') = 1
 AND   c.exist(''(data[@name="is_recompiled"]/value[. = "false"])'') = 1
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
-ORDER BY event_time
-OPTION(RECOMPILE);'
+ORDER BY event_time;'
                                    ELSE N'' 
                               END  
                        ELSE N''
@@ -3868,8 +3826,13 @@ OPTION(RECOMPILE);'
             /* this table is only used for the inserts, hence the "internal" in the name */
             IF @azure = 0
             BEGIN
+                INSERT
+                    #x
+                (
+                    x
+                )  
                 SELECT 
-                    @x = 
+                    x = 
                         CONVERT
                         (
                             xml, 
@@ -3883,8 +3846,13 @@ OPTION(RECOMPILE);'
             END;
             ELSE
             BEGIN
+                INSERT
+                    #x
+                (
+                    x
+                )  
                 SELECT 
-                    @x = 
+                    x = 
                         CONVERT
                         (
                             xml, 
@@ -3905,9 +3873,9 @@ OPTION(RECOMPILE);'
             SELECT 
                 human_events_xml = 
                     e.x.query('.')
-            FROM @x.nodes('/RingBufferTarget/event') AS e(x)
-            WHERE e.x.exist('@timestamp[. > sql:variable("@date_filter")]') = 1
-            OPTION(RECOMPILE);
+                FROM #x AS x
+            CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
+            WHERE e.x.exist('@timestamp[. > sql:variable("@date_filter")]') = 1;
             
             IF @debug = 1
             BEGIN 
@@ -3941,14 +3909,14 @@ OPTION(RECOMPILE);'
                             ELSE hew.last_updated
                         END 
             FROM #human_events_worker AS hew
-            WHERE hew.id = @min_id
-            OPTION(RECOMPILE);
+            WHERE hew.id = @min_id;
             
-            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew OPTION(RECOMPILE); END;
-            IF @debug = 1 BEGIN SELECT N'#human_events_xml_internal' AS table_name, * FROM #human_events_xml_internal AS hew OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew; END;
+            IF @debug = 1 BEGIN SELECT N'#human_events_xml_internal' AS table_name, * FROM #human_events_xml_internal AS hew; END;
 
             /*Clear the table out between runs*/
             TRUNCATE TABLE #human_events_xml_internal;
+            TRUNCATE TABLE #x;
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
@@ -4004,10 +3972,8 @@ BEGIN
                                           DAY, 
                                           (-1 * @delete_retention_days
                                       ), 
-                                      SYSDATETIME())
-                OPTION(RECOMPILE); ' + @nc10
-        FROM #human_events_worker AS hew
-        OPTION(RECOMPILE);
+                                      SYSDATETIME()); ' + @nc10
+        FROM #human_events_worker AS hew;
         
         IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;
         
@@ -4044,8 +4010,7 @@ BEGIN
     FROM sys.server_event_sessions AS ses  
     LEFT JOIN sys.dm_xe_sessions AS dxs  
         ON dxs.name = ses.name  
-    WHERE ses.name LIKE N'%HumanEvents_%'
-    OPTION(RECOMPILE);  
+    WHERE ses.name LIKE N'%HumanEvents_%';  
         
     EXEC sys.sp_executesql 
         @cleanup_sessions;  
@@ -4067,8 +4032,7 @@ BEGIN
                     ''; '' + 
                     NCHAR(10)
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
-            WHERE s.name LIKE ''' + '%HumanEvents%' + N'''
-            OPTION(RECOMPILE);';
+            WHERE s.name LIKE ''' + '%HumanEvents%' + N''';';
     
     EXEC sys.sp_executesql 
         @cleanup_tables, 
@@ -4099,8 +4063,7 @@ BEGIN
                     ''; '' + 
                     NCHAR(10)
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
-            WHERE v.name LIKE ''' + '%HumanEvents%' + N'''
-            OPTION(RECOMPILE);';
+            WHERE v.name LIKE ''' + '%HumanEvents%' + N''';';
     
     EXEC sys.sp_executesql 
         @cleanup_views, 
