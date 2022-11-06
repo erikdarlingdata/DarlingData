@@ -2681,11 +2681,12 @@ BEGIN
                 resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
                 monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
                 spid = bd.value('(process/@spid)[1]', 'int'),
-                ecid = bd.value('(process/@ecid)[1]', 'int'),
+                ecid = bd.value('(process/@ecid)[1]', 'int'),            
                 query_text = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
                 wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
                 transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
                 last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
+                last_transaction_completed = CONVERT(datetime2, NULL),
                 wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
                 lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
                 status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
@@ -2695,15 +2696,17 @@ BEGIN
                 host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
                 login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
                 isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-                sqlhandle = bd.value('(process/executionStack/frame/@sqlhandle)[1]', 'nvarchar(260)'),
+                log_used = bd.value('(process/@logused)[1]', 'bigint'),
+                clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
+                clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
                 activity = 'blocked',
                 blocked_process_report = c.query('.')
             INTO #blocked
-            FROM #human_events_xml AS xet
-            OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
+            FROM #blocking_xml AS bx
+            OUTER APPLY bx.human_events_xml.nodes('//event') AS oa(c)
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd);
 
-            IF @debug = 1 BEGIN SELECT N'#blocked' AS table_name, * FROM #blocked AS wa; END;
+            IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa; END;
 
             SELECT 
                 event_time = 
@@ -2727,11 +2730,12 @@ BEGIN
                 spid = bg.value('(process/@spid)[1]', 'int'),
                 ecid = bg.value('(process/@ecid)[1]', 'int'),
                 query_text = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
-                wait_time = CONVERT(int, NULL),
-                transaction_name = CONVERT(nvarchar(256), NULL),
-                last_transaction_started = CONVERT(datetime2, NULL),
-                wait_resource = CONVERT(nvarchar(100), NULL),
-                lock_mode = CONVERT(nvarchar(10), NULL),
+                wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
+                transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(256)'),
+                last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
+                last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
+                wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+                lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
                 status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
                 priority = bg.value('(process/@priority)[1]', 'int'),
                 transaction_count = bg.value('(process/@trancount)[1]', 'int'),
@@ -2739,67 +2743,141 @@ BEGIN
                 host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
                 login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
                 isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
-                sqlhandle = CONVERT(nvarchar(260), NULL),
+                log_used = bg.value('(process/@logused)[1]', 'bigint'),
+                clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+                clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
                 activity = 'blocking',
                 blocked_process_report = c.query('.')
             INTO #blocking
-            FROM #human_events_xml AS xet
-            OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
+            FROM #blocking_xml AS bx
+            OUTER APPLY bx.human_events_xml.nodes('//event') AS oa(c)
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg);
 
-            IF @debug = 1 BEGIN SELECT N'#blocking' AS table_name, * FROM #blocking AS wa; END;
+            IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa; END;
 
-
-            SELECT TOP (2147483647)
+            SELECT
                 kheb.event_time,
                 kheb.database_name,
-                kheb.contentious_object,
+                contentious_object = 
+                    ISNULL
+                    (
+                        kheb.contentious_object, 
+                        N'Unresolved'
+                    ),
                 kheb.activity,
+                kheb.monitor_loop,
                 kheb.spid,
-                kheb.query_text,
-                kheb.wait_time,
+                kheb.ecid,
+                query_text = 
+                    (
+                        SELECT 
+                            [processing-instruction(query)] = 
+                                kheb.query_text
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    ),
+                wait_time_ms = 
+                    kheb.wait_time,
                 kheb.status,
                 kheb.isolation_level,
-                kheb.last_transaction_started,
-                kheb.transaction_name,
-                kheb.wait_resource,
+                kheb.resource_owner_type,
                 kheb.lock_mode,
-                kheb.priority,
                 kheb.transaction_count,
+                kheb.transaction_name,
+                kheb.last_transaction_started,
+                kheb.last_transaction_completed,
+                client_option_1 = 
+                      SUBSTRING
+                      (    
+                          CASE WHEN kheb.clientoption1 & 0x20 = 0x20 THEN ', QUOTED IDENTIFIER ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x40 = 0x40 THEN ', ARITHABORT' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x800 = 0x800 THEN ', USER SET ARITHABORT' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x8000 = 0x8000 THEN ', NUMERIC ROUNDABORT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x10000 = 0x10000 THEN ', USER SET NUMERIC ROUNDABORT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x20000 = 0x20000 THEN ', SET XACT ABORT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x80000 = 0x80000 THEN ', NOCOUNT OFF' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x200000 = 0x200000 THEN ', NOCOUNT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x8000000 = 8000000 THEN ', USER SET QUOTED IDENTIFIER' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x20000000 = 0x20000000 THEN ', ANSI NULL DEFAULT ON' ELSE '' END +
+                          CASE WHEN kheb.clientoption1 & 0x40000000 = 0x40000000 THEN ', ANSI NULL DEFAULT OFF' ELSE '' END,
+                          3,
+                          8000
+                      ),
+                  client_option_2 = 
+                      SUBSTRING
+                      (
+                          CASE WHEN kheb.clientoption2 & 2 = 2 THEN ', IMPLICIT TRANSACTION' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 8 = 8 THEN ', ANSI WARNINGS' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x10 = 0x10 THEN ', ANSI PADDING' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x20 = 0x20 THEN ', ANSI NULLS' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x1000 = 0x1000 THEN ', USER CONCAT NULL YIELDS NULL' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x2000 = 0x2000 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x4000 = 0x4000 THEN ', USER ANSI NULLS' ELSE '' END +
+                          CASE WHEN kheb.clientoption2 & 0x8000 = 0x8000 THEN ', USER ANSI WARNINGS' ELSE '' END,
+                          3,
+                          8000
+                      ),
+                kheb.wait_resource,
+                kheb.priority,
+                kheb.log_used,
                 kheb.client_app,
                 kheb.host_name,
                 kheb.login_name,
+                kheb.transaction_id,
                 kheb.blocked_process_report
+            INTO #blocks
             FROM 
-            (
-                
+            (                
                 SELECT 
                     bg.*, 
-                    OBJECT_NAME
-                    (
-                        object_id, 
-                        bg.database_id
-                    ) AS contentious_object 
-                    FROM #blocking AS bg
+                    contentious_object = 
+                        OBJECT_NAME
+                        (
+                            bg.object_id, 
+                            bg.database_id
+                        )
+                FROM #blocking AS bg
                 
                 UNION ALL 
                 
                 SELECT 
                     bd.*, 
-                    OBJECT_NAME
-                    (
-                        object_id, 
-                        bd.database_id
-                    ) AS contentious_object 
-                FROM #blocked AS bd
-            
-            ) AS kheb
-            ORDER BY kheb.event_time,
-                     CASE 
-                         WHEN kheb.activity = 'blocking' 
-                         THEN 1
-                         ELSE 999 
-                     END;
+                    contentious_object = 
+                        OBJECT_NAME
+                        (
+                            bd.object_id, 
+                            bd.database_id
+                        ) 
+                FROM #blocked AS bd           
+            ) AS kheb;
+
+            SELECT
+                b.*
+            FROM
+            (
+                SELECT
+                    b.*,
+                    n = 
+                        ROW_NUMBER() OVER
+                        (
+                            PARTITION BY
+                                b.transaction_id,
+                                b.spid,
+                                b.ecid
+                            ORDER BY
+                                b.event_time DESC
+                        )
+                FROM #blocks AS b
+            ) AS b
+            WHERE b.n = 1
+            ORDER BY 
+                b.event_time DESC,
+                CASE 
+                    WHEN b.activity = 'blocking' 
+                    THEN 1
+                    ELSE 999 
+                END;
 
 END;
 

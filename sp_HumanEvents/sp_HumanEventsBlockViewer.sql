@@ -66,7 +66,6 @@ ALTER PROCEDURE
     @help bit = 0,
     @debug bit = 0
 )
-WITH RECOMPILE
 AS
 BEGIN
 SET STATISTICS XML OFF;
@@ -123,8 +122,7 @@ BEGIN
     JOIN sys.types AS t
         ON  ap.system_type_id = t.system_type_id
         AND ap.user_type_id = t.user_type_id
-    WHERE o.name = N'sp_HumanEventsBlockViewer'
-    OPTION(RECOMPILE);
+    WHERE o.name = N'sp_HumanEventsBlockViewer';
 
     SELECT 
         mit_license_yo = N'i am MIT licensed, so like, do whatever' UNION ALL
@@ -226,8 +224,7 @@ BEGIN
     FROM sys.dm_xe_sessions AS s
     JOIN sys.dm_xe_session_targets AS t
       ON s.address = t.event_session_address
-    WHERE s.name = @session_name
-    OPTION(RECOMPILE);
+    WHERE s.name = @session_name;
 END;
 IF @azure = 1
 BEGIN
@@ -237,8 +234,7 @@ BEGIN
     FROM sys.dm_xe_database_sessions AS s
     JOIN sys.dm_xe_database_session_targets AS t
       ON s.address = t.event_session_address
-    WHERE s.name = @session_name
-    OPTION(RECOMPILE);
+    WHERE s.name = @session_name;
 END;
 
 /* Dump whatever we got into a temp table */
@@ -294,8 +290,7 @@ BEGIN
         JOIN sys.server_event_sessions s
             ON s.event_session_id = t.event_session_id
         WHERE t.name = @target_type 
-        AND   s.name = @session_name
-        OPTION(RECOMPILE);
+        AND   s.name = @session_name;
 
         SELECT
             @file_name =
@@ -317,8 +312,7 @@ BEGIN
             WHERE f.event_session_id = @session_id
             AND   f.object_id = @target_session_id
             AND   f.name = N'filename'
-        ) AS f
-        OPTION(RECOMPILE);
+        ) AS f;
     END;
     IF @azure = 1
     BEGIN
@@ -329,8 +323,7 @@ BEGIN
         JOIN sys.dm_xe_database_sessions s 
             ON s.event_session_id = t.event_session_id
         WHERE t.name = @target_type 
-        AND   s.name = @session_name
-        OPTION(RECOMPILE);
+        AND   s.name = @session_name;
 
         SELECT
             @file_name =
@@ -352,8 +345,7 @@ BEGIN
             WHERE f.event_session_id = @session_id
             AND   f.object_id = @target_session_id
             AND   f.name = N'filename'
-        ) AS f
-        OPTION(RECOMPILE);
+        ) AS f;
     END;
 
     INSERT
@@ -408,7 +400,7 @@ END;
 
 IF @debug = 1
 BEGIN
-    SELECT table_name = N'#blocking_xml', bx.* FROM #blocking_xml AS bx OPTION(RECOMPILE);
+    SELECT table_name = N'#blocking_xml', bx.* FROM #blocking_xml AS bx;
 END;
 
             SELECT 
@@ -454,10 +446,9 @@ END;
             INTO #blocked
             FROM #blocking_xml AS bx
             OUTER APPLY bx.human_events_xml.nodes('//event') AS oa(c)
-            OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
-            OPTION(RECOMPILE);
+            OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd);
 
-            IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa; END;
 
             SELECT 
                 event_time = 
@@ -502,10 +493,9 @@ END;
             INTO #blocking
             FROM #blocking_xml AS bx
             OUTER APPLY bx.human_events_xml.nodes('//event') AS oa(c)
-            OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
-            OPTION(RECOMPILE);
+            OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg);
 
-            IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
+            IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa; END;
 
             SELECT
                 kheb.event_time,
@@ -602,8 +592,7 @@ END;
                             bd.database_id
                         ) 
                 FROM #blocked AS bd           
-            ) AS kheb
-            OPTION(RECOMPILE);
+            ) AS kheb;
 
             SELECT
                 b.*
