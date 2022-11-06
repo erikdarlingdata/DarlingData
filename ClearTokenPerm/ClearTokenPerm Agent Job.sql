@@ -6,7 +6,7 @@ BEGIN TRANSACTION;
 DECLARE 
     @ReturnCode int = 0,
     @jobId binary(16),
-    @active_start_date datetime = GETDATE();
+    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112)));
 
 IF NOT EXISTS 
 (

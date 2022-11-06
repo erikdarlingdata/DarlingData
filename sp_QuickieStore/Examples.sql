@@ -80,6 +80,11 @@ EXEC dbo.sp_QuickieStore
     @top = 10,
     @duration_ms = 10000;
 
+/*Search for queries with a specific execution type*/
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @top = 10,
+    @execution_type_desc = 'aborted';
 
 /*Search for a specific stored procedure*/
 EXEC dbo.sp_QuickieStore
