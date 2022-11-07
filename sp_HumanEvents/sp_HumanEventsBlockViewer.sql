@@ -510,15 +510,37 @@ END;
                 kheb.monitor_loop,
                 kheb.spid,
                 kheb.ecid,
-                query_text = 
-                    (
-                        SELECT 
-                            [processing-instruction(query)] = 
-                                kheb.query_text
-                        FOR XML
-                            PATH(N''),
-                            TYPE
-                    ),
+                query_text =
+                    CASE 
+                        WHEN kheb.query_text LIKE 'Proc [[]Database Id = %'
+                        THEN 
+                            (
+                                SELECT
+                                    [processing-instruction(query)] =                                       
+                                           OBJECT_NAME
+                                           (
+                                               SUBSTRING
+                                               (
+                                                   REPLACE(REPLACE(query_text, '[', ''), ']', ''),
+                                                   CHARINDEX('Object Id = ', query_text) + LEN('Object Id = '),
+                                                   LEN(query_text)
+                                               ),
+                                               kheb.database_id
+                                           )
+                                FOR XML
+                                    PATH(N'query'),
+                                    TYPE
+                            )
+                        ELSE
+                            (
+                                SELECT 
+                                    [processing-instruction(query)] = 
+                                        kheb.query_text
+                                FOR XML
+                                    PATH(N'query'),
+                                    TYPE
+                            )
+                    END,
                 wait_time_ms = 
                     kheb.wait_time,
                 kheb.status,
