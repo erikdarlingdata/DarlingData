@@ -512,7 +512,8 @@ END;
                 kheb.ecid,
                 query_text =
                     CASE 
-                        WHEN kheb.query_text LIKE 'Proc [[]Database Id = %'
+                        WHEN kheb.query_text 
+                        LIKE 'Proc [[]Database Id = %'
                         THEN 
                             (
                                 SELECT
@@ -521,14 +522,14 @@ END;
                                            (
                                                SUBSTRING
                                                (
-                                                   REPLACE(REPLACE(query_text, '[', ''), ']', ''),
-                                                   CHARINDEX('Object Id = ', query_text) + LEN('Object Id = '),
-                                                   LEN(query_text)
+                                                   REPLACE(REPLACE(kheb.query_text, '[', ''), ']', ''),
+                                                   CHARINDEX('Object Id = ', kheb.query_text) + LEN('Object Id = '),
+                                                   LEN(kheb.query_text)
                                                ),
                                                kheb.database_id
                                            )
                                 FOR XML
-                                    PATH(N'query'),
+                                    PATH(N''),
                                     TYPE
                             )
                         ELSE
@@ -537,7 +538,7 @@ END;
                                     [processing-instruction(query)] = 
                                         kheb.query_text
                                 FOR XML
-                                    PATH(N'query'),
+                                    PATH(N''),
                                     TYPE
                             )
                     END,
