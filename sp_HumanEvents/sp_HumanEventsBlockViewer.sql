@@ -511,37 +511,60 @@ END;
                 kheb.spid,
                 kheb.ecid,
                 query_text =
-                    CASE 
-                        WHEN kheb.query_text 
-                        LIKE N'Proc [[]Database Id = %'
-                        THEN 
-                            (
-                                SELECT
-                                    [processing-instruction(query)] =                                       
-                                           OBJECT_NAME
-                                           (
-                                               SUBSTRING
-                                               (
-                                                   REPLACE(REPLACE(kheb.query_text, N'[', N''), N']', N''),
-                                                   CHARINDEX(N'Object Id = ', kheb.query_text) + LEN(N'Object Id = '),
-                                                   LEN(kheb.query_text)
-                                               ),
-                                               kheb.database_id
-                                           )
-                                FOR XML
-                                    PATH(N''),
-                                    TYPE
-                            )
-                        ELSE
-                            (
-                                SELECT 
-                                    [processing-instruction(query)] = 
-                                        kheb.query_text
-                                FOR XML
-                                    PATH(N''),
-                                    TYPE
-                            )
-                    END,
+            CASE 
+                WHEN kheb.query_text
+                     LIKE N'%Proc |[Database Id = %' ESCAPE N'|'
+                THEN 
+                    (
+                        SELECT
+                            [processing-instruction(query)] =                                       
+                                OBJECT_SCHEMA_NAME
+                                (
+                                        SUBSTRING
+                                        (
+                                            kheb.query_text,
+                                            CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
+                                            LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
+                                        )
+                                        ,
+                                        SUBSTRING
+                                        (
+                                            kheb.query_text, 
+                                            CHARINDEX(N'Database Id = ', kheb.query_text) + 14, 
+                                            CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
+                                        )
+                                ) + 
+                                N'.' + 
+                                OBJECT_NAME
+                                (
+                                     SUBSTRING
+                                     (
+                                         kheb.query_text,
+                                         CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
+                                         LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
+                                     )
+                                     ,
+                                     SUBSTRING
+                                     (
+                                         kheb.query_text, 
+                                         CHARINDEX(N'Database Id = ', kheb.query_text) + 14, 
+                                         CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
+                                     )
+                                )
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    )
+                ELSE
+                    (
+                        SELECT 
+                            [processing-instruction(query)] = 
+                                kheb.query_text
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    )
+            END,
                 wait_time_ms = 
                     kheb.wait_time,
                 kheb.status,
