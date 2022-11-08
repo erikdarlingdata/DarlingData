@@ -513,7 +513,7 @@ END;
                 query_text =
                     CASE 
                         WHEN kheb.query_text 
-                        LIKE 'Proc [[]Database Id = %'
+                        LIKE N'Proc [[]Database Id = %'
                         THEN 
                             (
                                 SELECT
@@ -522,8 +522,8 @@ END;
                                            (
                                                SUBSTRING
                                                (
-                                                   REPLACE(REPLACE(kheb.query_text, '[', ''), ']', ''),
-                                                   CHARINDEX('Object Id = ', kheb.query_text) + LEN('Object Id = '),
+                                                   REPLACE(REPLACE(kheb.query_text, N'[', N''), N']', N''),
+                                                   CHARINDEX(N'Object Id = ', kheb.query_text) + LEN(N'Object Id = '),
                                                    LEN(kheb.query_text)
                                                ),
                                                kheb.database_id
