@@ -61,10 +61,11 @@ ALTER PROCEDURE
     dbo.sp_HumanEventsBlockViewer
 (
     @session_name nvarchar(256) = N'keeper_HumanEvents_blocking',
-    @version varchar(30) = NULL OUTPUT,
-    @version_date datetime = NULL OUTPUT,
+    @target_type sysname = NULL,
     @help bit = 0,
-    @debug bit = 0
+    @debug bit = 0,
+    @version varchar(30) = NULL OUTPUT,
+    @version_date datetime = NULL OUTPUT
 )
 AS
 BEGIN
@@ -95,26 +96,29 @@ BEGIN
         description =
             CASE ap.name
                  WHEN '@session_name' THEN 'The name of the Extended Event session to pull blocking data from'
-                 WHEN '@version' THEN 'OUTPUT; for support'
-                 WHEN '@version_date' THEN 'OUTPUT; for support'
+                 WHEN '@target_type' THEN 'file or ring buffer'
                  WHEN '@help' THEN 'how you got here'
                  WHEN '@debug' THEN 'dumps raw temp table contents'
+                 WHEN '@version' THEN 'OUTPUT; for support'
+                 WHEN '@version_date' THEN 'OUTPUT; for support'
             END,
         valid_inputs =
             CASE ap.name
                  WHEN '@session_name' THEN 'An Extended Event session name that is capturing the sqlserver.blocked_process_report'
-                 WHEN '@version' THEN 'none; OUTPUT'
-                 WHEN '@version_date' THEN 'none; OUTPUT'
+                 WHEN '@target_type' THEN 'file or ring buffer'
                  WHEN '@help' THEN '0 or 1'
                  WHEN '@debug' THEN '0 or 1'
+                 WHEN '@version' THEN 'none; OUTPUT'
+                 WHEN '@version_date' THEN 'none; OUTPUT'
             END,
         defaults =
             CASE ap.name
                  WHEN '@session_name' THEN 'keeper_HumanEvents_blocking'
-                 WHEN '@version' THEN 'none; OUTPUT'
-                 WHEN '@version_date' THEN 'none; OUTPUT'
+                 WHEN '@target_type' THEN 'NULL'
                  WHEN '@help' THEN '0'
                  WHEN '@debug' THEN '0'
+                 WHEN '@version' THEN 'none; OUTPUT'
+                 WHEN '@version_date' THEN 'none; OUTPUT'
             END
     FROM sys.all_parameters AS ap
     JOIN sys.all_objects AS o
@@ -162,13 +166,10 @@ DECLARE
             THEN 1
             ELSE 0
         END,
-    @target_type sysname = '',
     @session_id int,
     @target_session_id int,
-    @file_name nvarchar(4000);
-
-
-DECLARE @inputbuf_bom nvarchar(1) = CONVERT(nvarchar(1), 0x0a00, 0);
+    @file_name nvarchar(4000),
+    @inputbuf_bom nvarchar(1) = CONVERT(nvarchar(1), 0x0a00, 0);
 
 CREATE TABLE
     #x
@@ -190,8 +191,8 @@ BEGIN
         SELECT 
             1/0
         FROM sys.server_event_sessions AS ses
-        LEFT JOIN sys.dm_xe_sessions AS dxs 
-            ON dxs.name = ses.name
+        JOIN sys.dm_xe_sessions AS dxs 
+          ON dxs.name = ses.name
         WHERE ses.name = @session_name
         AND   dxs.create_time IS NOT NULL
     )
@@ -207,8 +208,8 @@ BEGIN
         SELECT 
             1/0
         FROM sys.database_event_sessions AS ses
-        LEFT JOIN sys.dm_xe_database_sessions AS dxs 
-            ON dxs.name = ses.name
+        JOIN sys.dm_xe_database_sessions AS dxs 
+          ON dxs.name = ses.name
         WHERE ses.name = @session_name
         AND   dxs.create_time IS NOT NULL
     )
@@ -219,67 +220,77 @@ BEGIN
 END;
 
 /*Figure out if we have a file or ring buffer target*/
-IF @azure = 0
+IF @target_type IS NULL
 BEGIN
-    SELECT 
-        @target_type = 
-            t.target_name
-    FROM sys.dm_xe_sessions AS s
-    JOIN sys.dm_xe_session_targets AS t
-      ON s.address = t.event_session_address
-    WHERE s.name = @session_name;
-END;
-IF @azure = 1
-BEGIN
-    SELECT 
-        @target_type = 
-            t.target_name
-    FROM sys.dm_xe_database_sessions AS s
-    JOIN sys.dm_xe_database_session_targets AS t
-      ON s.address = t.event_session_address
-    WHERE s.name = @session_name;
-END;
+    IF @azure = 0
+    BEGIN
+        SELECT TOP (1)
+            @target_type = 
+                t.target_name
+        FROM sys.dm_xe_sessions AS s
+        JOIN sys.dm_xe_session_targets AS t
+          ON s.address = t.event_session_address
+        WHERE s.name = @session_name
+        ORDER BY t.target_name;
+    END;
+    
+    IF @azure = 1
+    BEGIN
+        SELECT TOP (1)
+            @target_type = 
+                t.target_name
+        FROM sys.dm_xe_database_sessions AS s
+        JOIN sys.dm_xe_database_session_targets AS t
+          ON s.address = t.event_session_address
+        WHERE s.name = @session_name
+        ORDER BY t.target_name;
+    END;
+END
 
 /* Dump whatever we got into a temp table */
-IF (@azure = 0 AND @target_type = 'ring_buffer')
-BEGIN   
-    INSERT
-        #x
-    (
-        x
-    )
-    SELECT 
-        x = 
-            TRY_CAST
-            (
-                t.target_data
-                AS xml
-            )
-    FROM sys.dm_xe_session_targets AS t
-    JOIN sys.dm_xe_sessions AS s
-        ON s.address = t.event_session_address
-    WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer';
-END;
-IF (@azure = 1 AND @target_type = 'ring_buffer')
+IF @target_type = 'ring_buffer'
 BEGIN
-    INSERT
-        #x
-    (
-        x
-    )
-    SELECT 
-        x = 
-            TRY_CAST
-            (
-                t.target_data
-                AS xml
-            )
-    FROM sys.dm_xe_database_session_targets AS t
-    JOIN sys.dm_xe_database_sessions AS s
-        ON s.address = t.event_session_address
-    WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer';
+    IF @azure = 0
+    BEGIN   
+        INSERT
+            #x
+        (
+            x
+        )
+        SELECT 
+            x = 
+                TRY_CAST
+                (
+                    t.target_data
+                    AS xml
+                )
+        FROM sys.dm_xe_session_targets AS t
+        JOIN sys.dm_xe_sessions AS s
+            ON s.address = t.event_session_address
+        WHERE s.name = @session_name
+        AND   t.target_name = N'ring_buffer';
+    END;
+    
+    IF @azure = 1 
+    BEGIN
+        INSERT
+            #x
+        (
+            x
+        )
+        SELECT 
+            x = 
+                TRY_CAST
+                (
+                    t.target_data
+                    AS xml
+                )
+        FROM sys.dm_xe_database_session_targets AS t
+        JOIN sys.dm_xe_database_sessions AS s
+            ON s.address = t.event_session_address
+        WHERE s.name = @session_name
+        AND   t.target_name = N'ring_buffer';
+    END;
 END;
 
 IF @target_type = 'event_file'
@@ -317,6 +328,7 @@ BEGIN
             AND   f.name = N'filename'
         ) AS f;
     END;
+    
     IF @azure = 1
     BEGIN
         SELECT
@@ -419,15 +431,15 @@ END;
                         ), 
                         c.value('@timestamp', 'datetime2')
                     ),        
-                database_name = DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'int')),
-                database_id = c.value('(data[@name="database_id"]/value)[1]', 'int'),
-                object_id = c.value('(data[@name="object_id"]/value)[1]', 'int'),
-                transaction_id = c.value('(data[@name="transaction_id"]/value)[1]', 'bigint'),
+                database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
+                database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
+                object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+                transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
                 resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
                 monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
                 spid = bd.value('(process/@spid)[1]', 'int'),
                 ecid = bd.value('(process/@ecid)[1]', 'int'),            
-                query_text = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+                query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
                 wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
                 transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
                 last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
@@ -444,7 +456,7 @@ END;
                 log_used = bd.value('(process/@logused)[1]', 'bigint'),
                 clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
                 clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-                activity = 'blocked',
+                activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
                 blocked_process_report = c.query('.')
             INTO #blocked
             FROM #blocking_xml AS bx
@@ -466,15 +478,15 @@ END;
                         ), 
                         c.value('@timestamp', 'datetime2')
                     ),        
-                database_name = DB_NAME(c.value('(data[@name="database_id"]/value)[1]', 'int')),
-                database_id = c.value('(data[@name="database_id"]/value)[1]', 'int'),
-                object_id = c.value('(data[@name="object_id"]/value)[1]', 'int'),
-                transaction_id = c.value('(data[@name="transaction_id"]/value)[1]', 'bigint'),
+                database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
+                database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
+                object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+                transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
                 resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
                 monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
                 spid = bg.value('(process/@spid)[1]', 'int'),
                 ecid = bg.value('(process/@ecid)[1]', 'int'),
-                query_text = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+                query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
                 wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
                 transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(256)'),
                 last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
@@ -491,7 +503,7 @@ END;
                 log_used = bg.value('(process/@logused)[1]', 'bigint'),
                 clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
                 clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-                activity = 'blocking',
+                activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
                 blocked_process_report = c.query('.')
             INTO #blocking
             FROM #blocking_xml AS bx
@@ -499,6 +511,28 @@ END;
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg);
 
             IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa; END;
+
+            ALTER TABLE #blocked 
+            ADD query_text 
+            AS REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+               REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+               REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                   query_text_pre,
+               NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+               NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+               NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?') 
+            PERSISTED;
+
+            ALTER TABLE #blocking 
+            ADD query_text 
+            AS REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+               REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+               REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                   query_text_pre,
+               NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+               NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+               NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?') 
+            PERSISTED;
 
             SELECT
                 kheb.event_time,
@@ -582,31 +616,43 @@ END;
                 client_option_1 = 
                       SUBSTRING
                       (    
-                          CASE WHEN kheb.clientoption1 & 0x20 = 0x20 THEN ', QUOTED IDENTIFIER ON' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x40 = 0x40 THEN ', ARITHABORT' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x800 = 0x800 THEN ', USER SET ARITHABORT' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x8000 = 0x8000 THEN ', NUMERIC ROUNDABORT ON' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x10000 = 0x10000 THEN ', USER SET NUMERIC ROUNDABORT ON' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x20000 = 0x20000 THEN ', SET XACT ABORT ON' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x80000 = 0x80000 THEN ', NOCOUNT OFF' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x200000 = 0x200000 THEN ', NOCOUNT ON' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x8000000 = 8000000 THEN ', USER SET QUOTED IDENTIFIER' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x20000000 = 0x20000000 THEN ', ANSI NULL DEFAULT ON' ELSE '' END +
-                          CASE WHEN kheb.clientoption1 & 0x40000000 = 0x40000000 THEN ', ANSI NULL DEFAULT OFF' ELSE '' END,
+                          CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 8 = 8 THEN ', ANSI_WARNINGS' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 16 = 16 THEN ', ANSI_PADDING' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 32 = 32 THEN ', ANSI_NULLS' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 64 = 64 THEN ', ARITHABORT' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 128 = 128 THEN ', ARITHIGNORE' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 256 = 256 THEN ', QUOTED_IDENTIFIER' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 512 = 512 THEN ', NOCOUNT' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 1024 = 1024 THEN ', ANSI_NULL_DFLT_ON' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 2048 = 2048 THEN ', ANSI_NULL_DFLT_OFF' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 4096 = 4096 THEN ', CONCAT_NULL_YIELDS_NULL' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 8192 = 8192 THEN ', NUMERIC_ROUNDABORT' ELSE '' END + 
+                          CASE WHEN kheb.clientoption1 & 16384 = 16384 THEN ', XACT_ABORT' ELSE '' END,
                           3,
                           8000
                       ),
                   client_option_2 = 
                       SUBSTRING
                       (
-                          CASE WHEN kheb.clientoption2 & 2 = 2 THEN ', IMPLICIT TRANSACTION' ELSE '' END +
-                          CASE WHEN kheb.clientoption2 & 8 = 8 THEN ', ANSI WARNINGS' ELSE '' END +
-                          CASE WHEN kheb.clientoption2 & 0x10 = 0x10 THEN ', ANSI PADDING' ELSE '' END +
-                          CASE WHEN kheb.clientoption2 & 0x20 = 0x20 THEN ', ANSI NULLS' ELSE '' END +
-                          CASE WHEN kheb.clientoption2 & 0x1000 = 0x1000 THEN ', USER CONCAT NULL YIELDS NULL' ELSE '' END +
-                          CASE WHEN kheb.clientoption2 & 0x2000 = 0x2000 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END +
-                          CASE WHEN kheb.clientoption2 & 0x4000 = 0x4000 THEN ', USER ANSI NULLS' ELSE '' END +
-                          CASE WHEN kheb.clientoption2 & 0x8000 = 0x8000 THEN ', USER ANSI WARNINGS' ELSE '' END,
+                          CASE WHEN kheb.clientoption2 & 1024 = 1024 THEN ', DB CHAINING' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 2048 = 2048 THEN ', NUMERIC ROUNDABORT' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 4096 = 4096 THEN ', ARITHABORT' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 8192 = 8192 THEN ', ANSI PADDING' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 16384 = 16384 THEN ', ANSI NULL DEFAULT' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 65536 = 65536 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 131072 = 131072 THEN ', RECURSIVE TRIGGERS' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 1048576 = 1048576 THEN ', DEFAULT TO LOCAL CURSOR' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 8388608 = 8388608 THEN ', QUOTED IDENTIFIER' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 16777216 = 16777216 THEN ', AUTO CREATE STATISTICS' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 33554432 = 33554432 THEN ', CURSOR CLOSE ON COMMIT' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 67108864 = 67108864 THEN ', ANSI NULLS' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 268435456 = 268435456 THEN ', ANSI WARNINGS' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 536870912 = 536870912 THEN ', FULL TEXT ENABLED' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 1073741824 = 1073741824 THEN ', AUTO UPDATE STATISTICS' ELSE '' END + 
+                          CASE WHEN kheb.clientoption2 & 1469283328 = 1469283328 THEN ', ALL SETTABLE OPTIONS' ELSE '' END,
                           3,
                           8000
                       ),

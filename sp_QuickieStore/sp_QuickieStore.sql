@@ -1206,7 +1206,9 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                         @sql
                 FROM #troubleshoot_performance AS tp
                 WHERE tp.current_table = @current_table
-                FOR XML PATH(N''''), TYPE
+                FOR XML 
+                    PATH(N''''), 
+                    TYPE
             ).query(''.[1]'') AS current_query
         OPTION(RECOMPILE);',
     @rc = 0;
@@ -1655,13 +1657,13 @@ See if AGs are a thing so we can skip the checks for replica stuff
 */
 IF (@azure = 1)
 BEGIN
-	SELECT
-		@ags_present = 0
+    SELECT
+        @ags_present = 0
 END
 ELSE
 BEGIN 
-	SELECT
-		@ags_present = 
+    SELECT
+        @ags_present = 
             CASE 
                 WHEN EXISTS 
                         (
@@ -1672,7 +1674,7 @@ BEGIN
                 THEN 1
                 ELSE 0
             END
-		OPTION(RECOMPILE);
+        OPTION(RECOMPILE);
 END
 
 /*
@@ -3566,8 +3568,16 @@ SELECT
         (
              SELECT
                  [processing-instruction(query)] =
-                     qsqt.query_sql_text
-             FOR XML PATH(''''), TYPE
+                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                         qsqt.query_sql_text,
+                     NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
+                     NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
+                     NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N'''')
+             FOR XML 
+                 PATH(''''), 
+                 TYPE
         ),
     qsqt.statement_sql_handle,
     qsqt.is_part_of_encrypted_module,

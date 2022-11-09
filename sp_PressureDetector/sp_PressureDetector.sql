@@ -689,7 +689,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         [processing-instruction(query)] = 
                             SUBSTRING
                             (
-                                dest.text, 
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                    dest.text, 
+                                NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
+                                NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
+                                NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N''''),
                                 (der.statement_start_offset / 2) + 1,
                                 (
                                     (
@@ -705,15 +711,22 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             )
                        FROM sys.dm_exec_requests AS der
                        WHERE der.session_id = deqmg.session_id
-                            FOR XML PATH(''''), 
-                            TYPE
+                            FOR XML 
+                                PATH(''''), 
+                                TYPE
                 ),'
             + CASE 
                   WHEN @skip_plan_xml = 0
-                  THEN N'
+                  THEN CONVERT
+                      (
+                          nvarchar(MAX),N'
             deqp.query_plan,'
-                  ELSE N''
-              END + N'
+                      )
+                  ELSE CONVERT(nvarchar(MAX), N'')
+              END + CONVERT
+                    (
+                        nvarchar(MAX),
+                        N'
             deqmg.request_time,
             deqmg.grant_time,
             requested_memory_mb = 
@@ -737,14 +750,23 @@ OPTION(MAXDOP 1, RECOMPILE);',
             wait_duration_seconds = 
                 (waits.wait_duration_ms / 1000.),
             deqmg.dop,'
+                    )
             + CASE 
                   WHEN @helpful_new_columns = 1
-                  THEN N'
+                  THEN CONVERT
+                       ( 
+                           nvarchar(MAX),
+                           N'
             deqmg.reserved_worker_count,
             deqmg.used_worker_count,'
-                  ELSE N''
+                       )
+                  ELSE CONVERT(nvarchar(MAX), N'')
               END
-            + N'
+            + 
+            CONVERT
+            (
+                nvarchar(MAX),
+                N'
             deqmg.plan_handle
         FROM sys.dm_exec_query_memory_grants AS deqmg
         OUTER APPLY 
@@ -762,7 +784,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             requested_memory_mb DESC,
             deqmg.request_time
         OPTION(MAXDOP 1, RECOMPILE);
-        ';
+        '
+            );
 
         IF @debug = 1 BEGIN PRINT @mem_sql; END;
 
@@ -1073,7 +1096,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         [processing-instruction(query)] = 
                             SUBSTRING
                             (
-                                dest.text, 
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                    dest.text, 
+                                NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
+                                NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
+                                NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N''''),
                                 (der.statement_start_offset / 2) + 1,
                                 (
                                     (
@@ -1092,11 +1121,18 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ),'
             + CASE 
                   WHEN @skip_plan_xml = 0
-                  THEN N'
+                  THEN CONVERT
+                       (
+                           nvarchar(MAX),
+                           N'
             deqp.query_plan,'
-                  ELSE N''
+                       )
+                  ELSE CONVERT(nvarchar(MAX), N'')
               END
-            + N'
+            + CONVERT
+              ( 
+                  nvarchar(MAX),
+                  N'
             statement_start_offset = 
                 (der.statement_start_offset / 2) + 1,
             statement_end_offset = 
@@ -1157,6 +1193,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     THEN ''Snapshot''
                     ELSE ''???''
                 END'
+              )
             + CASE 
                   WHEN @cool_new_columns = 1
                   THEN CONVERT
