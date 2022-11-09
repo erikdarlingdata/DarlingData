@@ -167,6 +167,9 @@ DECLARE
     @target_session_id int,
     @file_name nvarchar(4000);
 
+
+DECLARE @inputbuf_bom nvarchar(1) = CONVERT(nvarchar(1), 0x0a00, 0);
+
 CREATE TABLE
     #x
 (
@@ -513,7 +516,7 @@ END;
                 query_text =
             CASE 
                 WHEN kheb.query_text
-                     LIKE N'%Proc |[Database Id = %' ESCAPE N'|'
+                     LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
                 THEN 
                     (
                         SELECT
