@@ -4,3 +4,5 @@
 
 *.sqlite
 *.suo
+*.vsidx
+*.lock
