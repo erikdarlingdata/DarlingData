@@ -1888,7 +1888,7 @@ SELECT
         e.x.query('.')
 INTO #human_events_xml
 FROM #x AS x
-CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e;
+CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x);
 
 
 IF @debug = 1
