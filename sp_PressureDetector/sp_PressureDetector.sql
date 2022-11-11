@@ -573,7 +573,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     decimal(9, 2),
                     SUM
                     (
-                        ' +
+                        ' + CONVERT
+                            (
+                                nvarchar(MAX),
                           CASE @pages_kb
                                WHEN 1 
                                THEN
@@ -582,6 +584,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         N'domc.single_pages_kb +
                         domc.multi_pages_kb + '
                           END
+                            )
                         + N'
                         domc.virtual_memory_committed_kb +
                         domc.awe_allocated_kb +
@@ -629,7 +632,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         decimal(9, 2), 
                         SUM
                         (
-                        ' +
+                        ' + CONVERT
+                            (
+                                nvarchar(MAX),
                           CASE @pages_kb
                                WHEN 1 
                                THEN
@@ -638,6 +643,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         N'    domc.single_pages_kb +
                             domc.multi_pages_kb '
                           END
+                            )
                         + N'
                         ) / 1024. / 1024. 
                     )
@@ -648,7 +654,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
             HAVING
                SUM
                (
-                   ' +
+                   ' + CONVERT
+                       (
+                           nvarchar(MAX),
                       CASE @pages_kb
                            WHEN 1 
                            THEN
@@ -657,6 +665,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     N'domc.single_pages_kb +
                     domc.multi_pages_kb '
                       END
+                       )
                     + N'
                ) / 1024. / 1024. > 0.
             ORDER BY
@@ -831,8 +840,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             SELECT 
                 @total_physical_memory_gb = 
-                    SUM(dosi.[committed_target_kb]) / 1024.
-            FROM [sys].[dm_os_sys_info] dosi
+                    SUM(dosi.committed_target_kb) / 1024.
+            FROM sys.dm_os_sys_info dosi;
         END;
 
         SELECT  
