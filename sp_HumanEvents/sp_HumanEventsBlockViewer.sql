@@ -253,7 +253,7 @@ BEGIN
     IF @azure = 0
     BEGIN   
         INSERT
-            #x
+            #x WITH(TABLOCK)
         (
             x
         )
@@ -274,7 +274,7 @@ BEGIN
     IF @azure = 1 
     BEGIN
         INSERT
-            #x
+            #x WITH(TABLOCK)
         (
             x
         )
@@ -364,7 +364,7 @@ BEGIN
     END;
 
     INSERT
-        #x
+        #x WITH(TABLOCK)
     (
         x
     )    
@@ -388,7 +388,7 @@ END;
 IF @target_type = 'ring_buffer'
 BEGIN
     INSERT
-        #blocking_xml
+        #blocking_xml WITH(TABLOCK)
     (
         human_events_xml
     )
@@ -402,7 +402,7 @@ END;
 IF @target_type = 'event_file'
 BEGIN
     INSERT
-        #blocking_xml
+        #blocking_xml WITH(TABLOCK)
     (
         human_events_xml
     )
@@ -460,7 +460,7 @@ END;
                 blocked_process_report = c.query('.')
             INTO #blocked
             FROM #blocking_xml AS bx
-            OUTER APPLY bx.human_events_xml.nodes('//event') AS oa(c)
+            OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd);
 
             IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa; END;
@@ -507,7 +507,7 @@ END;
                 blocked_process_report = c.query('.')
             INTO #blocking
             FROM #blocking_xml AS bx
-            OUTER APPLY bx.human_events_xml.nodes('//event') AS oa(c)
+            OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
             OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg);
 
             IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa; END;
