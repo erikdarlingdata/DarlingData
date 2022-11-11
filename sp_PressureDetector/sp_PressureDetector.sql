@@ -830,9 +830,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF @azure = 1
         BEGIN
             SELECT 
-                @total_physical_memory_gb =
-                    SUM(domn.target_kb / 1024.) 
-            FROM sys.dm_os_memory_nodes AS domn;
+                @total_physical_memory_gb = 
+                    SUM(dosi.[committed_target_kb]) / 1024.
+            FROM [sys].[dm_os_sys_info] dosi
         END;
 
         SELECT  
