@@ -890,7 +890,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         
         /*Figure out who's using a lot of CPU*/    
         
-        SET @cpu_sql += N'
+        SET @cpu_sql = CONCAT(@cpu_sql, N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
         
         SELECT 
@@ -904,7 +904,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         [processing-instruction(query)] = 
                             SUBSTRING
                             (
-                                dest.text, 
+                                REPLACE(dest.text  COLLATE Latin1_General_BIN, NCHAR(0), N''?''), 
                                 (der.statement_start_offset / 2) + 1,
                                 (
                                     (
@@ -921,13 +921,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             FOR XML PATH(''''), 
                             TYPE
                 ),'
-            + CASE 
+            , CASE 
                   WHEN @skip_plan_xml = 0
                   THEN N'
             deqp.query_plan,'
                   ELSE N''
               END
-            + N'
+            , N'
             statement_start_offset = 
                 (der.statement_start_offset / 2) + 1,
             statement_end_offset = 
@@ -988,7 +988,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     THEN ''Snapshot''
                     ELSE ''???''
                 END'
-            + CASE 
+            , CASE 
                   WHEN @cool_new_columns = 1
                   THEN CONVERT
                        (
@@ -999,17 +999,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                        )
                   ELSE N''
               END
-            + CONVERT
-              (
-                  nvarchar(MAX), 
-                  N'
+            , N'
         FROM sys.dm_exec_requests AS der
         CROSS APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
         CROSS APPLY sys.dm_exec_query_plan(der.plan_handle) AS deqp
         WHERE der.session_id <> @@SPID
         AND   der.session_id >= 50
         ORDER BY ' 
-        + CASE 
+        , CASE 
               WHEN @cool_new_columns = 1
               THEN N'
             der.cpu_time DESC,
@@ -1019,7 +1016,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             der.cpu_time DESC
         OPTION(MAXDOP 1, RECOMPILE);'
           END
-              );
+        );
         
         IF @debug = 1 BEGIN PRINT SUBSTRING(@cpu_sql, 0, 4000); PRINT SUBSTRING(@cpu_sql, 4000, 8000); END;
         
