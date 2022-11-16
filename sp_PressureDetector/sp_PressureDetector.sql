@@ -701,7 +701,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                                 REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                                 REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                                    dest.text, 
+                                    dest.text COLLATE Latin1_General_BIN2, 
                                 NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
                                 NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
                                 NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N''''),
@@ -724,18 +724,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 PATH(''''), 
                                 TYPE
                 ),'
-            + CASE 
+            + CONVERT
+              (
+                  nvarchar(MAX),
+              CASE 
                   WHEN @skip_plan_xml = 0
-                  THEN CONVERT
-                      (
-                          nvarchar(MAX),N'
+                  THEN N'
             deqp.query_plan,'
-                      )
-                  ELSE CONVERT(nvarchar(MAX), N'')
-              END + CONVERT
-                    (
-                        nvarchar(MAX),
-                        N'
+                  ELSE N''
+              END
+              ) + CONVERT
+                  (
+                      nvarchar(MAX),
+                      N'
             deqmg.request_time,
             deqmg.grant_time,
             requested_memory_mb = 
@@ -759,23 +760,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
             wait_duration_seconds = 
                 (waits.wait_duration_ms / 1000.),
             deqmg.dop,'
-                    )
-            + CASE 
-                  WHEN @helpful_new_columns = 1
-                  THEN CONVERT
-                       ( 
-                           nvarchar(MAX),
-                           N'
+                  )
+            + CONVERT
+              (
+                  nvarchar(MAX),
+                  CASE 
+                      WHEN @helpful_new_columns = 1
+                      THEN N'
             deqmg.reserved_worker_count,
             deqmg.used_worker_count,'
-                       )
-                  ELSE CONVERT(nvarchar(MAX), N'')
-              END
-            + 
-            CONVERT
-            (
-                nvarchar(MAX),
-                N'
+                      ELSE N''
+                  END
+              ) + CONVERT
+                  (
+                      nvarchar(MAX),
+                      N'
             deqmg.plan_handle
         FROM sys.dm_exec_query_memory_grants AS deqmg
         OUTER APPLY 
@@ -794,7 +793,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             deqmg.request_time
         OPTION(MAXDOP 1, RECOMPILE);
         '
-            );
+                  );
 
         IF @debug = 1 BEGIN PRINT @mem_sql; END;
 
@@ -956,7 +955,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         (
             SELECT
                 sample_time = 
-                    CONVERT(datetime, DATEADD(MILLISECOND, -1 * (inf.ms_ticks - t.timestamp), GETDATE())),
+                    CONVERT(datetime, DATEADD(MILLISECOND, -1 * (inf.ms_ticks - t.timestamp), SYSDATETIME())),
                 sqlserver_cpu_utilization = 
                     t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int'),
                 other_process_cpu_utilization = 
@@ -973,7 +972,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         CONVERT(xml, dorb.record)
                 FROM sys.dm_os_ring_buffers AS dorb
                 WHERE dorb.ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
-                AND   dorb.record LIKE N'%<SystemHealth>%'
             ) AS t
             WHERE t.record.exist('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization[. > 0])') = 1
             ORDER BY
@@ -1108,7 +1106,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                                 REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                                 REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                                    dest.text, 
+                                    dest.text COLLATE Latin1_General_BIN2, 
                                 NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
                                 NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
                                 NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N''''),
