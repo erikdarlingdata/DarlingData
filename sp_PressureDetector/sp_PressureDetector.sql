@@ -258,7 +258,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @database_size_out nvarchar(MAX) = N'',
         @database_size_out_gb nvarchar(10) = N'0',
         @total_physical_memory_gb bigint,
-        @cpu_utilization xml = N'';
+        @cpu_utilization xml = N'',
+        @low_memory xml = N'';
 
     /*
     Check to see if the DAC is enabled.
@@ -842,6 +843,65 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     SUM(dosi.committed_target_kb) / 1024.
             FROM sys.dm_os_sys_info dosi;
         END;
+
+        SELECT
+            @low_memory = 
+                x.low_memory
+        FROM
+        (
+            SELECT
+                sample_time = 
+                    CONVERT(datetime, DATEADD(MILLISECOND, -1 * (inf.ms_ticks - t.timestamp), SYSDATETIME())),
+                notification_type = 
+                    t.record.value('(/Record/ResourceMonitor/Notification)[1]', 'varchar(50)'),
+                indicators_process = 
+                    t.record.value('(/Record/ResourceMonitor/IndicatorsProcess)[1]', 'int'),
+                indicators_system = 
+                    t.record.value('(/Record/ResourceMonitor/IndicatorsSystem)[1]', 'int'),
+                physical_memory_availble_gb = 
+                    t.record.value('(/Record/MemoryRecord/AvailablePhysicalMemory)[1]', 'bigint') / 1024 / 1024,
+                virtual_memory_availble_gb = 
+                    t.record.value('(/Record/MemoryRecord/AvailableVirtualAddressSpace)[1]', 'bigint') / 1024 / 1024
+            FROM sys.dm_os_sys_info AS inf
+            CROSS JOIN
+            (
+                SELECT
+                    dorb.timestamp,
+                    record = 
+                        CONVERT(xml, dorb.record)
+                FROM sys.dm_os_ring_buffers AS dorb
+                WHERE dorb.ring_buffer_type = N'RING_BUFFER_RESOURCE_MONITOR'
+            ) AS t
+            WHERE t.record.exist('(Record/ResourceMonitor/Notification[. = "RESOURCE_MEMPHYSICAL_LOW"])') = 1
+            AND  
+              (
+                  t.record.exist('(Record/ResourceMonitor/IndicatorsProcess[. > 0])') = 1
+               OR t.record.exist('(Record/ResourceMonitor/IndicatorsSystem[. > 0])') = 1
+              )
+            ORDER BY
+                sample_time DESC
+            FOR XML 
+                PATH('memory'),
+                TYPE
+        ) AS x (low_memory)
+        OPTION(MAXDOP 1, RECOMPILE);
+   
+        IF @low_memory IS NULL
+        BEGIN
+            SELECT
+                @low_memory = 
+                (
+                    SELECT 
+                        N'No RESOURCE_MEMPHYSICAL_LOW indicators detected'
+                    FOR XML 
+                        PATH(N'memory'), 
+                        TYPE
+                );
+        END;  
+
+        SELECT
+            low_memory = 
+               @low_memory
 
         SELECT  
             deqrs.resource_semaphore_id,
