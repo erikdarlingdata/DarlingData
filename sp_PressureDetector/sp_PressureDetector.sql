@@ -691,8 +691,39 @@ OPTION(MAXDOP 1, RECOMPILE);',
             deqmg.session_id,
             database_name = 
                 DB_NAME(deqp.dbid),
-            start_time = 
-                deqmg.request_time,
+            [dd hh:mm:ss.mss] = 
+                RIGHT
+                (
+                    ''00'' +
+                    CONVERT
+                    (
+                        varchar(10),
+                        DATEDIFF
+                        (
+                            DAY, 
+                            deqmg.request_time,
+                            SYSDATETIME()
+                        )
+                    ),
+                    2
+                ) + 
+                '' '' +
+                CONVERT
+                (
+                    varchar(20),
+                    DATEADD
+                    (
+                        MILLISECOND,
+                        DATEDIFF
+                        (
+                            MILLISECOND,
+                            deqmg.request_time,
+                            SYSDATETIME()
+                        ),
+                        ''19000101''
+                    ),
+                    14
+                ),
             query_text =
                 (
                     SELECT
@@ -788,6 +819,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         ) AS waits
         OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
         OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest
+
         WHERE deqmg.session_id <> @@SPID
         ORDER BY 
             requested_memory_mb DESC,
@@ -1156,7 +1188,39 @@ OPTION(MAXDOP 1, RECOMPILE);',
             der.session_id,
             database_name = 
                 DB_NAME(der.database_id),
-            der.start_time,           
+            [dd hh:mm:ss.mss] = 
+                RIGHT
+                (
+                    ''00'' +
+                    CONVERT
+                    (
+                        varchar(10),
+                        DATEDIFF
+                        (
+                            DAY, 
+                            der.start_time, 
+                            SYSDATETIME()
+                        )
+                    ),
+                    2
+                ) + 
+                '' '' +
+                CONVERT
+                (
+                    varchar(20),
+                    DATEADD
+                    (
+                        MILLISECOND,
+                        DATEDIFF
+                        (
+                            MILLISECOND,
+                            der.start_time, 
+                            SYSDATETIME()
+                        ),
+                        ''19000101''
+                    ),
+                    14
+                ),          
             query_text =
                 (
                     SELECT
