@@ -241,9 +241,9 @@ BEGIN
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o
-        ON ap.object_id = o.object_id
+      ON ap.object_id = o.object_id
     INNER JOIN sys.types AS t
-        ON  ap.system_type_id = t.system_type_id
+      ON  ap.system_type_id = t.system_type_id
         AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_QuickieStore'
     OPTION(RECOMPILE);
@@ -2956,7 +2956,7 @@ WHERE NOT EXISTS
                  1/0
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
               JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                  ON qsqt.query_text_id = qsq.query_text_id
+                ON qsqt.query_text_id = qsq.query_text_id
               WHERE qsq.query_id = qsp.query_id
               AND   qsqt.query_sql_text NOT LIKE ''ALTER INDEX%''
               AND   qsqt.query_sql_text NOT LIKE ''CREATE%INDEX%''
@@ -3768,7 +3768,7 @@ BEGIN
             qsqt.max_used_threads = deqs.max_used_threads
     FROM #query_store_query_text AS qsqt
     JOIN #dm_exec_query_stats AS deqs
-        ON qsqt.statement_sql_handle = deqs.statement_sql_handle
+      ON qsqt.statement_sql_handle = deqs.statement_sql_handle
     OPTION(RECOMPILE);
 
     IF @troubleshoot_performance = 1
@@ -4065,9 +4065,9 @@ WHERE EXISTS
         1/0
     FROM #query_store_runtime_stats AS qsrs
     JOIN #query_store_plan AS qsp
-        ON qsrs.plan_id = qsp.plan_id
+      ON qsrs.plan_id = qsp.plan_id
     JOIN #query_store_query AS qsq
-        ON qsp.query_id = qsq.query_id
+      ON qsp.query_id = qsq.query_id
     WHERE qsq.context_settings_id = qcs.context_settings_id
 )
 OPTION(RECOMPILE);';
@@ -5178,7 +5178,7 @@ FROM
             qsqt.*
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
-            ON qsqt.query_text_id = qsq.query_text_id
+          ON qsqt.query_text_id = qsq.query_text_id
         WHERE qsq.query_id = qsp.query_id
         ORDER BY qsq.last_execution_time DESC
     ) AS qsqt
@@ -5559,7 +5559,7 @@ BEGIN
             qsqt.max_used_threads
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
-            ON qsq.query_text_id = qsqt.query_text_id
+          ON qsq.query_text_id = qsqt.query_text_id
         WHERE ( qsqt.total_grant_mb IS NOT NULL
         OR      qsqt.total_reserved_threads IS NOT NULL )
         ORDER BY qsq.query_id
@@ -5620,9 +5620,9 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                    ON qsrs.plan_id = qsp.plan_id
+                  ON qsrs.plan_id = qsp.plan_id
                 JOIN #query_store_query AS qsq
-                    ON qsp.query_id = qsq.query_id
+                  ON qsp.query_id = qsq.query_id
                 WHERE qsws.plan_id = qsrs.plan_id
             ) AS x
             ORDER BY
@@ -5669,9 +5669,9 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                    ON qsrs.plan_id = qsp.plan_id
+                  ON qsrs.plan_id = qsp.plan_id
                 JOIN #query_store_query AS qsq
-                    ON qsp.query_id = qsq.query_id
+                  ON qsp.query_id = qsq.query_id
                 WHERE qsws.plan_id = qsrs.plan_id
             ) AS x
             GROUP BY qsws.wait_category_desc
@@ -5716,7 +5716,7 @@ BEGIN
                    1/0
                FROM #query_store_replicas AS qsr
                JOIN #query_store_plan_forcing_locations AS qspfl
-                   ON qsr.replica_group_id = qspfl.replica_group_id
+                 ON qsr.replica_group_id = qspfl.replica_group_id
            )
         BEGIN
         
@@ -5733,7 +5733,7 @@ BEGIN
             qspfl.replica_group_id 
         FROM #query_store_replicas AS qsr
         JOIN #query_store_plan_forcing_locations AS qspfl
-            ON qsr.replica_group_id = qspfl.replica_group_id
+          ON qsr.replica_group_id = qspfl.replica_group_id
         ORDER BY qsr.replica_group_id;
         
         END;
@@ -6041,7 +6041,7 @@ BEGIN
             qsqt.max_used_threads
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
-            ON qsq.query_text_id = qsqt.query_text_id
+          ON qsq.query_text_id = qsqt.query_text_id
         WHERE ( qsqt.total_grant_mb IS NOT NULL
         OR      qsqt.total_reserved_threads IS NOT NULL )
         ORDER BY qsq.query_id
@@ -6107,9 +6107,9 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                    ON qsrs.plan_id = qsp.plan_id
+                  ON qsrs.plan_id = qsp.plan_id
                 JOIN #query_store_query AS qsq
-                    ON qsp.query_id = qsq.query_id
+                  ON qsp.query_id = qsq.query_id
                 WHERE qsws.plan_id = qsrs.plan_id
             ) AS x
             ORDER BY
@@ -6156,9 +6156,9 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                    ON qsrs.plan_id = qsp.plan_id
+                  ON qsrs.plan_id = qsp.plan_id
                 JOIN #query_store_query AS qsq
-                    ON qsp.query_id = qsq.query_id
+                  ON qsp.query_id = qsq.query_id
                 WHERE qsws.plan_id = qsrs.plan_id
             ) AS x
             GROUP BY qsws.wait_category_desc
@@ -6203,7 +6203,7 @@ BEGIN
                    1/0
                FROM #query_store_replicas AS qsr
                JOIN #query_store_plan_forcing_locations AS qspfl
-                   ON qsr.replica_group_id = qspfl.replica_group_id
+                 ON qsr.replica_group_id = qspfl.replica_group_id
            )
         BEGIN
         
@@ -6220,7 +6220,7 @@ BEGIN
             qspfl.replica_group_id 
         FROM #query_store_replicas AS qsr
         JOIN #query_store_plan_forcing_locations AS qspfl
-            ON qsr.replica_group_id = qspfl.replica_group_id
+          ON qsr.replica_group_id = qspfl.replica_group_id
         ORDER BY qsr.replica_group_id
         OPTION(RECOMPILE);
         
