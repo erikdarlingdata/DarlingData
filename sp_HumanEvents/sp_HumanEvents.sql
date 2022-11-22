@@ -225,10 +225,10 @@ BEGIN
            END 
     FROM sys.all_parameters AS ap
     JOIN sys.all_objects AS o
-        ON ap.object_id = o.object_id
+      ON ap.object_id = o.object_id
     JOIN sys.types AS t
-        ON  ap.system_type_id = t.system_type_id
-        AND ap.user_type_id = t.user_type_id
+      ON  ap.system_type_id = t.system_type_id
+      AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_HumanEvents';
 
 
@@ -528,7 +528,7 @@ IF NOT EXISTS
         1/0
     FROM sys.dm_xe_packages AS xp
     JOIN sys.dm_xe_objects AS xo
-        ON xp.guid = xo.package_guid
+      ON xp.guid = xo.package_guid
     WHERE (xo.capabilities IS NULL
              OR xo.capabilities & 1 = 0)
     AND   (xp.capabilities IS NULL
@@ -555,7 +555,7 @@ BEGIN
         N' ON SERVER;'
     FROM sys.server_event_sessions AS ses
     LEFT JOIN sys.dm_xe_sessions AS dxe
-        ON dxe.name = ses.name
+      ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents%'
     AND   (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
       OR    dxe.create_time IS NULL);
@@ -574,7 +574,7 @@ BEGIN
         N' ON DATABASE;'
     FROM sys.database_event_sessions AS ses
     LEFT JOIN sys.dm_xe_database_sessions AS dxe
-        ON dxe.name = ses.name
+      ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents%'
     AND   (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
       OR     dxe.create_time IS NULL);
@@ -1240,7 +1240,7 @@ BEGIN
             1/0
         FROM sys.server_event_sessions AS ses
         LEFT JOIN sys.dm_xe_sessions AS dxs 
-            ON dxs.name = ses.name
+          ON dxs.name = ses.name
         WHERE ses.name = @session_name
     )
     BEGIN
@@ -1258,7 +1258,7 @@ BEGIN
             1/0
         FROM sys.database_event_sessions AS ses
         LEFT JOIN sys.dm_xe_database_sessions AS dxs 
-            ON dxs.name = ses.name
+          ON dxs.name = ses.name
         WHERE ses.name = @session_name
     )
     BEGIN
@@ -1858,7 +1858,7 @@ BEGIN
             )
     FROM sys.dm_xe_session_targets AS t
     JOIN sys.dm_xe_sessions AS s
-        ON s.address = t.event_session_address
+      ON s.address = t.event_session_address
     WHERE s.name = @session_name
     AND   t.target_name = N'ring_buffer';
 END;
@@ -1878,7 +1878,7 @@ BEGIN
             )
     FROM sys.dm_xe_database_session_targets AS t
     JOIN sys.dm_xe_database_sessions AS s
-        ON s.address = t.event_session_address
+      ON s.address = t.event_session_address
     WHERE s.name = @session_name
     AND   t.target_name = N'ring_buffer';
 END;
@@ -2140,7 +2140,7 @@ BEGIN;
                          )
              FROM #queries AS q
              JOIN #totals AS t
-                 ON  q.query_hash_signed = t.query_hash_signed
+               ON  q.query_hash_signed = t.query_hash_signed
                  AND q.query_plan_hash_signed = t.query_plan_hash_signed
                  AND q.plan_handle = t.plan_handle
              CROSS APPLY
@@ -3129,7 +3129,7 @@ WHILE 1 = 1
                 1/0
             FROM sys.server_event_sessions AS ses
             LEFT JOIN sys.dm_xe_sessions AS dxs
-                ON dxs.name = ses.name
+              ON dxs.name = ses.name
             WHERE ses.name LIKE N'keeper_HumanEvents_%'
             AND   dxs.create_time IS NOT NULL
         )
@@ -3146,7 +3146,7 @@ WHILE 1 = 1
                 @nc10
         FROM sys.server_event_sessions AS ses
         LEFT JOIN sys.dm_xe_sessions AS dxs
-            ON dxs.name = ses.name
+          ON dxs.name = ses.name
         WHERE ses.name LIKE N'keeper_HumanEvents_%'
         AND   dxs.create_time IS NULL;
     END;
@@ -3159,7 +3159,7 @@ WHILE 1 = 1
                 1/0
             FROM sys.database_event_sessions AS ses
             LEFT JOIN sys.dm_xe_database_sessions AS dxs
-                ON dxs.name = ses.name
+              ON dxs.name = ses.name
             WHERE ses.name LIKE N'keeper_HumanEvents_%'
             AND   dxs.create_time IS NOT NULL
         )
@@ -3176,7 +3176,7 @@ WHILE 1 = 1
                 @nc10
         FROM sys.database_event_sessions AS ses
         LEFT JOIN sys.dm_xe_database_sessions AS dxs
-            ON dxs.name = ses.name
+          ON dxs.name = ses.name
         WHERE ses.name LIKE N'keeper_HumanEvents_%'
         AND   dxs.create_time IS NULL;
     END;
@@ -3226,7 +3226,7 @@ WHILE 1 = 1
                  s.name
             FROM sys.server_event_sessions AS s
             LEFT JOIN sys.dm_xe_sessions AS r 
-                ON r.name = s.name
+              ON r.name = s.name
             WHERE s.name LIKE N'keeper_HumanEvents_%'
             AND   r.create_time IS NOT NULL;
         END;
@@ -3257,7 +3257,7 @@ WHILE 1 = 1
                  s.name
             FROM sys.database_event_sessions AS s
             LEFT JOIN sys.dm_xe_database_sessions AS r 
-                ON r.name = s.name
+              ON r.name = s.name
             WHERE s.name LIKE N'keeper_HumanEvents_%'
             AND   r.create_time IS NOT NULL;
         END;
@@ -3525,19 +3525,19 @@ WHILE 1 = 1
                     vc.output_table = hew.output_table
             FROM #view_check AS vc
             JOIN #human_events_worker AS hew
-                ON  vc.view_name LIKE N'%' + hew.event_type_short + N'%'
-                AND hew.is_table_created = 1
-                AND hew.is_view_created = 0;
+              ON  vc.view_name LIKE N'%' + hew.event_type_short + N'%'
+              AND hew.is_table_created = 1
+              AND hew.is_view_created = 0;
         
             UPDATE vc 
                 SET 
                     vc.output_table = hew.output_table + N'_parameterization'
             FROM #view_check AS vc
             JOIN #human_events_worker AS hew
-                ON  vc.view_name = N'HumanEvents_Parameterization'
-                AND hew.output_table LIKE N'keeper_HumanEvents_compiles%'
-                AND hew.is_table_created = 1
-                AND hew.is_view_created = 0;
+              ON  vc.view_name = N'HumanEvents_Parameterization'
+              AND hew.output_table LIKE N'keeper_HumanEvents_compiles%'
+              AND hew.is_table_created = 1
+              AND hew.is_view_created = 0;
         
             IF @debug = 1 BEGIN SELECT N'#view_check' AS table_name, * FROM #view_check AS vc; END;
         
@@ -4135,7 +4135,7 @@ ORDER BY event_time;'
                         )
                 FROM   sys.dm_xe_session_targets AS t
                 JOIN   sys.dm_xe_sessions AS s
-                    ON s.address = t.event_session_address
+                  ON s.address = t.event_session_address
                 WHERE  s.name = @event_type_check
                 AND    t.target_name = N'ring_buffer';
             END;
@@ -4155,7 +4155,7 @@ ORDER BY event_time;'
                         )
                 FROM   sys.dm_xe_database_session_targets AS t
                 JOIN   sys.dm_xe_database_sessions AS s
-                    ON s.address = t.event_session_address
+                  ON s.address = t.event_session_address
                 WHERE  s.name = @event_type_check
                 AND    t.target_name = N'ring_buffer';
             END;
@@ -4304,7 +4304,7 @@ BEGIN
             @nc10  
     FROM sys.server_event_sessions AS ses  
     LEFT JOIN sys.dm_xe_sessions AS dxs  
-        ON dxs.name = ses.name  
+      ON dxs.name = ses.name  
     WHERE ses.name LIKE N'%HumanEvents_%';  
         
     EXEC sys.sp_executesql 

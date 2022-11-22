@@ -124,10 +124,10 @@ BEGIN
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o
-        ON ap.object_id = o.object_id
+      ON ap.object_id = o.object_id
     INNER JOIN sys.types AS t
-        ON  ap.system_type_id = t.system_type_id
-        AND ap.user_type_id = t.user_type_id
+      ON  ap.system_type_id = t.system_type_id
+      AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_PressureDetector'
     OPTION(MAXDOP 1, RECOMPILE);
 
@@ -294,7 +294,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 1/0
             FROM sys.endpoints AS ep
             JOIN sys.dm_exec_sessions AS ses
-                ON ep.endpoint_id = ses.endpoint_id
+              ON ep.endpoint_id = ses.endpoint_id
             WHERE ep.name = N'Dedicated Admin Connection'
             AND   ses.session_id <> @@SPID 
         )
@@ -314,7 +314,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ses.last_request_end_time
             FROM sys.endpoints AS ep
             JOIN sys.dm_exec_sessions AS ses
-                ON ep.endpoint_id = ses.endpoint_id
+              ON ep.endpoint_id = ses.endpoint_id
             WHERE ep.name = N'Dedicated Admin Connection'
             AND   ses.session_id <> @@SPID
             OPTION(MAXDOP 1, RECOMPILE);
@@ -348,13 +348,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 WHEN dows.wait_type = N'RESOURCE_SEMAPHORE_QUERY_COMPILE' 
                 THEN N'Queries waiting to get memory to compile'
                 WHEN dows.wait_type = N'CXPACKET' 
-                THEN N'Parallelism'
+                THEN N'Query parallelism'
                 WHEN dows.wait_type = N'CXCONSUMER' 
-                THEN N'Parallelism'
+                THEN N'Query parallelism'
                 WHEN dows.wait_type = N'CXSYNC_PORT' 
-                THEN N'Parallelism'
+                THEN N'Query parallelism'
                 WHEN dows.wait_type = N'CXSYNC_CONSUMER' 
-                THEN N'Parallelism'
+                THEN N'Query parallelism'
                 WHEN dows.wait_type = N'SOS_SCHEDULER_YIELD' 
                 THEN N'Query scheduling'
                 WHEN dows.wait_type = N'THREADPOOL' 
