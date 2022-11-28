@@ -64,8 +64,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     
 SELECT 
-    @version = '2.50', 
-    @version_date = '20220701';
+    @version = '2.80', 
+    @version_date = '20221201';
 
 
 IF @help = 1
@@ -95,7 +95,7 @@ BEGIN
         description =
             CASE
                 ap.name
-                WHEN '@what_to_check' THEN 'areas to check for pressure '
+                WHEN '@what_to_check' THEN 'areas to check for pressure'
                 WHEN '@skip_plan_xml' THEN 'if you want to skip getting plan XML'
                 WHEN '@version' THEN 'OUTPUT; for support'
                 WHEN '@version_date' THEN 'OUTPUT; for support'

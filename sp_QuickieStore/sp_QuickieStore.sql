@@ -113,8 +113,8 @@ END;
 These are for your outputs.
 */
 SELECT 
-    @version = '2.22', 
-    @version_date = '20220701';
+    @version = '2.50', 
+    @version_date = '20221201';
 
 /*
 Helpful section! For help.
@@ -244,7 +244,7 @@ BEGIN
       ON ap.object_id = o.object_id
     INNER JOIN sys.types AS t
       ON  ap.system_type_id = t.system_type_id
-        AND ap.user_type_id = t.user_type_id
+      AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_QuickieStore'
     OPTION(RECOMPILE);
 

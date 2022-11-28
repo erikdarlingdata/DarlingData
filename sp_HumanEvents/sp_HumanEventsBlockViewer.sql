@@ -75,8 +75,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT 
-    @version = '1.01', 
-    @version_date = '20221109';
+    @version = '1.13', 
+    @version_date = '20221201';
 
 IF @help = 1
 BEGIN
@@ -537,65 +537,66 @@ END;
         kheb.spid,
         kheb.ecid,
         query_text =
-    CASE 
-        WHEN kheb.query_text
-             LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
-        THEN 
-            (
-                SELECT
-                    [processing-instruction(query)] =                                       
-                        OBJECT_SCHEMA_NAME
-                        (
-                                SUBSTRING
+            CASE 
+                WHEN kheb.query_text
+                     LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
+                THEN 
+                    (
+                        SELECT
+                            [processing-instruction(query)] =                                       
+                                OBJECT_SCHEMA_NAME
                                 (
-                                    kheb.query_text,
-                                    CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
-                                    LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
-                                )
-                                ,
-                                SUBSTRING
+                                        SUBSTRING
+                                        (
+                                            kheb.query_text,
+                                            CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
+                                            LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
+                                        )
+                                        ,
+                                        SUBSTRING
+                                        (
+                                            kheb.query_text, 
+                                            CHARINDEX(N'Database Id = ', kheb.query_text) + 14, 
+                                            CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
+                                        )
+                                ) + 
+                                N'.' + 
+                                OBJECT_NAME
                                 (
-                                    kheb.query_text, 
-                                    CHARINDEX(N'Database Id = ', kheb.query_text) + 14, 
-                                    CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
+                                     SUBSTRING
+                                     (
+                                         kheb.query_text,
+                                         CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
+                                         LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
+                                     )
+                                     ,
+                                     SUBSTRING
+                                     (
+                                         kheb.query_text, 
+                                         CHARINDEX(N'Database Id = ', kheb.query_text) + 14, 
+                                         CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
+                                     )
                                 )
-                        ) + 
-                        N'.' + 
-                        OBJECT_NAME
-                        (
-                             SUBSTRING
-                             (
-                                 kheb.query_text,
-                                 CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
-                                 LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
-                             )
-                             ,
-                             SUBSTRING
-                             (
-                                 kheb.query_text, 
-                                 CHARINDEX(N'Database Id = ', kheb.query_text) + 14, 
-                                 CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
-                             )
-                        )
-                FOR XML
-                    PATH(N''),
-                    TYPE
-            )
-        ELSE
-            (
-                SELECT 
-                    [processing-instruction(query)] = 
-                        kheb.query_text
-                FOR XML
-                    PATH(N''),
-                    TYPE
-            )
-    END,
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    )
+                ELSE
+                    (
+                        SELECT 
+                            [processing-instruction(query)] = 
+                                kheb.query_text
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    )
+            END,
         wait_time_ms = 
             kheb.wait_time,
         kheb.status,
         kheb.isolation_level,
-        c.sql_handles,
+        c_sh.sql_handles,
+        c_pn.proc_names,
         kheb.resource_owner_type,
         kheb.lock_mode,
         kheb.transaction_count,
@@ -692,6 +693,7 @@ END;
                               n.c.value('@sqlhandle', 'varchar(130)')
                           )
                       FROM kheb.blocked_process_report.nodes('//executionStack/frame') AS n(c)
+                      WHERE n.c.exist('@sql_handle[ .!= "0x" ]') = 1
                       FOR XML
                           PATH(''),
                           TYPE
@@ -700,7 +702,30 @@ END;
                   1,
                   ''
               )                    
-     ) AS c;
+    ) AS c_sh
+    CROSS APPLY 
+    (
+      SELECT 
+          proc_names = 
+              STUFF
+              (
+                  (
+                      SELECT DISTINCT
+                          ',' +
+                          RTRIM
+                          (
+                              n.c.value('@procname', 'nvarchar(1024)')
+                          )
+                      FROM kheb.blocked_process_report.nodes('//executionStack/frame') AS n(c)
+                      FOR XML
+                          PATH(''),
+                          TYPE
+                  ).value('./text()[1]', 'nvarchar(max)'),
+                  1,
+                  1,
+                  ''
+              )                    
+    ) AS c_pn;
     
     SELECT
         b.*
