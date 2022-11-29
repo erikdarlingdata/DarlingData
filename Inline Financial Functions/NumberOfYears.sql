@@ -1,4 +1,4 @@
-CREATE OR ALTER FUNCTION 
+CREATE OR ALTER FUNCTION
     dbo.NumberOfYears_Inline
 (
     @Rate float,
@@ -14,23 +14,23 @@ AS
 RETURN
 /*
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData 
+https://github.com/erikdarlingdata/DarlingData
 */
-    SELECT 
-        NumberOfYears = 
+    SELECT
+        NumberOfYears =
             CONVERT
             (
                 float,
-                CASE WHEN (@Type = 0 
+                CASE WHEN (@Type = 0
                              OR @Type IS NULL)
                      THEN LOG(((@FutureValue * (POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear / @NumberPayments) - 1) + @Payment))
                               / ((@PreviousValue * (POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear / @NumberPayments) - 1) + @Payment)))
                                   / LOG(POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear))
                      WHEN @Type = 1
-                     THEN LOG(((@FutureValue * (POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear / @NumberPayments) - 1) 
+                     THEN LOG(((@FutureValue * (POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear / @NumberPayments) - 1)
                               + @Payment * POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear / @NumberPayments)))
                                   / ((@PreviousValue * (POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear / @NumberPayments) - 1) + @Payment
-                                      * POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear / @NumberPayments)))) 
+                                      * POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear / @NumberPayments))))
                                           / LOG(POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear))
                 END
             );

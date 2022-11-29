@@ -2,7 +2,7 @@
 
 Creates a table to log statement information from dynamic SQL to.
 
-Should be used in conjunction with dbo.logging 
+Should be used in conjunction with dbo.logging
  * https://github.com/erikdarlingdata/DarlingData/tree/main/dynamic_sql_logging
 
 Copyright (c) 2022 Darling Data, LLC
@@ -13,17 +13,17 @@ and/or sell copies of the Software, and to permit persons to whom the Software i
 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF 
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE 
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 */
 
-DROP TABLE IF EXISTS 
+DROP TABLE IF EXISTS
     dbo.logger;
 
-CREATE TABLE 
+CREATE TABLE
     dbo.logger
 (
     run_hash uniqueidentifier,
@@ -38,6 +38,6 @@ CREATE TABLE
     execution_text nvarchar(MAX),
     query_plan xml,
     is_final bit DEFAULT 0,
-  CONSTRAINT loggerino PRIMARY KEY (run_hash) 
+  CONSTRAINT loggerino PRIMARY KEY (run_hash)
 );
-GO 
+GO

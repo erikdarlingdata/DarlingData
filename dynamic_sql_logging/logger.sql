@@ -1,14 +1,14 @@
-CREATE OR ALTER PROCEDURE 
+CREATE OR ALTER PROCEDURE
     dbo.logging
-( 
-    @spid int, 
-    @sql nvarchar(MAX), 
+(
+    @spid int,
+    @sql nvarchar(MAX),
     @query_plan XML,
-    @guid_in uniqueidentifier, 
-    @guid_out uniqueidentifier OUTPUT 
+    @guid_in uniqueidentifier,
+    @guid_out uniqueidentifier OUTPUT
 )
-WITH RECOMPILE 
-AS 
+WITH RECOMPILE
+AS
 BEGIN
 
 SET NOCOUNT, XACT_ABORT ON;
@@ -30,15 +30,15 @@ and/or sell copies of the Software, and to permit persons to whom the Software i
 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF 
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE 
+DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 */
 
 /*variables for the variable gods*/
-DECLARE 
+DECLARE
     @run_hash uniqueidentifier = NEWID(),
     @cpu_time decimal(18,2),
     @total_elapsed_time decimal(18,2),
@@ -50,37 +50,37 @@ DECLARE
 IF @guid_in IS NULL
 BEGIN
 
-    INSERT 
-        dbo.logger 
-    ( 
-        run_hash, 
-        run_date, 
-        user_name, 
-        cpu_time_ms, 
-        total_elapsed_time_ms, 
-        physical_reads_mb, 
-        logical_reads_mb, 
-        writes_mb, 
-        statement_text, 
-        execution_text 
+    INSERT
+        dbo.logger
+    (
+        run_hash,
+        run_date,
+        user_name,
+        cpu_time_ms,
+        total_elapsed_time_ms,
+        physical_reads_mb,
+        logical_reads_mb,
+        writes_mb,
+        statement_text,
+        execution_text
     )
-    SELECT 
+    SELECT
         @run_hash,
         SYSDATETIME(),
         SUSER_NAME(),
         cpu_time,
         total_elapsed_time,
-        physical_reads_mb = 
-            ((reads - logical_reads) * 8.) / 1024., 
-        logical_reads_mb = 
+        physical_reads_mb =
+            ((reads - logical_reads) * 8.) / 1024.,
+        logical_reads_mb =
             (logical_reads * 8.) / 1024.,
-        writes_mb = 
+        writes_mb =
             (writes * 8.) / 1024.,
         @sql AS statement_text,
-        execution_text = 
+        execution_text =
             (
-                SELECT 
-                    deib.event_info 
+                SELECT
+                    deib.event_info
                 FROM sys.dm_exec_input_buffer(@spid, 0) AS deib
             )
     FROM sys.dm_exec_requests
@@ -97,7 +97,7 @@ IF @guid_in IS NOT NULL
 BEGIN
 
     UPDATE l
-        SET 
+        SET
             l.cpu_time_ms =
                 r.cpu_time - l.cpu_time_ms,
             l.total_elapsed_time_ms =
@@ -122,4 +122,4 @@ BEGIN
 END
 
 END
-GO 
+GO
