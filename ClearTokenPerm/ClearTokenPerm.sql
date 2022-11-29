@@ -18,21 +18,21 @@ Copyright 2022 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData    
+https://github.com/erikdarlingdata/DarlingData
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR 
-OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 
 */
 
 
-CREATE OR ALTER PROCEDURE 
+CREATE OR ALTER PROCEDURE
     dbo.ClearTokenPerm
 (
     @CacheSizeGB decimal(38,2)
@@ -44,7 +44,7 @@ BEGIN
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-DECLARE 
+DECLARE
     @clear_triggered bit = 0;
 
 IF OBJECT_ID('dbo.ClearTokenPermLogging') IS NULL
@@ -62,11 +62,11 @@ END
 
 IF
 (
-    SELECT 
-        cache_size = 
+    SELECT
+        cache_size =
             CONVERT
             (
-                decimal(38,2), 
+                decimal(38,2),
                 (domc.pages_kb / 1024. / 1024.)
             )
     FROM sys.dm_os_memory_clerks AS domc
@@ -75,51 +75,51 @@ IF
 ) >= @CacheSizeGB
 BEGIN
 
-    INSERT 
+    INSERT
         dbo.ClearTokenPermLogging
     (
         cache_size_gb,
         log_date,
         clear_triggered
     )
-    SELECT 
-        cache_size = 
+    SELECT
+        cache_size =
             CONVERT
             (
-                decimal(38,2), 
+                decimal(38,2),
                 (domc.pages_kb / 1024. / 1024.)
             ),
-        log_date = 
+        log_date =
             GETDATE(),
-        clear_triggered = 
+        clear_triggered =
             1
     FROM sys.dm_os_memory_clerks AS domc
     WHERE domc.type = 'USERSTORE_TOKENPERM'
     AND   domc.name = 'TokenAndPermUserStore';
-    
+
     DBCC FREESYSTEMCACHE('TokenAndPermUserStore');
 
 END
 ELSE
 BEGIN
 
-    INSERT 
+    INSERT
         dbo.ClearTokenPermLogging
     (
         cache_size_gb,
         log_date,
         clear_triggered
     )
-    SELECT 
-        cache_size = 
+    SELECT
+        cache_size =
             CONVERT
             (
-                decimal(38, 2), 
+                decimal(38, 2),
                 (domc.pages_kb / 1024. / 1024.)
             ),
-        log_date = 
+        log_date =
             GETDATE(),
-        clear_triggered = 
+        clear_triggered =
             0
     FROM sys.dm_os_memory_clerks AS domc
     WHERE domc.type = 'USERSTORE_TOKENPERM'
@@ -127,14 +127,14 @@ BEGIN
     END
 
 END
-GO 
+GO
 
 /*Example execution*/
-EXEC dbo.ClearTokenPerm 
+EXEC dbo.ClearTokenPerm
     @CacheSizeGB = 1;
 
 /*Query a log*/
-SELECT 
+SELECT
     ctpl.*
 FROM dbo.ClearTokenPermLogging AS ctpl
 

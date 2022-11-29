@@ -1,4 +1,4 @@
-CREATE OR ALTER FUNCTION 
+CREATE OR ALTER FUNCTION
     dbo.FutureValue_Inline
 (
     @Rate float,
@@ -7,28 +7,28 @@ CREATE OR ALTER FUNCTION
     @Value float,
     @Type int
 )
-RETURNS table
-AS    
+RETURNS TABLE
+AS
 RETURN
 /*
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData 
+https://github.com/erikdarlingdata/DarlingData
 */
     WITH pre AS
     (
         SELECT
-            Type = 
+            Type =
                ISNULL(@Type, 0),
-            Value = 
+            Value =
                ISNULL(@Value, 0),
             Term =
                POWER(1 + @Rate, @Periods)
 
     ),
-        post AS 
+        post AS
     (
-        SELECT 
-            FutureValue = 
+        SELECT
+            FutureValue =
                 CASE
                     WHEN @Rate = 0
                     THEN (p.Value + @Payment) * @Periods
@@ -39,7 +39,7 @@ https://github.com/erikdarlingdata/DarlingData
                            AND p.Type = 1)
                     THEN p.Value * p.Term + @Payment * (1 + @Rate) * (p.Term - 1.0) / @Rate
                 END
-        FROM pre AS p  
+        FROM pre AS p
     )
     SELECT
         FutureValue =

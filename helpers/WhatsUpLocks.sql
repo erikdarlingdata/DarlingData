@@ -19,42 +19,42 @@ It's definitely not a replacements for sp_WhoIsActive, it just gives me
 
 IF OBJECT_ID('dbo.WhatsUpLocks') IS NULL
 BEGIN
-    DECLARE 
+    DECLARE
         @fsql nvarchar(MAX) = N'
-    CREATE FUNCTION 
-	    dbo.WhatsUpLocks()
+    CREATE FUNCTION
+        dbo.WhatsUpLocks()
     RETURNS TABLE
-    AS 
+    AS
     RETURN
-    SELECT 
+    SELECT
         x = 1;';
-    
+
     PRINT @fsql;
     EXEC (@fsql);
 END;
-GO 
+GO
 
-ALTER FUNCTION 
+ALTER FUNCTION
     dbo.WhatsUpLocks
 (
     @spid int
 )
 RETURNS table
 AS
-RETURN 
-SELECT 
+RETURN
+SELECT
     dtl.request_mode,
-    locked_object = 
+    locked_object =
         CASE dtl.resource_type
-             WHEN N'OBJECT' 
+             WHEN N'OBJECT'
              THEN OBJECT_NAME(dtl.resource_associated_entity_id)
              ELSE OBJECT_NAME(p.object_id)
         END,
-    index_name = 
+    index_name =
         ISNULL(i.name, N'OBJECT'),
     dtl.resource_type,
     dtl.request_status,
-    total_locks = 
+    total_locks =
         COUNT_BIG(*)
 FROM sys.dm_tran_locks AS dtl WITH(NOLOCK)
 LEFT JOIN sys.partitions AS p WITH(NOLOCK)
@@ -62,12 +62,12 @@ LEFT JOIN sys.partitions AS p WITH(NOLOCK)
 LEFT JOIN sys.indexes AS i WITH(NOLOCK)
     ON  p.object_id = i.object_id
     AND p.index_id  = i.index_id
-WHERE (dtl.request_session_id = @spid 
+WHERE (dtl.request_session_id = @spid
          OR @spid IS NULL)
 AND    dtl.resource_type <> N'DATABASE'
-GROUP BY 
+GROUP BY
     CASE dtl.resource_type
-         WHEN N'OBJECT' 
+         WHEN N'OBJECT'
          THEN OBJECT_NAME(dtl.resource_associated_entity_id)
          ELSE OBJECT_NAME(p.object_id)
     END,
