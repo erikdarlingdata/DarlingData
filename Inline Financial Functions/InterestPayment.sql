@@ -1,4 +1,4 @@
-CREATE OR ALTER FUNCTION 
+CREATE OR ALTER FUNCTION
     dbo.InterestPayment_Inline
 (
     @Rate float,
@@ -12,28 +12,29 @@ RETURNS TABLE
 AS
 /*
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData 
+https://github.com/erikdarlingdata/DarlingData
 */
 RETURN
-    WITH pre AS 
+    WITH pre AS
     (
         SELECT
-            Type = 
+            Type =
                 ISNULL(@Type, 0),
-            Payment = 
+            Payment =
                 (
-                    SELECT 
-                        Payment 
+                    SELECT
+                        Payment
                     FROM dbo.Payment_Inline
                     (
-                        @Rate, 
-                        @Periods, 
-                        @Present, 
-                        @Future, 
-                        @Type)
-                )            
+                        @Rate,
+                        @Periods,
+                        @Present,
+                        @Future,
+                        @Type
+                    )
+                )
     ),
-         post AS 
+         post AS
     (
         SELECT
             InterestPayment =
@@ -47,13 +48,13 @@ RETURN
                     WHEN (@Period <> 1
                             AND p.Type = 0)
                     THEN (
-                             SELECT 
-                                 FutureValue 
+                             SELECT
+                                 FutureValue
                              FROM dbo.FutureValue_Inline
                              (
-                                 @Rate, 
-                                 @Period - 1, 
-                                 p.Payment, 
+                                 @Rate,
+                                 @Period - 1,
+                                 p.Payment,
                                  @Present, 0
                               )
                          )
@@ -64,11 +65,11 @@ RETURN
                                  FutureValue - p.Payment
                              FROM dbo.FutureValue_Inline
                              (
-                                 @Rate, 
-                                 @Period - 2, 
-                                 p.Payment, 
+                                 @Rate,
+                                 @Period - 2,
+                                 p.Payment,
                                  @Present, 1
-                              ) 
+                              )
                           )
                     END
         FROM pre AS p

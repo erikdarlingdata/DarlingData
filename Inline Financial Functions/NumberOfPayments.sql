@@ -1,4 +1,4 @@
-CREATE OR ALTER FUNCTION 
+CREATE OR ALTER FUNCTION
     dbo.NumberOfPayments_Inline
 (
     @Rate float,
@@ -14,15 +14,15 @@ AS
 RETURN
 /*
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData 
-*/    
+https://github.com/erikdarlingdata/DarlingData
+*/
     SELECT
         NumPayments =
             CONVERT
             (
-                float,              
-                CASE 
-                     WHEN (@Type = 0 
+                float,
+                CASE
+                     WHEN (@Type = 0
                              OR @Type IS NULL)
                      THEN LOG(POWER(1 + @Rate / @PaymentsPerYear, @PaymentsPerYear))
                               / LOG((@Payments * (POWER(1 + @Rate / @PaymentsPerYear, @Years * @PaymentsPerYear) - 1))

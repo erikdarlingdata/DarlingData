@@ -18,37 +18,37 @@ It's not a replacement for index analysis tools. There's just less overhead and 
 
 IF OBJECT_ID('dbo.WhatsUpIndexes') IS NULL
 BEGIN
-    DECLARE 
+    DECLARE
         @vsql nvarchar(MAX) = N'
-    CREATE VIEW 
-	    dbo.WhatsUpIndexes
+    CREATE VIEW
+        dbo.WhatsUpIndexes
     AS
-    SELECT 
+    SELECT
         x = 1;';
-    
+
     PRINT @vsql;
     EXEC (@vsql);
 END;
-GO 
+GO
 
 
-ALTER VIEW 
+ALTER VIEW
     dbo.WhatsUpIndexes
 AS
 SELECT TOP (2147483647)
-    view_name = 
+    view_name =
         'WhatsUpIndexes',
-    database_name = 
+    database_name =
         DB_NAME(),
     schema_name =
         s.name,
-    table_name = 
+    table_name =
         OBJECT_NAME(ps.object_id),
-    index_name = 
+    index_name =
         i.name,
-    in_row_pages_mb = 
+    in_row_pages_mb =
         ( ps.reserved_page_count * 8. / 1024. ),
-    lob_pages_mb = 
+    lob_pages_mb =
         ( ps.lob_reserved_page_count * 8. / 1024. ),
     ps.in_row_used_page_count,
     ps.row_count
@@ -62,7 +62,7 @@ JOIN sys.schemas AS s
 JOIN sys.indexes AS i
     ON  ps.object_id = i.object_id
     AND ps.index_id  = i.index_id
-ORDER BY 
+ORDER BY
     ps.object_id,
     ps.index_id,
     ps.partition_number;

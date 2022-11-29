@@ -1,4 +1,4 @@
-CREATE OR ALTER FUNCTION 
+CREATE OR ALTER FUNCTION
     dbo.PrincipalPayment_Inline
 (
     @Rate float,
@@ -13,34 +13,34 @@ AS
 RETURN
 /*
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData 
+https://github.com/erikdarlingdata/DarlingData
 */
     SELECT
-        PrincipalPayment = 
+        PrincipalPayment =
             (
                 (
-                    SELECT 
-                        p.Payment 
+                    SELECT
+                        p.Payment
                     FROM dbo.Payment_Inline
                     (
-                        @Rate, 
-                        @Periods, 
-                        @Present, 
-                        @Future, 
+                        @Rate,
+                        @Periods,
+                        @Present,
+                        @Future,
                         @Type
                     ) AS  p
                 )
-                 - 
+                 -
                 (
-                    SELECT 
-                        i.InterestPayment 
+                    SELECT
+                        i.InterestPayment
                     FROM dbo.InterestPayment_Inline
                     (
-                        @Rate, 
-                        @Period, 
-                        @Periods, 
-                        @Present, 
-                        @Future, 
+                        @Rate,
+                        @Period,
+                        @Periods,
+                        @Present,
+                        @Future,
                         @Type
                     ) AS i
                 )

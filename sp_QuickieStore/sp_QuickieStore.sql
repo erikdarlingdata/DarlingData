@@ -17,7 +17,7 @@ GO
 ██║▄▄ ██║██║   ██║██║██║     ██╔═██╗ ██║██╔══╝
 ╚██████╔╝╚██████╔╝██║╚██████╗██║  ██╗██║███████╗
  ╚══▀▀═╝  ╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝╚══════╝
-                      
+
 ███████╗████████╗ ██████╗ ██████╗ ███████╗██╗
 ██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗██╔════╝██║
 ███████╗   ██║   ██║   ██║██████╔╝█████╗  ██║
@@ -45,7 +45,7 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-CREATE OR ALTER PROCEDURE 
+CREATE OR ALTER PROCEDURE
     dbo.sp_QuickieStore
 (
     @database_name sysname = NULL,
@@ -112,9 +112,9 @@ END;
 /*
 These are for your outputs.
 */
-SELECT 
-    @version = '2.22', 
-    @version_date = '20220701';
+SELECT
+    @version = '2.50',
+    @version_date = '20221201';
 
 /*
 Helpful section! For help.
@@ -241,10 +241,10 @@ BEGIN
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o
-        ON ap.object_id = o.object_id
+      ON ap.object_id = o.object_id
     INNER JOIN sys.types AS t
-        ON  ap.system_type_id = t.system_type_id
-        AND ap.user_type_id = t.user_type_id
+      ON  ap.system_type_id = t.system_type_id
+      AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_QuickieStore'
     OPTION(RECOMPILE);
 
@@ -253,9 +253,9 @@ BEGIN
     */
     IF EXISTS
     (
-        SELECT 
-            1/0 
-        FROM sys.all_objects AS ao 
+        SELECT
+            1/0
+        FROM sys.all_objects AS ao
         WHERE ao.name = N'query_store_wait_stats'
     )
     BEGIN
@@ -271,7 +271,7 @@ BEGIN
         SELECT 'parallelism (16): CXPACKET, EXCHANGE, HT%, BMP%, BP%' UNION ALL
         SELECT 'memory (17): RESOURCE_SEMAPHORE, CMEMTHREAD, CMEMPARTITIONED, EE_PMOLOCK, MEMORY_ALLOCATION_EXT, RESERVED_MEMORY_ALLOCATION_EXT, MEMORY_GRANT_UPDATE';
     END;
-    
+
     /*
     Results
     */
@@ -285,13 +285,13 @@ BEGIN
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Resource Stats (expert mode only): data from dm_exec_query_stats, when available' UNION ALL
     SELECT 'query store does not currently track some details about memory grants and thread usage' UNION ALL
-    SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL    
+    SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Plan Feedback (2022+, expert mode only): Lists queries that have been adjusted based on automated feedback mechanisms' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Hints (2022+, expert mode only): lists hints applied to queries from automated feedback mechanisms' UNION ALL    
+    SELECT 'Query Store Hints (2022+, expert mode only): lists hints applied to queries from automated feedback mechanisms' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Variants (2022+, expert mode only): lists plan variants from the Parameter Sensitive Plan feedback mechanism' UNION ALL    
+    SELECT 'Query Variants (2022+, expert mode only): lists plan variants from the Parameter Sensitive Plan feedback mechanism' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Waits By Query (2017+, expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
@@ -411,11 +411,11 @@ CREATE TABLE
     #include_query_hashes
 (
     query_hash_s varchar(131),
-    query_hash AS 
+    query_hash AS
         CONVERT
         (
-            binary(8), 
-            query_hash_s, 
+            binary(8),
+            query_hash_s,
             1
         ) PERSISTED NOT NULL PRIMARY KEY
 );
@@ -427,11 +427,11 @@ CREATE TABLE
     #include_plan_hashes
 (
     plan_hash_s varchar(131),
-    plan_hash AS 
+    plan_hash AS
         CONVERT
         (
-            binary(8), 
-            plan_hash_s, 
+            binary(8),
+            plan_hash_s,
             1
         ) PERSISTED NOT NULL PRIMARY KEY
 );
@@ -443,11 +443,11 @@ CREATE TABLE
     #ignore_query_hashes
 (
     query_hash_s varchar(131),
-    query_hash AS 
+    query_hash AS
         CONVERT
         (
-            binary(8), 
-            query_hash_s, 
+            binary(8),
+            query_hash_s,
             1
         ) PERSISTED NOT NULL PRIMARY KEY
 );
@@ -459,11 +459,11 @@ CREATE TABLE
     #ignore_plan_hashes
 (
     plan_hash_s varchar(131),
-    plan_hash AS 
+    plan_hash AS
         CONVERT
         (
-            binary(8), 
-            plan_hash_s, 
+            binary(8),
+            plan_hash_s,
             1
         ) PERSISTED NOT NULL PRIMARY KEY
 );
@@ -475,11 +475,11 @@ CREATE TABLE
     #include_sql_handles
 (
     sql_handle_s varchar(131),
-    sql_handle AS 
+    sql_handle AS
         CONVERT
         (
-            varbinary(64), 
-            sql_handle_s, 
+            varbinary(64),
+            sql_handle_s,
             1
         ) PERSISTED NOT NULL PRIMARY KEY
 );
@@ -491,11 +491,11 @@ CREATE TABLE
     #ignore_sql_handles
 (
     sql_handle_s varchar(131),
-    sql_handle AS 
+    sql_handle AS
         CONVERT
         (
-            varbinary(64), 
-            sql_handle_s, 
+            varbinary(64),
+            sql_handle_s,
             1
         ) PERSISTED NOT NULL PRIMARY KEY
 );
@@ -739,9 +739,9 @@ CREATE TABLE
                         SECOND,
                         first_execution_time,
                         last_execution_time
-                    ), 
+                    ),
                     0
-                ), 
+                ),
                 0
         ),
     avg_duration_ms float NULL,
@@ -863,7 +863,7 @@ CREATE TABLE
     feedback_data nvarchar(MAX),
     state_desc nvarchar(120),
     create_time datetimeoffset(7),
-    last_updated_time datetimeoffset(7)    
+    last_updated_time datetimeoffset(7)
 );
 
 /*
@@ -1087,7 +1087,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @current_table = N'',
     @string_split_ints = N'
     SELECT DISTINCT
-        ids = 
+        ids =
             LTRIM
             (
                 RTRIM
@@ -1131,7 +1131,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     OPTION(RECOMPILE);',
     @string_split_strings = N'
     SELECT DISTINCT
-        ids = 
+        ids =
             LTRIM
             (
                 RTRIM
@@ -1206,7 +1206,9 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                         @sql
                 FROM #troubleshoot_performance AS tp
                 WHERE tp.current_table = @current_table
-                FOR XML PATH(N''''), TYPE
+                FOR XML
+                    PATH(N''''),
+                    TYPE
             ).query(''.[1]'') AS current_query
         OPTION(RECOMPILE);',
     @rc = 0;
@@ -1234,11 +1236,11 @@ SELECT
         NULLIF(@ignore_plan_ids, ''),
     @ignore_query_ids =
         NULLIF(@ignore_query_ids, ''),
-    @include_query_hashes = 
+    @include_query_hashes =
         NULLIF(@include_query_hashes, ''),
-    @include_plan_hashes = 
+    @include_plan_hashes =
         NULLIF(@include_plan_hashes, ''),
-    @include_sql_handles = 
+    @include_sql_handles =
         NULLIF(@include_sql_handles, ''),
     @ignore_query_hashes =
         NULLIF(@ignore_query_hashes, ''),
@@ -1478,16 +1480,16 @@ END;
 Validate Sort Order
 */
 IF @sort_order NOT IN
-               (
-                   'cpu',
-                   'logical reads',
-                   'physical reads',
-                   'writes',
-                   'duration',
-                   'memory',
-                   'tempdb',
-                   'executions'
-               )
+   (
+       'cpu',
+       'logical reads',
+       'physical reads',
+       'writes',
+       'duration',
+       'memory',
+       'tempdb',
+       'executions'
+   )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
    SELECT
@@ -1500,7 +1502,7 @@ These columns are only available in 2017+
 IF
   (
       @sort_order = 'tempdb'
-        AND @new = 0
+      AND @new = 0
   )
 BEGIN
    RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
@@ -1514,7 +1516,7 @@ Wait stats aren't in Query Store until 2017, so we can't do that on television
 IF
 (
     @wait_filter IS NOT NULL
-      AND @new = 0
+    AND @new = 0
 )
 BEGIN
    RAISERROR('Query Store wait stats are not available prior to SQL Server 2017', 11, 1) WITH NOWAIT;
@@ -1524,27 +1526,27 @@ END;
 /*
 Make sure the wait filter is valid
 */
-IF 
+IF
 (
     @new = 1
-      AND @wait_filter NOT IN
-                       (
-                           'cpu',
-                           'lock',
-                           'locks',
-                           'latch',
-                           'latches',
-                           'buffer latch',
-                           'buffer latches',
-                           'buffer io',
-                           'log',
-                           'log io',
-                           'network',
-                           'network io',
-                           'parallel',
-                           'parallelism',
-                           'memory'
-                       )
+    AND @wait_filter NOT IN
+        (
+            'cpu',
+            'lock',
+            'locks',
+            'latch',
+            'latches',
+            'buffer latch',
+            'buffer latches',
+            'buffer io',
+            'log',
+            'log io',
+            'network',
+            'network io',
+            'parallel',
+            'parallelism',
+            'memory'
+        )
 )
 BEGIN
    RAISERROR('The wait category (%s) you chose is invalid', 11, 1, @wait_filter) WITH NOWAIT;
@@ -1564,19 +1566,19 @@ BEGIN
     SELECT
         @current_table = 'checking query store waits are enabled',
         @sql = @isolation_level;
-    
+
     IF @troubleshoot_performance = 1
     BEGIN
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
-    
+
     END;
-    
+
     SELECT
         @sql += N'
 SELECT
@@ -1593,33 +1595,33 @@ SELECT
             ELSE 0
         END
 OPTION(RECOMPILE);' + @nc10;
-    
+
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
-    
+
     EXEC sys.sp_executesql
         @sql,
       N'@query_store_waits_enabled bit OUTPUT',
         @query_store_waits_enabled OUTPUT;
-    
+
     IF @troubleshoot_performance = 1
     BEGIN
-    
+
         SET STATISTICS XML OFF;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-    
+
     END;
-    
+
     IF @query_store_waits_enabled = 0
     BEGIN
        RAISERROR('Query Store wait stats are not enabled for database %s', 11, 1, @database_name_quoted) WITH NOWAIT;
@@ -1629,18 +1631,18 @@ OPTION(RECOMPILE);' + @nc10;
 END; /*End wait stats checks*/
 
 /*
-See if our cool new 2022 views exist. 
+See if our cool new 2022 views exist.
 May have to tweak this if views aren't present in some cloudy situations.
 */
 SELECT
-    @sql_2022_views = 
-        CASE 
+    @sql_2022_views =
+        CASE
             WHEN COUNT_BIG(*) = 5
             THEN 1
-            ELSE 0 
+            ELSE 0
         END
 FROM sys.all_objects AS ao
-WHERE ao.name IN 
+WHERE ao.name IN
       (
           N'query_store_plan_feedback',
           N'query_store_query_hints',
@@ -1655,25 +1657,25 @@ See if AGs are a thing so we can skip the checks for replica stuff
 */
 IF (@azure = 1)
 BEGIN
-	SELECT
-		@ags_present = 0
-END
+    SELECT
+        @ags_present = 0;
+END;
 ELSE
-BEGIN 
-	SELECT
-		@ags_present = 
-            CASE 
-                WHEN EXISTS 
+BEGIN
+    SELECT
+        @ags_present =
+            CASE
+                WHEN EXISTS
                         (
-                            SELECT 
+                            SELECT
                                 1/0
                             FROM sys.availability_groups AS ag
                         )
                 THEN 1
                 ELSE 0
             END
-		OPTION(RECOMPILE);
-END
+        OPTION(RECOMPILE);
+END;
 
 /*
 Get filters ready, or whatever
@@ -1719,7 +1721,7 @@ END;
 
 /*
 In this section we set up the filter if someone's searching for
-a single stored procedure in Query Store. 
+a single stored procedure in Query Store.
 */
 IF
   (
@@ -1940,11 +1942,11 @@ OPTION(RECOMPILE);' + @nc10;
         /*
         This section of code confused me when I came back to it,
         so I'm going to add a note here about why I do this:
-        
+
         If @include_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter. 
-        
-        We need to do this because it's how we figure 
+        the user didn't populate the parameter.
+
+        We need to do this because it's how we figure
         out which plans to keep in the main query
         */
         IF @include_plan_ids IS NULL
@@ -2039,11 +2041,11 @@ OPTION(RECOMPILE);' + @nc10;
         /*
         This section of code confused me when I came back to it,
         so I'm going to add a note here about why I do this:
-        
+
         If @ignore_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter. 
-        
-        We need to do this because it's how we figure 
+        the user didn't populate the parameter.
+
+        We need to do this because it's how we figure
         out which plans to keep in the main query
         */
         IF @ignore_plan_ids IS NULL
@@ -2160,11 +2162,11 @@ OPTION(RECOMPILE);' + @nc10;
         /*
         This section of code confused me when I came back to it,
         so I'm going to add a note here about why I do this:
-        
+
         If @include_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter. 
-        
-        We need to do this because it's how we figure 
+        the user didn't populate the parameter.
+
+        We need to do this because it's how we figure
         out which plans to keep in the main query
         */
         IF @include_plan_ids IS NULL
@@ -2266,11 +2268,11 @@ OPTION(RECOMPILE);' + @nc10;
         /*
         This section of code confused me when I came back to it,
         so I'm going to add a note here about why I do this:
-        
+
         If @ignore_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter. 
-        
-        We need to do this because it's how we figure 
+        the user didn't populate the parameter.
+
+        We need to do this because it's how we figure
         out which plans to keep in the main query
         */
         IF @ignore_plan_ids IS NULL
@@ -2285,7 +2287,7 @@ OPTION(RECOMPILE);' + @nc10;
               )' + @nc10;
           END;
     END; /*End ignore query hashes*/
-   
+
     IF @include_plan_hashes IS NOT NULL
     BEGIN
 
@@ -2364,11 +2366,11 @@ OPTION(RECOMPILE);' + @nc10;
         /*
         This section of code confused me when I came back to it,
         so I'm going to add a note here about why I do this:
-        
+
         If @include_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter. 
-        
-        We need to do this because it's how we figure 
+        the user didn't populate the parameter.
+
+        We need to do this because it's how we figure
         out which plans to keep in the main query
         */
         IF @include_plan_ids IS NULL
@@ -2463,11 +2465,11 @@ OPTION(RECOMPILE);' + @nc10;
         /*
         This section of code confused me when I came back to it,
         so I'm going to add a note here about why I do this:
-        
+
         If @ignore_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter. 
-        
-        We need to do this because it's how we figure 
+        the user didn't populate the parameter.
+
+        We need to do this because it's how we figure
         out which plans to keep in the main query
         */
         IF @ignore_plan_ids IS NULL
@@ -2537,7 +2539,7 @@ WHERE EXISTS
                             SELECT
                                 1/0
                             FROM #include_sql_handles AS ish
-                            WHERE ish.sql_handle = qsqt.statement_sql_handle                        
+                            WHERE ish.sql_handle = qsqt.statement_sql_handle
                         )
               )
       )
@@ -2575,11 +2577,11 @@ OPTION(RECOMPILE);' + @nc10;
         /*
         This section of code confused me when I came back to it,
         so I'm going to add a note here about why I do this:
-        
+
         If @include_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter. 
-        
-        We need to do this because it's how we figure 
+        the user didn't populate the parameter.
+
+        We need to do this because it's how we figure
         out which plans to keep in the main query
         */
         IF @include_plan_ids IS NULL
@@ -2650,7 +2652,7 @@ WHERE EXISTS
                             SELECT
                                 1/0
                             FROM #ignore_sql_handles AS ish
-                            WHERE ish.sql_handle = qsqt.statement_sql_handle                        
+                            WHERE ish.sql_handle = qsqt.statement_sql_handle
                         )
               )
       )
@@ -2688,11 +2690,11 @@ OPTION(RECOMPILE);' + @nc10;
         /*
         This section of code confused me when I came back to it,
         so I'm going to add a note here about why I do this:
-        
+
         If @ignore_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter. 
-        
-        We need to do this because it's how we figure 
+        the user didn't populate the parameter.
+
+        We need to do this because it's how we figure
         out which plans to keep in the main query
         */
         IF @ignore_plan_ids IS NULL
@@ -2779,7 +2781,28 @@ WHERE EXISTS
                   WHERE qsqt.query_text_id = qsq.query_text_id
                   AND   qsqt.query_sql_text LIKE @query_text_search
               )
-      )
+      )';
+
+/*If we're searching by a procedure name, limit the text search to it */
+IF
+(
+        @procedure_name IS NOT NULL
+    AND @procedure_exists = 1
+)
+BEGIN
+    SELECT
+        @sql += N'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #procedure_plans AS pp
+          WHERE pp.plan_id = qsp.plan_id
+      )';
+END;
+
+SELECT
+    @sql += N'
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -2954,7 +2977,7 @@ WHERE NOT EXISTS
                  1/0
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
               JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                  ON qsqt.query_text_id = qsq.query_text_id
+                ON qsqt.query_text_id = qsq.query_text_id
               WHERE qsq.query_id = qsp.query_id
               AND   qsqt.query_sql_text NOT LIKE ''ALTER INDEX%''
               AND   qsqt.query_sql_text NOT LIKE ''CREATE%INDEX%''
@@ -3566,8 +3589,16 @@ SELECT
         (
              SELECT
                  [processing-instruction(query)] =
-                     qsqt.query_sql_text
-             FOR XML PATH(''''), TYPE
+                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                         qsqt.query_sql_text COLLATE Latin1_General_BIN2,
+                     NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
+                     NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
+                     NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N'''')
+             FOR XML
+                 PATH(''''),
+                 TYPE
         ),
     qsqt.statement_sql_handle,
     qsqt.is_part_of_encrypted_module,
@@ -3758,7 +3789,7 @@ BEGIN
             qsqt.max_used_threads = deqs.max_used_threads
     FROM #query_store_query_text AS qsqt
     JOIN #dm_exec_query_stats AS deqs
-        ON qsqt.statement_sql_handle = deqs.statement_sql_handle
+      ON qsqt.statement_sql_handle = deqs.statement_sql_handle
     OPTION(RECOMPILE);
 
     IF @troubleshoot_performance = 1
@@ -4055,9 +4086,9 @@ WHERE EXISTS
         1/0
     FROM #query_store_runtime_stats AS qsrs
     JOIN #query_store_plan AS qsp
-        ON qsrs.plan_id = qsp.plan_id
+      ON qsrs.plan_id = qsp.plan_id
     JOIN #query_store_query AS qsq
-        ON qsp.query_id = qsq.query_id
+      ON qsp.query_id = qsq.query_id
     WHERE qsq.context_settings_id = qcs.context_settings_id
 )
 OPTION(RECOMPILE);';
@@ -4214,14 +4245,14 @@ BEGIN
 
     SELECT
         @sql += N'
-SELECT 
+SELECT
     qspf.plan_feedback_id,
     qspf.plan_id,
     qspf.feature_desc,
     qspf.feedback_data,
     qspf.state_desc,
     qspf.create_time,
-    qspf.last_updated_time 
+    qspf.last_updated_time
 FROM ' + @database_name_quoted + N'.sys.query_store_plan_feedback AS qspf
 WHERE EXISTS
 (
@@ -4286,10 +4317,10 @@ OPTION(RECOMPILE);' + @nc10;
 
     SELECT
         @sql += N'
-SELECT 
+SELECT
     qsqv.query_variant_query_id,
     qsqv.parent_query_id,
-    qsqv.dispatcher_plan_id 
+    qsqv.dispatcher_plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
 WHERE EXISTS
 (
@@ -4307,7 +4338,7 @@ OPTION(RECOMPILE);' + @nc10;
     (
         query_variant_query_id,
         parent_query_id,
-        dispatcher_plan_id 
+        dispatcher_plan_id
     )
     EXEC sys.sp_executesql
         @sql;
@@ -4350,7 +4381,7 @@ OPTION(RECOMPILE);' + @nc10;
 
     SELECT
         @sql += N'
-SELECT 
+SELECT
     qsqh.query_hint_id,
     qsqh.query_id,
     qsqh.query_hint_text,
@@ -4403,31 +4434,31 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ags_present = 1
     BEGIN
-    
+
         /*query_store_plan_forcing_locations*/
         SELECT
             @current_table = 'inserting #query_store_plan_forcing_locations',
             @sql = @isolation_level;
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             SET STATISTICS XML ON;
-    
+
         END;
-    
+
         SELECT
             @sql += N'
-SELECT 
+SELECT
     qspfl.plan_forcing_location_id,
     qspfl.query_id,
     qspfl.plan_id,
-    qspfl.replica_group_id 
+    qspfl.replica_group_id
 FROM ' + @database_name_quoted + N'.query_store_plan_forcing_locations AS qspfl
 WHERE EXISTS
       (
@@ -4438,59 +4469,59 @@ WHERE EXISTS
           AND   qspfl.plan_id = qsp.plan_id
       )
 OPTION(RECOMPILE);' + @nc10;
-    
+
         IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
-    
+
         INSERT
             #query_store_plan_forcing_locations WITH(TABLOCK)
         (
             plan_forcing_location_id,
             query_id,
             plan_id,
-            replica_group_id 
+            replica_group_id
         )
         EXEC sys.sp_executesql
             @sql;
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
-    
+
             SET STATISTICS XML OFF;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-    
+
         END;
-    
+
         /*query_store_replicas*/
         SELECT
             @current_table = 'inserting #query_store_replicas',
             @sql = @isolation_level;
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             SET STATISTICS XML ON;
-    
+
         END;
-    
+
         SELECT
             @sql += N'
-SELECT 
+SELECT
     qsr.replica_group_id,
     qsr.role_type,
     qsr.replica_name
@@ -4503,9 +4534,9 @@ WHERE EXISTS
           WHERE qspfl.replica_group_id = qsr.replica_group_id
       )
 OPTION(RECOMPILE);' + @nc10;
-    
+
         IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
-    
+
         INSERT
             #query_store_replicas WITH(TABLOCK)
         (
@@ -4515,26 +4546,26 @@ OPTION(RECOMPILE);' + @nc10;
         )
         EXEC sys.sp_executesql
             @sql;
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
-    
+
             SET STATISTICS XML OFF;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-    
+
         END;
-    
+
     END; /*End AG queries*/
 
 END; /*End SQL 2022 views*/
@@ -4572,7 +4603,7 @@ FROM
     BEGIN
 
         SELECT
-            @sql += 
+            @sql +=
             N'
     SELECT
         source =
@@ -4603,14 +4634,14 @@ FROM
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
-                 WHEN 1 
+                 WHEN 1
                  THEN
         N'
-        has_query_feedback = 
+        has_query_feedback =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
-        has_query_store_hints = 
+        has_query_store_hints =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
-        has_plan_variants = 
+        has_plan_variants =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
                  ELSE
         N''
@@ -4761,14 +4792,14 @@ FROM
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
-                 WHEN 1 
+                 WHEN 1
                  THEN
         N'
-        has_query_feedback = 
+        has_query_feedback =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
-        has_query_store_hints = 
+        has_query_store_hints =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
-        has_plan_variants = 
+        has_plan_variants =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
                  ELSE
         N''
@@ -4784,10 +4815,10 @@ FROM
         w.top_waits,'
                  ELSE
         N''
-            END + 
+            END +
         CONVERT
         (
-            nvarchar(MAX), 
+            nvarchar(MAX),
             N'
         qsrs.first_execution_time,
         qsrs.last_execution_time,
@@ -4928,14 +4959,14 @@ FROM
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
-                 WHEN 1 
+                 WHEN 1
                  THEN
         N'
-        has_query_feedback = 
+        has_query_feedback =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
-        has_query_store_hints = 
+        has_query_store_hints =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
-        has_plan_variants = 
+        has_plan_variants =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
                  ELSE
         N''
@@ -5052,14 +5083,14 @@ FROM
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
-                 WHEN 1 
+                 WHEN 1
                  THEN
         N'
-        has_query_feedback = 
+        has_query_feedback =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
-        has_query_store_hints = 
+        has_query_store_hints =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
-        has_plan_variants = 
+        has_plan_variants =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
                  ELSE
         N''
@@ -5168,7 +5199,7 @@ FROM
             qsqt.*
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
-            ON qsqt.query_text_id = qsq.query_text_id
+          ON qsqt.query_text_id = qsq.query_text_id
         WHERE qsq.query_id = qsp.query_id
         ORDER BY qsq.last_execution_time DESC
     ) AS qsqt
@@ -5360,10 +5391,10 @@ BEGIN
                FROM #query_store_plan_feedback AS qspf
            )
         BEGIN
-            
+
             SELECT
                 @current_table = 'selecting plan feedback';
-        
+
             SELECT
                 qspf.plan_feedback_id,
                 qspf.plan_id,
@@ -5376,12 +5407,12 @@ BEGIN
             ORDER BY qspf.plan_id
             OPTION(RECOMPILE);
         END;
-        ELSE 
-        BEGIN 
+        ELSE
+        BEGIN
             SELECT
                 result = '#query_store_plan_feedback is empty';
         END;
-        
+
         IF EXISTS
            (
                SELECT
@@ -5389,10 +5420,10 @@ BEGIN
                FROM #query_store_query_hints AS qsqh
            )
         BEGIN
-            
+
             SELECT
                 @current_table = 'selecting query hints';
-        
+
             SELECT
                 qsqh.query_hint_id,
                 qsqh.query_id,
@@ -5404,12 +5435,12 @@ BEGIN
             ORDER BY qsqh.query_id
             OPTION(RECOMPILE);
         END;
-        ELSE 
-        BEGIN 
+        ELSE
+        BEGIN
             SELECT
                 result = '#query_store_query_hints is empty';
         END;
-        
+
         IF EXISTS
            (
                SELECT
@@ -5417,10 +5448,10 @@ BEGIN
                FROM #query_store_query_variant AS qsqv
            )
         BEGIN
-            
+
             SELECT
                 @current_table = 'selecting query variants';
-        
+
             SELECT
                 qsqv.query_variant_query_id,
                 qsqv.parent_query_id,
@@ -5429,8 +5460,8 @@ BEGIN
             ORDER BY qsqv.parent_query_id
             OPTION(RECOMPILE);
         END;
-        ELSE 
-        BEGIN 
+        ELSE
+        BEGIN
             SELECT
                 result = '#query_store_query_variant is empty';
         END;
@@ -5549,7 +5580,7 @@ BEGIN
             qsqt.max_used_threads
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
-            ON qsq.query_text_id = qsqt.query_text_id
+          ON qsq.query_text_id = qsqt.query_text_id
         WHERE ( qsqt.total_grant_mb IS NOT NULL
         OR      qsqt.total_reserved_threads IS NOT NULL )
         ORDER BY qsq.query_id
@@ -5610,9 +5641,9 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                    ON qsrs.plan_id = qsp.plan_id
+                  ON qsrs.plan_id = qsp.plan_id
                 JOIN #query_store_query AS qsq
-                    ON qsp.query_id = qsq.query_id
+                  ON qsp.query_id = qsq.query_id
                 WHERE qsws.plan_id = qsrs.plan_id
             ) AS x
             ORDER BY
@@ -5659,9 +5690,9 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                    ON qsrs.plan_id = qsp.plan_id
+                  ON qsrs.plan_id = qsp.plan_id
                 JOIN #query_store_query AS qsq
-                    ON qsp.query_id = qsq.query_id
+                  ON qsp.query_id = qsq.query_id
                 WHERE qsws.plan_id = qsrs.plan_id
             ) AS x
             GROUP BY qsws.wait_category_desc
@@ -5675,7 +5706,7 @@ BEGIN
                 result =
                     '#query_store_wait_stats is empty' +
                     CASE
-                        WHEN (      
+                        WHEN (
                                     @product_version = 13
                                 AND @azure = 0
                              )
@@ -5694,7 +5725,7 @@ BEGIN
 
     END; /*End wait stats queries*/
 
-    IF 
+    IF
     (
            @sql_2022_views = 1
        AND @ags_present = 1
@@ -5706,26 +5737,26 @@ BEGIN
                    1/0
                FROM #query_store_replicas AS qsr
                JOIN #query_store_plan_forcing_locations AS qspfl
-                   ON qsr.replica_group_id = qspfl.replica_group_id
+                 ON qsr.replica_group_id = qspfl.replica_group_id
            )
         BEGIN
-        
+
         SELECT
             @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
-        
-        SELECT 
-            qsr.replica_group_id, 
-            qsr.role_type, 
+
+        SELECT
+            qsr.replica_group_id,
+            qsr.role_type,
             qsr.replica_name,
             qspfl.plan_forcing_location_id,
             qspfl.query_id,
             qspfl.plan_id,
-            qspfl.replica_group_id 
+            qspfl.replica_group_id
         FROM #query_store_replicas AS qsr
         JOIN #query_store_plan_forcing_locations AS qspfl
-            ON qsr.replica_group_id = qspfl.replica_group_id
+          ON qsr.replica_group_id = qspfl.replica_group_id
         ORDER BY qsr.replica_group_id;
-        
+
         END;
         ELSE
         BEGIN
@@ -5811,10 +5842,10 @@ BEGIN
                FROM #query_store_plan_feedback AS qspf
            )
         BEGIN
-            
+
             SELECT
                 @current_table = 'selecting plan feedback';
-        
+
             SELECT
                 qspf.plan_feedback_id,
                 qspf.plan_id,
@@ -5827,12 +5858,12 @@ BEGIN
             ORDER BY qspf.plan_id
             OPTION(RECOMPILE);
         END;
-        ELSE 
-        BEGIN 
+        ELSE
+        BEGIN
             SELECT
                 result = '#query_store_plan_feedback is empty';
         END;
-        
+
         IF EXISTS
            (
                SELECT
@@ -5840,10 +5871,10 @@ BEGIN
                FROM #query_store_query_hints AS qsqh
            )
         BEGIN
-            
+
             SELECT
                 @current_table = 'selecting query hints';
-        
+
             SELECT
                 qsqh.query_hint_id,
                 qsqh.query_id,
@@ -5855,12 +5886,12 @@ BEGIN
             ORDER BY qsqh.query_id
             OPTION(RECOMPILE);
         END;
-        ELSE 
-        BEGIN 
+        ELSE
+        BEGIN
             SELECT
                 result = '#query_store_query_hints is empty';
         END;
-        
+
         IF EXISTS
            (
                SELECT
@@ -5868,10 +5899,10 @@ BEGIN
                FROM #query_store_query_variant AS qsqv
            )
         BEGIN
-            
+
             SELECT
                 @current_table = 'selecting query variants';
-        
+
             SELECT
                 qsqv.query_variant_query_id,
                 qsqv.parent_query_id,
@@ -5880,8 +5911,8 @@ BEGIN
             ORDER BY qsqv.parent_query_id
             OPTION(RECOMPILE);
         END;
-        ELSE 
-        BEGIN 
+        ELSE
+        BEGIN
             SELECT
                 result = '#query_store_query_variant is empty';
         END;
@@ -6031,7 +6062,7 @@ BEGIN
             qsqt.max_used_threads
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
-            ON qsq.query_text_id = qsqt.query_text_id
+          ON qsq.query_text_id = qsqt.query_text_id
         WHERE ( qsqt.total_grant_mb IS NOT NULL
         OR      qsqt.total_reserved_threads IS NOT NULL )
         ORDER BY qsq.query_id
@@ -6097,9 +6128,9 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                    ON qsrs.plan_id = qsp.plan_id
+                  ON qsrs.plan_id = qsp.plan_id
                 JOIN #query_store_query AS qsq
-                    ON qsp.query_id = qsq.query_id
+                  ON qsp.query_id = qsq.query_id
                 WHERE qsws.plan_id = qsrs.plan_id
             ) AS x
             ORDER BY
@@ -6146,9 +6177,9 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                    ON qsrs.plan_id = qsp.plan_id
+                  ON qsrs.plan_id = qsp.plan_id
                 JOIN #query_store_query AS qsq
-                    ON qsp.query_id = qsq.query_id
+                  ON qsp.query_id = qsq.query_id
                 WHERE qsws.plan_id = qsrs.plan_id
             ) AS x
             GROUP BY qsws.wait_category_desc
@@ -6164,7 +6195,7 @@ BEGIN
             result =
                 '#query_store_wait_stats is empty' +
                 CASE
-                    WHEN (      
+                    WHEN (
                                 @product_version = 13
                             AND @azure = 0
                          )
@@ -6193,27 +6224,27 @@ BEGIN
                    1/0
                FROM #query_store_replicas AS qsr
                JOIN #query_store_plan_forcing_locations AS qspfl
-                   ON qsr.replica_group_id = qspfl.replica_group_id
+                 ON qsr.replica_group_id = qspfl.replica_group_id
            )
         BEGIN
-        
+
         SELECT
             @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-        
-        SELECT 
-            qsr.replica_group_id, 
-            qsr.role_type, 
+
+        SELECT
+            qsr.replica_group_id,
+            qsr.role_type,
             qsr.replica_name,
             qspfl.plan_forcing_location_id,
             qspfl.query_id,
             qspfl.plan_id,
-            qspfl.replica_group_id 
+            qspfl.replica_group_id
         FROM #query_store_replicas AS qsr
         JOIN #query_store_plan_forcing_locations AS qspfl
-            ON qsr.replica_group_id = qspfl.replica_group_id
+          ON qsr.replica_group_id = qspfl.replica_group_id
         ORDER BY qsr.replica_group_id
         OPTION(RECOMPILE);
-        
+
         END;
         ELSE
         BEGIN
@@ -6344,7 +6375,7 @@ BEGIN CATCH
     */
     IF @current_table IS NOT NULL
     BEGIN
-        DECLARE 
+        DECLARE
             @em tinyint = @expert_mode,
             @fo tinyint = @format_output;
         RAISERROR('error while %s with @expert mode = %i and format_output = %i', 11, 1, @current_table, @em, @fo) WITH NOWAIT;
@@ -6399,21 +6430,21 @@ BEGIN
             @include_plan_ids,
         include_query_ids =
             @include_query_ids,
-        include_query_hashes = 
+        include_query_hashes =
             @include_query_hashes,
-        include_plan_hashes = 
+        include_plan_hashes =
             @include_plan_hashes,
-        include_sql_handles = 
+        include_sql_handles =
             @include_sql_handles,
         ignore_plan_ids =
             @ignore_plan_ids,
         ignore_query_ids =
             @ignore_query_ids,
-        ignore_query_hashes = 
+        ignore_query_hashes =
             @ignore_query_hashes,
-        ignore_plan_hashes = 
+        ignore_plan_hashes =
             @ignore_plan_hashes,
-        ignore_sql_handles = 
+        ignore_sql_handles =
             @ignore_sql_handles,
         query_text_search =
             @query_text_search,
@@ -6473,9 +6504,9 @@ BEGIN
             @query_store_exists,
         query_store_waits_enabled =
             @query_store_waits_enabled,
-        sql_2022_views = 
+        sql_2022_views =
             @sql_2022_views,
-        ags_present = 
+        ags_present =
             @ags_present,
         string_split_ints =
             @string_split_ints,
@@ -6978,7 +7009,7 @@ BEGIN
             result =
                 '#query_store_wait_stats is empty' +
                 CASE
-                    WHEN (      
+                    WHEN (
                                 @product_version = 13
                             AND @azure = 0
                          )
@@ -7040,7 +7071,7 @@ BEGIN
                 result =
                     '#query_store_query_hints is empty';
         END;
-        
+
         IF EXISTS
            (
               SELECT
@@ -7062,7 +7093,7 @@ BEGIN
                 result =
                     '#query_store_query_hints is empty';
         END;
-        
+
         IF EXISTS
            (
               SELECT
@@ -7084,7 +7115,7 @@ BEGIN
                 result =
                     '#query_store_query_variant is empty';
         END;
-        
+
         IF @ags_present = 1
         BEGIN
             IF EXISTS
@@ -7108,7 +7139,7 @@ BEGIN
                     result =
                         '#query_store_replicas is empty';
             END;
-            
+
             IF EXISTS
                (
                   SELECT
@@ -7132,7 +7163,7 @@ BEGIN
             END;
         END;
     END;
-    
+
     IF EXISTS
        (
           SELECT
