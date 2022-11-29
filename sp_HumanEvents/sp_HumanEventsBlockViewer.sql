@@ -62,8 +62,8 @@ ALTER PROCEDURE
 (
     @session_name nvarchar(256) = N'keeper_HumanEvents_blocking',
     @target_type sysname = NULL,
-    @start_date datetime = NULL,
-    @end_date datetime = NULL,
+    @start_date datetime2 = NULL,
+    @end_date datetime2 = NULL,
     @database_name sysname = NULL,
     @help bit = 0,
     @debug bit = 0,
@@ -168,6 +168,7 @@ RETURN;
 
 END;
 
+/*Set some variables for better decision-making later*/
 DECLARE
     @azure bit = 
         CASE 
@@ -184,6 +185,7 @@ DECLARE
     @file_name nvarchar(4000),
     @inputbuf_bom nvarchar(1) = CONVERT(nvarchar(1), 0x0a00, 0);
 
+/*Use some sane defaults for input parameters*/
 SELECT
     @start_date =
     CASE
@@ -233,6 +235,7 @@ SELECT
             ELSE @end_date
         END;
 
+/*Temp tables for staging results*/
 CREATE TABLE
     #x
 (
@@ -322,12 +325,12 @@ BEGIN
 END;
 
 /* Dump whatever we got into a temp table */
-IF @target_type = 'ring_buffer'
+IF @target_type = N'ring_buffer'
 BEGIN
     IF @azure = 0
     BEGIN   
         INSERT
-            #x WITH(TABLOCK)
+            #x WITH(TABLOCKX)
         (
             x
         )
@@ -343,7 +346,7 @@ BEGIN
     IF @azure = 1 
     BEGIN
         INSERT
-            #x WITH(TABLOCK)
+            #x WITH(TABLOCKX)
         (
             x
         )
@@ -357,7 +360,7 @@ BEGIN
     END;
 END;
 
-IF @target_type = 'event_file'
+IF @target_type = N'event_file'
 BEGIN   
     IF @azure = 0
     BEGIN
@@ -432,7 +435,7 @@ BEGIN
     END;
 
     INSERT
-        #x WITH(TABLOCK)
+        #x WITH(TABLOCKX)
     (
         x
     )    
@@ -448,10 +451,10 @@ BEGIN
 END;
 
 
-IF @target_type = 'ring_buffer'
+IF @target_type = N'ring_buffer'
 BEGIN
     INSERT
-        #blocking_xml WITH(TABLOCK)
+        #blocking_xml WITH(TABLOCKX)
     (
         human_events_xml
     )
@@ -462,12 +465,13 @@ BEGIN
     WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
     AND   e.x.exist('@timestamp[. >= sql:variable("@start_date")]') = 1
     AND   e.x.exist('@timestamp[. <  sql:variable("@end_date")]') = 1
+    OPTION(RECOMPILE);
 END;
 
-IF @target_type = 'event_file'
+IF @target_type = N'event_file'
 BEGIN
     INSERT
-        #blocking_xml WITH(TABLOCK)
+        #blocking_xml WITH(TABLOCKX)
     (
         human_events_xml
     )
@@ -478,6 +482,7 @@ BEGIN
     WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
     AND   e.x.exist('@timestamp[. >= sql:variable("@start_date")]') = 1
     AND   e.x.exist('@timestamp[. <  sql:variable("@end_date")]') = 1
+    OPTION(RECOMPILE);
 END;
 
 IF @debug = 1
@@ -1244,7 +1249,7 @@ SELECT
         1001,
     b.database_name,
     object_name = 
-        N'-',
+        b.contentious_object,
     finding_group = 
         N'Total database and object block wait time',
     finding = 
@@ -1288,7 +1293,8 @@ SELECT
         b.database_name
 FROM b AS b
 GROUP BY
-    b.database_name;
+    b.database_name,
+    b.contentious_object;
 
 INSERT
     #block_findings
