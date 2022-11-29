@@ -1,4 +1,4 @@
-CREATE OR ALTER FUNCTION 
+CREATE OR ALTER FUNCTION
     dbo.Payment_Inline
 (
     @Rate float,
@@ -12,24 +12,24 @@ AS
 RETURN
 /*
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData 
-*/    
-    WITH pre AS 
+https://github.com/erikdarlingdata/DarlingData
+*/
+    WITH pre AS
     (
        SELECT
-           Type 
+           Type
                = ISNULL(@Type, 0),
-           Future 
+           Future
                = ISNULL(@Future, 0),
-           Term 
+           Term
                = POWER(1 + @Rate, @Periods)
     ),
-         post AS 
+         post AS
     (
         SELECT
-            Payment = 
-                CASE 
-                    WHEN @Rate = 0 
+            Payment =
+                CASE
+                    WHEN @Rate = 0
                     THEN (@Present + p.Future) / @Periods
                     WHEN (@Rate <> 0
                            AND p.Type = 0)
@@ -41,7 +41,7 @@ https://github.com/erikdarlingdata/DarlingData
         FROM pre AS p
     )
     SELECT
-        Payment = 
+        Payment =
             CONVERT
             (
                 float,

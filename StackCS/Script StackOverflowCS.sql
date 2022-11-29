@@ -6,7 +6,7 @@ Copyright (c) 2022 Erik Darling Data
 https://www.erikdarlingdata.com/
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData   
+https://github.com/erikdarlingdata/DarlingData
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -30,8 +30,8 @@ SOFTWARE.
 USE master;
 GO
 
-CREATE DATABASE 
-    StackOverflowCS 
+CREATE DATABASE
+    StackOverflowCS
 CONTAINMENT = NONE
 ON PRIMARY
 (
@@ -158,7 +158,7 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.partition_functions AS pf
     WHERE pf.name = N'pfunc'
@@ -168,7 +168,7 @@ BEGIN
 
     CREATE PARTITION FUNCTION pfunc (datetime)
     AS RANGE RIGHT FOR VALUES
-    (   
+    (
         N'2007-01-01T00:00:00.000',
         N'2008-01-01T00:00:00.000',
         N'2009-01-01T00:00:00.000',
@@ -190,21 +190,21 @@ END;
 
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.partition_schemes AS ps
     WHERE ps.name = N'pscheme'
     AND   ps.type = N'PS'
 )
 BEGIN
-    CREATE PARTITION SCHEME pscheme 
-    AS PARTITION pfunc 
+    CREATE PARTITION SCHEME pscheme
+    AS PARTITION pfunc
     ALL TO ([PRIMARY]);
 END;
 
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Badges]')
@@ -227,7 +227,7 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Comments]')
@@ -251,7 +251,7 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Posts]')
@@ -288,7 +288,7 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[PostTypes]')
@@ -313,7 +313,7 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Users]')
@@ -345,7 +345,7 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[Votes]')
@@ -370,7 +370,7 @@ SET QUOTED_IDENTIFIER ON;
 GO
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.objects
     WHERE object_id = OBJECT_ID(N'[dbo].[VoteTypes]')
@@ -391,7 +391,7 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Badges]')
@@ -405,7 +405,7 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Comments]')
@@ -419,7 +419,7 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Posts]')
@@ -433,7 +433,7 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Users]')
@@ -447,7 +447,7 @@ GO
 
 IF NOT EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'[dbo].[Votes]')

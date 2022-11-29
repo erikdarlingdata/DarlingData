@@ -1,22 +1,22 @@
-CREATE OR ALTER FUNCTION 
+CREATE OR ALTER FUNCTION
     dbo.EffectiveAnnualInterestRate_Inline
 (
     @Rate float,
     @Periods int
 )
-RETURNS table
+RETURNS TABLE
 AS
 RETURN
 /*
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData 
+https://github.com/erikdarlingdata/DarlingData
 */
     SELECT
         Rate =
             CONVERT
             (
                 float,
-                CASE 
+                CASE
                     WHEN (@Rate < 1)
                            OR (@Periods < 1)
                     THEN 0
