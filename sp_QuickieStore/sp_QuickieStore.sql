@@ -1811,7 +1811,13 @@ IF
 BEGIN
 
     IF @include_plan_ids IS NOT NULL
-    BEGIN
+    BEGIN    
+        SELECT 
+            @include_plan_ids = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@include_plan_ids)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
             @current_table = 'inserting #include_plan_ids';
@@ -1839,6 +1845,12 @@ BEGIN
 
     IF @ignore_plan_ids IS NOT NULL
     BEGIN
+        SELECT 
+            @ignore_plan_ids = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@ignore_plan_ids)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
             @current_table = 'inserting #ignore_plan_ids';
@@ -1866,7 +1878,12 @@ BEGIN
 
     IF @include_query_ids IS NOT NULL
     BEGIN
-
+        SELECT 
+            @include_query_ids = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@include_query_ids)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #include_query_ids',
             @sql = @isolation_level;
@@ -1965,7 +1982,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_query_ids IS NOT NULL
     BEGIN
-
+        SELECT 
+            @ignore_query_ids = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@ignore_query_ids)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #ignore_query_ids',
             @sql = @isolation_level;
@@ -2079,6 +2101,12 @@ BEGIN
 
     IF @include_query_hashes IS NOT NULL
     BEGIN
+        SELECT 
+            @include_query_hashes = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@include_query_hashes)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
             @current_table = 'inserting #include_query_hashes',
@@ -2185,6 +2213,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_query_hashes IS NOT NULL
     BEGIN
+        SELECT 
+            @ignore_query_hashes = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@ignore_query_hashes)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
             @current_table = 'inserting #ignore_query_hashes',
@@ -2290,6 +2324,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_plan_hashes IS NOT NULL
     BEGIN
+        SELECT 
+            @include_plan_hashes = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@include_plan_hashes)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
             @current_table = 'inserting #include_plan_hashes',
@@ -2389,6 +2429,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_plan_hashes IS NOT NULL
     BEGIN
+        SELECT 
+            @ignore_plan_hashes = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@ignore_plan_hashes)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
             @current_table = 'inserting #ignore_plan_hashes',
@@ -2487,6 +2533,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_sql_handles IS NOT NULL
     BEGIN
+        SELECT 
+            @include_sql_handles = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@include_sql_handles)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
             @current_table = 'inserting #include_sql_handles',
@@ -2600,6 +2652,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_sql_handles IS NOT NULL
     BEGIN
+        SELECT 
+            @ignore_sql_handles = 
+                REPLACE(REPLACE(REPLACE(REPLACE
+                (LTRIM(RTRIM(@ignore_sql_handles)), 
+                CHAR(10), N''), CHAR(13), N''), 
+                NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
             @current_table = 'inserting #ignore_sql_handles',
