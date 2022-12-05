@@ -855,9 +855,9 @@ INSERT
 SELECT
     check_id = -1,
     database_name = N'erikdarlingdata.com',
-    object_name = N'sp_HumanEventsBlockViewer',
+    object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
-    finding = N'thanks for using me!';
+    finding = N'blocking for period ' + CONVERT(nvarchar(10), @start_date, 23) + N' through ' + CONVERT(nvarchar(10), @end_date, 23) + N'.';
 
 INSERT
     #block_findings
@@ -1308,7 +1308,7 @@ INSERT
 SELECT
     check_id = 2147483647,
     database_name = N'erikdarlingdata.com',
-    object_name = N'sp_HumanEventsBlockViewer',
+    object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
     finding = N'thanks for using me!';
 
