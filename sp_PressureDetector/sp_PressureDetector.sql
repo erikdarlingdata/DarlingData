@@ -883,7 +883,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
         (
             SELECT
                 sample_time =
-                    CONVERT(datetime, DATEADD(MILLISECOND, -1 * (inf.ms_ticks - t.timestamp), SYSDATETIME())),
+                    CONVERT
+                    (
+                        datetime, 
+                        DATEADD
+                        (
+                            SECOND, 
+                            (t.timestamp - inf.ms_ticks) / 1000, 
+                            SYSDATETIME()
+                        )
+                    ),
                 notification_type =
                     t.record.value('(/Record/ResourceMonitor/Notification)[1]', 'varchar(50)'),
                 indicators_process =
@@ -1047,7 +1056,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
         (
             SELECT
                 sample_time =
-                    CONVERT(datetime, DATEADD(MILLISECOND, -1 * (inf.ms_ticks - t.timestamp), SYSDATETIME())),
+                    CONVERT
+                    (
+                        datetime, 
+                        DATEADD
+                        (
+                            SECOND, 
+                            (t.timestamp - inf.ms_ticks) / 1000, 
+                            SYSDATETIME()
+                        )
+                    ),
                 sqlserver_cpu_utilization =
                     t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int'),
                 other_process_cpu_utilization =
