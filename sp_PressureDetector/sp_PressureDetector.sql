@@ -885,11 +885,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 sample_time =
                     CONVERT
                     (
-                        datetime, 
+                        datetime,
                         DATEADD
                         (
-                            SECOND, 
-                            (t.timestamp - inf.ms_ticks) / 1000, 
+                            SECOND,
+                            (t.timestamp - inf.ms_ticks) / 1000,
                             SYSDATETIME()
                         )
                     ),
@@ -1058,11 +1058,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 sample_time =
                     CONVERT
                     (
-                        datetime, 
+                        datetime,
                         DATEADD
                         (
-                            SECOND, 
-                            (t.timestamp - inf.ms_ticks) / 1000, 
+                            SECOND,
+                            (t.timestamp - inf.ms_ticks) / 1000,
                             SYSDATETIME()
                         )
                     ),
