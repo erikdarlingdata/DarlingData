@@ -402,13 +402,13 @@ BEGIN
     BEGIN
         SELECT
             @session_id = 
-                t.event_session_id,
+                t.event_session_address,
             @target_session_id = 
-                t.target_id
+                t.target_name
         FROM sys.dm_xe_database_session_targets t
         JOIN sys.dm_xe_database_sessions s 
-          ON s.event_session_id = t.event_session_id
-        WHERE t.name = @target_type 
+          ON s.address = t.event_session_address
+        WHERE t.target_name = @target_type 
         AND   s.name = @session_name;
 
         SELECT
