@@ -961,6 +961,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     FROM sys.configurations AS c
                     WHERE c.name = N'max server memory (MB)'
                 ),
+            memory_model = 
+                (
+                    SELECT
+                        inf.sql_memory_model_desc
+                    FROM sys.dm_os_sys_info AS inf
+                ),
             target_memory_mb =
                 (deqrs.target_memory_kb / 1024.),
             max_target_memory_mb =
@@ -1011,6 +1017,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         THEN N'                osi.hyperthread_ratio, ' + NCHAR(10)
                         WHEN ac.name = N'softnuma_configuration_desc'
                         THEN N'                osi.softnuma_configuration_desc, ' + NCHAR(10)
+                        WHEN ac.name = N'scheduler_total_count'
+                        THEN N'                osi.scheduler_total_count, ' + NCHAR(10)
+                        WHEN ac.name = N'scheduler_count'
+                        THEN N'                osi.scheduler_count, ' + NCHAR(10)
                         ELSE N''
                     END
             FROM
@@ -1026,7 +1036,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                           N'cpu_count',
                           N'cores_per_socket',
                           N'hyperthread_ratio',
-                          N'softnuma_configuration_desc'
+                          N'softnuma_configuration_desc',
+                          N'scheduler_total_count',
+                          N'scheduler_count'
                       )
             ) AS ac
             OPTION(MAXDOP 1, RECOMPILE);
@@ -1083,7 +1095,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FROM sys.dm_os_ring_buffers AS dorb
                 WHERE dorb.ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
             ) AS t
-            WHERE t.record.exist('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization[. > 0])') = 1
+            WHERE t.record.exist('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization[. > 50])') = 1
             ORDER BY
                 sample_time DESC
             FOR XML
@@ -1109,7 +1121,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SELECT
             cpu_details_output =
                 @cpu_details_output,
-            cpu_utilization =
+            cpu_utilization_over_50_percent =
                 @cpu_utilization,
             total_threads =
                 MAX(osi.max_workers_count),
