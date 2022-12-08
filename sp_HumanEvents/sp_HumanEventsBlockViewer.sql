@@ -65,6 +65,7 @@ ALTER PROCEDURE
     @start_date datetime2 = NULL,
     @end_date datetime2 = NULL,
     @database_name sysname = NULL,
+    @object_name sysname = NULL,
     @help bit = 0,
     @debug bit = 0,
     @version varchar(30) = NULL OUTPUT,
@@ -139,7 +140,8 @@ BEGIN
     JOIN sys.types AS t
       ON  ap.system_type_id = t.system_type_id
       AND ap.user_type_id = t.user_type_id
-    WHERE o.name = N'sp_HumanEventsBlockViewer';
+    WHERE o.name = N'sp_HumanEventsBlockViewer'
+    OPTION(RECOMPILE);
 
     SELECT 
         mit_license_yo = N'i am MIT licensed, so like, do whatever' UNION ALL
@@ -308,7 +310,8 @@ BEGIN
         JOIN sys.dm_xe_session_targets AS t
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        ORDER BY t.target_name;
+        ORDER BY t.target_name
+        OPTION(RECOMPILE);
     END;
     
     IF @azure = 1
@@ -320,7 +323,8 @@ BEGIN
         JOIN sys.dm_xe_database_session_targets AS t
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        ORDER BY t.target_name;
+        ORDER BY t.target_name
+        OPTION(RECOMPILE);
     END;
 END;
 
@@ -340,7 +344,8 @@ BEGIN
         JOIN sys.dm_xe_sessions AS s
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        AND   t.target_name = N'ring_buffer';
+        AND   t.target_name = N'ring_buffer'
+        OPTION(RECOMPILE);
     END;
     
     IF @azure = 1 
@@ -356,7 +361,8 @@ BEGIN
         JOIN sys.dm_xe_database_sessions AS s
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        AND   t.target_name = N'ring_buffer';
+        AND   t.target_name = N'ring_buffer'
+        OPTION(RECOMPILE);
     END;
 END;
 
@@ -373,7 +379,8 @@ BEGIN
         JOIN sys.server_event_sessions s
           ON s.event_session_id = t.event_session_id
         WHERE t.name = @target_type 
-        AND   s.name = @session_name;
+        AND   s.name = @session_name
+        OPTION(RECOMPILE);
 
         SELECT
             @file_name =
@@ -395,7 +402,8 @@ BEGIN
             WHERE f.event_session_id = @session_id
             AND   f.object_id = @target_session_id
             AND   f.name = N'filename'
-        ) AS f;
+        ) AS f
+        OPTION(RECOMPILE);
     END;
     
     IF @azure = 1
@@ -409,7 +417,8 @@ BEGIN
         JOIN sys.dm_xe_database_sessions s 
           ON s.address = t.event_session_address
         WHERE t.target_name = @target_type 
-        AND   s.name = @session_name;
+        AND   s.name = @session_name
+        OPTION(RECOMPILE);
 
         SELECT
             @file_name =
@@ -431,7 +440,8 @@ BEGIN
             WHERE f.event_session_id = @session_id
             AND   f.object_id = @target_session_id
             AND   f.name = N'filename'
-        ) AS f;
+        ) AS f
+        OPTION(RECOMPILE);
     END;
 
     INSERT
@@ -447,7 +457,8 @@ BEGIN
              NULL, 
              NULL, 
              NULL
-         ) AS f;
+         ) AS f
+    OPTION(RECOMPILE);
 END;
 
 
@@ -533,7 +544,8 @@ END;
     INTO #blocked
     FROM #blocking_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-    OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd);
+    OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
+    OPTION(RECOMPILE);
 
     ALTER TABLE #blocked 
     ADD query_text 
@@ -546,7 +558,7 @@ END;
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?') 
     PERSISTED;
     
-    IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa; END;
+    IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
     
     SELECT 
         event_time = 
@@ -591,7 +603,8 @@ END;
     INTO #blocking
     FROM #blocking_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-    OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg);
+    OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
+    OPTION(RECOMPILE);
     
     ALTER TABLE #blocking 
     ADD query_text 
@@ -604,7 +617,7 @@ END;
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?') 
     PERSISTED;
 
-    IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa; END;
+    IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
     
     SELECT
         kheb.event_time,
@@ -776,9 +789,10 @@ END;
                   (
                       SELECT DISTINCT
                           ',' +
-                          RTRIM
+                          ISNULL
                           (
-                              n.c.value('@sqlhandle', 'varchar(130)')
+                              n.c.value('@sqlhandle', 'varchar(130)'),
+                              N''
                           )
                       FROM kheb.blocked_process_report.nodes('//executionStack/frame') AS n(c)
                       WHERE n.c.value('@sqlhandle', 'varchar(130)') <> 0x
@@ -800,9 +814,10 @@ END;
                   (
                       SELECT DISTINCT
                           ',' +
-                          RTRIM
+                          ISNULL
                           (
-                              n.c.value('@procname', 'nvarchar(1024)')
+                              n.c.value('@procname', 'nvarchar(1024)'),
+                              N''
                           )
                       FROM kheb.blocked_process_report.nodes('//executionStack/frame') AS n(c)
                       FOR XML
@@ -813,7 +828,8 @@ END;
                   1,
                   ''
               )                    
-    ) AS c_pn;
+    ) AS c_pn
+    OPTION(RECOMPILE);
     
     SELECT
         b.*
@@ -834,6 +850,7 @@ END;
         FROM #blocks AS b
     ) AS b
     WHERE b.n = 1
+    AND   (b.contentious_object = @object_name OR @object_name IS NULL)
     ORDER BY 
         b.event_time DESC,
         CASE 
@@ -884,7 +901,11 @@ SELECT
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' blocking sessions.'
 FROM #blocks AS b
-GROUP BY b.database_name;
+WHERE (b.database_name = @database_name OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name OR @object_name IS NULL)
+GROUP BY b.database_name
+OPTION(RECOMPILE);
+
 
 INSERT
     #block_findings
@@ -917,9 +938,12 @@ SELECT
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' blocking sessions.'
 FROM #blocks AS b
+WHERE (b.database_name = @database_name OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name OR @object_name IS NULL)
 GROUP BY 
     b.database_name,
-    b.contentious_object;
+    b.contentious_object
+OPTION(RECOMPILE);
 
 INSERT
     #block_findings
@@ -951,8 +975,11 @@ WHERE b.lock_mode IN
           N'S',
           N'IS'
       )
+AND   (b.database_name = @database_name OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name OR @object_name IS NULL)
 GROUP BY 
-    b.database_name;
+    b.database_name
+OPTION(RECOMPILE);
 
 INSERT
     #block_findings
@@ -980,8 +1007,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'repeatable%'
+AND   (b.database_name = @database_name OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name OR @object_name IS NULL)
 GROUP BY 
-    b.database_name;
+    b.database_name
+OPTION(RECOMPILE);
 
 
 INSERT
@@ -1010,8 +1040,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'serializable%'
+AND   (b.database_name = @database_name OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name OR @object_name IS NULL)
 GROUP BY 
-    b.database_name;
+    b.database_name
+OPTION(RECOMPILE);
 
 INSERT
     #block_findings
@@ -1039,8 +1072,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.status = N'sleeping'
+AND   (b.database_name = @database_name OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name OR @object_name IS NULL)
 GROUP BY 
-    b.database_name;
+    b.database_name
+OPTION(RECOMPILE);
 
 INSERT
     #block_findings
@@ -1068,8 +1104,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.transaction_name = N'implicit_transaction'
+AND   (b.database_name = @database_name OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name OR @object_name IS NULL)
 GROUP BY 
-    b.database_name;
+    b.database_name
+OPTION(RECOMPILE);
 
 INSERT
     #block_findings
@@ -1097,8 +1136,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.transaction_name = N'user_transaction'
+AND   (b.database_name = @database_name OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name OR @object_name IS NULL)
 GROUP BY 
-    b.database_name;
+    b.database_name
+OPTION(RECOMPILE);
 
 INSERT
     #block_findings
@@ -1141,11 +1183,14 @@ SELECT
         ) +
         N'.'
 FROM #blocks AS b
+WHERE (b.database_name = @database_name OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name OR @object_name IS NULL)
 GROUP BY
     b.database_name,
     b.login_name,
     b.client_app,
-    b.host_name;
+    b.host_name
+OPTION(RECOMPILE);
 
 
 WITH
@@ -1157,6 +1202,8 @@ WITH
         wait_time_ms = 
             MAX(b.wait_time_ms)
     FROM #blocks AS b
+    WHERE (b.database_name = @database_name OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name OR @object_name IS NULL)
     GROUP BY 
         b.database_name, 
         b.transaction_id
@@ -1218,7 +1265,8 @@ SELECT
         N' [dd hh:mm:ss:ms] of deadlock wait time.'
 FROM b AS b
 GROUP BY
-    b.database_name;
+    b.database_name
+OPTION(RECOMPILE);
 
 WITH
     b AS
@@ -1230,6 +1278,8 @@ WITH
         wait_time_ms = 
             MAX(b.wait_time_ms)
     FROM #blocks AS b
+    WHERE (b.database_name = @database_name OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name OR @object_name IS NULL)
     GROUP BY 
         b.database_name, 
         b.contentious_object,
@@ -1294,7 +1344,8 @@ SELECT
 FROM b AS b
 GROUP BY
     b.database_name,
-    b.contentious_object;
+    b.contentious_object
+OPTION(RECOMPILE);
 
 INSERT
     #block_findings
@@ -1312,8 +1363,6 @@ SELECT
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
     finding = N'thanks for using me!';
 
-
-
 SELECT
     bf.check_id,
     bf.database_name,
@@ -1321,7 +1370,8 @@ SELECT
     bf.finding_group,
     bf.finding
 FROM #block_findings AS bf
-ORDER BY bf.check_id;
+ORDER BY bf.check_id
+OPTION(RECOMPILE);
 
 END; --Final End
 GO
