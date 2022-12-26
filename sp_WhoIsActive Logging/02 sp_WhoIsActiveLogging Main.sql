@@ -1,6 +1,6 @@
 /*
 
-Copyright 2022 Darling Data, LLC
+Copyright 2023 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 This will log sp_WhoIsActive to a table.
@@ -53,8 +53,8 @@ BEGIN
                     date,
                     GETDATE()
                 ),
-                '-',
-                ''
+                N'-',
+                N''
             ),
         @destination_schema sysname =
             N'dbo',

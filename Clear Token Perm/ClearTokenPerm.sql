@@ -14,7 +14,7 @@ For background on why you might need this:
 
 In short, if your security caches are growing out of control, it can cause all sorts of weird issues with SQL Server.
 
-Copyright 2022 Darling Data, LLC
+Copyright 2023 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For support, head over to GitHub:
@@ -47,7 +47,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 DECLARE
     @clear_triggered bit = 0;
 
-IF OBJECT_ID('dbo.ClearTokenPermLogging') IS NULL
+IF OBJECT_ID(N'dbo.ClearTokenPermLogging') IS NULL
 BEGIN
 
     CREATE TABLE dbo.ClearTokenPermLogging
@@ -58,7 +58,7 @@ BEGIN
         clear_triggered bit NOT NULL
     );
 
-END
+END;
 
 IF
 (
@@ -74,7 +74,6 @@ IF
     AND   domc.name = 'TokenAndPermUserStore'
 ) >= @CacheSizeGB
 BEGIN
-
     INSERT
         dbo.ClearTokenPermLogging
     (
@@ -98,11 +97,9 @@ BEGIN
     AND   domc.name = 'TokenAndPermUserStore';
 
     DBCC FREESYSTEMCACHE('TokenAndPermUserStore');
-
-END
+END;
 ELSE
 BEGIN
-
     INSERT
         dbo.ClearTokenPermLogging
     (
@@ -124,10 +121,9 @@ BEGIN
     FROM sys.dm_os_memory_clerks AS domc
     WHERE domc.type = 'USERSTORE_TOKENPERM'
     AND   domc.name = 'TokenAndPermUserStore';
-    END
-
-END
-GO
+    END;
+END;
+RETURN;
 
 /*Example execution*/
 EXEC dbo.ClearTokenPerm
@@ -136,7 +132,7 @@ EXEC dbo.ClearTokenPerm
 /*Query a log*/
 SELECT
     ctpl.*
-FROM dbo.ClearTokenPermLogging AS ctpl
+FROM dbo.ClearTokenPermLogging AS ctpl;
 
 /*Truncate a log*/
 TRUNCATE TABLE dbo.ClearTokenPermLogging;
