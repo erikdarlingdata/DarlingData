@@ -3,7 +3,7 @@ CREATE OR ALTER PROCEDURE
 (
     @spid int,
     @sql nvarchar(MAX),
-    @query_plan XML,
+    @query_plan xml,
     @guid_in uniqueidentifier,
     @guid_out uniqueidentifier OUTPUT
 )
@@ -22,7 +22,7 @@ Should be used in conjunction with the logging table here:
  * https://github.com/erikdarlingdata/DarlingData/tree/main/dynamic_sql_logging
 
 
-Copyright (c) 2022 Darling Data, LLC
+Copyright (c) 2023 Darling Data, LLC
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
@@ -46,12 +46,40 @@ DECLARE
     @writes decimal(18,2),
     @logical_reads decimal(18,2);
 
+IF NOT EXISTS
+(
+    SELECT
+        1/0
+    FROM sys.tables AS t
+    WHERE t.name = N'dynamic_sql_logger'
+    AND   t.schema_id = SCHEMA_ID(N'dbo')
+)
+BEGIN
+    CREATE TABLE
+        dbo.dynamic_sql_logger
+    (
+        run_hash uniqueidentifier,
+        run_date datetime2,
+        user_name sysname,
+        cpu_time_ms decimal(18,2),
+        total_elapsed_time_ms decimal(18,2),
+        physical_reads_mb decimal(18,2),
+        logical_reads_mb decimal(18,2),
+        writes_mb decimal(18,2),
+        statement_text nvarchar(MAX),
+        execution_text nvarchar(MAX),
+        query_plan xml,
+        is_final bit DEFAULT 0,
+      CONSTRAINT loggerino
+      PRIMARY KEY (run_hash)
+    );
+END;
+
 /*first pass to collect initial metrics*/
 IF @guid_in IS NULL
 BEGIN
-
     INSERT
-        dbo.logger
+        dbo.dynamic_sql_logger
     (
         run_hash,
         run_date,
@@ -89,13 +117,11 @@ BEGIN
 
     SET @guid_out = @run_hash;
     RETURN;
-
-END
+END;
 
 /*second pass to update metrics with final values*/
 IF @guid_in IS NOT NULL
 BEGIN
-
     UPDATE l
         SET
             l.cpu_time_ms =
@@ -112,14 +138,13 @@ BEGIN
                 @query_plan,
             l.is_final =
                 CONVERT(bit, 1)
-    FROM dbo.logger AS l
+    FROM dbo.dynamic_sql_logger AS l
     CROSS JOIN sys.dm_exec_requests AS r
     WHERE l.run_hash = @guid_in
     AND   r.session_id = @spid
     OPTION(RECOMPILE);
     RETURN;
+END;
 
-END
-
-END
+END;
 GO

@@ -310,7 +310,7 @@ BEGIN
     RAISERROR(N'    
 MIT License    
     
-Copyright 2022 Darling Data, LLC     
+Copyright 2023 Darling Data, LLC     
     
 https://www.erikdarlingdata.com/    
     

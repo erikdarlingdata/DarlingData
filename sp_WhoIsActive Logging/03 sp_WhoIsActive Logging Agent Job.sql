@@ -1,6 +1,6 @@
 /*
 
-Copyright 2022 Darling Data, LLC
+Copyright 2023 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 This will log sp_WhoIsActive to a table.
@@ -35,7 +35,8 @@ BEGIN TRANSACTION;
 DECLARE
     @ReturnCode int = 0,
     @jobId binary(16),
-    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112)));
+    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112))),
+    @schedule_uid nvarchar(36) = NEWID();
 
 
 IF NOT EXISTS
@@ -47,7 +48,6 @@ IF NOT EXISTS
     AND   category_class = 1
 )
 BEGIN
-
     EXEC @ReturnCode = msdb.dbo.sp_add_category
         @class = N'JOB',
         @type = N'LOCAL',
@@ -55,7 +55,6 @@ BEGIN
 
     IF (@@ERROR <> 0 OR @ReturnCode <> 0)
         GOTO QuitWithRollback;
-
 END;
 
 
@@ -130,7 +129,7 @@ IF (@@ERROR <> 0 OR @ReturnCode <> 0)
         @active_end_date = 99991231,
         @active_start_time = 0,
         @active_end_time = 235959,
-        @schedule_uid = N'eb778522-86e7-4c47-8f7c-efadc7e22f9d';
+        @schedule_uid = @schedule_uid;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
