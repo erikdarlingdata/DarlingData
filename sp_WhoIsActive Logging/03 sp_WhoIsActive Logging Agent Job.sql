@@ -1,6 +1,6 @@
 /*
 
-Copyright 2022 Darling Data, LLC
+Copyright 2023 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 This will log sp_WhoIsActive to a table.
@@ -35,7 +35,8 @@ BEGIN TRANSACTION;
 DECLARE
     @ReturnCode int = 0,
     @jobId binary(16),
-    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112)));
+    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112))),
+    @schedule_uid nvarchar(36) = NEWID();
 
 
 IF NOT EXISTS
@@ -47,7 +48,6 @@ IF NOT EXISTS
     AND   category_class = 1
 )
 BEGIN
-
     EXEC @ReturnCode = msdb.dbo.sp_add_category
         @class = N'JOB',
         @type = N'LOCAL',
@@ -55,7 +55,6 @@ BEGIN
 
     IF (@@ERROR <> 0 OR @ReturnCode <> 0)
         GOTO QuitWithRollback;
-
 END;
 
 
@@ -103,102 +102,7 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep
     @retry_interval = 0,
     @os_run_priority = 0,
     @subsystem = N'TSQL',
-    @command = N'/*
-SQL Agent has some weird settings.
-This sets them to the correct ones.
-*/
-SET
-    NOCOUNT,
-    XACT_ABORT,
-    ANSI_NULLS,
-    ANSI_PADDING,
-    ANSI_WARNINGS,
-    ARITHABORT,
-    CONCAT_NULL_YIELDS_NULL,
-    QUOTED_IDENTIFIER
-ON;
-
-/*
-Variables we know and love.
-
-If you have weird date settings you might need to change the replace character below.
-*/
-DECLARE
-    @destination_table sysname =
-        N''WhoIsActive_'' +
-        REPLACE
-        (
-            CONVERT
-            (
-                date,
-                GETDATE()
-            ),
-            ''-'',
-            ''''
-        ),
-    @destination_schema sysname =
-        N''dbo'',
-    @destination_database sysname =
-        N''master'',
-    @parameters nvarchar(MAX)  =
-        N''@destination_table sysname'',
-    @schema nvarchar(MAX) =
-        N'''';
-
-/*
-Some assembly required
-*/
-SELECT
-    @destination_table =
-        QUOTENAME(@destination_database) +
-        N''.'' +
-        QUOTENAME(@destination_schema) +
-        N''.'' +
-        QUOTENAME(@destination_table);
-
-/*
-Create the table for logging.
-*/
-IF OBJECT_ID(@destination_table) IS NULL
-BEGIN;
-
-    EXEC sp_WhoIsActive
-        @get_transaction_info = 1,
-        @get_outer_command = 1,
-        @get_plans = 1,
-        @get_task_info = 2,
-        @get_additional_info = 1,
-        @find_block_leaders = 1,
-        @get_memory_info = 1,
-        @return_schema = 1,
-        @schema = @schema OUTPUT;
-
-    SELECT
-        @schema =
-            REPLACE
-            (
-                @schema,
-                N''<table_name>'',
-                @destination_table
-            );
-
-    EXEC sys.sp_executesql
-        @schema;
-
-END;
-
-/*
-This logs to the table.
-*/
-EXEC sp_WhoIsActive
-    @get_transaction_info = 1,
-    @get_outer_command = 1,
-    @get_plans = 1,
-    @get_task_info = 2,
-    @get_additional_info = 1,
-    @find_block_leaders = 1,
-    @get_memory_info = 1,
-    @destination_table = @destination_table;',
+    @command=N'EXEC dbo.sp_WhoIsActiveLogging_Main',
     @database_name = N'master',
     @flags = 0;
 
@@ -225,7 +129,7 @@ IF (@@ERROR <> 0 OR @ReturnCode <> 0)
         @active_end_date = 99991231,
         @active_start_time = 0,
         @active_end_time = 235959,
-        @schedule_uid = N'eb778522-86e7-4c47-8f7c-efadc7e22f9d';
+        @schedule_uid = @schedule_uid;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;

@@ -1,25 +1,24 @@
 /*
+This is a helper view I use in some of my presentations to look at what's in memory.
+I probably wouldn't run this in production, especially on servers with a lot of memory in them.
+The dm_os_buffer_descriptors DMV especially can be really slow at times
+
+
 https://github.com/erikdarlingdata/DarlingData
 
-Copyright (c) 2022 Darling Data, LLC
+Copyright (c) 2023 Darling Data, LLC
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-
-/*
-This is a helper view I use in some of my presentations to look at what's in memory.
-
-I probably wouldn't run this in production, especially on servers with a lot of memory in them.
-
-The dm_os_buffer_descriptors DMV especially can be really slow at times
-*/
-
-IF OBJECT_ID('dbo.WhatsUpMemory') IS NULL
+IF OBJECT_ID(N'dbo.WhatsUpMemory') IS NULL
 BEGIN
     DECLARE
         @vsql nvarchar(MAX) = N'
@@ -27,7 +26,7 @@ BEGIN
         dbo.WhatsUpMemory
     AS
     SELECT
-        x = 1;';
+        x = 138;';
 
     PRINT @vsql;
     EXEC (@vsql);

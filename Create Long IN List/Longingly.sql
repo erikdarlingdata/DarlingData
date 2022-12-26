@@ -11,7 +11,7 @@ GO
 
 This procedure exists only to show how long IN clauses can hurt query performance.
 
-Copyright 2022 Darling Data, LLC
+Copyright 2023 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For support, head over to GitHub:
@@ -34,17 +34,18 @@ CREATE OR ALTER PROCEDURE
     @debug bit = 0
 )
 AS
-SET
-    NOCOUNT, XACT_ABORT ON;
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
 BEGIN
+    SET NOCOUNT, XACT_ABORT ON;
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
     DECLARE
-        @psql nvarchar(MAX) = N'DECLARE @p',
+        @psql nvarchar(MAX) =
+            N'DECLARE @p',
         @ssql nvarchar(MAX) =
             N'SELECT c = COUNT_BIG(*) FROM dbo.Users AS u WHERE u.Reputation < 0 OR u.DisplayName IN (@p',
-        @asql nvarchar(MAX) = N'',
-        @i int = 1;
+        @asql nvarchar(MAX) =
+            N'',
+        @i int =
+            1;
 
     WHILE @i <= @loops
     BEGIN
@@ -59,7 +60,7 @@ BEGIN
                         nvarchar(36),
                         NEWID()
                     ),
-                    ''''
+                    N''''
                 ) +
                 N';' +
                 NCHAR(10) +
