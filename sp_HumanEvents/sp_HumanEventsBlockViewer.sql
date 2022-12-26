@@ -36,7 +36,7 @@ GO
  ╚████╔╝ ██║███████╗╚███╔███╔╝███████╗██║  ██║
   ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚═╝  ╚═╝
 
-Copyright 2022 Darling Data, LLC
+Copyright 2023 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -149,7 +149,7 @@ BEGIN
     RAISERROR(N'
 MIT License
 
-Copyright 2022 Darling Data, LLC 
+Copyright 2023 Darling Data, LLC 
 
 https://www.erikdarlingdata.com/
 

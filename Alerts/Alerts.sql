@@ -11,7 +11,7 @@ GO
 
 This script will set up alerts for high severity and corruption errors in SQL Server.
 
-Copyright 2022 Darling Data, LLC
+Copyright 2023 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For support, head over to GitHub:
@@ -46,7 +46,7 @@ https://social.technet.microsoft.com/wiki/contents/articles/51133.sql-server-ale
 Once you do that, you can get rid of this RETURN and F5 the whole script.
 */
 
-DECLARE @operator_name sysname = 'Who You Want To Notify';
+DECLARE @operator_name sysname = N'Who You Want To Notify';
 
 RETURN;
 
