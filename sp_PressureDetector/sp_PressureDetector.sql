@@ -470,7 +470,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     scheduler_total_count =
                                         (
                                             SELECT
-                                                i.scheduler_total_count
+                                                i.cpu_count
                                             FROM sys.dm_os_sys_info AS i
                                         )
                                 FROM sys.master_files AS mf
