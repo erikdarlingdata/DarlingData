@@ -71,7 +71,7 @@ CREATE OR ALTER PROCEDURE
     @query_text_search nvarchar(4000) = NULL,
     @wait_filter varchar(20) = NULL,
     @expert_mode bit = 0,
-    @format_output bit = 0,
+    @format_output bit = 1,
     @version varchar(30) = NULL OUTPUT,
     @version_date datetime = NULL OUTPUT,
     @help bit = 0,
@@ -212,7 +212,7 @@ BEGIN
                 WHEN '@database_name' THEN 'NULL; current non-system database name if NULL'
                 WHEN '@sort_order' THEN 'cpu'
                 WHEN '@top' THEN '10'
-                WHEN '@start_date' THEN 'the last 24 hours'
+                WHEN '@start_date' THEN 'the last seven days'
                 WHEN '@end_date' THEN 'NULL'
                 WHEN '@execution_count' THEN 'NULL'
                 WHEN '@duration_ms' THEN 'NULL'
@@ -232,7 +232,7 @@ BEGIN
                 WHEN '@query_text_search' THEN 'NULL'
                 WHEN '@wait_filter' THEN 'NULL'
                 WHEN '@expert_mode' THEN '0'
-                WHEN '@format_output' THEN '0'
+                WHEN '@format_output' THEN '1'
                 WHEN '@version' THEN 'none; OUTPUT'
                 WHEN '@version_date' THEN 'none; OUTPUT'
                 WHEN '@help' THEN '0'
@@ -1251,7 +1251,7 @@ SELECT
     @wait_filter =
         NULLIF(@wait_filter, ''),
     @format_output =
-        ISNULL(@format_output, 0),
+        ISNULL(@format_output, 1),
     @help =
         ISNULL(@help, 0),
     @debug =
@@ -1685,7 +1685,7 @@ We're only going to pull some stuff from runtime stats and plans
 IF @start_date IS NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -1, DATEDIFF(DAY, 0, SYSDATETIME()))' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIME()))' + @nc10;
 END;
 
 IF @start_date IS NOT NULL
