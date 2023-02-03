@@ -836,66 +836,6 @@ BEGIN
 END;    
     
     
-RAISERROR(N'Checking query duration filter', 0, 1) WITH NOWAIT;    
-/* Set these durations to non-crazy numbers unless someone asks for @gimme_danger = 1    
-   ignore compile and recompile because this is a filter on query compilation time 🙄 */    
-IF     
-(     
-  LOWER(@event_type) LIKE N'%quer%'     
-    AND @event_type NOT LIKE N'%comp%'    
-    AND @gimme_danger = 0     
-)    
-      AND     
-(    
-       @query_duration_ms < 500     
-    OR @query_duration_ms IS NULL     
-)    
-BEGIN    
-    RAISERROR(N'You chose a really dangerous value for @query_duration', 0, 1) WITH NOWAIT;    
-    RAISERROR(N'If you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;    
-    RAISERROR(N'Setting @query_duration to 500', 0, 1) WITH NOWAIT;    
-    SET @query_duration_ms = 500;    
-END;    
-    
-    
-RAISERROR(N'Checking wait duration filter', 0, 1) WITH NOWAIT;    
-IF     
-(     
-  LOWER(@event_type) LIKE N'%wait%'     
-    AND @gimme_danger = 0     
-)    
-      AND     
-(            
-       @wait_duration_ms < 10     
-    OR @wait_duration_ms IS NULL     
-)     
-BEGIN    
-    RAISERROR(N'You chose a really dangerous value for @wait_duration_ms', 0, 1) WITH NOWAIT;    
-    RAISERROR(N'If you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;    
-    RAISERROR(N'Setting @wait_duration_ms to 10', 0, 1) WITH NOWAIT;    
-    SET @wait_duration_ms = 10;    
-END;    
-    
-    
-RAISERROR(N'Checking block duration filter', 0, 1) WITH NOWAIT;    
-IF     
-(     
-  LOWER(@event_type) LIKE N'%lock%'     
-    AND @gimme_danger = 0     
-)    
-      AND     
-(    
-       @blocking_duration_ms < 500     
-    OR @blocking_duration_ms IS NULL     
-)     
-BEGIN    
-    RAISERROR(N'You chose a really dangerous value for @blocking_duration_ms', 0, 1) WITH NOWAIT;    
-    RAISERROR(N'If you really want that, please set @gimme_danger = 1, and re-run', 0, 1) WITH NOWAIT;    
-    RAISERROR(N'Setting @blocking_duration_ms to 500', 0, 1) WITH NOWAIT;    
-    SET @blocking_duration_ms = 500;    
-END;    
-    
-    
 RAISERROR(N'Checking query sort order', 0, 1) WITH NOWAIT;    
 IF @query_sort_order NOT IN     
 (     
@@ -1019,81 +959,7 @@ RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT;
     
 END;    
     
-    
-/*    
-If someone is passing in non-blank values, let's try to limit our SQL injection exposure a little bit    
-*/    
-IF     
-(     
-       @client_app_name <> N''    
-    OR @client_hostname <> N''    
-    OR @database_name <> N''    
-    OR @session_id <> N''    
-    OR @username <> N''    
-    OR @object_name <> N''    
-    OR @object_schema NOT IN (N'dbo', N'')     
-    OR @custom_name <> N''           
-    OR @output_database_name <> N''    
-    OR @output_schema_name NOT IN (N'dbo', N'')     
-)    
-BEGIN    
-RAISERROR(N'Checking for unsanitary inputs', 0, 1) WITH NOWAIT;    
-        
-    INSERT     
-        #papers_please WITH(TABLOCK)    
-    (    
-        ahem    
-    )    
-    SELECT     
-        UPPER(pp.ahem)    
-    FROM     
-    (    
-        VALUES    
-            (@client_app_name),    
-            (@client_hostname),    
-            (@database_name),    
-            (@session_id),    
-            (@username),    
-            (@object_name),    
-            (@object_schema),    
-            (@custom_name),    
-            (@output_database_name),    
-            (@output_schema_name)    
-    ) AS pp (ahem)    
-    WHERE pp.ahem NOT IN     
-          (    
-              N'',     
-              N'dbo'    
-          );    
-    
-    IF EXISTS    
-    (    
-        SELECT     
-            1/0    
-        FROM #papers_please AS pp    
-        WHERE pp.ahem LIKE N'%SELECT%'    
-        OR    pp.ahem LIKE N'%INSERT%'    
-        OR    pp.ahem LIKE N'%UPDATE%'    
-        OR    pp.ahem LIKE N'%DELETE%'    
-        OR    pp.ahem LIKE N'%DROP%'    
-        OR    pp.ahem LIKE N'%EXEC%'    
-        OR    pp.ahem LIKE N'%BACKUP%'    
-        OR    pp.ahem LIKE N'%RESTORE%'    
-        OR    pp.ahem LIKE N'%ALTER%'    
-        OR    pp.ahem LIKE N'%CREATE%'    
-        OR    pp.ahem LIKE N'%SHUTDOWN%'    
-        OR    pp.ahem LIKE N'%DBCC%'    
-        OR    pp.ahem LIKE N'%CONFIGURE%'    
-        OR    pp.ahem LIKE N'%XP[_]CMDSHELL%'    
-    )    
-    BEGIN    
-        RAISERROR(N'Say... you wouldn''t happen to be trying some funny business, would you?', 11, 1) WITH NOWAIT;    
-        RETURN;    
-    END;    
-    
-END;    
-    
-    
+       
 /* I just don't want anyone to be disappointed */    
 RAISERROR(N'Avoiding disappointment', 0, 1) WITH NOWAIT;    
 IF     
@@ -1138,7 +1004,7 @@ END;
 /* no blocked process report, no love */    
 RAISERROR(N'Validating if the Blocked Process Report is on, if the session is for blocking', 0, 1) WITH NOWAIT;    
 IF @event_type LIKE N'%lock%'    
-AND  EXISTS    
+AND EXISTS    
 (    
     SELECT     
         1/0    
@@ -1194,40 +1060,7 @@ BEGIN
     RAISERROR(N'we can''t really divide by zero, and dividing by 1 would be useless.', 11, 1) WITH NOWAIT;    
     RETURN;    
 END;    
-    
-    
-/*    
-We need to do some seconds math here, because WAITFOR is very stupid    
-*/    
-RAISERROR(N'Wait For It! Wait For it!', 0, 1) WITH NOWAIT;    
-IF @seconds_sample > 1    
-BEGIN    
-    /* I really don't want this running for more than 10 minutes right now. */    
-    IF     
-    (     
-            @seconds_sample > 600     
-        AND @gimme_danger = 0     
-    )    
-    BEGIN    
-        RAISERROR(N'Yeah nah not more than 10 minutes', 10, 1) WITH NOWAIT;    
-        RAISERROR(N'(unless you set @gimme_danger = 1)', 10, 1) WITH NOWAIT;    
-        RETURN;    
-    END;    
-        
-    SELECT     
-        @waitfor =     
-            CONVERT    
-            (    
-                nvarchar(20),     
-                DATEADD    
-                (    
-                    SECOND,     
-                    @seconds_sample,     
-                    0    
-                 ),     
-                 114    
-            );    
-END;    
+   
     
 /* CH-CH-CH-CHECK-IT-OUT */    
     
@@ -1317,7 +1150,7 @@ IF
      LEN(@output_database_name + @output_schema_name) > 0    
     AND  @output_schema_name <> N'dbo'    
     AND (@output_database_name  = N''     
-      OR @output_schema_name = N'')    
+    OR   @output_schema_name = N'')    
 )    
 BEGIN    
     IF @output_database_name = N''    
