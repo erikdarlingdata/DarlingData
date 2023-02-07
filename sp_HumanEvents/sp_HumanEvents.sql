@@ -327,7 +327,7 @@ FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TOR
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.    
 ', 0, 1) WITH NOWAIT;     
     
-RETURN;    
+    RETURN;    
 END;    
     
 BEGIN TRY    
@@ -830,8 +830,9 @@ IF LOWER(@event_type) NOT IN
             N'recompilations'     
         )    
 BEGIN    
-    RAISERROR(N'You have chosen a value for @event_type... poorly. use @help = 1 to see valid arguments.', 11, 1) WITH NOWAIT;    
-    RAISERROR(N'What on earth is %s?', 11, 1, @event_type) WITH NOWAIT;    
+    RAISERROR(N'
+You have chosen a value for @event_type... poorly. use @help = 1 to see valid arguments.
+What on earth is %s?', 11, 1, @event_type) WITH NOWAIT;  
     RETURN;    
 END;    
     
@@ -1018,7 +1019,7 @@ BEGIN
     RECONFIGURE    
     EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */    
     RECONFIGURE    
-    GO', 1, 0) WITH NOWAIT;    
+    GO', 11, 0) WITH NOWAIT;    
     RETURN;    
 END;    
     
@@ -1056,8 +1057,9 @@ IF
     AND LOWER(@session_id) LIKE N'%sample%'    
 )    
 BEGIN    
-    RAISERROR(N'@sample_divisor is used to divide @session_id when taking a sample of a workload.', 11, 1) WITH NOWAIT;    
-    RAISERROR(N'we can''t really divide by zero, and dividing by 1 would be useless.', 11, 1) WITH NOWAIT;    
+    RAISERROR(N'
+@sample_divisor is used to divide @session_id when taking a sample of a workload.
+we can''t really divide by zero, and dividing by 1 would be useless.', 11, 1) WITH NOWAIT;       
     RETURN;    
 END;    
    
@@ -1175,8 +1177,9 @@ IF
       OR @custom_name LIKE N'[0-9]%'     
 )    
 BEGIN    
-    RAISERROR(N'Dunno if I like the looks of @custom_name: %s', 11, 1, @custom_name) WITH NOWAIT;    
-    RAISERROR(N'You can''t use special characters, or leading numbers.', 11, 1, @custom_name) WITH NOWAIT;    
+    RAISERROR(N'
+Dunno if I like the looks of @custom_name: %s
+You can''t use special characters, or leading numbers.', 11, 1, @custom_name) WITH NOWAIT;
     RETURN;    
 END;    
     
@@ -1203,8 +1206,7 @@ IF
     AND @cleanup = 0     
 )    
 BEGIN    
-    RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT;        
-            
+    RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT;                    
     GOTO output_results;    
     RETURN;    
 END;    
@@ -1219,8 +1221,7 @@ IF
     AND @cleanup = 1     
 )    
 BEGIN    
-    RAISERROR(N'Skipping all the other stuff and going to cleanup', 0, 1) WITH NOWAIT;           
-        
+    RAISERROR(N'Skipping all the other stuff and going to cleanup', 0, 1) WITH NOWAIT;                  
     GOTO cleanup;    
     RETURN;    
 END;    
@@ -1966,18 +1967,17 @@ BEGIN;
             q.query_hash_signed,    
             q.plan_handle,    
             n =     
-                ROW_NUMBER()     
-                    OVER    
-                    (     
-                        PARTITION BY     
-                            q.query_plan_hash_signed,     
-                            q.query_hash_signed,     
-                            q.plan_handle    
-                        ORDER BY     
-                            q.query_plan_hash_signed,     
-                            q.query_hash_signed,     
-                            q.plan_handle     
-                    )    
+                ROW_NUMBER() OVER    
+                (     
+                    PARTITION BY     
+                        q.query_plan_hash_signed,     
+                        q.query_hash_signed,     
+                        q.plan_handle    
+                    ORDER BY     
+                        q.query_plan_hash_signed,     
+                        q.query_hash_signed,     
+                        q.plan_handle     
+                )    
         FROM #queries AS q    
         JOIN #totals AS t    
           ON  q.query_hash_signed = t.query_hash_signed    
@@ -2075,7 +2075,8 @@ BEGIN;
               WHEN N'avg spills' THEN q.avg_spills_mb    
               WHEN N'avg memory' THEN q.avg_granted_memory_mb    
               ELSE N'cpu'    
-         END DESC;    
+         END DESC
+     OPTION(RECOMPILE);    
 END;    
     
     
@@ -2706,8 +2707,8 @@ BEGIN
     IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa; END;    
     
     ALTER TABLE #blocked     
-    ADD query_text     
-    AS REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(    
+    ADD query_text AS   
+       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(    
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(    
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(    
            query_text_pre COLLATE Latin1_General_BIN2,    
@@ -2717,8 +2718,8 @@ BEGIN
     PERSISTED;    
     
     ALTER TABLE #blocking     
-    ADD query_text     
-    AS REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(    
+    ADD query_text AS
+       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(    
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(    
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(    
            query_text_pre COLLATE Latin1_General_BIN2,    
@@ -2807,48 +2808,48 @@ BEGIN
         kheb.last_transaction_started,    
         kheb.last_transaction_completed,    
         client_option_1 =     
-              SUBSTRING    
-              (        
-                  CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 8 = 8 THEN ', ANSI_WARNINGS' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 16 = 16 THEN ', ANSI_PADDING' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 32 = 32 THEN ', ANSI_NULLS' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 64 = 64 THEN ', ARITHABORT' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 128 = 128 THEN ', ARITHIGNORE' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 256 = 256 THEN ', QUOTED_IDENTIFIER' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 512 = 512 THEN ', NOCOUNT' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 1024 = 1024 THEN ', ANSI_NULL_DFLT_ON' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 2048 = 2048 THEN ', ANSI_NULL_DFLT_OFF' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 4096 = 4096 THEN ', CONCAT_NULL_YIELDS_NULL' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 8192 = 8192 THEN ', NUMERIC_ROUNDABORT' ELSE '' END +     
-                  CASE WHEN kheb.clientoption1 & 16384 = 16384 THEN ', XACT_ABORT' ELSE '' END,    
-                  3,    
-                  8000    
-              ),    
-          client_option_2 =     
-              SUBSTRING    
-              (    
-                  CASE WHEN kheb.clientoption2 & 1024 = 1024 THEN ', DB CHAINING' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 2048 = 2048 THEN ', NUMERIC ROUNDABORT' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 4096 = 4096 THEN ', ARITHABORT' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 8192 = 8192 THEN ', ANSI PADDING' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 16384 = 16384 THEN ', ANSI NULL DEFAULT' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 65536 = 65536 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 131072 = 131072 THEN ', RECURSIVE TRIGGERS' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 1048576 = 1048576 THEN ', DEFAULT TO LOCAL CURSOR' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 8388608 = 8388608 THEN ', QUOTED IDENTIFIER' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 16777216 = 16777216 THEN ', AUTO CREATE STATISTICS' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 33554432 = 33554432 THEN ', CURSOR CLOSE ON COMMIT' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 67108864 = 67108864 THEN ', ANSI NULLS' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 268435456 = 268435456 THEN ', ANSI WARNINGS' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 536870912 = 536870912 THEN ', FULL TEXT ENABLED' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 1073741824 = 1073741824 THEN ', AUTO UPDATE STATISTICS' ELSE '' END +     
-                  CASE WHEN kheb.clientoption2 & 1469283328 = 1469283328 THEN ', ALL SETTABLE OPTIONS' ELSE '' END,    
-                  3,    
-                  8000    
-              ),    
+            SUBSTRING    
+            (        
+                CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 8 = 8 THEN ', ANSI_WARNINGS' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 16 = 16 THEN ', ANSI_PADDING' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 32 = 32 THEN ', ANSI_NULLS' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 64 = 64 THEN ', ARITHABORT' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 128 = 128 THEN ', ARITHIGNORE' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 256 = 256 THEN ', QUOTED_IDENTIFIER' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 512 = 512 THEN ', NOCOUNT' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 1024 = 1024 THEN ', ANSI_NULL_DFLT_ON' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 2048 = 2048 THEN ', ANSI_NULL_DFLT_OFF' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 4096 = 4096 THEN ', CONCAT_NULL_YIELDS_NULL' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 8192 = 8192 THEN ', NUMERIC_ROUNDABORT' ELSE '' END +     
+                CASE WHEN kheb.clientoption1 & 16384 = 16384 THEN ', XACT_ABORT' ELSE '' END,    
+                3,    
+                8000    
+            ),    
+        client_option_2 =     
+            SUBSTRING    
+            (    
+                CASE WHEN kheb.clientoption2 & 1024 = 1024 THEN ', DB CHAINING' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 2048 = 2048 THEN ', NUMERIC ROUNDABORT' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 4096 = 4096 THEN ', ARITHABORT' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 8192 = 8192 THEN ', ANSI PADDING' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 16384 = 16384 THEN ', ANSI NULL DEFAULT' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 65536 = 65536 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 131072 = 131072 THEN ', RECURSIVE TRIGGERS' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 1048576 = 1048576 THEN ', DEFAULT TO LOCAL CURSOR' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 8388608 = 8388608 THEN ', QUOTED IDENTIFIER' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 16777216 = 16777216 THEN ', AUTO CREATE STATISTICS' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 33554432 = 33554432 THEN ', CURSOR CLOSE ON COMMIT' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 67108864 = 67108864 THEN ', ANSI NULLS' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 268435456 = 268435456 THEN ', ANSI WARNINGS' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 536870912 = 536870912 THEN ', FULL TEXT ENABLED' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 1073741824 = 1073741824 THEN ', AUTO UPDATE STATISTICS' ELSE '' END +     
+                CASE WHEN kheb.clientoption2 & 1469283328 = 1469283328 THEN ', ALL SETTABLE OPTIONS' ELSE '' END,    
+                3,    
+                8000    
+            ),    
         kheb.wait_resource,    
         kheb.priority,    
         kheb.log_used,    
@@ -3059,10 +3060,9 @@ BEGIN
                 @output_schema_name,     
                 s.name    
             FROM sys.server_event_sessions AS s    
-            LEFT JOIN sys.dm_xe_sessions AS r     
+            JOIN sys.dm_xe_sessions AS r     
               ON r.name = s.name    
-            WHERE s.name LIKE N'keeper_HumanEvents_%'    
-            AND   r.create_time IS NOT NULL;    
+            WHERE s.name LIKE N'keeper_HumanEvents_%';    
         END;    
         ELSE    
         BEGIN    
@@ -3090,10 +3090,9 @@ BEGIN
                 @output_schema_name,     
                 s.name    
             FROM sys.database_event_sessions AS s    
-            LEFT JOIN sys.dm_xe_database_sessions AS r     
+            JOIN sys.dm_xe_database_sessions AS r     
               ON r.name = s.name    
-            WHERE s.name LIKE N'keeper_HumanEvents_%'    
-            AND   r.create_time IS NOT NULL;    
+            WHERE s.name LIKE N'keeper_HumanEvents_%';    
         END;    
     
         /*If we're getting compiles, and the parameterization event is available*/    
@@ -3450,7 +3449,10 @@ BEGIN
                       );    
             END;    
                     
-            SELECT @spe = @view_database + @spe;    
+            SELECT 
+                @spe = 
+                    @view_database + 
+                    @spe;    
                 
             IF @debug = 1 BEGIN RAISERROR(@spe, 0, 1) WITH NOWAIT; END;    
             
