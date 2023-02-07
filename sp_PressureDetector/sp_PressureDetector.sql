@@ -95,32 +95,32 @@ BEGIN
         description =
             CASE
                 ap.name
-                WHEN '@what_to_check' THEN 'areas to check for pressure'
-                WHEN '@skip_plan_xml' THEN 'if you want to skip getting plan XML'
-                WHEN '@version' THEN 'OUTPUT; for support'
-                WHEN '@version_date' THEN 'OUTPUT; for support'
-                WHEN '@help' THEN 'how you got here'
-                WHEN '@debug' THEN 'prints dynamic sql'
+                WHEN N'@what_to_check' THEN N'areas to check for pressure'
+                WHEN N'@skip_plan_xml' THEN N'if you want to skip getting plan XML'
+                WHEN N'@version' THEN N'OUTPUT; for support'
+                WHEN N'@version_date' THEN N'OUTPUT; for support'
+                WHEN N'@help' THEN N'how you got here'
+                WHEN N'@debug' THEN N'prints dynamic sql'
             END,
         valid_inputs =
             CASE
                 ap.name
-                WHEN '@what_to_check' THEN '"both", "cpu", and "memory"'
-                WHEN '@skip_plan_xml' THEN '0 or 1'
-                WHEN '@version' THEN 'none'
-                WHEN '@version_date' THEN 'none'
-                WHEN '@help' THEN '0 or 1'
-                WHEN '@debug' THEN '0 or 1'
+                WHEN N'@what_to_check' THEN N'"both", "cpu", and "memory"'
+                WHEN N'@skip_plan_xml' THEN N'0 or 1'
+                WHEN N'@version' THEN N'none'
+                WHEN N'@version_date' THEN N'none'
+                WHEN N'@help' THEN N'0 or 1'
+                WHEN N'@debug' THEN N'0 or 1'
             END,
         defaults =
             CASE
                 ap.name
-                WHEN '@what_to_check' THEN 'both'
-                WHEN '@skip_plan_xml' THEN '1'
-                WHEN '@version' THEN 'none; OUTPUT'
-                WHEN '@version_date' THEN 'none; OUTPUT'
-                WHEN '@help' THEN '0'
-                WHEN '@debug' THEN '0'
+                WHEN N'@what_to_check' THEN N'both'
+                WHEN N'@skip_plan_xml' THEN N'1'
+                WHEN N'@version' THEN N'none; OUTPUT'
+                WHEN N'@version_date' THEN N'none; OUTPUT'
+                WHEN N'@help' THEN N'0'
+                WHEN N'@debug' THEN N'0'
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o
@@ -409,7 +409,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    dows.wait_time_ms /
                        NULLIF
                        (
-                           1. *
+                           1.*
                            dows.waiting_tasks_count,
                            0.
                        )
