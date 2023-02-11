@@ -99,39 +99,39 @@ BEGIN
         data_type = t.name,
         description =
             CASE ap.name
-                 WHEN '@session_name' THEN 'name of the extended event session to pull from'
-                 WHEN '@target_type' THEN 'target of the extended event session'
-                 WHEN '@start_date' THEN 'filter by date'
-                 WHEN '@end_date' THEN 'filter by date'
-                 WHEN '@database_name' THEN 'filter by database name'
-                 WHEN '@help' THEN 'how you got here'
-                 WHEN '@debug' THEN 'dumps raw temp table contents'
-                 WHEN '@version' THEN 'OUTPUT; for support'
-                 WHEN '@version_date' THEN 'OUTPUT; for support'
+                 WHEN N'@session_name' THEN 'name of the extended event session to pull from'
+                 WHEN N'@target_type' THEN 'target of the extended event session'
+                 WHEN N'@start_date' THEN 'filter by date'
+                 WHEN N'@end_date' THEN 'filter by date'
+                 WHEN N'@database_name' THEN 'filter by database name'
+                 WHEN N'@help' THEN 'how you got here'
+                 WHEN N'@debug' THEN 'dumps raw temp table contents'
+                 WHEN N'@version' THEN 'OUTPUT; for support'
+                 WHEN N'@version_date' THEN 'OUTPUT; for support'
             END,
         valid_inputs =
             CASE ap.name
-                 WHEN '@session_name' THEN 'extended event session name capturing sqlserver.blocked_process_report'
-                 WHEN '@target_type' THEN 'event_file or ring_buffer'
-                 WHEN '@start_date' THEN 'a reasonable date'
-                 WHEN '@end_date' THEN 'a reasonable date'
-                 WHEN '@database_name' THEN 'a database that exists on this server'
-                 WHEN '@help' THEN '0 or 1'
-                 WHEN '@debug' THEN '0 or 1'
-                 WHEN '@version' THEN 'none; OUTPUT'
-                 WHEN '@version_date' THEN 'none; OUTPUT'
+                 WHEN N'@session_name' THEN 'extended event session name capturing sqlserver.blocked_process_report'
+                 WHEN N'@target_type' THEN 'event_file or ring_buffer'
+                 WHEN N'@start_date' THEN 'a reasonable date'
+                 WHEN N'@end_date' THEN 'a reasonable date'
+                 WHEN N'@database_name' THEN 'a database that exists on this server'
+                 WHEN N'@help' THEN '0 or 1'
+                 WHEN N'@debug' THEN '0 or 1'
+                 WHEN N'@version' THEN 'none; OUTPUT'
+                 WHEN N'@version_date' THEN 'none; OUTPUT'
             END,
         defaults =
             CASE ap.name
-                 WHEN '@session_name' THEN 'keeper_HumanEvents_blocking'
-                 WHEN '@target_type' THEN 'NULL'
-                 WHEN '@start_date' THEN 'NULL; will shortcut to last 7 days'
-                 WHEN '@end_date' THEN 'NULL'
-                 WHEN '@database_name' THEN 'NULL'
-                 WHEN '@help' THEN '0'
-                 WHEN '@debug' THEN '0'
-                 WHEN '@version' THEN 'none; OUTPUT'
-                 WHEN '@version_date' THEN 'none; OUTPUT'
+                 WHEN N'@session_name' THEN 'keeper_HumanEvents_blocking'
+                 WHEN N'@target_type' THEN 'NULL'
+                 WHEN N'@start_date' THEN 'NULL; will shortcut to last 7 days'
+                 WHEN N'@end_date' THEN 'NULL'
+                 WHEN N'@database_name' THEN 'NULL'
+                 WHEN N'@help' THEN '0'
+                 WHEN N'@debug' THEN '0'
+                 WHEN N'@version' THEN 'none; OUTPUT'
+                 WHEN N'@version_date' THEN 'none; OUTPUT'
             END
     FROM sys.all_parameters AS ap
     JOIN sys.all_objects AS o
@@ -143,9 +143,14 @@ BEGIN
     OPTION(RECOMPILE);
 
     SELECT 
-        mit_license_yo = N'i am MIT licensed, so like, do whatever' UNION ALL
-    SELECT N'see printed messages for full license';
-    RAISERROR(N'
+        mit_license_yo = 'i am MIT licensed, so like, do whatever' 
+    
+    UNION ALL
+    
+    SELECT 
+        mit_license_yo = 'see printed messages for full license';
+    
+    RAISERROR('
 MIT License
 
 Copyright 2023 Darling Data, LLC 
@@ -851,7 +856,8 @@ END;
         FROM #blocks AS b
     ) AS b
     WHERE b.n = 1
-    AND   (b.contentious_object = @object_name OR @object_name IS NULL)
+    AND   (b.contentious_object = @object_name 
+           OR @object_name IS NULL)
     ORDER BY 
         b.event_time DESC,
         CASE 
@@ -986,6 +992,8 @@ AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
 GROUP BY 
     b.database_name
+HAVING 
+    COUNT_BIG(DISTINCT b.transaction_id) > 1
 OPTION(RECOMPILE);
 
 INSERT
@@ -1221,8 +1229,10 @@ WITH
         wait_time_ms = 
             MAX(b.wait_time_ms)
     FROM #blocks AS b
-    WHERE (b.database_name = @database_name OR @database_name IS NULL)
-    AND   (b.contentious_object = @object_name OR @object_name IS NULL)
+    WHERE (b.database_name = @database_name 
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name 
+           OR @object_name IS NULL)
     GROUP BY 
         b.database_name, 
         b.transaction_id
@@ -1283,6 +1293,8 @@ SELECT
           ) +
         N' [dd hh:mm:ss:ms] of deadlock wait time.'
 FROM b AS b
+WHERE (b.database_name = @database_name 
+       OR @database_name IS NULL)
 GROUP BY
     b.database_name
 OPTION(RECOMPILE);
@@ -1363,6 +1375,10 @@ SELECT
         N' [dd hh:mm:ss:ms] of deadlock wait time in database ' +
         b.database_name
 FROM b AS b
+WHERE (b.database_name = @database_name 
+       OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name 
+       OR @object_name IS NULL)
 GROUP BY
     b.database_name,
     b.contentious_object
