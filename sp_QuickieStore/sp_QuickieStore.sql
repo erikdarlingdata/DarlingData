@@ -143,101 +143,101 @@ BEGIN
         description =
             CASE
                 ap.name
-                WHEN '@database_name' THEN 'the name of the database you want to look at query store in'
-                WHEN '@sort_order' THEN 'the runtime metric you want to prioritize results by'
-                WHEN '@top' THEN 'the number of queries you want to pull back'
-                WHEN '@start_date' THEN 'the begin date of your search'
-                WHEN '@end_date' THEN 'the end date of your search'
-                WHEN '@execution_count' THEN 'the minimum number of executions a query must have'
-                WHEN '@duration_ms' THEN 'the minimum duration a query must have'
-                WHEN '@execution_type_desc' THEN 'the type of execution you want to filter'
-                WHEN '@procedure_schema' THEN 'the schema of the procedure you''re searching for'
-                WHEN '@procedure_name' THEN 'the name of the programmable object you''re searching for'
-                WHEN '@include_plan_ids' THEN 'a list of plan ids to search for'
-                WHEN '@include_query_ids' THEN 'a list of query ids to search for'
-                WHEN '@include_query_hashes' THEN 'a list of query hashes to search for'
-                WHEN '@include_plan_hashes' THEN 'a list of query plan hashes to search for'
-                WHEN '@include_sql_handles' THEN 'a list of sql handles to search for'
-                WHEN '@ignore_plan_ids' THEN 'a list of plan ids to ignore'
-                WHEN '@ignore_query_ids' THEN 'a list of query ids to ignore'
-                WHEN '@ignore_query_hashes' THEN 'a list of query hashes to ignore'
-                WHEN '@ignore_plan_hashes' THEN 'a list of query plan hashes to ignore'
-                WHEN '@ignore_sql_handles' THEN 'a list of sql handles to ignore'
-                WHEN '@query_text_search' THEN 'query text to search for'
-                WHEN '@wait_filter' THEN 'wait category to search for; category details are below'
-                WHEN '@expert_mode' THEN 'returns additional columns and results'
-                WHEN '@format_output' THEN 'returns numbers formatted with commas'
-                WHEN '@version' THEN 'OUTPUT; for support'
-                WHEN '@version_date' THEN 'OUTPUT; for support'
-                WHEN '@help' THEN 'how you got here'
-                WHEN '@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
-                WHEN '@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
+                WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
+                WHEN N'@sort_order' THEN 'the runtime metric you want to prioritize results by'
+                WHEN N'@top' THEN 'the number of queries you want to pull back'
+                WHEN N'@start_date' THEN 'the begin date of your search'
+                WHEN N'@end_date' THEN 'the end date of your search'
+                WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
+                WHEN N'@duration_ms' THEN 'the minimum duration a query must have'
+                WHEN N'@execution_type_desc' THEN 'the type of execution you want to filter'
+                WHEN N'@procedure_schema' THEN 'the schema of the procedure you''re searching for'
+                WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
+                WHEN N'@include_plan_ids' THEN 'a list of plan ids to search for'
+                WHEN N'@include_query_ids' THEN 'a list of query ids to search for'
+                WHEN N'@include_query_hashes' THEN 'a list of query hashes to search for'
+                WHEN N'@include_plan_hashes' THEN 'a list of query plan hashes to search for'
+                WHEN N'@include_sql_handles' THEN 'a list of sql handles to search for'
+                WHEN N'@ignore_plan_ids' THEN 'a list of plan ids to ignore'
+                WHEN N'@ignore_query_ids' THEN 'a list of query ids to ignore'
+                WHEN N'@ignore_query_hashes' THEN 'a list of query hashes to ignore'
+                WHEN N'@ignore_plan_hashes' THEN 'a list of query plan hashes to ignore'
+                WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
+                WHEN N'@query_text_search' THEN 'query text to search for'
+                WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
+                WHEN N'@expert_mode' THEN 'returns additional columns and results'
+                WHEN N'@format_output' THEN 'returns numbers formatted with commas'
+                WHEN N'@version' THEN 'OUTPUT; for support'
+                WHEN N'@version_date' THEN 'OUTPUT; for support'
+                WHEN N'@help' THEN 'how you got here'
+                WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
+                WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
             END,
         valid_inputs =
             CASE
                 ap.name
-                WHEN '@database_name' THEN 'a database name with query store enabled'
-                WHEN '@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions'
-                WHEN '@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
-                WHEN '@start_date' THEN 'January 1, 1753, through December 31, 9999'
-                WHEN '@end_date' THEN 'January 1, 1753, through December 31, 9999'
-                WHEN '@execution_count' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
-                WHEN '@duration_ms' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
-                WHEN '@execution_type_desc' THEN 'regular, aborted, exception'
-                WHEN '@procedure_schema' THEN 'a valid schema in your database'
-                WHEN '@procedure_name' THEN 'a valid programmable object in your database'
-                WHEN '@include_plan_ids' THEN 'a string; comma separated for multiple ids'
-                WHEN '@include_query_ids' THEN 'a string; comma separated for multiple ids'
-                WHEN '@include_query_hashes' THEN 'a string; comma separated for multiple hashes'
-                WHEN '@include_plan_hashes' THEN 'a string; comma separated for multiple hashes'
-                WHEN '@include_sql_handles' THEN 'a string; comma separated for multiple handles'
-                WHEN '@ignore_plan_ids' THEN 'a string; comma separated for multiple ids'
-                WHEN '@ignore_query_ids' THEN 'a string; comma separated for multiple ids'
-                WHEN '@ignore_query_hashes' THEN 'a string; comma separated for multiple hashes'
-                WHEN '@ignore_plan_hashes' THEN 'a string; comma separated for multiple hashes'
-                WHEN '@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
-                WHEN '@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
-                WHEN '@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
-                WHEN '@expert_mode' THEN '0 or 1'
-                WHEN '@format_output' THEN '0 or 1'
-                WHEN '@version' THEN 'none; OUTPUT'
-                WHEN '@version_date' THEN 'none; OUTPUT'
-                WHEN '@help' THEN '0 or 1'
-                WHEN '@debug' THEN '0 or 1'
-                WHEN '@troubleshoot_performance' THEN '0 or 1'
+                WHEN N'@database_name' THEN 'a database name with query store enabled'
+                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions'
+                WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
+                WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
+                WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
+                WHEN N'@execution_count' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
+                WHEN N'@duration_ms' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
+                WHEN N'@execution_type_desc' THEN 'regular, aborted, exception'
+                WHEN N'@procedure_schema' THEN 'a valid schema in your database'
+                WHEN N'@procedure_name' THEN 'a valid programmable object in your database'
+                WHEN N'@include_plan_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN N'@include_query_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN N'@include_query_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN N'@include_plan_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN N'@include_sql_handles' THEN 'a string; comma separated for multiple handles'
+                WHEN N'@ignore_plan_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN N'@ignore_query_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN N'@ignore_query_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN N'@ignore_plan_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
+                WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
+                WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
+                WHEN N'@expert_mode' THEN '0 or 1'
+                WHEN N'@format_output' THEN '0 or 1'
+                WHEN N'@version' THEN 'none; OUTPUT'
+                WHEN N'@version_date' THEN 'none; OUTPUT'
+                WHEN N'@help' THEN '0 or 1'
+                WHEN N'@debug' THEN '0 or 1'
+                WHEN N'@troubleshoot_performance' THEN '0 or 1'
             END,
         defaults =
             CASE
                 ap.name
-                WHEN '@database_name' THEN 'NULL; current non-system database name if NULL'
-                WHEN '@sort_order' THEN 'cpu'
-                WHEN '@top' THEN '10'
-                WHEN '@start_date' THEN 'the last seven days'
-                WHEN '@end_date' THEN 'NULL'
-                WHEN '@execution_count' THEN 'NULL'
-                WHEN '@duration_ms' THEN 'NULL'
-                WHEN '@execution_type_desc' THEN 'NULL'
-                WHEN '@procedure_schema' THEN 'NULL; dbo if NULL and procedure name is not NULL'
-                WHEN '@procedure_name' THEN 'NULL'
-                WHEN '@include_plan_ids' THEN 'NULL'
-                WHEN '@include_query_ids' THEN 'NULL'
-                WHEN '@include_query_hashes' THEN 'NULL'
-                WHEN '@include_plan_hashes' THEN 'NULL'
-                WHEN '@include_sql_handles' THEN 'NULL'
-                WHEN '@ignore_plan_ids' THEN 'NULL'
-                WHEN '@ignore_query_ids' THEN 'NULL'
-                WHEN '@ignore_query_hashes' THEN 'NULL'
-                WHEN '@ignore_plan_hashes' THEN 'NULL'
-                WHEN '@ignore_sql_handles' THEN 'NULL'
-                WHEN '@query_text_search' THEN 'NULL'
-                WHEN '@wait_filter' THEN 'NULL'
-                WHEN '@expert_mode' THEN '0'
-                WHEN '@format_output' THEN '1'
-                WHEN '@version' THEN 'none; OUTPUT'
-                WHEN '@version_date' THEN 'none; OUTPUT'
-                WHEN '@help' THEN '0'
-                WHEN '@debug' THEN '0'
-                WHEN '@troubleshoot_performance' THEN '0'
+                WHEN N'@database_name' THEN 'NULL; current non-system database name if NULL'
+                WHEN N'@sort_order' THEN 'cpu'
+                WHEN N'@top' THEN '10'
+                WHEN N'@start_date' THEN 'the last seven days'
+                WHEN N'@end_date' THEN 'NULL'
+                WHEN N'@execution_count' THEN 'NULL'
+                WHEN N'@duration_ms' THEN 'NULL'
+                WHEN N'@execution_type_desc' THEN 'NULL'
+                WHEN N'@procedure_schema' THEN 'NULL; dbo if NULL and procedure name is not NULL'
+                WHEN N'@procedure_name' THEN 'NULL'
+                WHEN N'@include_plan_ids' THEN 'NULL'
+                WHEN N'@include_query_ids' THEN 'NULL'
+                WHEN N'@include_query_hashes' THEN 'NULL'
+                WHEN N'@include_plan_hashes' THEN 'NULL'
+                WHEN N'@include_sql_handles' THEN 'NULL'
+                WHEN N'@ignore_plan_ids' THEN 'NULL'
+                WHEN N'@ignore_query_ids' THEN 'NULL'
+                WHEN N'@ignore_query_hashes' THEN 'NULL'
+                WHEN N'@ignore_plan_hashes' THEN 'NULL'
+                WHEN N'@ignore_sql_handles' THEN 'NULL'
+                WHEN N'@query_text_search' THEN 'NULL'
+                WHEN N'@wait_filter' THEN 'NULL'
+                WHEN N'@expert_mode' THEN '0'
+                WHEN N'@format_output' THEN '1'
+                WHEN N'@version' THEN 'none; OUTPUT'
+                WHEN N'@version_date' THEN 'none; OUTPUT'
+                WHEN N'@help' THEN '0'
+                WHEN N'@debug' THEN '0'
+                WHEN N'@troubleshoot_performance' THEN '0'
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o
@@ -317,8 +317,12 @@ BEGIN
     */
     SELECT
         mit_license_yo =
-           'i am MIT licensed, so like, do whatever' UNION ALL
-    SELECT 'see printed messages for full license';
+           'i am MIT licensed, so like, do whatever' 
+    UNION ALL
+    
+    SELECT 
+        mit_license_yo =
+            'see printed messages for full license';
 
     RAISERROR('
 MIT License
@@ -995,7 +999,9 @@ DECLARE
     @troubleshoot_insert nvarchar(MAX),
     @troubleshoot_update nvarchar(MAX),
     @troubleshoot_info nvarchar(MAX),
-    @rc bigint;
+    @rc bigint,
+    @em tinyint,
+    @fo tinyint;
 
 /*
 Some variable assignment, because why not?
@@ -1211,7 +1217,9 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                     TYPE
             ).query(''.[1]'') AS current_query
         OPTION(RECOMPILE);',
-    @rc = 0;
+    @rc = 0,
+    @em = @expert_mode,
+    @fo = @format_output;
 
 /*
 Some parameters can't be NULL,
@@ -1280,10 +1288,10 @@ END;
 Database what are you?
 */
 IF
-  (
-      @azure = 1
-        AND @engine NOT IN (5, 8)
-  )
+(
+    @azure = 1
+    AND @engine NOT IN (5, 8)
+)
 BEGIN
     RAISERROR('Not all Azure offerings are supported, please try avoiding memes', 11, 1) WITH NOWAIT;
     RETURN;
@@ -1293,17 +1301,17 @@ END;
 Database are you compatible?
 */
 IF
-  (
-      @azure = 1
-        AND EXISTS
-            (
-                SELECT
-                    1/0
-                 FROM sys.databases AS d
-                 WHERE d.database_id = @database_id
-                 AND   d.compatibility_level < 130
-            )
-  )
+(
+    @azure = 1
+    AND EXISTS
+        (
+            SELECT
+                1/0
+             FROM sys.databases AS d
+             WHERE d.database_id = @database_id
+             AND   d.compatibility_level < 130
+        )
+)
 BEGIN
     RAISERROR('Azure databases in compatiblity levels under 130 are not supported', 11, 1) WITH NOWAIT;
     RETURN;
@@ -1379,10 +1387,10 @@ BEGIN
 END;
 
 IF @query_store_exists = 0
-    BEGIN
-        RAISERROR('Query Store doesn''t seem to be enabled for database: %s', 11, 1, @database_name) WITH NOWAIT;
-        RETURN;
-    END;
+BEGIN
+    RAISERROR('Query Store doesn''t seem to be enabled for database: %s', 11, 1, @database_name) WITH NOWAIT;
+    RETURN;
+END;
 
 /*
 If you specified a procedure name, we need to figure out if there are any plans for it available
@@ -1469,7 +1477,7 @@ like the wait stats DMV, and tempdb spills columns
 IF
   (
       @product_version > 13
-        OR @azure = 1
+      OR @azure = 1
   )
 BEGIN
    SELECT
@@ -1514,10 +1522,10 @@ END;
 Wait stats aren't in Query Store until 2017, so we can't do that on television
 */
 IF
-(
-    @wait_filter IS NOT NULL
-    AND @new = 0
-)
+  (
+      @wait_filter IS NOT NULL
+      AND @new = 0
+  )
 BEGIN
    RAISERROR('Query Store wait stats are not available prior to SQL Server 2017', 11, 1) WITH NOWAIT;
    RETURN;
@@ -1527,27 +1535,27 @@ END;
 Make sure the wait filter is valid
 */
 IF
-(
-    @new = 1
-    AND @wait_filter NOT IN
-        (
-            'cpu',
-            'lock',
-            'locks',
-            'latch',
-            'latches',
-            'buffer latch',
-            'buffer latches',
-            'buffer io',
-            'log',
-            'log io',
-            'network',
-            'network io',
-            'parallel',
-            'parallelism',
-            'memory'
-        )
-)
+  (
+      @new = 1
+      AND @wait_filter NOT IN
+          (
+              'cpu',
+              'lock',
+              'locks',
+              'latch',
+              'latches',
+              'buffer latch',
+              'buffer latches',
+              'buffer io',
+              'log',
+              'log io',
+              'network',
+              'network io',
+              'parallel',
+              'parallelism',
+              'memory'
+          )
+  )
 BEGIN
    RAISERROR('The wait category (%s) you chose is invalid', 11, 1, @wait_filter) WITH NOWAIT;
    RETURN;
@@ -1557,10 +1565,10 @@ END;
 One last check: wait stat capture can be enabled or disabled in settings
 */
 IF
-(
-    @wait_filter IS NOT NULL
+  (
+      @wait_filter IS NOT NULL
       OR @new = 1
-)
+  )
 BEGIN
 
     SELECT
@@ -1666,11 +1674,11 @@ BEGIN
         @ags_present =
             CASE
                 WHEN EXISTS
-                        (
-                            SELECT
-                                1/0
-                            FROM sys.availability_groups AS ag
-                        )
+                     (
+                         SELECT
+                             1/0
+                         FROM sys.availability_groups AS ag
+                     )
                 THEN 1
                 ELSE 0
             END
@@ -1726,7 +1734,7 @@ a single stored procedure in Query Store.
 IF
   (
       @procedure_name IS NOT NULL
-        AND @procedure_exists = 1
+      AND @procedure_exists = 1
   )
 BEGIN
 
@@ -1931,9 +1939,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #include_plan_ids
-            (
-                plan_id
-            )
+        (
+            plan_id
+        )
         EXEC sys.sp_executesql
             @sql;
 
@@ -2035,9 +2043,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #ignore_plan_ids
-            (
-                plan_id
-            )
+        (
+            plan_id
+        )
         EXEC sys.sp_executesql
             @sql;
 
@@ -2114,9 +2122,9 @@ BEGIN
 
         INSERT
             #include_query_hashes WITH(TABLOCK)
-            (
-                query_hash_s
-            )
+        (
+            query_hash_s
+        )
         EXEC sys.sp_executesql
             @string_split_strings,
           N'@ids nvarchar(4000)',
@@ -2162,9 +2170,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #include_plan_ids
-            (
-                plan_id
-            )
+        (
+            plan_id
+        )
         EXEC sys.sp_executesql
             @sql;
 
@@ -2274,9 +2282,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #ignore_plan_ids
-            (
-                plan_id
-            )
+        (
+            plan_id
+        )
         EXEC sys.sp_executesql
             @sql;
 
@@ -2337,9 +2345,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #include_plan_hashes WITH(TABLOCK)
-            (
-                plan_hash_s
-            )
+        (
+            plan_hash_s
+        )
         EXEC sys.sp_executesql
             @string_split_strings,
           N'@ids nvarchar(4000)',
@@ -2378,9 +2386,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #include_plan_ids
-            (
-                plan_id
-            )
+        (
+            plan_id
+        )
         EXEC sys.sp_executesql
             @sql;
 
@@ -2483,9 +2491,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #ignore_plan_ids
-            (
-                plan_id
-            )
+        (
+            plan_id
+        )
         EXEC sys.sp_executesql
             @sql;
 
@@ -2546,9 +2554,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #include_sql_handles WITH(TABLOCK)
-            (
-                sql_handle_s
-            )
+        (
+            sql_handle_s
+        )
         EXEC sys.sp_executesql
             @string_split_strings,
           N'@ids nvarchar(4000)',
@@ -2601,9 +2609,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #include_plan_ids
-            (
-                plan_id
-            )
+        (
+            plan_id
+        )
         EXEC sys.sp_executesql
             @sql;
 
@@ -2720,9 +2728,9 @@ OPTION(RECOMPILE);' + @nc10;
 
         INSERT
             #ignore_plan_ids
-            (
-                plan_id
-            )
+        (
+            plan_id
+        )
         EXEC sys.sp_executesql
             @sql;
 
@@ -2843,10 +2851,10 @@ WHERE EXISTS
 
 /*If we're searching by a procedure name, limit the text search to it */
 IF
-(
-        @procedure_name IS NOT NULL
-    AND @procedure_exists = 1
-)
+  (
+      @procedure_name IS NOT NULL
+      AND @procedure_exists = 1
+  )
 BEGIN
     SELECT
         @sql += N'
@@ -3930,7 +3938,7 @@ SELECT
     +
     CASE
         WHEN (@product_version > 14
-                OR @azure = 1)
+              OR @azure = 1)
         THEN N'
     dqso.capture_policy_execution_count,
     dqso.capture_policy_total_compile_cpu_time_ms,
@@ -3947,7 +3955,7 @@ SELECT
     +
     CASE
         WHEN (@product_version = 13
-                AND @azure = 0)
+              AND @azure = 0)
         THEN N'
     NULL'
         ELSE N'
@@ -4005,16 +4013,16 @@ END; /*End getting query store settings*/
 If wait stats are available, we'll grab them here
 */
 IF
-(
-    @new = 1
+  (
+      @new = 1
       AND EXISTS
           (
               SELECT
                   1/0
               FROM #database_query_store_options AS dqso
-              WHERE dqso.wait_stats_capture_mode_desc = 'ON'
+              WHERE dqso.wait_stats_capture_mode_desc = N'ON'
           )
-)
+  )
 BEGIN
 
     SELECT
@@ -4644,11 +4652,16 @@ BEGIN
         @current_table = 'selecting final results';
 
     SELECT
-        @sql += N'
+        @sql += 
+        CONVERT
+        (
+            nvarchar(MAX), 
+        N'
 SELECT
     x.*
 FROM
-(';
+('
+        );
 
     /*
     Expert mode returns more columns from runtime stats
@@ -4656,12 +4669,15 @@ FROM
     IF
       (
           @expert_mode = 1
-            AND @format_output = 0
+          AND @format_output = 0
       )
     BEGIN
 
         SELECT
             @sql +=
+        CONVERT
+        (
+            nvarchar(MAX),           
             N'
     SELECT
         source =
@@ -4689,6 +4705,7 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
+        query_plan = TRY_CAST(qsp.query_plan AS XML),
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -4696,16 +4713,15 @@ FROM
                  THEN
         N'
         has_query_feedback =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END,
         has_query_store_hints =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
         has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,'
                  ELSE
         N''
                  END +
-        N'
-        query_plan = TRY_CAST(qsp.query_plan AS XML),'
+        N''
         +
             CASE @new
                  WHEN 1
@@ -4794,18 +4810,19 @@ FROM
                     qsrs.plan_id
                 ORDER BY
                     ' +
-    CASE @sort_order
-        WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-        WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-        WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-        WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-        WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-        WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-        WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-        WHEN 'executions' THEN N'qsrs.count_executions'
-        ELSE N'qsrs.avg_cpu_time_ms'
-    END + N' DESC
-            )';
+        CASE @sort_order
+            WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
+            WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
+            WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
+            WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
+            WHEN 'duration' THEN N'qsrs.avg_duration_ms'
+            WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
+            WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
+            WHEN 'executions' THEN N'qsrs.count_executions'
+            ELSE N'qsrs.avg_cpu_time_ms'
+        END + N' DESC
+            )'
+        );
 
     END; /*End expert mode 1, format output 0 columns*/
 
@@ -4815,12 +4832,16 @@ FROM
     IF
       (
           @expert_mode = 1
-            AND @format_output = 1
+          AND @format_output = 1
       )
     BEGIN
 
         SELECT
-            @sql += N'
+            @sql += 
+        CONVERT
+        (
+            nvarchar(MAX),            
+            N'
     SELECT
         source =
             ''runtime_stats'',
@@ -4847,6 +4868,7 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
+        query_plan = TRY_CAST(qsp.query_plan AS XML),
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -4854,16 +4876,15 @@ FROM
                  THEN
         N'
         has_query_feedback =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END,
         has_query_store_hints =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
         has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,'
                  ELSE
         N''
                  END +
-        N'
-        query_plan = TRY_CAST(qsp.query_plan AS XML),'
+        N''
         +
             CASE @new
                  WHEN 1
@@ -4930,9 +4951,6 @@ FROM
             CASE @new
                  WHEN 1
                  THEN
-        CONVERT
-        (
-            nvarchar(MAX),
         N'
         avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
         total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),
@@ -4949,7 +4967,6 @@ FROM
         last_tempdb_space_used_mb = FORMAT(qsrs.last_tempdb_space_used_mb, ''N0''),
         min_tempdb_space_used_mb = FORMAT(qsrs.min_tempdb_space_used_mb, ''N0''),
         max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
-        )
                  ELSE
         N''
             END + N'
@@ -4961,18 +4978,19 @@ FROM
                     qsrs.plan_id
                 ORDER BY
                     ' +
-    CASE @sort_order
-        WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-        WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-        WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-        WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-        WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-        WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-        WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-        WHEN 'executions' THEN N'qsrs.count_executions'
-        ELSE N'qsrs.avg_cpu_time_ms'
-    END + N' DESC
-            )';
+        CASE @sort_order
+            WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
+            WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
+            WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
+            WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
+            WHEN 'duration' THEN N'qsrs.avg_duration_ms'
+            WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
+            WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
+            WHEN 'executions' THEN N'qsrs.count_executions'
+            ELSE N'qsrs.avg_cpu_time_ms'
+        END + N' DESC
+            )'
+        );
 
     END; /*End expert mode = 1, format output = 1*/
 
@@ -4982,12 +5000,16 @@ FROM
     IF
       (
           @expert_mode = 0
-            AND @format_output = 0
+          AND @format_output = 0
       )
     BEGIN
 
         SELECT
-            @sql += N'
+            @sql +=
+        CONVERT
+        (
+            nvarchar(MAX),            
+            N'
     SELECT
         source =
             ''runtime_stats'',
@@ -5014,6 +5036,7 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
+        query_plan = TRY_CAST(qsp.query_plan AS XML),
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -5021,16 +5044,15 @@ FROM
                  THEN
         N'
         has_query_feedback =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END,
         has_query_store_hints =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
         has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,'
                  ELSE
         N''
                  END +
-        N'
-        query_plan = TRY_CAST(qsp.query_plan AS XML),'
+        N''
         +
             CASE @new
                  WHEN 1
@@ -5084,19 +5106,21 @@ FROM
                 PARTITION BY
                     qsrs.plan_id
                 ORDER BY
-                    ' +
-    CASE @sort_order
-        WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-        WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-        WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-        WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-        WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-        WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-        WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-        WHEN 'executions' THEN N'qsrs.count_executions'
-        ELSE N'qsrs.avg_cpu_time_ms'
-    END + N' DESC
-            )';
+                    '
+        +
+        CASE @sort_order
+            WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
+            WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
+            WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
+            WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
+            WHEN 'duration' THEN N'qsrs.avg_duration_ms'
+            WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
+            WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
+            WHEN 'executions' THEN N'qsrs.count_executions'
+            ELSE N'qsrs.avg_cpu_time_ms'
+        END + N' DESC
+            )'
+        );
 
     END; /*End expert mode = 0, format output = 0*/
 
@@ -5106,12 +5130,16 @@ FROM
     IF
       (
           @expert_mode = 0
-            AND @format_output = 1
+          AND @format_output = 1
       )
     BEGIN
 
         SELECT
-            @sql += N'
+            @sql += 
+        CONVERT
+        (
+            nvarchar(MAX),            
+            N'
     SELECT
         source =
             ''runtime_stats'',
@@ -5134,10 +5162,12 @@ FROM
         qsqt.statement_sql_handle,'
                 ELSE
         N''
-            END + N'
+            END
+        + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
+        query_plan = TRY_CAST(qsp.query_plan AS XML),
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -5145,16 +5175,15 @@ FROM
                  THEN
         N'
         has_query_feedback =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN 1 ELSE 0 END,
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END,
         has_query_store_hints =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN 1 ELSE 0 END,
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
         has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN 1 ELSE 0 END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,'
                  ELSE
         N''
                  END +
-        N'
-        query_plan = TRY_CAST(qsp.query_plan AS XML),'
+        N''
         +
             CASE @new
                  WHEN 1
@@ -5164,7 +5193,8 @@ FROM
         w.top_waits,'
                  ELSE
         N''
-            END + N'
+            END
+        + N'
         qsrs.first_execution_time,
         qsrs.last_execution_time,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
@@ -5208,19 +5238,21 @@ FROM
                 PARTITION BY
                     qsrs.plan_id
                 ORDER BY
-                    ' +
-    CASE @sort_order
-         WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-         WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-         WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-         WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-         WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-         WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-         WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-         WHEN 'executions' THEN N'qsrs.count_executions'
-         ELSE N'qsrs.avg_cpu_time_ms'
-    END + N' DESC
-            )';
+                    ' 
+        +
+        CASE @sort_order
+             WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
+             WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
+             WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
+             WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
+             WHEN 'duration' THEN N'qsrs.avg_duration_ms'
+             WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
+             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
+             WHEN 'executions' THEN N'qsrs.count_executions'
+             ELSE N'qsrs.avg_cpu_time_ms'
+        END + N' DESC
+            )'
+        );
 
     END; /*End expert mode = 0, format output = 1*/
 
@@ -5228,7 +5260,11 @@ FROM
     Add on the from and stuff
     */
     SELECT
-        @sql += N'
+        @sql += 
+    CONVERT
+    (
+        nvarchar(MAX),
+        N'
     FROM #query_store_runtime_stats AS qsrs
     CROSS APPLY
     (
@@ -5268,7 +5304,8 @@ FROM
         FROM #query_store_query AS qsq
         WHERE qsq.query_id = qsp.query_id
         ORDER BY qsq.last_execution_time DESC
-    ) AS qsq';
+    ) AS qsq'
+    );
 
     /*
     Get wait stats if we can
@@ -5276,12 +5313,16 @@ FROM
     IF
       (
           @new = 1
-            AND @format_output = 0
+          AND @format_output = 0
       )
     BEGIN
 
         SELECT
-            @sql += N'
+            @sql += 
+        CONVERT
+        (
+            nvarchar(MAX),
+            N'
     CROSS APPLY
     (
         SELECT TOP (1)
@@ -5316,19 +5357,24 @@ FROM
                     2,
                     ''''
                 )
-    ) AS w';
+    ) AS w'
+    );
 
     END; /*End format output = 0 wait stats query*/
 
     IF
       (
           @new = 1
-            AND @format_output = 1
+          AND @format_output = 1
       )
     BEGIN
 
         SELECT
-            @sql += N'
+            @sql += 
+        CONVERT
+        (
+            nvarchar(MAX),
+            N'
     CROSS APPLY
     (
         SELECT TOP (1)
@@ -5362,12 +5408,17 @@ FROM
                     2,
                     ''''
                 )
-    ) AS w';
+    ) AS w'
+    );
 
     END; /*End format output = 1 wait stats query*/
 
     SELECT
-        @sql += N'
+        @sql += 
+    CONVERT
+    (
+        nvarchar(MAX),
+        N'
 ) AS x
 WHERE x.n = 1
 ORDER BY ' +
@@ -5408,7 +5459,9 @@ ORDER BY ' +
              END
     END
              + N' DESC
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE);' 
+    + @nc10
+    );
 
     IF @debug = 1
     BEGIN
@@ -5639,8 +5692,11 @@ BEGIN
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
           ON qsq.query_text_id = qsqt.query_text_id
-        WHERE ( qsqt.total_grant_mb IS NOT NULL
-        OR      qsqt.total_reserved_threads IS NOT NULL )
+        WHERE 
+        (
+            qsqt.total_grant_mb IS NOT NULL
+            OR qsqt.total_reserved_threads IS NOT NULL
+        )
         ORDER BY qsq.query_id
         OPTION(RECOMPILE);
 
@@ -5764,10 +5820,11 @@ BEGIN
                 result =
                     '#query_store_wait_stats is empty' +
                     CASE
-                        WHEN (
-                                    @product_version = 13
-                                AND @azure = 0
-                             )
+                        WHEN 
+                        (
+                                @product_version = 13
+                            AND @azure = 0
+                        )
                         THEN ' because it''s not available < 2017'
                         WHEN EXISTS
                              (
@@ -5784,10 +5841,10 @@ BEGIN
     END; /*End wait stats queries*/
 
     IF
-    (
-           @sql_2022_views = 1
-       AND @ags_present = 1
-    )
+      (
+         @sql_2022_views = 1
+         AND @ags_present = 1
+      )
     BEGIN
         IF EXISTS
            (
@@ -5828,7 +5885,11 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql += N'
+        @sql += 
+    CONVERT
+    (
+        nvarchar(MAX),
+        N'
     SELECT
         source =
             ''query_store_options'',
@@ -5841,38 +5902,44 @@ BEGIN
         dqso.max_storage_size_mb,
         dqso.stale_query_threshold_days,
         dqso.max_plans_per_query,
-        dqso.query_capture_mode_desc,';
-
-        IF
-          (
-              @azure = 1
+        dqso.query_capture_mode_desc,'
+        + 
+        CASE
+            WHEN
+            (
+                @azure = 1
                 OR @product_version > 13
-          )
-        BEGIN
-            SELECT
-                @sql += N'
-        dqso.wait_stats_capture_mode_desc,';
-        END;
-
-        IF
-          (
-              @azure = 1
+            )
+            THEN N'
+        dqso.wait_stats_capture_mode_desc,'
+            ELSE N''
+        END
+        +
+        CASE
+            WHEN
+            (
+                @azure = 1
                 OR @product_version > 14
-          )
-        BEGIN
-            SELECT
-                @sql += N'
+            )
+            THEN N'
         dqso.capture_policy_execution_count,
         dqso.capture_policy_total_compile_cpu_time_ms,
         dqso.capture_policy_total_execution_cpu_time_ms,
-        dqso.capture_policy_stale_threshold_hours,';
-        END;
+        dqso.capture_policy_stale_threshold_hours,'
+            ELSE N''
+        END
+    );
 
     SELECT
-        @sql += N'
+        @sql += 
+    CONVERT
+    (
+        nvarchar(MAX),
+        N'
     dqso.size_based_cleanup_mode_desc
     FROM #database_query_store_options AS dqso
-    OPTION(RECOMPILE);';
+    OPTION(RECOMPILE);'
+    );
 
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
@@ -6121,8 +6188,11 @@ BEGIN
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
           ON qsq.query_text_id = qsqt.query_text_id
-        WHERE ( qsqt.total_grant_mb IS NOT NULL
-        OR      qsqt.total_reserved_threads IS NOT NULL )
+        WHERE 
+        ( 
+            qsqt.total_grant_mb IS NOT NULL
+            OR qsqt.total_reserved_threads IS NOT NULL 
+        )
         ORDER BY qsq.query_id
         OPTION(RECOMPILE);
 
@@ -6254,7 +6324,7 @@ BEGIN
                 '#query_store_wait_stats is empty' +
                 CASE
                     WHEN (
-                                @product_version = 13
+                            @product_version = 13
                             AND @azure = 0
                          )
                     THEN ' because it''s not available < 2017'
@@ -6271,10 +6341,10 @@ BEGIN
     END;
 
     IF
-    (
-            @sql_2022_views = 1
-        AND @ags_present = 1
-    )
+      (
+          @sql_2022_views = 1
+          AND @ags_present = 1
+      )
     BEGIN
         IF EXISTS
            (
@@ -6316,7 +6386,11 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql += N'
+        @sql += 
+    CONVERT
+    (
+        nvarchar(MAX),
+        N'
     SELECT
         source =
             ''query_store_options'',
@@ -6334,27 +6408,26 @@ BEGIN
         dqso.stale_query_threshold_days,
         max_plans_per_query =
             FORMAT(dqso.max_plans_per_query, ''N0''),
-        dqso.query_capture_mode_desc,';
-
-        IF
-          (
-              @azure = 1
+        dqso.query_capture_mode_desc,'
+        +
+        CASE
+            WHEN
+            (
+                @azure = 1
                 OR @product_version > 13
-          )
-        BEGIN
-            SELECT
-                @sql += N'
-        dqso.wait_stats_capture_mode_desc,';
-        END;
-
-        IF
-          (
-              @azure = 1
+            )
+            THEN N'
+        dqso.wait_stats_capture_mode_desc,'
+            ELSE N''
+        END
+        +
+        CASE
+            WHEN 
+            (
+                @azure = 1
                 OR @product_version > 14
-          )
-        BEGIN
-            SELECT
-                @sql += N'
+            )
+            THEN N'
         capture_policy_execution_count =
             FORMAT(dqso.capture_policy_execution_count, ''N0''),
         capture_policy_total_compile_cpu_time_ms =
@@ -6362,8 +6435,10 @@ BEGIN
         capture_policy_total_execution_cpu_time_ms =
            FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, ''N0''),
         capture_policy_stale_threshold_hours =
-            FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),';
-        END;
+            FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),'
+            ELSE N''
+        END
+        );
 
     SELECT
         @sql += N'
@@ -6403,7 +6478,7 @@ FROM
                     DATEADD
                     (
                         DAY, 
-                        -1, 
+                        -7, 
                         DATEDIFF
                         (
                             DAY, 
@@ -6412,7 +6487,8 @@ FROM
                         )
                     )
                 ), 
-                23) + 
+                23
+            ) + 
             N' through ' + 
             CONVERT
             (
@@ -6455,7 +6531,7 @@ FROM
                     DATEADD
                     (
                         DAY, 
-                        -1, 
+                        -7, 
                         DATEDIFF
                         (
                             DAY, 
@@ -6464,7 +6540,8 @@ FROM
                         )
                     )
                 ), 
-                23) + 
+                23
+            ) + 
             N' through ' + 
             CONVERT
             (
@@ -6491,7 +6568,8 @@ FROM
         thanks =
             'i hope you find it useful, or whatever'
 ) AS x
-ORDER BY x.sort;
+ORDER BY 
+    x.sort;
 
 END TRY
 
@@ -6503,9 +6581,6 @@ BEGIN CATCH
     */
     IF @current_table IS NOT NULL
     BEGIN
-        DECLARE
-            @em tinyint = @expert_mode,
-            @fo tinyint = @format_output;
         RAISERROR('error while %s with @expert mode = %i and format_output = %i', 11, 1, @current_table, @em, @fo) WITH NOWAIT;
     END;
 
@@ -6649,7 +6724,11 @@ BEGIN
         troubleshoot_info =
             @troubleshoot_info,
         rc =
-            @rc;
+            @rc,
+       em = 
+           @em,
+       fo = 
+           @fo;
 
     IF EXISTS
        (

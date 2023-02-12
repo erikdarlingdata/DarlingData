@@ -133,8 +133,13 @@ BEGIN
 
     SELECT
         mit_license_yo =
-           'i am MIT licensed, so like, do whatever' UNION ALL
-    SELECT 'see printed messages for full license';
+           'i am MIT licensed, so like, do whatever' 
+    
+    UNION ALL
+    
+    SELECT 
+        mit_license_yo = 
+            'see printed messages for full license';
 
     RAISERROR('
 MIT License
@@ -368,7 +373,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 WHEN dows.wait_type = N'PAGELATCH_UP'
                 THEN N'Potential tempdb contention'
                 WHEN dows.wait_type LIKE N'LCK%'
-                THEN N'Queries being blocked'
+                THEN N'Queries waiting to acquire locks'
             END,
         hours_wait_time =
             CONVERT
