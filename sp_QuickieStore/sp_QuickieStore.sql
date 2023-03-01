@@ -1041,6 +1041,7 @@ SELECT
 FROM sys.databases AS d
 WHERE @get_all_databases = 1
 AND   d.is_query_store_on = 1
+AND   d.database_id > 4
 OPTION(RECOMPILE);
 
 DECLARE
