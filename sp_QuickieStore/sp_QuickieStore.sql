@@ -72,6 +72,7 @@ CREATE OR ALTER PROCEDURE
     @wait_filter varchar(20) = NULL,
     @expert_mode bit = 0,
     @format_output bit = 1,
+    @get_all_databases bit = 0,
     @version varchar(30) = NULL OUTPUT,
     @version_date datetime = NULL OUTPUT,
     @help bit = 0,
@@ -167,6 +168,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
+                WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
                 WHEN N'@version' THEN 'OUTPUT; for support'
                 WHEN N'@version_date' THEN 'OUTPUT; for support'
                 WHEN N'@help' THEN 'how you got here'
@@ -200,6 +202,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@expert_mode' THEN '0 or 1'
                 WHEN N'@format_output' THEN '0 or 1'
+                WHEN N'@get_all_databases' THEN '0 or 1'
                 WHEN N'@version' THEN 'none; OUTPUT'
                 WHEN N'@version_date' THEN 'none; OUTPUT'
                 WHEN N'@help' THEN '0 or 1'
@@ -233,6 +236,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
                 WHEN N'@format_output' THEN '1'
+                WHEN N'@get_all_databases' THEN '0'
                 WHEN N'@version' THEN 'none; OUTPUT'
                 WHEN N'@version_date' THEN 'none; OUTPUT'
                 WHEN N'@help' THEN '0'
@@ -537,6 +541,7 @@ Query Store Setup
 CREATE TABLE
     #database_query_store_options
 (
+    database_id int NOT NULL,
     desired_state_desc nvarchar(60) NULL,
     actual_state_desc nvarchar(60) NULL,
     readonly_reason nvarchar(100) NULL,
@@ -561,6 +566,7 @@ Plans and Plan information
 CREATE TABLE
     #query_store_plan
 (
+    database_id int NOT NULL,
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
     all_plan_ids varchar(MAX),
@@ -591,6 +597,7 @@ Queries and Compile Information
 CREATE TABLE
     #query_store_query
 (
+    database_id int NOT NULL,
     query_id bigint NOT NULL,
     query_text_id bigint NOT NULL,
     context_settings_id bigint NOT NULL,
@@ -653,8 +660,7 @@ CREATE TABLE
         (count_compiles * avg_compile_memory_mb),
     last_compile_memory_mb bigint NULL,
     max_compile_memory_mb bigint NULL,
-    is_clouddb_internal_query bit NULL,
-    database_id int NULL
+    is_clouddb_internal_query bit NULL
 );
 
 /*
@@ -663,6 +669,7 @@ Query Text And Columns From sys.dm_exec_query_stats
 CREATE TABLE
     #query_store_query_text
 (
+    database_id int NOT NULL,
     query_text_id bigint NOT NULL,
     query_sql_text xml NULL,
     statement_sql_handle varbinary(64) NULL,
@@ -725,6 +732,7 @@ Runtime stats information
 CREATE TABLE
     #query_store_runtime_stats
 (
+    database_id int NOT NULL,
     runtime_stats_id bigint NOT NULL,
     plan_id bigint NOT NULL,
     runtime_stats_interval_id bigint NOT NULL,
@@ -826,6 +834,7 @@ Wait Stats, When Available (2017+)
 CREATE TABLE
     #query_store_wait_stats
 (
+    database_id int NOT NULL,
     plan_id bigint NOT NULL,
     wait_category_desc nvarchar(60) NOT NULL,
     total_query_wait_time_ms bigint NOT NULL,
@@ -841,6 +850,7 @@ Context is everything
 CREATE TABLE
     #query_context_settings
 (
+    database_id int NOT NULL,
     context_settings_id bigint NOT NULL,
     set_options varbinary(8) NULL,
     language_id smallint NOT NULL,
@@ -861,6 +871,7 @@ Feed me Seymour
 CREATE TABLE
     #query_store_plan_feedback
 (
+    database_id int NOT NULL,
     plan_feedback_id bigint,
     plan_id bigint,
     feature_desc nvarchar(120),
@@ -876,6 +887,7 @@ America's Most Hinted
 CREATE TABLE
     #query_store_query_hints
 (
+    database_id int NOT NULL,
     query_hint_id bigint,
     query_id bigint,
     query_hint_text nvarchar(MAX),
@@ -890,6 +902,7 @@ Variant? Deviant? You decide!
 CREATE TABLE
     #query_store_query_variant
 (
+    database_id int NOT NULL,
     query_variant_query_id bigint,
     parent_query_id bigint,
     dispatcher_plan_id bigint
@@ -901,6 +914,7 @@ Replicants
 CREATE TABLE
     #query_store_replicas
 (
+    database_id int NOT NULL,
     replica_group_id bigint,
     role_type smallint,
     replica_name nvarchar(1288)
@@ -912,6 +926,7 @@ Location, location, location
 CREATE TABLE
     #query_store_plan_forcing_locations
 (
+    database_id int NOT NULL,
     plan_forcing_location_id bigint,
     query_id bigint,
     plan_id bigint,
@@ -941,28 +956,34 @@ CREATE TABLE
         )
 );
 
+/*GET ALL THOSE DATABASES*/
+CREATE TABLE
+    #databases
+(
+    database_name sysname PRIMARY KEY
+);
+
+
 /*
 Try to be helpful by subbing in a database name if null
 */
 IF
   (
       @database_name IS NULL
-        AND LOWER
-            (
-                DB_NAME()
-            )
-            NOT IN
-            (
-                N'master',
-                N'model',
-                N'msdb',
-                N'tempdb',
-                N'dbatools',
-                N'dbadmin',
-                N'dbmaintenance',
-                N'rdsadmin',
-                N'other_memes'
-            )
+      AND LOWER(DB_NAME())
+          NOT IN
+          (
+              N'master',
+              N'model',
+              N'msdb',
+              N'tempdb',
+              N'dbatools',
+              N'dbadmin',
+              N'dbmaintenance',
+              N'rdsadmin',
+              N'other_memes'
+          )
+      AND @get_all_databases = 0
   )
 BEGIN
     SELECT
@@ -984,7 +1005,7 @@ DECLARE
     @new bit,
     @sql nvarchar(MAX),
     @isolation_level nvarchar(MAX),
-    @parameters nvarchar(200),
+    @parameters nvarchar(4000),
     @plans_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(MAX),
@@ -1003,6 +1024,42 @@ DECLARE
     @em tinyint,
     @fo tinyint;
 
+
+INSERT
+    #databases WITH(TABLOCK)
+(
+    database_name
+)
+SELECT
+    @database_name
+WHERE @get_all_databases = 0
+
+UNION ALL
+
+SELECT
+    d.name
+FROM sys.databases AS d
+WHERE @get_all_databases = 1
+AND   d.is_query_store_on = 1
+OPTION(RECOMPILE);
+
+DECLARE
+    database_cursor CURSOR
+    LOCAL
+    STATIC
+FOR
+SELECT
+    d.database_name
+FROM #databases AS d;
+
+OPEN database_cursor;
+
+FETCH NEXT 
+FROM database_cursor
+INTO @database_name;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
 /*
 Some variable assignment, because why not?
 */
@@ -1076,7 +1133,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @end_date datetime,
           @execution_count bigint,
           @duration_ms bigint,
-          @execution_type_desc nvarchar(60)',
+          @execution_type_desc nvarchar(60),
+          @database_id int',
     @plans_top =
         CASE
             WHEN @include_plan_ids IS NULL
@@ -1265,7 +1323,9 @@ SELECT
     @debug =
         ISNULL(@debug, 0),
     @troubleshoot_performance =
-        ISNULL(@troubleshoot_performance, 0);
+        ISNULL(@troubleshoot_performance, 0),
+    @get_all_databases = 
+        ISNULL(@get_all_databases, 0);
 
 /*
 Let's make sure things will work
@@ -1280,8 +1340,12 @@ IF
         OR @collation IS NULL
   )
 BEGIN
-    RAISERROR('Database %s does not exist', 11, 1, @database_name) WITH NOWAIT;
-    RETURN;
+    RAISERROR('Database %s does not exist', 10, 1, @database_name) WITH NOWAIT;
+    
+    IF @get_all_databases = 0
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /*
@@ -1350,11 +1414,11 @@ SELECT
                                OR dqso.actual_state IS NULL )
                  )
             OR   NOT EXISTS
-                     (
-                         SELECT
-                             1/0
-                         FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
-                     )
+                 (
+                     SELECT
+                         1/0
+                     FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
+                 )
             THEN 0
             ELSE 1
         END
@@ -1388,8 +1452,12 @@ END;
 
 IF @query_store_exists = 0
 BEGIN
-    RAISERROR('Query Store doesn''t seem to be enabled for database: %s', 11, 1, @database_name) WITH NOWAIT;
-    RETURN;
+    RAISERROR('Query Store doesn''t seem to be enabled for database: %s', 10, 1, @database_name) WITH NOWAIT;
+    
+    IF @get_all_databases = 0
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /*
@@ -1406,9 +1474,9 @@ BEGIN
     BEGIN
 
         EXEC sys.sp_executesql
-        @troubleshoot_insert,
-      N'@current_table nvarchar(100)',
-        @current_table;
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
 
         SET STATISTICS XML ON;
 
@@ -1463,8 +1531,12 @@ OPTION(RECOMPILE);' + @nc10;
         BEGIN
             RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s
 Check that you spelled everything correctly and you''re in the right database',
-                       11, 1, @procedure_name, @database_name) WITH NOWAIT;
-        RETURN;
+                       10, 1, @procedure_name, @database_name) WITH NOWAIT;
+        
+        IF @get_all_databases = 0
+        BEGIN
+            RETURN;
+        END
     END;
 END; /*End procedure existence checking*/
 
@@ -1527,8 +1599,12 @@ IF
       AND @new = 0
   )
 BEGIN
-   RAISERROR('Query Store wait stats are not available prior to SQL Server 2017', 11, 1) WITH NOWAIT;
-   RETURN;
+    RAISERROR('Query Store wait stats are not available prior to SQL Server 2017', 10, 1) WITH NOWAIT;
+    
+    IF @get_all_databases = 0
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /*
@@ -1557,8 +1633,12 @@ IF
           )
   )
 BEGIN
-   RAISERROR('The wait category (%s) you chose is invalid', 11, 1, @wait_filter) WITH NOWAIT;
-   RETURN;
+    RAISERROR('The wait category (%s) you chose is invalid', 10, 1, @wait_filter) WITH NOWAIT;
+    
+    IF @get_all_databases = 0
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /*
@@ -1632,8 +1712,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @query_store_waits_enabled = 0
     BEGIN
-       RAISERROR('Query Store wait stats are not enabled for database %s', 11, 1, @database_name_quoted) WITH NOWAIT;
-       RETURN;
+        RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
+        IF @get_all_databases = 0
+        BEGIN
+            RETURN;
+        END;
     END;
 
 END; /*End wait stats checks*/
@@ -1875,12 +1958,12 @@ BEGIN
 
         SELECT
            @where_clause += N'AND   NOT EXISTS
-          (
-             SELECT
-                1/0
-             FROM #ignore_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
+      (
+         SELECT
+            1/0
+         FROM #ignore_plan_ids AS idi
+         WHERE idi.plan_id = qsrs.plan_id
+      )' + @nc10;
 
     END; /*End ignore plan ids*/
 
@@ -2082,12 +2165,12 @@ OPTION(RECOMPILE);' + @nc10;
         BEGIN
         SELECT
                @where_clause += N'AND   NOT EXISTS
-              (
-                 SELECT
-                    1/0
-                 FROM #ignore_plan_ids AS idi
-                 WHERE idi.plan_id = qsrs.plan_id
-              )' + @nc10;
+          (
+             SELECT
+                1/0
+             FROM #ignore_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
           END;
     END; /*End ignore query ids*/
 
@@ -2321,12 +2404,12 @@ OPTION(RECOMPILE);' + @nc10;
         BEGIN
         SELECT
                @where_clause += N'AND   NOT EXISTS
-              (
-                 SELECT
-                    1/0
-                 FROM #ignore_plan_ids AS idi
-                 WHERE idi.plan_id = qsrs.plan_id
-              )' + @nc10;
+          (
+             SELECT
+                1/0
+             FROM #ignore_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
           END;
     END; /*End ignore query hashes*/
 
@@ -2530,12 +2613,12 @@ OPTION(RECOMPILE);' + @nc10;
         BEGIN
         SELECT
                @where_clause += N'AND   NOT EXISTS
-              (
-                 SELECT
-                    1/0
-                 FROM #ignore_plan_ids AS idi
-                 WHERE idi.plan_id = qsrs.plan_id
-              )' + @nc10;
+          (
+             SELECT
+                1/0
+             FROM #ignore_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
           END;
     END; /*End ignore plan hashes*/
 
@@ -2767,12 +2850,12 @@ OPTION(RECOMPILE);' + @nc10;
         BEGIN
         SELECT
                @where_clause += N'AND   NOT EXISTS
-              (
-                 SELECT
-                    1/0
-                 FROM #ignore_plan_ids AS idi
-                 WHERE idi.plan_id = qsrs.plan_id
-              )' + @nc10;
+          (
+             SELECT
+                1/0
+             FROM #ignore_plan_ids AS idi
+             WHERE idi.plan_id = qsrs.plan_id
+          )' + @nc10;
           END;
     END; /*End ignore plan hashes*/
 
@@ -3038,19 +3121,19 @@ SELECT DISTINCT
    qsp.plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 WHERE NOT EXISTS
-          (
-              SELECT
-                 1/0
-              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                ON qsqt.query_text_id = qsq.query_text_id
-              WHERE qsq.query_id = qsp.query_id
-              AND   qsqt.query_sql_text NOT LIKE ''ALTER INDEX%''
-              AND   qsqt.query_sql_text NOT LIKE ''CREATE%INDEX%''
-              AND   qsqt.query_sql_text NOT LIKE ''CREATE STATISTICS%''
-              AND   qsqt.query_sql_text NOT LIKE ''UPDATE STATISTICS%''
-              AND   qsqt.query_sql_text NOT LIKE ''SELECT StatMan%''
-          )
+      (
+          SELECT
+             1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+            ON qsqt.query_text_id = qsq.query_text_id
+          WHERE qsq.query_id = qsp.query_id
+          AND   qsqt.query_sql_text NOT LIKE ''ALTER INDEX%''
+          AND   qsqt.query_sql_text NOT LIKE ''CREATE%INDEX%''
+          AND   qsqt.query_sql_text NOT LIKE ''CREATE STATISTICS%''
+          AND   qsqt.query_sql_text NOT LIKE ''UPDATE STATISTICS%''
+          AND   qsqt.query_sql_text NOT LIKE ''SELECT StatMan%''
+      )
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -3084,12 +3167,12 @@ END;
 
 SELECT
     @where_clause += N'AND   NOT EXISTS
-          (
-              SELECT
-                  1/0
-              FROM #maintenance_plans AS mp
-              WHERE mp.plan_id = qsrs.plan_id
-          )' + @nc10;
+      (
+          SELECT
+              1/0
+          FROM #maintenance_plans AS mp
+          WHERE mp.plan_id = qsrs.plan_id
+      )' + @nc10;
 
 /*
 Tidy up the where clause a bit
@@ -3161,7 +3244,8 @@ EXEC sys.sp_executesql
     @end_date,
     @execution_count,
     @duration_ms,
-    @execution_type_desc;
+    @execution_type_desc,
+    @database_id;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -3204,6 +3288,7 @@ END;
 SELECT
     @sql += N'
 SELECT
+    @database_id,
     qsrs.runtime_stats_id,
     qsrs.plan_id,
     qsrs.runtime_stats_interval_id,
@@ -3320,7 +3405,7 @@ IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 INSERT
     #query_store_runtime_stats WITH(TABLOCK)
 (
-    runtime_stats_id, plan_id, runtime_stats_interval_id, execution_type_desc,
+    database_id, runtime_stats_id, plan_id, runtime_stats_interval_id, execution_type_desc,
     first_execution_time, last_execution_time, count_executions,
     avg_duration_ms, last_duration_ms, min_duration_ms, max_duration_ms,
     avg_cpu_time_ms, last_cpu_time_ms, min_cpu_time_ms, max_cpu_time_ms,
@@ -3344,7 +3429,8 @@ EXEC sys.sp_executesql
     @end_date,
     @execution_count,
     @duration_ms,
-    @execution_type_desc;
+    @execution_type_desc,
+    @database_id;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -3387,6 +3473,7 @@ END;
 SELECT
     @sql += N'
 SELECT
+    @database_id,
     qsp.plan_id,
     qsp.query_id,
     all_plan_ids =
@@ -3450,6 +3537,7 @@ CROSS APPLY
     AND   qsp.is_online_index_plan = 0
     ORDER BY qsp.last_execution_time DESC
 ) AS qsp
+WHERE qsrs.database_id = @database_id
 OPTION(RECOMPILE, OPTIMIZE FOR (@plans_top = 9223372036854775807));' + @nc10;
 
 IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -3457,6 +3545,7 @@ IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 INSERT
     #query_store_plan WITH(TABLOCK)
 (
+    database_id,
     plan_id,
     query_id,
     all_plan_ids,
@@ -3482,8 +3571,10 @@ INSERT
 )
 EXEC sys.sp_executesql
     @sql,
-  N'@plans_top bigint',
-    @plans_top;
+  N'@plans_top bigint,
+    @database_id int',
+    @plans_top,
+    @database_id;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -3526,6 +3617,7 @@ END;
 SELECT
     @sql += N'
 SELECT
+    @database_id,
     qsq.query_id,
     qsq.query_text_id,
     qsq.context_settings_id,
@@ -3554,8 +3646,7 @@ SELECT
     ((qsq.avg_compile_memory_kb * 8) / 1024.),
     ((qsq.last_compile_memory_kb * 8) / 1024.),
     ((qsq.max_compile_memory_kb * 8) / 1024.),
-    qsq.is_clouddb_internal_query,
-    @database_id
+    qsq.is_clouddb_internal_query
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
@@ -3565,6 +3656,7 @@ CROSS APPLY
     WHERE qsq.query_id = qsp.query_id
     ORDER BY qsq.last_execution_time DESC
 ) AS qsq
+WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -3572,6 +3664,7 @@ IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 INSERT
     #query_store_query WITH(TABLOCK)
 (
+    database_id,
     query_id,
     query_text_id,
     context_settings_id,
@@ -3600,8 +3693,7 @@ INSERT
     avg_compile_memory_mb,
     last_compile_memory_mb,
     max_compile_memory_mb,
-    is_clouddb_internal_query,
-    database_id
+    is_clouddb_internal_query
 )
 EXEC sys.sp_executesql
     @sql,
@@ -3650,6 +3742,7 @@ END;
 SELECT
     @sql += N'
 SELECT
+    @database_id,
     qsqt.query_text_id,
     query_sql_text =
         (
@@ -3677,6 +3770,7 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
     WHERE qsqt.query_text_id = qsq.query_text_id
 ) AS qsqt
+WHERE qsq.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -3684,6 +3778,7 @@ IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 INSERT
     #query_store_query_text WITH(TABLOCK)
 (
+    database_id,
     query_text_id,
     query_sql_text,
     statement_sql_handle,
@@ -3691,7 +3786,9 @@ INSERT
     has_restricted_text
 )
 EXEC sys.sp_executesql
-    @sql;
+    @sql,
+  N'@database_id int',
+    @database_id;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -3902,6 +3999,7 @@ END;
 SELECT
     @sql += N'
 SELECT
+    @database_id,
     dqso.desired_state_desc,
     dqso.actual_state_desc,
     readonly_reason =
@@ -3970,6 +4068,7 @@ IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 INSERT
     #database_query_store_options WITH(TABLOCK)
 (
+    database_id,
     desired_state_desc,
     actual_state_desc,
     readonly_reason,
@@ -3988,7 +4087,9 @@ INSERT
     wait_stats_capture_mode_desc
 )
 EXEC sys.sp_executesql
-   @sql;
+    @sql,
+  N'@database_id int',
+    @database_id;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -4044,6 +4145,7 @@ BEGIN
     SELECT
         @sql += N'
 SELECT
+    @database_id,
     qsws.plan_id,
     qsws.wait_category_desc,
     total_query_wait_time_ms =
@@ -4068,10 +4170,11 @@ CROSS APPLY
     AND   qsws.min_query_wait_time_ms > 0
     ORDER BY qsws.avg_query_wait_time_ms DESC
 ) AS qsws
+WHERE qsrs.database_id = @database_id
 GROUP BY
     qsws.plan_id,
     qsws.wait_category_desc
-HAVING SUM(qsws.min_query_wait_time_ms) >= 0.
+HAVING SUM(qsws.min_query_wait_time_ms) > 0.
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -4079,6 +4182,7 @@ OPTION(RECOMPILE);' + @nc10;
     INSERT
         #query_store_wait_stats WITH(TABLOCK)
     (
+        database_id,
         plan_id,
         wait_category_desc,
         total_query_wait_time_ms,
@@ -4088,7 +4192,9 @@ OPTION(RECOMPILE);' + @nc10;
         max_query_wait_time_ms
     )
     EXEC sys.sp_executesql
-        @sql;
+        @sql,
+      N'@database_id int',
+        @database_id;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -4133,6 +4239,7 @@ END;
 SELECT
     @sql += N'
 SELECT
+    @database_id,
     context_settings_id,
     set_options,
     language_id,
@@ -4152,9 +4259,11 @@ WHERE EXISTS
         1/0
     FROM #query_store_runtime_stats AS qsrs
     JOIN #query_store_plan AS qsp
-      ON qsrs.plan_id = qsp.plan_id
+      ON  qsrs.plan_id = qsp.plan_id
+      AND qsrs.database_id = qsp.database_id
     JOIN #query_store_query AS qsq
-      ON qsp.query_id = qsq.query_id
+      ON  qsp.query_id = qsq.query_id
+      AND qsp.database_id = qsq.database_id
     WHERE qsq.context_settings_id = qcs.context_settings_id
 )
 OPTION(RECOMPILE);';
@@ -4162,6 +4271,7 @@ OPTION(RECOMPILE);';
 INSERT
     #query_context_settings WITH(TABLOCK)
 (
+    database_id,
     context_settings_id,
     set_options,
     language_id,
@@ -4176,7 +4286,9 @@ INSERT
     is_contained
 )
 EXEC sys.sp_executesql
-    @sql;
+    @sql,
+  N'@database_id int',
+    @database_id;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -4282,11 +4394,14 @@ UPDATE qsrs
         )
 FROM #query_store_runtime_stats AS qsrs
 JOIN #query_store_plan AS qsp
-    ON qsrs.plan_id = qsp.plan_id
+    ON  qsrs.plan_id = qsp.plan_id
+    AND qsrs.database_id = qsp.database_id
 JOIN #query_store_query AS qsq
-    ON qsp.query_id = qsq.query_id
+    ON  qsp.query_id = qsq.query_id
+    AND qsp.database_id = qsq.database_id
 JOIN #query_context_settings AS qcs
-    ON qsq.context_settings_id = qcs.context_settings_id
+    ON  qsq.context_settings_id = qcs.context_settings_id
+    AND qsq.database_id = qcs.database_id
 OPTION(RECOMPILE);
 
 IF @sql_2022_views = 1
@@ -4312,6 +4427,7 @@ BEGIN
     SELECT
         @sql += N'
 SELECT
+    @database_id,
     qspf.plan_feedback_id,
     qspf.plan_id,
     qspf.feature_desc,
@@ -4334,6 +4450,7 @@ OPTION(RECOMPILE);' + @nc10;
     INSERT
         #query_store_plan_feedback WITH(TABLOCK)
     (
+        database_id,
         plan_feedback_id,
         plan_id,
         feature_desc,
@@ -4343,7 +4460,9 @@ OPTION(RECOMPILE);' + @nc10;
         last_updated_time
     )
     EXEC sys.sp_executesql
-        @sql;
+        @sql,
+      N'@database_id int',
+        @database_id;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -4384,6 +4503,7 @@ OPTION(RECOMPILE);' + @nc10;
     SELECT
         @sql += N'
 SELECT
+    @database_id,
     qsqv.query_variant_query_id,
     qsqv.parent_query_id,
     qsqv.dispatcher_plan_id
@@ -4402,12 +4522,15 @@ OPTION(RECOMPILE);' + @nc10;
     INSERT
         #query_store_query_variant WITH(TABLOCK)
     (
+        database_id,
         query_variant_query_id,
         parent_query_id,
         dispatcher_plan_id
     )
     EXEC sys.sp_executesql
-        @sql;
+        @sql,
+      N'@database_id int',
+        @database_id;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -4448,6 +4571,7 @@ OPTION(RECOMPILE);' + @nc10;
     SELECT
         @sql += N'
 SELECT
+    @database_id,
     qsqh.query_hint_id,
     qsqh.query_id,
     qsqh.query_hint_text,
@@ -4469,6 +4593,7 @@ OPTION(RECOMPILE);' + @nc10;
     INSERT
         #query_store_query_hints WITH(TABLOCK)
     (
+        database_id,
         query_hint_id,
         query_id,
         query_hint_text,
@@ -4477,7 +4602,9 @@ OPTION(RECOMPILE);' + @nc10;
         source_desc
     )
     EXEC sys.sp_executesql
-        @sql;
+        @sql,
+      N'@database_id int',
+        @database_id;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -4521,6 +4648,7 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT
             @sql += N'
 SELECT
+    @database_id,
     qspfl.plan_forcing_location_id,
     qspfl.query_id,
     qspfl.plan_id,
@@ -4541,13 +4669,16 @@ OPTION(RECOMPILE);' + @nc10;
         INSERT
             #query_store_plan_forcing_locations WITH(TABLOCK)
         (
+            database_id,
             plan_forcing_location_id,
             query_id,
             plan_id,
             replica_group_id
         )
         EXEC sys.sp_executesql
-            @sql;
+            @sql,
+          N'@database_id int',
+            @database_id;
 
         IF @troubleshoot_performance = 1
         BEGIN
@@ -4588,6 +4719,7 @@ OPTION(RECOMPILE);' + @nc10;
         SELECT
             @sql += N'
 SELECT
+    @database_id,
     qsr.replica_group_id,
     qsr.role_type,
     qsr.replica_name
@@ -4606,12 +4738,15 @@ OPTION(RECOMPILE);' + @nc10;
         INSERT
             #query_store_replicas WITH(TABLOCK)
         (
+            database_id,
             replica_group_id,
             role_type,
             replica_name
         )
         EXEC sys.sp_executesql
-            @sql;
+            @sql,
+          N'@database_id int',
+            @database_id;
 
         IF @troubleshoot_performance = 1
         BEGIN
@@ -4635,6 +4770,24 @@ OPTION(RECOMPILE);' + @nc10;
     END; /*End AG queries*/
 
 END; /*End SQL 2022 views*/
+
+TRUNCATE TABLE
+    #distinct_plans;
+TRUNCATE TABLE
+    #procedure_plans;
+TRUNCATE TABLE
+    #maintenance_plans;
+TRUNCATE TABLE
+    #dm_exec_query_stats;
+
+FETCH NEXT
+FROM database_cursor
+INTO @database_name;
+
+END;
+
+CLOSE database_cursor;
+DEALLOCATE database_cursor;
 
 /*
 This is where we start returning results
@@ -4682,6 +4835,8 @@ FROM
     SELECT
         source =
             ''runtime_stats'',
+        database_name = 
+            DB_NAME(qsrs.database_id),
         qsp.query_id,
         qsrs.plan_id,
         qsp.all_plan_ids,'
@@ -4845,6 +5000,8 @@ FROM
     SELECT
         source =
             ''runtime_stats'',
+        database_name = 
+            DB_NAME(qsrs.database_id),
         qsp.query_id,
         qsrs.plan_id,
         qsp.all_plan_ids,'
@@ -5013,6 +5170,8 @@ FROM
     SELECT
         source =
             ''runtime_stats'',
+        database_name = 
+            DB_NAME(qsrs.database_id),
         qsp.query_id,
         qsrs.plan_id,
         qsp.all_plan_ids,'
@@ -5143,6 +5302,8 @@ FROM
     SELECT
         source =
             ''runtime_stats'',
+        database_name = 
+            DB_NAME(qsrs.database_id),
         qsp.query_id,
         qsrs.plan_id,
         qsp.all_plan_ids,'
@@ -5284,6 +5445,7 @@ FROM
                     )
             FROM #query_store_plan AS qsp
             WHERE qsp.plan_id = qsrs.plan_id
+            AND   qsp.database_id = qsrs.database_id
         ) AS x
         WHERE x.pn = 1
     ) AS qsp
@@ -5295,6 +5457,7 @@ FROM
         JOIN #query_store_query_text AS qsqt
           ON qsqt.query_text_id = qsq.query_text_id
         WHERE qsq.query_id = qsp.query_id
+        AND   qsq.query_id = qsp.query_id
         ORDER BY qsq.last_execution_time DESC
     ) AS qsqt
     CROSS APPLY
@@ -5303,6 +5466,7 @@ FROM
             qsq.*
         FROM #query_store_query AS qsq
         WHERE qsq.query_id = qsp.query_id
+        AND   qsq.database_id = qsp.database_id
         ORDER BY qsq.last_execution_time DESC
     ) AS qsq'
     );
@@ -5349,6 +5513,7 @@ FROM
                             '' ms)''
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
+                       AND   qsws.database_id = qsrs.database_id
                        GROUP BY qsws.wait_category_desc
                        ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
@@ -5400,6 +5565,7 @@ FROM
                             '' ms)''
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
+                       AND   qsws.database_id = qsrs.database_id
                        GROUP BY qsws.wait_category_desc
                        ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
@@ -5507,6 +5673,8 @@ BEGIN
                 @current_table = 'selecting plan feedback';
 
             SELECT
+                database_name = 
+                    DB_NAME(qspf.database_id),
                 qspf.plan_feedback_id,
                 qspf.plan_id,
                 qspf.feature_desc,
@@ -5536,6 +5704,8 @@ BEGIN
                 @current_table = 'selecting query hints';
 
             SELECT
+                database_name = 
+                    DB_NAME(qsqh.database_id),
                 qsqh.query_hint_id,
                 qsqh.query_id,
                 qsqh.query_hint_text,
@@ -5564,6 +5734,8 @@ BEGIN
                 @current_table = 'selecting query variants';
 
             SELECT
+                database_name = 
+                    DB_NAME(qsqv.database_id),
                 qsqv.query_variant_query_id,
                 qsqv.parent_query_id,
                 qsqv.dispatcher_plan_id
@@ -5596,6 +5768,8 @@ BEGIN
             SELECT
                 source =
                     'compilation_stats',
+                database_name = 
+                    DB_NAME(qsq.database_id),
                 qsq.query_id,
                 qsq.object_name,
                 qsq.query_text_id,
@@ -5644,6 +5818,7 @@ BEGIN
                     qsqt.*
                 FROM #query_store_query_text AS qsqt
                 WHERE qsqt.query_text_id = qsq.query_text_id
+                AND   qsqt.database_id = qsq.database_id
             ) AS qsqt
         ) AS x
         WHERE x.n = 1
@@ -5667,6 +5842,8 @@ BEGIN
         SELECT
             source =
                 'resource_stats',
+            database_name = 
+                DB_NAME(qsq.database_id),
             qsq.query_id,
             qsq.object_name,
             qsqt.total_grant_mb,
@@ -5691,7 +5868,8 @@ BEGIN
             qsqt.max_used_threads
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
-          ON qsq.query_text_id = qsqt.query_text_id
+          ON  qsq.query_text_id = qsqt.query_text_id
+          AND qsq.database_id = qsqt.database_id
         WHERE 
         (
             qsqt.total_grant_mb IS NOT NULL
@@ -5725,6 +5903,8 @@ BEGIN
             SELECT DISTINCT
                 source =
                     'query_store_wait_stats_by_query',
+                database_name = 
+                    DB_NAME(qsws.database_id),
                 qsws.plan_id,
                 x.object_name,
                 qsws.wait_category_desc,
@@ -5755,10 +5935,13 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                  ON qsrs.plan_id = qsp.plan_id
+                  ON  qsrs.plan_id = qsp.plan_id
+                  AND qsrs.database_id = qsp.database_id
                 JOIN #query_store_query AS qsq
-                  ON qsp.query_id = qsq.query_id
+                  ON  qsp.query_id = qsq.query_id
+                  AND qsp.database_id = qsq.database_id
                 WHERE qsws.plan_id = qsrs.plan_id
+                AND   qsws.database_id = qsrs.database_id
             ) AS x
             ORDER BY
                 qsws.plan_id,
@@ -5771,6 +5954,8 @@ BEGIN
             SELECT
                 source =
                     'query_store_wait_stats_total',
+                database_name = 
+                    DB_NAME(qsws.database_id),
                 qsws.wait_category_desc,
                 total_query_wait_time_ms =
                     SUM(qsws.total_query_wait_time_ms),
@@ -5804,12 +5989,16 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                  ON qsrs.plan_id = qsp.plan_id
+                  ON  qsrs.plan_id = qsp.plan_id
+                  AND qsrs.database_id = qsp.database_id
                 JOIN #query_store_query AS qsq
-                  ON qsp.query_id = qsq.query_id
+                  ON  qsp.query_id = qsq.query_id
+                  AND qsp.database_id = qsq.database_id
                 WHERE qsws.plan_id = qsrs.plan_id
             ) AS x
-            GROUP BY qsws.wait_category_desc
+            GROUP BY 
+                qsws.wait_category_desc,
+                qsws.database_id
             ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
             OPTION(RECOMPILE);
 
@@ -5852,7 +6041,8 @@ BEGIN
                    1/0
                FROM #query_store_replicas AS qsr
                JOIN #query_store_plan_forcing_locations AS qspfl
-                 ON qsr.replica_group_id = qspfl.replica_group_id
+                 ON  qsr.replica_group_id = qspfl.replica_group_id
+                 AND qsr.database_id = qspfl.database_id
            )
         BEGIN
 
@@ -5860,6 +6050,8 @@ BEGIN
             @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
 
         SELECT
+            database_name = 
+                DB_NAME(qsr.database_id),
             qsr.replica_group_id,
             qsr.role_type,
             qsr.replica_name,
@@ -5893,6 +6085,8 @@ BEGIN
     SELECT
         source =
             ''query_store_options'',
+        database_name = 
+            DB_NAME(dqso.database_id),
         dqso.desired_state_desc,
         dqso.actual_state_desc,
         dqso.readonly_reason,
@@ -5972,6 +6166,8 @@ BEGIN
                 @current_table = 'selecting plan feedback';
 
             SELECT
+                database_name = 
+                    DB_NAME(qspf.database_id),
                 qspf.plan_feedback_id,
                 qspf.plan_id,
                 qspf.feature_desc,
@@ -6001,6 +6197,8 @@ BEGIN
                 @current_table = 'selecting query hints';
 
             SELECT
+                database_name = 
+                    DB_NAME(qsqh.database_id),
                 qsqh.query_hint_id,
                 qsqh.query_id,
                 qsqh.query_hint_text,
@@ -6029,6 +6227,8 @@ BEGIN
                 @current_table = 'selecting query variants';
 
             SELECT
+                database_name = 
+                    DB_NAME(qsqv.database_id),
                 qsqv.query_variant_query_id,
                 qsqv.parent_query_id,
                 qsqv.dispatcher_plan_id
@@ -6060,6 +6260,8 @@ BEGIN
             SELECT
                 source =
                     'compilation_stats',
+                database_name = 
+                    DB_NAME(qsq.database_id),
                 qsq.query_id,
                 qsq.object_name,
                 qsq.query_text_id,
@@ -6128,6 +6330,7 @@ BEGIN
                     qsqt.*
                 FROM #query_store_query_text AS qsqt
                 WHERE qsqt.query_text_id = qsq.query_text_id
+                AND   qsqt.database_id = qsq.database_id
             ) AS qsqt
         ) AS x
         WHERE x.n = 1
@@ -6151,6 +6354,8 @@ BEGIN
         SELECT
             source =
                 'resource_stats',
+            database_name = 
+                DB_NAME(qsq.database_id),
             qsq.query_id,
             qsq.object_name,
             total_grant_mb =
@@ -6187,7 +6392,8 @@ BEGIN
             qsqt.max_used_threads
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
-          ON qsq.query_text_id = qsqt.query_text_id
+          ON  qsq.query_text_id = qsqt.query_text_id
+          AND qsq.database_id = qsqt.database_id
         WHERE 
         ( 
             qsqt.total_grant_mb IS NOT NULL
@@ -6221,6 +6427,8 @@ BEGIN
             SELECT
                 source =
                     'query_store_wait_stats_by_query',
+                database_name = 
+                    DB_NAME(qsws.database_id),
                 qsws.plan_id,
                 x.object_name,
                 qsws.wait_category_desc,
@@ -6256,10 +6464,13 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                  ON qsrs.plan_id = qsp.plan_id
+                  ON  qsrs.plan_id = qsp.plan_id
+                  AND qsrs.database_id = qsp.database_id
                 JOIN #query_store_query AS qsq
-                  ON qsp.query_id = qsq.query_id
+                  ON  qsp.query_id = qsq.query_id
+                  AND qsp.database_id = qsq.database_id
                 WHERE qsws.plan_id = qsrs.plan_id
+                AND   qsws.database_id = qsrs.database_id
             ) AS x
             ORDER BY
                 qsws.plan_id,
@@ -6272,6 +6483,8 @@ BEGIN
             SELECT
                 source =
                     'query_store_wait_stats_total',
+                database_name = 
+                    DB_NAME(qsws.database_id),
                 qsws.wait_category_desc,
                 total_query_wait_time_ms =
                     FORMAT(SUM(qsws.total_query_wait_time_ms), 'N0'),
@@ -6305,12 +6518,17 @@ BEGIN
                     qsq.object_name
                 FROM #query_store_runtime_stats AS qsrs
                 JOIN #query_store_plan AS qsp
-                  ON qsrs.plan_id = qsp.plan_id
+                  ON  qsrs.plan_id = qsp.plan_id
+                  AND qsrs.database_id = qsp.database_id
                 JOIN #query_store_query AS qsq
-                  ON qsp.query_id = qsq.query_id
+                  ON  qsp.query_id = qsq.query_id
+                  AND qsp.database_id = qsq.database_id
                 WHERE qsws.plan_id = qsrs.plan_id
+                AND   qsws.database_id = qsrs.database_id
             ) AS x
-            GROUP BY qsws.wait_category_desc
+            GROUP BY 
+                qsws.wait_category_desc,
+                qsws.database_id
             ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
             OPTION(RECOMPILE);
 
@@ -6352,7 +6570,8 @@ BEGIN
                    1/0
                FROM #query_store_replicas AS qsr
                JOIN #query_store_plan_forcing_locations AS qspfl
-                 ON qsr.replica_group_id = qspfl.replica_group_id
+                 ON  qsr.replica_group_id = qspfl.replica_group_id
+                 AND qsr.replica_group_id = qspfl.database_id
            )
         BEGIN
 
@@ -6360,6 +6579,8 @@ BEGIN
             @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
 
         SELECT
+            database_name = 
+                DB_NAME(qsr.database_id),            
             qsr.replica_group_id,
             qsr.role_type,
             qsr.replica_name,
@@ -6369,7 +6590,8 @@ BEGIN
             qspfl.replica_group_id
         FROM #query_store_replicas AS qsr
         JOIN #query_store_plan_forcing_locations AS qspfl
-          ON qsr.replica_group_id = qspfl.replica_group_id
+          ON  qsr.replica_group_id = qspfl.replica_group_id
+          AND qsr.database_id = qspfl.database_id
         ORDER BY qsr.replica_group_id
         OPTION(RECOMPILE);
 
@@ -6394,6 +6616,8 @@ BEGIN
     SELECT
         source =
             ''query_store_options'',
+        database_name = 
+            DB_NAME(dqso.database_id),
         dqso.desired_state_desc,
         dqso.actual_state_desc,
         dqso.readonly_reason,
@@ -6729,6 +6953,28 @@ BEGIN
            @em,
        fo = 
            @fo;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #databases AS d
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#databases',
+            d.*
+        FROM #databases AS d
+        ORDER BY d.database_name
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#databases is empty';
+    END;
 
     IF EXISTS
        (
