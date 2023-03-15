@@ -719,12 +719,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     DATEADD
                     (
                         MILLISECOND,
-                        DATEDIFF
-                        (
-                            MILLISECOND,
-                            deqmg.request_time,
-                            SYSDATETIME()
-                        ),
+                        CASE
+                            WHEN 
+                                DATEDIFF
+                                (
+                                    DAY,
+                                    deqmg.request_time,
+                                    SYSDATETIME()
+                                ) >= 24
+                            THEN
+                                DATEDIFF
+                                (
+                                    SECOND,
+                                    deqmg.request_time,
+                                    SYSDATETIME()
+                                ) * 1000.
+                            ELSE
+                                DATEDIFF
+                                (
+                                    MILLISECOND,
+                                    deqmg.request_time,
+                                    SYSDATETIME()
+                                )
+                        END,
                         ''19000101''
                     ),
                     14
@@ -1246,12 +1263,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     DATEADD
                     (
                         MILLISECOND,
-                        DATEDIFF
-                        (
-                            MILLISECOND,
-                            der.start_time,
-                            SYSDATETIME()
-                        ),
+                        CASE
+                            WHEN 
+                                DATEDIFF
+                                (
+                                    DAY,
+                                    der.start_time,
+                                    SYSDATETIME()
+                                ) >= 24
+                            THEN
+                                DATEDIFF
+                                (
+                                    SECOND,
+                                    der.start_time,
+                                    SYSDATETIME()
+                                ) * 1000.
+                            ELSE
+                                DATEDIFF
+                                (
+                                    MILLISECOND,
+                                    der.start_time,
+                                    SYSDATETIME()
+                                )
+                        END,
                         ''19000101''
                     ),
                     14
