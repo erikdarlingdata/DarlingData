@@ -4525,7 +4525,7 @@ SELECT
     qspfl.query_id,
     qspfl.plan_id,
     qspfl.replica_group_id
-FROM ' + @database_name_quoted + N'.query_store_plan_forcing_locations AS qspfl
+FROM ' + @database_name_quoted + N'.sys.query_store_plan_forcing_locations AS qspfl
 WHERE EXISTS
       (
           SELECT
