@@ -1191,7 +1191,39 @@ BEGIN
     SET @delete_retention_days *= -1;    
     RAISERROR(N'Stay positive', 0, 1) WITH NOWAIT;    
 END;    
-    
+  
+/*    
+We need to do some seconds math here, because WAITFOR is very stupid    
+*/    
+RAISERROR(N'Wait For It! Wait For it!', 0, 1) WITH NOWAIT;    
+IF @seconds_sample > 0  
+BEGIN    
+    /* I really don't want this running for more than 10 minutes right now. */    
+    IF     
+    (     
+            @seconds_sample > 600     
+        AND @gimme_danger = 0     
+    )    
+    BEGIN    
+        RAISERROR(N'Yeah nah not more than 10 minutes', 10, 1) WITH NOWAIT;    
+        RAISERROR(N'(unless you set @gimme_danger = 1)', 10, 1) WITH NOWAIT;    
+        RETURN;    
+    END;    
+
+    SELECT     
+        @waitfor =     
+            CONVERT    
+            (    
+                nvarchar(20),     
+                DATEADD    
+                (    
+                    SECOND,     
+                    @seconds_sample,     
+                    0    
+                 ),     
+                 114    
+            );    
+END;      
     
 /*    
 If we're writing to a table, we don't want to do anything else    

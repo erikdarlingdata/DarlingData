@@ -21,6 +21,9 @@ sign that you need to update sp_WhoIsActive
 
 CREATE OR ALTER PROCEDURE
     dbo.sp_WhoIsActiveLogging_Main
+(
+    @RetentionPeriod int = 10
+)
 AS
 BEGIN
     /*
@@ -80,7 +83,7 @@ BEGIN
     Create the table for logging.
     */
     IF OBJECT_ID(@destination_table) IS NULL
-    BEGIN;
+    BEGIN
 
         EXEC dbo.sp_WhoIsActive
             @get_transaction_info = 1,
@@ -120,6 +123,10 @@ BEGIN
         @get_memory_info = 1,
         @destination_table = @destination_table;
 
-    /*Execute this to*/
+    /*Execute this to prune tables*/
+    EXEC dbo.sp_WhoIsActiveLogging_Retention
+        @RetentionPeriod = @RetentionPeriod;
+    
+    /*Execute this to create views*/
     EXEC dbo.sp_WhoIsActiveLogging_CreateViews;
 END;
