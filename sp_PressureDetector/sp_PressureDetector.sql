@@ -48,7 +48,7 @@ GO
 ALTER PROCEDURE
     dbo.sp_PressureDetector
 (
-    @what_to_check nvarchar(6) = N'both',
+    @what_to_check nvarchar(6) = N'all',
     @skip_plan_xml bit = 0,
     @help bit = 0,
     @debug bit = 0,
@@ -64,8 +64,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '2.80',
-    @version_date = '20221201';
+    @version = '3.00',
+    @version_date = '20230601';
 
 
 IF @help = 1
@@ -105,7 +105,7 @@ BEGIN
         valid_inputs =
             CASE
                 ap.name
-                WHEN N'@what_to_check' THEN N'"both", "cpu", and "memory"'
+                WHEN N'@what_to_check' THEN N'"all", "cpu", and "memory"'
                 WHEN N'@skip_plan_xml' THEN N'0 or 1'
                 WHEN N'@version' THEN N'none'
                 WHEN N'@version_date' THEN N'none'
@@ -174,9 +174,9 @@ END;
                 WHEN
                     CONVERT
                     (
-                        sysname,
-                        SERVERPROPERTY('EDITION')
-                    ) = N'SQL Azure'
+                        integer,
+                        SERVERPROPERTY('EngineEdition')
+                    ) = 5
                 THEN 1
                 ELSE 0
             END,
@@ -264,7 +264,24 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @database_size_out_gb nvarchar(10) = N'0',
         @total_physical_memory_gb bigint,
         @cpu_utilization xml = N'',
-        @low_memory xml = N'';
+        @low_memory xml = N'',
+        @disk_check nvarchar(MAX) = N'';
+
+DECLARE
+    @file_metrics table
+(
+    hours_uptime int,
+    drive nvarchar(2),
+    database_name nvarchar(128),
+    database_file_details nvarchar(1000),
+    file_size_gb decimal(38,2),
+    total_gb_read decimal(38,2),
+    total_read_count bigint,
+    avg_read_stall_ms decimal(38,2),
+    total_gb_written decimal(38,2),
+    total_write_count bigint,
+    avg_write_stall_ms decimal(38,2)
+)
 
     /*
     Check to see if the DAC is enabled.
@@ -363,7 +380,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 WHEN dows.wait_type = N'SOS_SCHEDULER_YIELD'
                 THEN N'Query scheduling'
                 WHEN dows.wait_type = N'THREADPOOL'
-                THEN N'Worker thread exhaustion'
+                THEN N'Potential worker thread exhaustion'
                 WHEN dows.wait_type = N'CMEMTHREAD'
                 THEN N'Tasks waiting on memory objects'
                 WHEN dows.wait_type = N'PAGELATCH_EX'
@@ -374,6 +391,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 THEN N'Potential tempdb contention'
                 WHEN dows.wait_type LIKE N'LCK%'
                 THEN N'Queries waiting to acquire locks'
+                WHEN dows.wait_type = N'WRITELOG'
+                THEN N'Transaction Log writes'
+                WHEN dows.wait_type = N'LOGBUFFER'
+                THEN N'Transaction Log buffering'
+                WHEN dows.wait_type = N'LOG_RATE_GOVERNOR'
+                THEN N'Azure Transaction Log throttling'
+                WHEN dows.wait_type = N'POOL_LOG_RATE_GOVERNOR'
+                THEN N'Azure Transaction Log throttling'
             END,
         hours_wait_time =
             CONVERT
@@ -445,7 +470,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                  /*tempdb (potentially)*/
                  N'PAGELATCH_EX', --Potential contention
                  N'PAGELATCH_SH', --Potential contention
-                 N'PAGELATCH_UP' --Potential contention
+                 N'PAGELATCH_UP', --Potential contention
+                 /*Transaction log*/
+                 N'WRITELOG',
+                 N'LOGBUFFER',
+                 N'LOG_RATE_GOVERNOR',
+                 N'POOL_LOG_RATE_GOVERNOR'
              )
         OR dows.wait_type LIKE N'LCK%' --Locking
     )
@@ -453,7 +483,198 @@ OPTION(MAXDOP 1, RECOMPILE);',
         dows.wait_time_ms DESC
     OPTION(MAXDOP 1, RECOMPILE);
 
-    IF @azure = 0
+    IF @what_to_check = 'all'
+    BEGIN
+        SET @disk_check = N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+           
+        SELECT
+            hours_uptime =
+                (
+                    SELECT
+                        DATEDIFF
+                        (
+                            HOUR,
+                            osi.sqlserver_start_time,
+                            SYSDATETIME()
+                        )
+                    FROM sys.dm_os_sys_info AS osi
+                ),
+            drive =
+                UPPER
+                (
+                    LEFT
+                    (
+                        f.physical_name,
+                        2
+                    )
+                ),
+            database_name = 
+                 DB_NAME(vfs.database_id),
+            database_file_details =
+                f.name COLLATE DATABASE_DEFAULT +
+                SPACE(1) +
+                CASE f.type
+                     WHEN 0
+                     THEN N''(data file)''
+                     WHEN 1
+                     THEN N''(transaction log)''
+                     WHEN 2
+                     THEN N''(filestream)''
+                     WHEN 4
+                     THEN N''(full-text)''
+                     ELSE QUOTENAME
+                          (
+                              f.type_desc COLLATE DATABASE_DEFAULT,
+                              N''()''
+                          )
+                END +
+                SPACE(1) +
+                QUOTENAME
+                (
+                    f.physical_name COLLATE DATABASE_DEFAULT,
+                    N''()''
+                ),
+            file_size_gb =
+                CONVERT
+                (
+                    decimal(38, 2),
+                    (vfs.size_on_disk_bytes / 1073741824.)
+                ),
+            total_gb_read =
+                CASE
+                    WHEN vfs.num_of_bytes_read > 0
+                    THEN CONVERT
+                         (
+                             decimal(38, 2),
+                             vfs.num_of_bytes_read / 1073741824.
+                         )
+                    ELSE 0
+                END,
+            total_read_count =    
+                vfs.num_of_reads,
+            avg_read_stall_ms =
+                CONVERT
+                (
+                    decimal(38, 2),
+                    vfs.io_stall_read_ms /
+                      (1.0 * vfs.num_of_reads)
+                ),
+            total_gb_written =
+                CASE
+                    WHEN vfs.num_of_bytes_written > 0
+                    THEN CONVERT
+                         (
+                             decimal(38, 2),
+                             vfs.num_of_bytes_written / 1073741824.
+                         )
+                    ELSE 0
+                END,
+            total_write_count =
+                vfs.num_of_writes,
+            avg_write_stall_ms =
+                CONVERT
+                (
+                    decimal(38, 2),
+                    vfs.io_stall_write_ms /
+                        (1.0 * vfs.num_of_writes)
+                )       
+        FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs
+        JOIN ' +
+        CONVERT
+        (
+            nvarchar(MAX),
+            CASE
+                WHEN @azure = 1
+                THEN N'sys.database_files AS f
+          ON  vfs.file_id = f.file_id
+          AND vfs.database_id = DB_ID()'
+                ELSE N'sys.master_files AS f
+          ON  vfs.file_id = f.file_id
+          AND vfs.database_id = f.database_id'
+        END +
+        N'
+        WHERE vfs.io_stall_read_ms > 0
+        OR    vfs.io_stall_write_ms > 0;'
+        );
+        
+        IF @debug = 1 
+        BEGIN 
+            PRINT SUBSTRING(@disk_check, 1, 4000);
+            PRINT SUBSTRING(@disk_check, 4000, 8000);
+        END;
+        
+        INSERT
+            @file_metrics
+        (
+            hours_uptime,
+            drive,
+            database_name,
+            database_file_details,
+            file_size_gb,
+            total_gb_read,
+            total_read_count,
+            avg_read_stall_ms,
+            total_gb_written,
+            total_write_count,
+            avg_write_stall_ms
+        )
+        EXEC sys.sp_executesql
+            @disk_check;
+
+        SELECT
+            fm.hours_uptime,
+            fm.drive,
+            fm.database_name,
+            fm.database_file_details,
+            fm.file_size_gb,
+            fm.avg_read_stall_ms,
+            fm.avg_write_stall_ms,
+            fm.total_gb_read,
+            fm.total_gb_written,
+            total_read_count = 
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            fm.total_read_count
+                        ),
+                        1
+                    ),
+                    N'.00',
+                    N''
+                ),
+            total_write_count = 
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            fm.total_write_count
+                        ),
+                        1
+                    ),
+                    N'.00',
+                    N''
+                )
+        FROM @file_metrics AS fm
+        WHERE fm.avg_read_stall_ms  > 100
+        OR    fm.avg_write_stall_ms > 100
+        ORDER BY 
+            fm.avg_read_stall_ms + 
+            fm.avg_write_stall_ms DESC;
+
+    END;
+
+    IF (@azure = 0 
+          AND @what_to_check = 'all')
     BEGIN
         SELECT
             tempdb_info =
@@ -558,7 +779,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     END;
 
     /*Memory Grant info*/
-    IF @what_to_check IN (N'both', N'memory')
+    IF @what_to_check IN (N'all', N'memory')
     BEGIN
 
         /*
@@ -793,23 +1014,23 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       N'
             deqmg.request_time,
             deqmg.grant_time,
+            wait_time_seconds =
+                (deqmg.wait_time_ms / 1000.),
             requested_memory_mb =
                 (deqmg.requested_memory_kb / 1024.),
             granted_memory_mb =
                 (deqmg.granted_memory_kb / 1024.),
-            ideal_memory_mb =
-                (deqmg.ideal_memory_kb / 1024.),
-            required_memory_mb =
-                (deqmg.required_memory_kb / 1024.),
             used_memory_mb =
                 (deqmg.used_memory_kb / 1024.),
             max_used_memory_mb =
                 (deqmg.max_used_memory_kb / 1024.),
+            ideal_memory_mb =
+                (deqmg.ideal_memory_kb / 1024.),
+            required_memory_mb =
+                (deqmg.required_memory_kb / 1024.),
             deqmg.queue_id,
             deqmg.wait_order,
             deqmg.is_next_candidate,
-            wait_time_seconds =
-                (deqmg.wait_time_ms / 1000.),
             waits.wait_type,
             wait_duration_seconds =
                 (waits.wait_duration_ms / 1000.),
@@ -841,7 +1062,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
         ) AS waits
         OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
         OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest
-
         WHERE deqmg.session_id <> @@SPID
         ORDER BY
             requested_memory_mb DESC,
@@ -1008,10 +1228,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
             deqrs.pool_id
         FROM sys.dm_exec_query_resource_semaphores AS deqrs
         OPTION(MAXDOP 1, RECOMPILE);
-
     END;
 
-    IF @what_to_check IN (N'cpu', N'both')
+    IF @what_to_check IN (N'all', N'cpu')
     BEGIN
 
         IF @helpful_new_columns = 1
@@ -1433,6 +1652,5 @@ OPTION(MAXDOP 1, RECOMPILE);',
             @cpu_sql;
 
     END;
-
 END;
 GO
