@@ -50,6 +50,7 @@ ALTER PROCEDURE
 (
     @what_to_check nvarchar(6) = N'all',
     @skip_plan_xml bit = 0,
+    @minimum_disk_latency_ms smallint = 100,
     @help bit = 0,
     @debug bit = 0,
     @version varchar(5) = NULL OUTPUT,
@@ -97,6 +98,7 @@ BEGIN
                 ap.name
                 WHEN N'@what_to_check' THEN N'areas to check for pressure'
                 WHEN N'@skip_plan_xml' THEN N'if you want to skip getting plan XML'
+                WHEN N'@minimum_disk_latency_ms' THEN N'low bound for reporting disk latency'
                 WHEN N'@version' THEN N'OUTPUT; for support'
                 WHEN N'@version_date' THEN N'OUTPUT; for support'
                 WHEN N'@help' THEN N'how you got here'
@@ -107,6 +109,7 @@ BEGIN
                 ap.name
                 WHEN N'@what_to_check' THEN N'"all", "cpu", and "memory"'
                 WHEN N'@skip_plan_xml' THEN N'0 or 1'
+                WHEN N'@minimum_disk_latency_ms' THEN N'any valid smallint value (-32,768 -- 32,767)'
                 WHEN N'@version' THEN N'none'
                 WHEN N'@version_date' THEN N'none'
                 WHEN N'@help' THEN N'0 or 1'
@@ -117,6 +120,7 @@ BEGIN
                 ap.name
                 WHEN N'@what_to_check' THEN N'both'
                 WHEN N'@skip_plan_xml' THEN N'1'
+                WHEN N'@minimum_disk_latency_ms' THEN N'100'
                 WHEN N'@version' THEN N'none; OUTPUT'
                 WHEN N'@version_date' THEN N'none; OUTPUT'
                 WHEN N'@help' THEN N'0'
@@ -133,12 +137,12 @@ BEGIN
 
     SELECT
         mit_license_yo =
-           'i am MIT licensed, so like, do whatever' 
-    
+           'i am MIT licensed, so like, do whatever'
+   
     UNION ALL
-    
-    SELECT 
-        mit_license_yo = 
+   
+    SELECT
+        mit_license_yo =
             'see printed messages for full license';
 
     RAISERROR('
@@ -267,21 +271,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @low_memory xml = N'',
         @disk_check nvarchar(MAX) = N'';
 
-DECLARE
-    @file_metrics table
-(
-    hours_uptime int,
-    drive nvarchar(2),
-    database_name nvarchar(128),
-    database_file_details nvarchar(1000),
-    file_size_gb decimal(38,2),
-    total_gb_read decimal(38,2),
-    total_read_count bigint,
-    avg_read_stall_ms decimal(38,2),
-    total_gb_written decimal(38,2),
-    total_write_count bigint,
-    avg_write_stall_ms decimal(38,2)
-)
+    DECLARE
+        @file_metrics table
+    (
+        hours_uptime int,
+        drive nvarchar(2),
+        database_name nvarchar(128),
+        database_file_details nvarchar(1000),
+        file_size_gb decimal(38,2),
+        total_gb_read decimal(38,2),
+        total_read_count bigint,
+        avg_read_stall_ms decimal(38,2),
+        total_gb_written decimal(38,2),
+        total_write_count bigint,
+        avg_write_stall_ms decimal(38,2)
+    );
 
     /*
     Check to see if the DAC is enabled.
@@ -487,7 +491,7 @@ DECLARE
     BEGIN
         SET @disk_check = N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-           
+          
         SELECT
             hours_uptime =
                 (
@@ -509,7 +513,7 @@ DECLARE
                         2
                     )
                 ),
-            database_name = 
+            database_name =
                  DB_NAME(vfs.database_id),
             database_file_details =
                 f.name COLLATE DATABASE_DEFAULT +
@@ -551,7 +555,7 @@ DECLARE
                          )
                     ELSE 0
                 END,
-            total_read_count =    
+            total_read_count =   
                 vfs.num_of_reads,
             avg_read_stall_ms =
                 CONVERT
@@ -578,7 +582,7 @@ DECLARE
                     decimal(38, 2),
                     vfs.io_stall_write_ms /
                         (1.0 * vfs.num_of_writes)
-                )       
+                )      
         FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs
         JOIN ' +
         CONVERT
@@ -597,13 +601,13 @@ DECLARE
         WHERE vfs.io_stall_read_ms > 0
         OR    vfs.io_stall_write_ms > 0;'
         );
-        
-        IF @debug = 1 
-        BEGIN 
+       
+        IF @debug = 1
+        BEGIN
             PRINT SUBSTRING(@disk_check, 1, 4000);
             PRINT SUBSTRING(@disk_check, 4000, 8000);
         END;
-        
+       
         INSERT
             @file_metrics
         (
@@ -632,7 +636,7 @@ DECLARE
             fm.avg_write_stall_ms,
             fm.total_gb_read,
             fm.total_gb_written,
-            total_read_count = 
+            total_read_count =
                 REPLACE
                 (
                     CONVERT
@@ -648,7 +652,7 @@ DECLARE
                     N'.00',
                     N''
                 ),
-            total_write_count = 
+            total_write_count =
                 REPLACE
                 (
                     CONVERT
@@ -665,15 +669,15 @@ DECLARE
                     N''
                 )
         FROM @file_metrics AS fm
-        WHERE fm.avg_read_stall_ms  > 100
-        OR    fm.avg_write_stall_ms > 100
-        ORDER BY 
-            fm.avg_read_stall_ms + 
+        WHERE fm.avg_read_stall_ms  > @minimum_disk_latency_ms
+        OR    fm.avg_write_stall_ms > @minimum_disk_latency_ms
+        ORDER BY
+            fm.avg_read_stall_ms +
             fm.avg_write_stall_ms DESC;
 
     END;
 
-    IF (@azure = 0 
+    IF (@azure = 0
           AND @what_to_check = 'all')
     BEGIN
         SELECT
@@ -941,7 +945,7 @@ DECLARE
                     (
                         MILLISECOND,
                         CASE
-                            WHEN 
+                            WHEN
                                 DATEDIFF
                                 (
                                     DAY,
@@ -1203,7 +1207,7 @@ DECLARE
                     FROM sys.configurations AS c
                     WHERE c.name = N'max server memory (MB)'
                 ),
-            memory_model = 
+            memory_model =
                 (
                     SELECT
                         inf.sql_memory_model_desc
@@ -1483,7 +1487,7 @@ DECLARE
                     (
                         MILLISECOND,
                         CASE
-                            WHEN 
+                            WHEN
                                 DATEDIFF
                                 (
                                     DAY,
