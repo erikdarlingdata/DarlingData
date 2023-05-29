@@ -70,6 +70,7 @@ CREATE OR ALTER PROCEDURE
     @ignore_sql_handles nvarchar(4000) = NULL,
     @query_text_search nvarchar(4000) = NULL,
     @wait_filter varchar(20) = NULL,
+    @query_types varchar(11) = NULL,
     @expert_mode bit = 0,
     @format_output bit = 1,
     @get_all_databases bit = 0,
@@ -166,6 +167,7 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
+                WHEN N'@query_types' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
@@ -200,6 +202,7 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
+                WHEN N'@query_types' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
                 WHEN N'@format_output' THEN '0 or 1'
                 WHEN N'@get_all_databases' THEN '0 or 1'
@@ -234,6 +237,7 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@wait_filter' THEN 'NULL'
+                WHEN N'@query_types' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
                 WHEN N'@format_output' THEN '1'
                 WHEN N'@get_all_databases' THEN '0'
@@ -372,6 +376,15 @@ Hold plan_ids for procedures we're searching
 */
 CREATE TABLE
     #procedure_plans
+(
+    plan_id bigint PRIMARY KEY
+);
+
+/*
+Hold plan_ids for procedures we're searching
+*/
+CREATE TABLE
+    #query_types
 (
     plan_id bigint PRIMARY KEY
 );
@@ -1031,13 +1044,15 @@ INSERT
     database_name
 )
 SELECT
-    @database_name
+    database_name = 
+        ISNULL(@database_name, DB_NAME())
 WHERE @get_all_databases = 0
 
 UNION ALL
 
 SELECT
-    d.name
+    database_name = 
+        d.name
 FROM sys.databases AS d
 WHERE @get_all_databases = 1
 AND   d.is_query_store_on = 1
@@ -1528,7 +1543,8 @@ OPTION(RECOMPILE);' + @nc10;
 
     END;
 
-    IF @procedure_exists = 0
+    IF (@procedure_exists = 0 
+          AND @get_all_databases = 0)
         BEGIN
             RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s
 Check that you spelled everything correctly and you''re in the right database',
@@ -1889,6 +1905,90 @@ OPTION(RECOMPILE);' + @nc10;
         )'  + @nc10;
 
 END; /*End procedure filter table population*/
+
+
+/*
+In this section we set up the filter if someone's searching for
+either ad hoc queries or queries from modules.
+*/
+IF
+  (
+      LEN(@query_types) > 0
+  )
+BEGIN
+
+    SELECT
+        @current_table = 'inserting #query_types',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+
+    END;
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+   ON qsq.query_id = qsp.query_id
+WHERE qsq.object_id ' + 
+CASE 
+    WHEN LOWER(@query_types) LIKE 'a%'
+    THEN N'= 0'
+    ELSE N'<> 0'
+END
++ N'
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+
+    INSERT
+        #query_types WITH(TABLOCK)
+    (
+        plan_id
+    )
+    EXEC sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+
+    END;
+
+    SELECT
+        @where_clause += N'AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #query_types AS qt
+            WHERE qt.plan_id = qsrs.plan_id
+        )'  + @nc10;
+
+END; /*End query type filter table population*/
+
 
 /*
 This section filters query or plan ids, both inclusive and exclusive
@@ -6884,6 +6984,8 @@ BEGIN
             @wait_filter,
         expert_mode =
             @expert_mode,
+        query_types =
+            @query_types,
         format_output =
             @format_output,
         version =
@@ -7023,6 +7125,28 @@ BEGIN
         SELECT
             result =
                 '#procedure_plans is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_types AS qt
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#query_types',
+            qt.*
+        FROM #query_types AS qt
+        ORDER BY qt.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#query_types is empty';
     END;
 
     IF EXISTS
