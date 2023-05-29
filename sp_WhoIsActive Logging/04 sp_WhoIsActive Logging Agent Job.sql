@@ -42,7 +42,7 @@ DECLARE
     @RetentionPeriod nvarchar(10) = N'10';
 
 DECLARE
-    @command nvarchar(MAX) = N'EXEC dbo.sp_WhoIsActiveLogging_Main ' + @RetentionPeriod + ';'
+    @command nvarchar(MAX) = N'EXEC dbo.sp_WhoIsActiveLogging_Main ' + @RetentionPeriod + N';'
 
 
 IF NOT EXISTS
