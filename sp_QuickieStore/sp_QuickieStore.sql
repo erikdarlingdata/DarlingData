@@ -70,7 +70,7 @@ CREATE OR ALTER PROCEDURE
     @ignore_sql_handles nvarchar(4000) = NULL,
     @query_text_search nvarchar(4000) = NULL,
     @wait_filter varchar(20) = NULL,
-    @query_types varchar(11) = NULL,
+    @query_type varchar(11) = NULL,
     @expert_mode bit = 0,
     @format_output bit = 1,
     @get_all_databases bit = 0,
@@ -167,7 +167,7 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
-                WHEN N'@query_types' THEN 'filter for only ad hoc queries or only from queries from modules'
+                WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
@@ -202,7 +202,7 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
-                WHEN N'@query_types' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
+                WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
                 WHEN N'@format_output' THEN '0 or 1'
                 WHEN N'@get_all_databases' THEN '0 or 1'
@@ -237,7 +237,7 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@wait_filter' THEN 'NULL'
-                WHEN N'@query_types' THEN 'NULL'
+                WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
                 WHEN N'@format_output' THEN '1'
                 WHEN N'@get_all_databases' THEN '0'
@@ -1913,7 +1913,7 @@ either ad hoc queries or queries from modules.
 */
 IF
   (
-      LEN(@query_types) > 0
+      LEN(@query_type) > 0
   )
 BEGIN
 
@@ -1942,7 +1942,7 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
    ON qsq.query_id = qsp.query_id
 WHERE qsq.object_id ' + 
 CASE 
-    WHEN LOWER(@query_types) LIKE 'a%'
+    WHEN LOWER(@query_type) LIKE 'a%'
     THEN N'= 0'
     ELSE N'<> 0'
 END
@@ -6985,7 +6985,7 @@ BEGIN
         expert_mode =
             @expert_mode,
         query_types =
-            @query_types,
+            @query_type,
         format_output =
             @format_output,
         version =
