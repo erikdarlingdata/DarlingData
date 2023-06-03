@@ -294,11 +294,18 @@ OPTION(MAXDOP 1, RECOMPILE);',
         avg_write_stall_ms decimal(38,2)
     );
 
+    IF @what_to_check = N'all'
+       AND @skip_waits IS NULL
+    BEGIN
+        SELECT
+            @skip_waits = 0;
+    END
+    
     /*
     Check to see if the DAC is enabled.
     If it's not, give people some helpful information.
     */
-    IF @what_to_check = 'all'
+    IF @what_to_check = N'all'
         BEGIN
         IF
         (
@@ -362,12 +369,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
     */
     IF 
     (
-        @what_to_check = 'all'
-        AND @skip_waits <> 1
+        @what_to_check = N'all'
+        AND (@skip_waits <> 1)
     )
     OR 
     (
-        @what_to_check IN ('cpu', 'memory')
+        @what_to_check IN (N'cpu', N'memory')
         AND @skip_waits = 0
     )
     BEGIN
