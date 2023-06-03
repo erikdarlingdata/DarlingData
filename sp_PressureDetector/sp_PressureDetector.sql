@@ -294,13 +294,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
         avg_write_stall_ms decimal(38,2)
     );
 
+    DECLARE
+        @threadpool_waits table
+        (
+            session_id smallint,
+            wait_duration_ms bigint,
+            threadpool_waits sysname
+        );
+
     IF @what_to_check = N'all'
        AND @skip_waits IS NULL
     BEGIN
         SELECT
             @skip_waits = 0;
     END
-    
+   
     /*
     Check to see if the DAC is enabled.
     If it's not, give people some helpful information.
@@ -323,7 +331,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 how_to_use_the_dac =
                     'https://bit.ly/RemoteDAC';
         END;
-        
+       
         /*
         See if someone else is using the DAC.
         Return some helpful information if they are.
@@ -367,12 +375,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /*
     Look at wait stats related to CPU memory, disk, and query performance
     */
-    IF 
+    IF
     (
         @what_to_check = N'all'
         AND (@skip_waits <> 1)
     )
-    OR 
+    OR
     (
         @what_to_check IN (N'cpu', N'memory')
         AND @skip_waits = 0
@@ -390,13 +398,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         )
                     FROM sys.dm_os_sys_info AS osi
                 ),
-            hours_cpu_time = 
+            hours_cpu_time =
             (
-                SELECT              
+                SELECT             
                     CONVERT
                     (
                         decimal(38, 2),
-                        SUM(wg.total_cpu_usage_ms) / 
+                        SUM(wg.total_cpu_usage_ms) /
                             (1000. * 60. * 60.)
                     )
                 FROM sys.dm_resource_governor_workload_groups AS wg
@@ -1084,17 +1092,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     FROM sys.dm_os_sys_info AS inf
                 ),
             target_memory_mb =
-                (deqrs.target_memory_kb / 1024.),
+                CONVERT(decimal(38, 2), (deqrs.target_memory_kb / 1024.)),
             max_target_memory_mb =
-                (deqrs.max_target_memory_kb / 1024.),
+                CONVERT(decimal(38, 2), (deqrs.max_target_memory_kb / 1024.)),
             total_memory_mb =
-                (deqrs.total_memory_kb / 1024.),
+                CONVERT(decimal(38, 2), (deqrs.total_memory_kb / 1024.)),
             available_memory_mb =
-                (deqrs.available_memory_kb / 1024.),
+                CONVERT(decimal(38, 2), (deqrs.available_memory_kb / 1024.)),
             granted_memory_mb =
-                (deqrs.granted_memory_kb / 1024.),
+                CONVERT(decimal(38, 2), (deqrs.granted_memory_kb / 1024.)),
             used_memory_mb =
-                (deqrs.used_memory_kb / 1024.),
+                CONVERT(decimal(38, 2), (deqrs.used_memory_kb / 1024.)),
             deqrs.grantee_count,
             deqrs.waiter_count,
             deqrs.timeout_error_count,
@@ -1105,7 +1113,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         CROSS APPLY
         (
             SELECT TOP (1)
-                total_reduced_memory_grant_count = 
+                total_reduced_memory_grant_count =
                     wg.total_reduced_memgrant_count
             FROM sys.dm_resource_governor_workload_groups AS wg
             WHERE wg.pool_id = deqrs.pool_id
@@ -1113,7 +1121,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 wg.total_reduced_memgrant_count DESC
         ) AS wg
         WHERE deqrs.max_target_memory_kb IS NOT NULL
-        ORDER BY 
+        ORDER BY
             deqrs.pool_id
         OPTION(MAXDOP 1, RECOMPILE);
     END;
@@ -1127,7 +1135,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             SET @mem_sql += N'
             SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
+           
             SELECT
                 deqmg.session_id,
                 database_name =
@@ -1232,17 +1240,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 wait_time_seconds =
                     (deqmg.wait_time_ms / 1000.),
                 requested_memory_mb =
-                    (deqmg.requested_memory_kb / 1024.),
+                    CONVERT(decimal(38, 2), (deqmg.requested_memory_kb / 1024.)),
                 granted_memory_mb =
-                    (deqmg.granted_memory_kb / 1024.),
+                    CONVERT(decimal(38, 2), (deqmg.granted_memory_kb / 1024.)),
                 used_memory_mb =
-                    (deqmg.used_memory_kb / 1024.),
+                    CONVERT(decimal(38, 2), (deqmg.used_memory_kb / 1024.)),
                 max_used_memory_mb =
-                    (deqmg.max_used_memory_kb / 1024.),
+                    CONVERT(decimal(38, 2), (deqmg.max_used_memory_kb / 1024.)),
                 ideal_memory_mb =
-                    (deqmg.ideal_memory_kb / 1024.),
+                    CONVERT(decimal(38, 2), (deqmg.ideal_memory_kb / 1024.)),
                 required_memory_mb =
-                    (deqmg.required_memory_kb / 1024.),
+                    CONVERT(decimal(38, 2), (deqmg.required_memory_kb / 1024.)),
                 deqmg.queue_id,
                 deqmg.wait_order,
                 deqmg.is_next_candidate,
@@ -1284,9 +1292,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
             OPTION(MAXDOP 1, RECOMPILE);
             '
                       );
-            
-            IF @debug = 1 BEGIN PRINT @mem_sql; END;
-            
+           
+            IF @debug = 1
+            BEGIN
+                PRINT SUBSTRING(@mem_sql, 1, 4000)
+                PRINT SUBSTRING(@mem_sql, 4000, 8000);
+            END;
+           
             EXEC sys.sp_executesql
                 @mem_sql;
         END;
@@ -1423,8 +1435,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             cpu_details_output =
                 @cpu_details_output,
             cpu_utilization_over_50_percent =
-                @cpu_utilization;        
-        
+                @cpu_utilization;       
+       
         /*Thread usage*/
         SELECT
             total_threads =
@@ -1449,13 +1461,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 SUM(dos.work_queue_count),
             current_workers =
                 SUM(dos.current_workers_count),
-            total_active_request_count = 
+            total_active_request_count =
                 SUM(wg.active_request_count),
-            total_queued_request_count = 
+            total_queued_request_count =
                 SUM(wg.queued_request_count),
-            total_blocked_task_count = 
+            total_blocked_task_count =
                 SUM(wg.blocked_task_count),
-            total_active_parallel_thread_count = 
+            total_active_parallel_thread_count =
                 SUM(wg.active_parallel_thread_count),
             avg_runnable_tasks_count =
                 AVG(dos.runnable_tasks_count),
@@ -1465,12 +1477,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
         CROSS JOIN sys.dm_os_sys_info AS osi
         CROSS JOIN
         (
-            SELECT 
+            SELECT
                 wg.active_request_count,
                 wg.queued_request_count,
                 wg.blocked_task_count,
                 wg.active_parallel_thread_count
-            FROM sys.dm_resource_governor_workload_groups AS wg        
+            FROM sys.dm_resource_governor_workload_groups AS wg       
         ) AS wg
         OUTER APPLY
         (
@@ -1518,17 +1530,30 @@ OPTION(MAXDOP 1, RECOMPILE);',
         OPTION(MAXDOP 1, RECOMPILE);
 
 
-        /*Any current threadpool waits?*/
+        /*Any current threadpool waits?*/       
+        INSERT
+            @threadpool_waits
+        (
+            session_id,
+            wait_duration_ms,
+            threadpool_waits
+        )
         SELECT
             dowt.session_id,
             dowt.wait_duration_ms,
-            threadpool_waits = 
+            threadpool_waits =
                 dowt.wait_type
         FROM sys.dm_os_waiting_tasks AS dowt
         WHERE dowt.wait_type = N'THREADPOOL'
         ORDER BY
             dowt.wait_duration_ms DESC
         OPTION(MAXDOP 1, RECOMPILE);
+
+        IF @@ROWCOUNT = 0
+        BEGIN
+            SELECT
+                result = N'No current THREADPOOL waits'
+        END
 
 
         /*Figure out who's using a lot of CPU*/
@@ -1538,7 +1563,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             SET @cpu_sql += N'
             SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
+           
             SELECT
                 der.session_id,
                 database_name =
@@ -1729,9 +1754,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
             OPTION(MAXDOP 1, RECOMPILE);'
               END
                   );
-            
+           
             IF @debug = 1 BEGIN PRINT SUBSTRING(@cpu_sql, 0, 4000); PRINT SUBSTRING(@cpu_sql, 4000, 8000); END;
-            
+           
             EXEC sys.sp_executesql
                 @cpu_sql;
         END;
