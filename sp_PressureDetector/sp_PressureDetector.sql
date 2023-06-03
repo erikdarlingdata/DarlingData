@@ -102,7 +102,7 @@ BEGIN
                 WHEN N'@skip_queries' THEN N'if you want to skip looking at running queries'
                 WHEN N'@skip_plan_xml' THEN N'if you want to skip getting plan XML'
                 WHEN N'@minimum_disk_latency_ms' THEN N'low bound for reporting disk latency'
-                WHEN N'@skip_waits' THEN N'skips waits when'
+                WHEN N'@skip_waits' THEN N'skips waits when you do not need them on every run'
                 WHEN N'@version' THEN N'OUTPUT; for support'
                 WHEN N'@version_date' THEN N'OUTPUT; for support'
                 WHEN N'@help' THEN N'how you got here'
