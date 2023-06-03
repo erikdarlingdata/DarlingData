@@ -599,7 +599,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END +
         N'
         WHERE vfs.io_stall_read_ms > 0
-        OR    vfs.io_stall_write_ms > 0;'
+        AND   vfs.io_stall_write_ms > 0;'
         );
        
         IF @debug = 1
