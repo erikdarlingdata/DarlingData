@@ -282,7 +282,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @file_metrics table
     (
         hours_uptime int,
-        drive nvarchar(2),
+        drive nvarchar(255),
         database_name nvarchar(128),
         database_file_details nvarchar(1000),
         file_size_gb decimal(38,2),
@@ -307,7 +307,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     BEGIN
         SELECT
             @skip_waits = 0;
-    END
+    END;
    
     /*
     Check to see if the DAC is enabled.
@@ -553,39 +553,56 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     FROM sys.dm_os_sys_info AS osi
                 ),
             drive =
-                UPPER
-                (
-                    LEFT
-                    (
-                        f.physical_name,
-                        2
-                    )
-                ),
+                CASE 
+                    WHEN f.physical_name LIKE N''http%''
+                    THEN f.physical_name
+                    ELSE
+                        UPPER
+                        (
+                            LEFT
+                            (
+                                f.physical_name,
+                                2
+                            )
+                        )
+                    END,
             database_name =
                  DB_NAME(vfs.database_id),
             database_file_details =
-                f.name COLLATE DATABASE_DEFAULT +
-                SPACE(1) +
-                CASE f.type
-                     WHEN 0
-                     THEN N''(data file)''
-                     WHEN 1
-                     THEN N''(transaction log)''
-                     WHEN 2
-                     THEN N''(filestream)''
-                     WHEN 4
-                     THEN N''(full-text)''
-                     ELSE QUOTENAME
-                          (
-                              f.type_desc COLLATE DATABASE_DEFAULT,
-                              N''()''
-                          )
-                END +
-                SPACE(1) +
-                QUOTENAME
+                ISNULL
                 (
-                    f.physical_name COLLATE DATABASE_DEFAULT,
-                    N''()''
+                    f.name COLLATE DATABASE_DEFAULT,
+                    N''''
+                ) +
+                SPACE(1) +
+                ISNULL
+                (
+                    CASE f.type
+                         WHEN 0
+                         THEN N''(data file)''
+                         WHEN 1
+                         THEN N''(transaction log)''
+                         WHEN 2
+                         THEN N''(filestream)''
+                         WHEN 4
+                         THEN N''(full-text)''
+                         ELSE QUOTENAME
+                              (
+                                  f.type_desc COLLATE DATABASE_DEFAULT,
+                                  N''()''
+                              )
+                    END,
+                    N''''
+                ) +
+                SPACE(1) +
+                ISNULL
+                (
+                    QUOTENAME
+                    (
+                        f.physical_name COLLATE DATABASE_DEFAULT,
+                        N''()''
+                    ),
+                    N''''
                 ),
             file_size_gb =
                 CONVERT
@@ -1295,7 +1312,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
            
             IF @debug = 1
             BEGIN
-                PRINT SUBSTRING(@mem_sql, 1, 4000)
+                PRINT SUBSTRING(@mem_sql, 1, 4000);
                 PRINT SUBSTRING(@mem_sql, 4000, 8000);
             END;
            
@@ -1552,8 +1569,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF @@ROWCOUNT = 0
         BEGIN
             SELECT
-                result = N'No current THREADPOOL waits'
-        END
+                result = N'No current THREADPOOL waits';
+        END;
+        ELSE
+        BEGIN
+        SELECT
+            dowt.session_id,
+            dowt.wait_duration_ms,
+            threadpool_waits =
+                dowt.wait_type
+        FROM sys.dm_os_waiting_tasks AS dowt
+        WHERE dowt.wait_type = N'THREADPOOL'
+        ORDER BY
+            dowt.wait_duration_ms DESC
+        OPTION(MAXDOP 1, RECOMPILE);
+        END;
 
 
         /*Figure out who's using a lot of CPU*/
