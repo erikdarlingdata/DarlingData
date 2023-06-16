@@ -124,7 +124,6 @@ Helpful section! For help.
 */
 IF @help = 1
 BEGIN
-
     /*
     Introduction
     */
@@ -355,9 +354,7 @@ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVE
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ', 0, 1) WITH NOWAIT;
-
     RETURN;
-
 END; /*End @help section*/
 
 /*
@@ -1419,7 +1416,6 @@ BEGIN
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -1455,7 +1451,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -1469,7 +1464,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END;
 
 IF @query_store_exists = 0
@@ -1487,21 +1481,18 @@ If you specified a procedure name, we need to figure out if there are any plans 
 */
 IF @procedure_name IS NOT NULL
 BEGIN
-
     SELECT
         @current_table = 'checking procedure existence',
         @sql = @isolation_level;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -1532,7 +1523,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -1546,7 +1536,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     IF (@procedure_exists = 0 
@@ -1559,7 +1548,7 @@ Check that you spelled everything correctly and you''re in the right database',
         IF @get_all_databases = 0
         BEGIN
             RETURN;
-        END
+        END;
     END;
 END; /*End procedure existence checking*/
 
@@ -1673,7 +1662,6 @@ IF
       OR @new = 1
   )
 BEGIN
-
     SELECT
         @current_table = 'checking query store waits are enabled',
         @sql = @isolation_level;
@@ -1687,7 +1675,6 @@ BEGIN
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -1716,7 +1703,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -1730,7 +1716,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     IF @query_store_waits_enabled = 0
@@ -1741,7 +1726,6 @@ OPTION(RECOMPILE);' + @nc10;
             RETURN;
         END;
     END;
-
 END; /*End wait stats checks*/
 
 /*
@@ -1803,7 +1787,7 @@ BEGIN
        )
        BEGIN
            RAISERROR('The time zone you chose (%s is not valid. Please check sys.time_zone_info for a valid list.)', 10, 1, @timezone) WITH NOWAIT;
-           RETURN
+           RETURN;
        END;
 END;
 
@@ -1872,21 +1856,18 @@ IF
       AND @procedure_exists = 1
   )
 BEGIN
-
     SELECT
         @current_table = 'inserting #procedure_plans',
         @sql = @isolation_level;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -1913,7 +1894,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -1927,7 +1907,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     SELECT
@@ -1938,7 +1917,6 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #procedure_plans AS pp
             WHERE pp.plan_id = qsrs.plan_id
         )'  + @nc10;
-
 END; /*End procedure filter table population*/
 
 
@@ -1951,21 +1929,18 @@ IF
       LEN(@query_type) > 0
   )
 BEGIN
-
     SELECT
         @current_table = 'inserting #query_types',
         @sql = @isolation_level;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -1996,7 +1971,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -2010,7 +1984,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     SELECT
@@ -2021,7 +1994,6 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #query_types AS qt
             WHERE qt.plan_id = qsrs.plan_id
         )'  + @nc10;
-
 END; /*End query type filter table population*/
 
 
@@ -2036,7 +2008,6 @@ IF
       OR @ignore_query_ids  IS NOT NULL
   )
 BEGIN
-
     IF @include_plan_ids IS NOT NULL
     BEGIN      
         SELECT   
@@ -2060,14 +2031,13 @@ BEGIN
             @include_plan_ids;
 
         SELECT
-           @where_clause += N'AND   EXISTS
+            @where_clause += N'AND   EXISTS
       (
          SELECT
             1/0
          FROM #include_plan_ids AS idi
          WHERE idi.plan_id = qsrs.plan_id
       )' + @nc10;
-
     END; /*End include plan ids*/
 
     IF @ignore_plan_ids IS NOT NULL
@@ -2093,14 +2063,13 @@ BEGIN
             @ignore_plan_ids;
 
         SELECT
-           @where_clause += N'AND   NOT EXISTS
+            @where_clause += N'AND   NOT EXISTS
       (
          SELECT
             1/0
          FROM #ignore_plan_ids AS idi
          WHERE idi.plan_id = qsrs.plan_id
       )' + @nc10;
-
     END; /*End ignore plan ids*/
 
     IF @include_query_ids IS NOT NULL
@@ -2130,14 +2099,12 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2166,7 +2133,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2180,7 +2146,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2196,7 +2161,7 @@ OPTION(RECOMPILE);' + @nc10;
         IF @include_plan_ids IS NULL
         BEGIN
             SELECT
-               @where_clause += N'AND   EXISTS
+                @where_clause += N'AND   EXISTS
           (
              SELECT
                 1/0
@@ -2204,7 +2169,6 @@ OPTION(RECOMPILE);' + @nc10;
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
         END;
-
     END; /*End include query ids*/
 
     IF @ignore_query_ids IS NOT NULL
@@ -2234,14 +2198,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2270,7 +2232,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2284,7 +2245,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2299,17 +2259,16 @@ OPTION(RECOMPILE);' + @nc10;
         */
         IF @ignore_plan_ids IS NULL
         BEGIN
-        SELECT
-               @where_clause += N'AND   NOT EXISTS
+            SELECT
+                @where_clause += N'AND   NOT EXISTS
           (
              SELECT
                 1/0
              FROM #ignore_plan_ids AS idi
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
-          END;
+        END;
     END; /*End ignore query ids*/
-
 END; /*End query and plan id filtering*/
 
 /*
@@ -2325,7 +2284,6 @@ IF
       OR @ignore_sql_handles   IS NOT NULL
   )
 BEGIN
-
     IF @include_query_hashes IS NOT NULL
     BEGIN
         SELECT   
@@ -2354,14 +2312,12 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2397,7 +2353,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2411,7 +2366,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2435,7 +2389,6 @@ OPTION(RECOMPILE);' + @nc10;
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
         END;
-
     END; /*End include query hashes*/
 
     IF @ignore_query_hashes IS NOT NULL
@@ -2466,14 +2419,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2509,7 +2460,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2523,7 +2473,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2538,7 +2487,7 @@ OPTION(RECOMPILE);' + @nc10;
         */
         IF @ignore_plan_ids IS NULL
         BEGIN
-        SELECT
+            SELECT
                @where_clause += N'AND   NOT EXISTS
           (
              SELECT
@@ -2577,14 +2526,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2613,7 +2560,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2627,7 +2573,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2651,7 +2596,6 @@ OPTION(RECOMPILE);' + @nc10;
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
         END;
-
     END; /*End include plan hashes*/
 
     IF @ignore_plan_hashes IS NOT NULL
@@ -2682,14 +2626,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2718,7 +2660,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2732,7 +2673,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2747,7 +2687,7 @@ OPTION(RECOMPILE);' + @nc10;
         */
         IF @ignore_plan_ids IS NULL
         BEGIN
-        SELECT
+            SELECT
                @where_clause += N'AND   NOT EXISTS
           (
              SELECT
@@ -2793,7 +2733,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2836,7 +2775,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2850,7 +2788,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2866,7 +2803,7 @@ OPTION(RECOMPILE);' + @nc10;
         IF @include_plan_ids IS NULL
         BEGIN
             SELECT
-               @where_clause += N'AND   EXISTS
+                @where_clause += N'AND   EXISTS
           (
              SELECT
                 1/0
@@ -2874,7 +2811,6 @@ OPTION(RECOMPILE);' + @nc10;
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
         END;
-
     END; /*End include plan hashes*/
 
     IF @ignore_sql_handles IS NOT NULL
@@ -2905,14 +2841,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2955,7 +2889,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2969,7 +2902,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2984,8 +2916,8 @@ OPTION(RECOMPILE);' + @nc10;
         */
         IF @ignore_plan_ids IS NULL
         BEGIN
-        SELECT
-               @where_clause += N'AND   NOT EXISTS
+            SELECT
+                @where_clause += N'AND   NOT EXISTS
           (
              SELECT
                 1/0
@@ -2994,12 +2926,10 @@ OPTION(RECOMPILE);' + @nc10;
           )' + @nc10;
           END;
     END; /*End ignore plan hashes*/
-
 END; /*End hash and handle filtering*/
 
 IF @query_text_search IS NOT NULL
 BEGIN
-
     IF
       (
           LEFT
@@ -3037,14 +2967,12 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -3104,7 +3032,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -3129,7 +3056,6 @@ OPTION(RECOMPILE);' + @nc10;
            FROM #query_text_search AS qst
            WHERE qst.plan_id = qsrs.plan_id
        )' + @nc10;
-
 END;
 
 /*
@@ -3137,23 +3063,19 @@ Validate wait stats stuff
 */
 IF @wait_filter IS NOT NULL
 BEGIN
-
     BEGIN
-
         SELECT
             @current_table = 'inserting #wait_filter',
             @sql = @isolation_level;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -3188,7 +3110,6 @@ HAVING
 ORDER BY 
     SUM(qsws.avg_query_wait_time_ms) DESC
 OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
-
     END;
 
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -3205,7 +3126,6 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -3219,7 +3139,6 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     SELECT
@@ -3230,7 +3149,6 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
            FROM #wait_filter AS wf
            WHERE wf.plan_id = qsrs.plan_id
        )' + @nc10;
-
 END;
 
 
@@ -3244,14 +3162,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3288,7 +3204,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3302,7 +3217,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END;
 
 SELECT
@@ -3335,14 +3249,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3391,7 +3303,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3405,7 +3316,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End gathering plan ids*/
 
 /*
@@ -3417,14 +3327,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3476,7 +3384,6 @@ SELECT
 
 IF @new = 1
     BEGIN
-
         SELECT
             @sql += N'
     ((qsrs.avg_num_physical_io_reads * 8.) / 1024.),
@@ -3491,12 +3398,10 @@ IF @new = 1
     ((qsrs.last_tempdb_space_used * 8) / 1024.),
     ((qsrs.min_tempdb_space_used * 8) / 1024.),
     ((qsrs.max_tempdb_space_used * 8) / 1024.),';
-
     END;
 
 IF @new = 0
     BEGIN
-
         SELECT
             @sql += N'
     NULL,
@@ -3511,7 +3416,6 @@ IF @new = 0
     NULL,
     NULL,
     NULL,';
-
     END;
 
 SELECT
@@ -3576,7 +3480,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3590,7 +3493,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting runtime stats*/
 
 /*
@@ -3602,14 +3504,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3721,7 +3621,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3735,7 +3634,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting query plans*/
 
 /*
@@ -3747,14 +3645,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3846,7 +3742,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3860,7 +3755,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting query details*/
 
 /*
@@ -3872,14 +3766,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 
@@ -3936,7 +3828,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3950,7 +3841,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting query text*/
 
 /*
@@ -3963,14 +3853,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 INSERT
@@ -4037,7 +3925,6 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -4051,26 +3938,22 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting runtime stats*/
 
 /*Only update if we got anything*/
 IF @rc > 0
 BEGIN
-
     SELECT
         @current_table = 'updating #dm_exec_query_stats';
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     UPDATE qsqt
@@ -4102,7 +3985,6 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4116,9 +3998,7 @@ BEGIN
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
-
 END; /*End updating runtime stats*/
 
 /*
@@ -4131,14 +4011,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -4238,7 +4116,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -4252,7 +4129,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting query store settings*/
 
 /*
@@ -4270,21 +4146,18 @@ IF
           )
   )
 BEGIN
-
     SELECT
         @current_table = 'inserting #query_store_wait_stats',
         @sql = @isolation_level;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -4345,7 +4218,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4359,9 +4231,7 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
-
 END; /*End getting wait stats*/
 
 /*
@@ -4373,14 +4243,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -4439,7 +4307,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -4453,7 +4320,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End geting context settings*/
 
 /*
@@ -4553,7 +4419,6 @@ OPTION(RECOMPILE);
 
 IF @sql_2022_views = 1
 BEGIN
-
     /*query_store_plan_feedback*/
     SELECT
         @current_table = 'inserting #query_store_plan_feedback',
@@ -4561,14 +4426,12 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -4613,7 +4476,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4627,7 +4489,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     /*query_store_query_variant*/
@@ -4637,14 +4498,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -4681,7 +4540,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4695,7 +4553,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     /*query_store_query_hints*/
@@ -4705,14 +4562,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -4755,7 +4610,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4769,12 +4623,10 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     IF @ags_present = 1
     BEGIN
-
         /*query_store_plan_forcing_locations*/
         SELECT
             @current_table = 'inserting #query_store_plan_forcing_locations',
@@ -4782,14 +4634,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -4829,7 +4679,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -4843,7 +4692,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*query_store_replicas*/
@@ -4853,14 +4701,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -4897,7 +4743,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -4911,11 +4756,8 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
-
     END; /*End AG queries*/
-
 END; /*End SQL 2022 views*/
 
 IF @get_all_databases = 1
@@ -4935,7 +4777,6 @@ END;
 FETCH NEXT
 FROM database_cursor
 INTO @database_name;
-
 END;
 
 CLOSE database_cursor;
@@ -4951,7 +4792,6 @@ IF EXISTS
       FROM #query_store_runtime_stats AS qsrs
    )
 BEGIN
-
     SELECT
         @sql = @isolation_level,
         @current_table = 'selecting final results';
@@ -4977,7 +4817,6 @@ FROM
           AND @format_output = 0
       )
     BEGIN
-
         SELECT
             @sql +=
         CONVERT
@@ -5150,7 +4989,6 @@ FROM
         END + N' DESC
             )'
         );
-
     END; /*End expert mode 1, format output 0 columns*/
 
     /*
@@ -5162,7 +5000,6 @@ FROM
           AND @format_output = 1
       )
     BEGIN
-
         SELECT
             @sql +=   
         CONVERT
@@ -5340,7 +5177,6 @@ FROM
         END + N' DESC
             )'
         );
-
     END; /*End expert mode = 1, format output = 1*/
 
     /*
@@ -5352,7 +5188,6 @@ FROM
           AND @format_output = 0
       )
     BEGIN
-
         SELECT
             @sql +=
         CONVERT
@@ -5492,7 +5327,6 @@ FROM
         END + N' DESC
             )'
         );
-
     END; /*End expert mode = 0, format output = 0*/
 
     /*
@@ -5504,7 +5338,6 @@ FROM
           AND @format_output = 1
       )
     BEGIN
-
         SELECT
             @sql +=   
         CONVERT
@@ -5646,7 +5479,6 @@ FROM
         END + N' DESC
             )'
         );
-
     END; /*End expert mode = 0, format output = 1*/
 
     /*
@@ -5714,7 +5546,6 @@ FROM
           AND @format_output = 0
       )
     BEGIN
-
         SELECT
             @sql +=   
         CONVERT
@@ -5760,7 +5591,6 @@ FROM
                 )
     ) AS w'
     );
-
     END; /*End format output = 0 wait stats query*/
 
     IF
@@ -5769,7 +5599,6 @@ FROM
           AND @format_output = 1
       )
     BEGIN
-
         SELECT
             @sql +=   
         CONVERT
@@ -5814,7 +5643,6 @@ FROM
                 )
     ) AS w'
     );
-
     END; /*End format output = 1 wait stats query*/
 
     SELECT
@@ -5880,7 +5708,6 @@ OPTION(RECOMPILE);'
         @sql,
       N'@timezone sysname',
         @timezone;
-
 END; /*End runtime stats main query*/
 ELSE
     BEGIN
@@ -5898,7 +5725,6 @@ IF
         AND @format_output = 0
   )
 BEGIN
-
     IF @sql_2022_views = 1
     BEGIN
         IF EXISTS
@@ -5908,7 +5734,6 @@ BEGIN
                FROM #query_store_plan_feedback AS qspf
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting plan feedback';
 
@@ -5960,7 +5785,6 @@ BEGIN
                FROM #query_store_query_hints AS qsqh
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting query hints';
 
@@ -5991,7 +5815,6 @@ BEGIN
                FROM #query_store_query_variant AS qsqv
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting query variants';
 
@@ -6020,7 +5843,6 @@ BEGIN
             FROM #query_store_query AS qsq
        )
     BEGIN
-
         SELECT
             @current_table = 'selecting compilation stats';
 
@@ -6129,7 +5951,6 @@ BEGIN
 
     IF @rc > 0
     BEGIN
-
         SELECT
             @current_table = 'selecting resource stats';
 
@@ -6183,7 +6004,6 @@ BEGIN
 
     IF @new = 1
     BEGIN
-
         IF EXISTS
            (
                SELECT
@@ -6191,7 +6011,6 @@ BEGIN
                 FROM #query_store_wait_stats AS qsws
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting wait stats by query';
 
@@ -6322,7 +6141,6 @@ BEGIN
                         ELSE ' for the queries in the results'
                     END;
         END;
-
     END; /*End wait stats queries*/
 
     IF
@@ -6341,7 +6159,6 @@ BEGIN
                  AND qsr.database_id = qspfl.database_id
            )
         BEGIN
-
         SELECT
             @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
 
@@ -6436,7 +6253,6 @@ BEGIN
 
     EXEC sys.sp_executesql
         @sql;
-
 END; /*End expert mode format output = 0*/
 
 /*
@@ -6448,7 +6264,6 @@ IF
         AND @format_output = 1
   )
 BEGIN
-
     IF @sql_2022_views = 1
     BEGIN
         IF EXISTS
@@ -6458,7 +6273,6 @@ BEGIN
                FROM #query_store_plan_feedback AS qspf
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting plan feedback';
 
@@ -6510,7 +6324,6 @@ BEGIN
                FROM #query_store_query_hints AS qsqh
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting query hints';
 
@@ -6541,7 +6354,6 @@ BEGIN
                FROM #query_store_query_variant AS qsqv
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting query variants';
 
@@ -6698,7 +6510,6 @@ BEGIN
 
     IF @rc > 0
     BEGIN
-
         SELECT
             @current_table = 'selecting resource stats';
 
@@ -6764,7 +6575,6 @@ BEGIN
 
     IF @new = 1
     BEGIN
-
         IF EXISTS
            (
                SELECT
@@ -6772,7 +6582,6 @@ BEGIN
                 FROM #query_store_wait_stats AS qsws
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting wait stats by query';
 
@@ -6927,28 +6736,27 @@ BEGIN
                  AND qsr.replica_group_id = qspfl.database_id
            )
         BEGIN
-
-        SELECT
-            @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-
-        SELECT
-            database_name =
-                DB_NAME(qsr.database_id),
-            qsr.replica_group_id,
-            qsr.role_type,
-            qsr.replica_name,
-            qspfl.plan_forcing_location_id,
-            qspfl.query_id,
-            qspfl.plan_id,
-            qspfl.replica_group_id
-        FROM #query_store_replicas AS qsr
-        JOIN #query_store_plan_forcing_locations AS qspfl
-          ON  qsr.replica_group_id = qspfl.replica_group_id
-          AND qsr.database_id = qspfl.database_id
-        ORDER BY 
-            qsr.replica_group_id
-        OPTION(RECOMPILE);
-
+            SELECT
+                @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
+            
+            SELECT
+                database_name =
+                    DB_NAME(qsr.database_id),
+                qsr.replica_group_id,
+                qsr.role_type,
+                qsr.replica_name,
+                qspfl.plan_forcing_location_id,
+                qspfl.query_id,
+                qspfl.plan_id,
+                qspfl.replica_group_id
+            FROM #query_store_replicas AS qsr
+            JOIN #query_store_plan_forcing_locations AS qspfl
+              ON  qsr.replica_group_id = qspfl.replica_group_id
+              AND qsr.database_id = qspfl.database_id
+            ORDER BY 
+                qsr.replica_group_id
+            OPTION(RECOMPILE);
+            
         END;
         ELSE
         BEGIN
@@ -7157,7 +6965,6 @@ END TRY
 
 /*Error handling!*/
 BEGIN CATCH
-
     /*
     Where the error happened and the message
     */
@@ -7187,7 +6994,6 @@ Debug elements!
 */
 IF @debug = 1
 BEGIN
-
     SELECT
         parameter_type =
             'procedure_parameters',
@@ -8053,12 +7859,8 @@ BEGIN
             result =
                 '#troubleshoot_performance is empty';
     END;
-
     RETURN; /*Stop doing anything, I guess*/
-
 END; /*End debug*/
-
 RETURN; /*Yeah sure why not?*/
-
 END;/*Final End*/
 GO
