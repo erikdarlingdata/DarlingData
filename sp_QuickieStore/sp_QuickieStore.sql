@@ -151,7 +151,7 @@ BEGIN
                 WHEN N'@top' THEN 'the number of queries you want to pull back'
                 WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
                 WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
-                WHEN N'@timezone' THEN 'user specified time zone to *display* query execution times in'
+                WHEN N'@timezone' THEN 'user specified time zone to *display* query execution dates in'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
                 WHEN N'@duration_ms' THEN 'the minimum duration a query must have'
                 WHEN N'@execution_type_desc' THEN 'the type of execution you want to filter'
