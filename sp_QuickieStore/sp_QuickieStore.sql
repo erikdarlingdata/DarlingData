@@ -53,7 +53,7 @@ CREATE OR ALTER PROCEDURE
     @top bigint = 10,
     @start_date datetimeoffset(7) = NULL,
     @end_date datetimeoffset(7) = NULL,
-    @timezone sysname = NULL,
+    @timezone sysname = 'UTC',
     @execution_count bigint = NULL,
     @duration_ms bigint = NULL,
     @execution_type_desc nvarchar(60) = NULL,
@@ -149,8 +149,8 @@ BEGIN
                 WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
                 WHEN N'@sort_order' THEN 'the runtime metric you want to prioritize results by'
                 WHEN N'@top' THEN 'the number of queries you want to pull back'
-                WHEN N'@start_date' THEN 'the begin date of your search'
-                WHEN N'@end_date' THEN 'the end date of your search'
+                WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
+                WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
                 WHEN N'@timezone' THEN 'user specified time zone to *display* query execution times in'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
                 WHEN N'@duration_ms' THEN 'the minimum duration a query must have'
@@ -223,7 +223,7 @@ BEGIN
                 WHEN N'@top' THEN '10'
                 WHEN N'@start_date' THEN 'the last seven days'
                 WHEN N'@end_date' THEN 'NULL'
-                WHEN N'@timezone' THEN 'SELECT CURRENT_TIMEZONE = CURRENT_TIMEZONE_ID();'
+                WHEN N'@timezone' THEN 'UTC'
                 WHEN N'@execution_count' THEN 'NULL'
                 WHEN N'@duration_ms' THEN 'NULL'
                 WHEN N'@execution_type_desc' THEN 'NULL'
@@ -1307,7 +1307,7 @@ SELECT
     @sort_order =
         ISNULL(@sort_order, 'cpu'),
     @timezone = 
-        ISNULL(@timezone, CURRENT_TIMEZONE_ID()),
+        ISNULL(@timezone, 'UTC'),
     @top =
         ISNULL(@top, 10),
     @expert_mode =
@@ -1790,6 +1790,23 @@ BEGIN
             END
         OPTION(RECOMPILE);
 END;
+
+/*Check that the selected @timezone is valid*/
+IF @timezone <> N'UTC'
+BEGIN
+    IF NOT EXISTS
+       (
+           SELECT 
+               1/0
+           FROM sys.time_zone_info AS tzi
+           WHERE tzi.name = @timezone
+       )
+       BEGIN
+           RAISERROR('The time zone you chose (%s is not valid. Please check sys.time_zone_info for a valid list.)', 10, 1, @timezone) WITH NOWAIT;
+           RETURN
+       END;
+END;
+
 
 /*
 Get filters ready, or whatever
