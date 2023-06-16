@@ -4879,27 +4879,9 @@ FROM
         N''
             END + N'
         first_execution_time =
-            SWITCHOFFSET
-            (
-                qsrs.first_execution_time,
-                DATEPART
-                (
-                    TZOFFSET,
-                    SYSDATETIMEOFFSET()
-                      AT TIME ZONE @timezone
-                )
-            ),
+            qsrs.first_execution_time AT TIME ZONE @timezone,
         last_execution_time =
-            SWITCHOFFSET
-            (
-                qsrs.last_execution_time,
-                DATEPART
-                (
-                    TZOFFSET,
-                    SYSDATETIMEOFFSET()
-                      AT TIME ZONE @timezone
-                )
-        ),
+            qsrs.last_execution_time AT TIME ZONE @timezone,
         qsrs.count_executions,
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
@@ -5066,27 +5048,9 @@ FROM
             nvarchar(MAX),
             N'
         first_execution_time =
-            SWITCHOFFSET
-            (
-                qsrs.first_execution_time,
-                DATEPART
-                (
-                    TZOFFSET,
-                    SYSDATETIMEOFFSET()
-                      AT TIME ZONE @timezone
-                )
-            ),
+            qsrs.first_execution_time AT TIME ZONE @timezone,
         last_execution_time =
-            SWITCHOFFSET
-            (
-                qsrs.last_execution_time,
-                DATEPART
-                (
-                    TZOFFSET,
-                    SYSDATETIMEOFFSET()
-                      AT TIME ZONE @timezone
-                )
-        ),
+            qsrs.last_execution_time AT TIME ZONE @timezone,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
@@ -5250,27 +5214,9 @@ FROM
         N''
             END + N'
         first_execution_time =
-            SWITCHOFFSET
-            (
-                qsrs.first_execution_time,
-                DATEPART
-                (
-                    TZOFFSET,
-                    SYSDATETIMEOFFSET()
-                      AT TIME ZONE @timezone
-                )
-            ),
+            qsrs.first_execution_time AT TIME ZONE @timezone,
         last_execution_time =
-            SWITCHOFFSET
-            (
-                qsrs.last_execution_time,
-                DATEPART
-                (
-                    TZOFFSET,
-                    SYSDATETIMEOFFSET()
-                      AT TIME ZONE @timezone
-                )
-        ),
+            qsrs.last_execution_time AT TIME ZONE @timezone,
         qsrs.count_executions,
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
@@ -5402,27 +5348,9 @@ FROM
             END
         + N'
         first_execution_time =
-            SWITCHOFFSET
-            (
-                qsrs.first_execution_time,
-                DATEPART
-                (
-                    TZOFFSET,
-                    SYSDATETIMEOFFSET()
-                      AT TIME ZONE @timezone
-                )
-            ),
+            qsrs.first_execution_time AT TIME ZONE @timezone,
         last_execution_time =
-            SWITCHOFFSET
-            (
-                qsrs.last_execution_time,
-                DATEPART
-                (
-                    TZOFFSET,
-                    SYSDATETIMEOFFSET()
-                      AT TIME ZONE @timezone
-                )
-        ),
+            qsrs.last_execution_time AT TIME ZONE @timezone,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
@@ -5746,27 +5674,9 @@ BEGIN
                 qspf.feedback_data,
                 qspf.state_desc,
                 create_time =
-                    SWITCHOFFSET
-                    (
-                        qspf.create_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                    ),
+                    qspf.create_time AT TIME ZONE @timezone,
                 last_updated_time =
-                    SWITCHOFFSET
-                    (
-                        qspf.last_updated_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                    )
+                    qspf.last_updated_time AT TIME ZONE @timezone
             FROM #query_store_plan_feedback AS qspf
             ORDER BY
                 qspf.plan_id
@@ -5860,38 +5770,11 @@ BEGIN
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
                 initial_compile_start_time =
-                    SWITCHOFFSET
-                    (
-                        qsq.initial_compile_start_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                    ),
+                    qsq.initial_compile_start_time AT TIME ZONE @timezone,
                 last_compile_start_time =
-                    SWITCHOFFSET
-                    (
-                        qsq.last_compile_start_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                    ),
+                    qsq.last_compile_start_time AT TIME ZONE @timezone,
                 last_execution_time =
-                    SWITCHOFFSET
-                    (
-                        qsq.last_execution_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                ),                              
+                    qsq.last_execution_time AT TIME ZONE @timezone,                             
                 qsq.count_compiles,
                 qsq.avg_compile_duration_ms,
                 qsq.total_compile_duration_ms,
@@ -6285,27 +6168,9 @@ BEGIN
                 qspf.feedback_data,
                 qspf.state_desc,
                 create_time =
-                    SWITCHOFFSET
-                    (
-                        qspf.create_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                    ),
+                    qspf.create_time AT TIME ZONE @timezone,
                 last_updated_time =
-                    SWITCHOFFSET
-                    (
-                        qspf.last_updated_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                    )
+                    qspf.last_updated_time AT TIME ZONE @timezone
             FROM #query_store_plan_feedback AS qspf
             ORDER BY
                 qspf.plan_id
@@ -6399,38 +6264,12 @@ BEGIN
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
                 initial_compile_start_time =
-                    SWITCHOFFSET
-                    (
-                        qsq.initial_compile_start_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                    ),           
+                    qsq.initial_compile_start_time AT TIME ZONE @timezone,          
                 last_compile_start_time =
-                    SWITCHOFFSET
-                    (
-                        qsq.last_compile_start_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                    ),
+                    qsq.last_compile_start_time AT TIME ZONE @timezone,
+
                 last_execution_time =
-                    SWITCHOFFSET
-                    (
-                        qsq.last_execution_time,
-                        DATEPART
-                        (
-                            TZOFFSET,
-                            SYSDATETIMEOFFSET()
-                              AT TIME ZONE @timezone
-                        )
-                    ),
+                    qsq.last_execution_time AT TIME ZONE @timezone,
                 count_compiles =
                     FORMAT(qsq.count_compiles, 'N0'),
                 avg_compile_duration_ms =
