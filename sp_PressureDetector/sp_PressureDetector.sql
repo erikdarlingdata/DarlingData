@@ -61,7 +61,6 @@ ALTER PROCEDURE
 WITH RECOMPILE
 AS
 BEGIN
-
 SET STATISTICS XML OFF;
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -73,7 +72,6 @@ SELECT
 
 IF @help = 1
 BEGIN
-
     /*
     Introduction
     */
@@ -553,7 +551,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     FROM sys.dm_os_sys_info AS osi
                 ),
             drive =
-                CASE 
+                CASE
                     WHEN f.physical_name LIKE N''http%''
                     THEN f.physical_name
                     ELSE
@@ -849,7 +847,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /*Memory Grant info*/
     IF @what_to_check IN (N'all', N'memory')
     BEGIN
-
         /*
         See buffer pool size, along with stolen memory
         and top non-buffer pool consumers
@@ -1322,7 +1319,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
     IF @what_to_check IN (N'all', N'cpu')
     BEGIN
-
         IF @helpful_new_columns = 1
         BEGIN
             IF @debug = 1 BEGIN PRINT @reserved_worker_count; END;

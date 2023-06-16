@@ -330,8 +330,8 @@ BEGIN
         mit_license_yo =
            'i am MIT licensed, so like, do whatever'
     UNION ALL
-      
-    SELECT   
+     
+    SELECT  
         mit_license_yo =
             'see printed messages for full license';
 
@@ -1045,14 +1045,14 @@ INSERT
     database_name
 )
 SELECT
-    database_name = 
+    database_name =
         ISNULL(@database_name, DB_NAME())
 WHERE @get_all_databases = 0
 
 UNION ALL
 
 SELECT
-    database_name = 
+    database_name =
         d.name
 FROM sys.databases AS d
 WHERE @get_all_databases = 1
@@ -1303,7 +1303,7 @@ and some shouldn't be empty strings
 SELECT
     @sort_order =
         ISNULL(@sort_order, 'cpu'),
-    @timezone = 
+    @timezone =
         ISNULL(@timezone, 'UTC'),
     @top =
         ISNULL(@top, 10),
@@ -1538,7 +1538,7 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    IF (@procedure_exists = 0 
+    IF (@procedure_exists = 0
           AND @get_all_databases = 0)
         BEGIN
             RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s
@@ -1780,7 +1780,7 @@ IF @timezone <> N'UTC'
 BEGIN
     IF NOT EXISTS
        (
-           SELECT 
+           SELECT
                1/0
            FROM sys.time_zone_info AS tzi
            WHERE tzi.name = @timezone
@@ -1797,7 +1797,7 @@ Get filters ready, or whatever
 We're only going to pull some stuff from runtime stats and plans
 */
 
-IF @start_date IS NULL 
+IF @start_date IS NULL
      AND @end_date IS NULL
 BEGIN
     SELECT
@@ -1811,19 +1811,19 @@ BEGIN
         @where_clause += N'AND   qsrs.last_execution_time >= @start_date AT TIME ZONE ''UTC'' ' + @nc10;
 END;
 
-IF @start_date IS NULL 
+IF @start_date IS NULL
      AND @end_date IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time BETWEEN DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET() AT TIME ZONE ''UTC'')) 
+        @where_clause += N'AND   qsrs.last_execution_time BETWEEN DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET() AT TIME ZONE ''UTC''))
                                    AND @end_date AT TIME ZONE ''UTC'' ' + @nc10;
 END;
 
-IF @start_date IS NOT NULL 
+IF @start_date IS NOT NULL
      AND @end_date IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time BETWEEN @start_date AT TIME ZONE ''UTC'' 
+        @where_clause += N'AND   qsrs.last_execution_time BETWEEN @start_date AT TIME ZONE ''UTC''
                                    AND @end_date AT TIME ZONE ''UTC'' ' + @nc10;
 END;
 
@@ -1950,8 +1950,8 @@ SELECT DISTINCT
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
    ON qsq.query_id = qsp.query_id
-WHERE qsq.object_id ' + 
-CASE 
+WHERE qsq.object_id ' +
+CASE
     WHEN LOWER(@query_type) LIKE 'a%'
     THEN N'= 0'
     ELSE N'<> 0'
@@ -2009,12 +2009,12 @@ IF
   )
 BEGIN
     IF @include_plan_ids IS NOT NULL
-    BEGIN      
-        SELECT   
-            @include_plan_ids =   
+    BEGIN     
+        SELECT  
+            @include_plan_ids =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_plan_ids)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_plan_ids)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2042,11 +2042,11 @@ BEGIN
 
     IF @ignore_plan_ids IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_plan_ids =   
+        SELECT  
+            @ignore_plan_ids =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_plan_ids)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_plan_ids)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2074,11 +2074,11 @@ BEGIN
 
     IF @include_query_ids IS NOT NULL
     BEGIN
-        SELECT   
-            @include_query_ids =   
+        SELECT  
+            @include_query_ids =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_query_ids)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_query_ids)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #include_query_ids',
@@ -2173,11 +2173,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_query_ids IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_query_ids =   
+        SELECT  
+            @ignore_query_ids =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_query_ids)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_query_ids)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #ignore_query_ids',
@@ -2286,11 +2286,11 @@ IF
 BEGIN
     IF @include_query_hashes IS NOT NULL
     BEGIN
-        SELECT   
-            @include_query_hashes =   
+        SELECT  
+            @include_query_hashes =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_query_hashes)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_query_hashes)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2393,11 +2393,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_query_hashes IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_query_hashes =   
+        SELECT  
+            @ignore_query_hashes =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_query_hashes)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_query_hashes)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2500,11 +2500,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_plan_hashes IS NOT NULL
     BEGIN
-        SELECT   
-            @include_plan_hashes =   
+        SELECT  
+            @include_plan_hashes =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_plan_hashes)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_plan_hashes)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2600,11 +2600,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_plan_hashes IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_plan_hashes =   
+        SELECT  
+            @ignore_plan_hashes =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_plan_hashes)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_plan_hashes)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2700,11 +2700,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_sql_handles IS NOT NULL
     BEGIN
-        SELECT   
-            @include_sql_handles =   
+        SELECT  
+            @include_sql_handles =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_sql_handles)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_sql_handles)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2815,11 +2815,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_sql_handles IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_sql_handles =   
+        SELECT  
+            @ignore_sql_handles =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_sql_handles)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_sql_handles)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -3103,11 +3103,11 @@ CASE @wait_filter
      WHEN 'memory' THEN N'17'
 END
 + N'
-GROUP BY 
+GROUP BY
     qsws.plan_id
-HAVING 
+HAVING
     SUM(qsws.avg_query_wait_time_ms) > 1000.
-ORDER BY 
+ORDER BY
     SUM(qsws.avg_query_wait_time_ms) DESC
 OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     END;
@@ -3265,9 +3265,9 @@ FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
 WHERE 1 = 1
 ' + @where_clause
   + N'
-GROUP 
+GROUP
     BY qsrs.plan_id
-ORDER BY 
+ORDER BY
     MAX(' +
 CASE @sort_order
      WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
@@ -3577,7 +3577,7 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE qsp.plan_id = qsrs.plan_id
     AND   qsp.is_online_index_plan = 0
-    ORDER BY 
+    ORDER BY
         qsp.last_execution_time DESC
 ) AS qsp
 WHERE qsrs.database_id = @database_id
@@ -3693,7 +3693,7 @@ CROSS APPLY
         qsq.*
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = qsp.query_id
-    ORDER 
+    ORDER
         BY qsq.last_execution_time DESC
 ) AS qsq
 WHERE qsp.database_id = @database_id
@@ -3916,7 +3916,7 @@ WHERE EXISTS
           FROM #query_store_query_text AS qsqt
           WHERE qsqt.statement_sql_handle = deqs.statement_sql_handle
       )
-GROUP BY 
+GROUP BY
     deqs.statement_sql_handle
 OPTION(RECOMPILE);
 
@@ -4186,14 +4186,14 @@ CROSS APPLY
     AND   qsws.plan_id = qsrs.plan_id
     AND   qsws.wait_category > 0
     AND   qsws.min_query_wait_time_ms > 0
-    ORDER BY 
+    ORDER BY
         qsws.avg_query_wait_time_ms DESC
 ) AS qsws
 WHERE qsrs.database_id = @database_id
 GROUP BY
     qsws.plan_id,
     qsws.wait_category_desc
-HAVING 
+HAVING
     SUM(qsws.min_query_wait_time_ms) > 0.
 OPTION(RECOMPILE);' + @nc10;
 
@@ -4797,10 +4797,10 @@ BEGIN
         @current_table = 'selecting final results';
 
     SELECT
-        @sql +=   
+        @sql +=  
         CONVERT
         (
-            nvarchar(MAX),   
+            nvarchar(MAX),  
         N'
 SELECT
     x.*
@@ -4821,7 +4821,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),             
+            nvarchar(MAX),            
             N'
     SELECT
         source =
@@ -4878,25 +4878,25 @@ FROM
                  ELSE
         N''
             END + N'
-        first_execution_time = 
+        first_execution_time =
             SWITCHOFFSET
             (
-                qsrs.first_execution_time, 
+                qsrs.first_execution_time,
                 DATEPART
                 (
-                    TZOFFSET, 
-                    SYSDATETIMEOFFSET() 
+                    TZOFFSET,
+                    SYSDATETIMEOFFSET()
                       AT TIME ZONE @timezone
                 )
             ),
-        last_execution_time = 
+        last_execution_time =
             SWITCHOFFSET
             (
-                qsrs.last_execution_time, 
+                qsrs.last_execution_time,
                 DATEPART
                 (
-                    TZOFFSET, 
-                    SYSDATETIMEOFFSET() 
+                    TZOFFSET,
+                    SYSDATETIMEOFFSET()
                       AT TIME ZONE @timezone
                 )
         ),
@@ -5001,10 +5001,10 @@ FROM
       )
     BEGIN
         SELECT
-            @sql +=   
+            @sql +=  
         CONVERT
         (
-            nvarchar(MAX),              
+            nvarchar(MAX),             
             N'
     SELECT
         source =
@@ -5065,25 +5065,25 @@ FROM
         (
             nvarchar(MAX),
             N'
-        first_execution_time = 
+        first_execution_time =
             SWITCHOFFSET
             (
-                qsrs.first_execution_time, 
+                qsrs.first_execution_time,
                 DATEPART
                 (
-                    TZOFFSET, 
-                    SYSDATETIMEOFFSET() 
+                    TZOFFSET,
+                    SYSDATETIMEOFFSET()
                       AT TIME ZONE @timezone
                 )
             ),
-        last_execution_time = 
+        last_execution_time =
             SWITCHOFFSET
             (
-                qsrs.last_execution_time, 
+                qsrs.last_execution_time,
                 DATEPART
                 (
-                    TZOFFSET, 
-                    SYSDATETIMEOFFSET() 
+                    TZOFFSET,
+                    SYSDATETIMEOFFSET()
                       AT TIME ZONE @timezone
                 )
         ),
@@ -5192,7 +5192,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),              
+            nvarchar(MAX),             
             N'
     SELECT
         source =
@@ -5249,25 +5249,25 @@ FROM
                  ELSE
         N''
             END + N'
-        first_execution_time = 
+        first_execution_time =
             SWITCHOFFSET
             (
-                qsrs.first_execution_time, 
+                qsrs.first_execution_time,
                 DATEPART
                 (
-                    TZOFFSET, 
-                    SYSDATETIMEOFFSET() 
+                    TZOFFSET,
+                    SYSDATETIMEOFFSET()
                       AT TIME ZONE @timezone
                 )
             ),
-        last_execution_time = 
+        last_execution_time =
             SWITCHOFFSET
             (
-                qsrs.last_execution_time, 
+                qsrs.last_execution_time,
                 DATEPART
                 (
-                    TZOFFSET, 
-                    SYSDATETIMEOFFSET() 
+                    TZOFFSET,
+                    SYSDATETIMEOFFSET()
                       AT TIME ZONE @timezone
                 )
         ),
@@ -5339,10 +5339,10 @@ FROM
       )
     BEGIN
         SELECT
-            @sql +=   
+            @sql +=  
         CONVERT
         (
-            nvarchar(MAX),              
+            nvarchar(MAX),             
             N'
     SELECT
         source =
@@ -5401,25 +5401,25 @@ FROM
         N''
             END
         + N'
-        first_execution_time = 
+        first_execution_time =
             SWITCHOFFSET
             (
-                qsrs.first_execution_time, 
+                qsrs.first_execution_time,
                 DATEPART
                 (
-                    TZOFFSET, 
-                    SYSDATETIMEOFFSET() 
+                    TZOFFSET,
+                    SYSDATETIMEOFFSET()
                       AT TIME ZONE @timezone
                 )
             ),
-        last_execution_time = 
+        last_execution_time =
             SWITCHOFFSET
             (
-                qsrs.last_execution_time, 
+                qsrs.last_execution_time,
                 DATEPART
                 (
-                    TZOFFSET, 
-                    SYSDATETIMEOFFSET() 
+                    TZOFFSET,
+                    SYSDATETIMEOFFSET()
                       AT TIME ZONE @timezone
                 )
         ),
@@ -5464,7 +5464,7 @@ FROM
                 PARTITION BY
                     qsrs.plan_id
                 ORDER BY
-                    '   
+                    '  
         +
         CASE @sort_order
              WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
@@ -5485,7 +5485,7 @@ FROM
     Add on the from and stuff
     */
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -5522,7 +5522,7 @@ FROM
           ON qsqt.query_text_id = qsq.query_text_id
         WHERE qsq.query_id = qsp.query_id
         AND   qsq.query_id = qsp.query_id
-        ORDER BY 
+        ORDER BY
             qsq.last_execution_time DESC
     ) AS qsqt
     CROSS APPLY
@@ -5532,7 +5532,7 @@ FROM
         FROM #query_store_query AS qsq
         WHERE qsq.query_id = qsp.query_id
         AND   qsq.database_id = qsp.database_id
-        ORDER 
+        ORDER
             BY qsq.last_execution_time DESC
     ) AS qsq'
     );
@@ -5547,7 +5547,7 @@ FROM
       )
     BEGIN
         SELECT
-            @sql +=   
+            @sql +=  
         CONVERT
         (
             nvarchar(MAX),
@@ -5579,9 +5579,9 @@ FROM
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
                        AND   qsws.database_id = qsrs.database_id
-                       GROUP BY 
+                       GROUP BY
                            qsws.wait_category_desc
-                       ORDER BY 
+                       ORDER BY
                            SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
@@ -5600,7 +5600,7 @@ FROM
       )
     BEGIN
         SELECT
-            @sql +=   
+            @sql +=  
         CONVERT
         (
             nvarchar(MAX),
@@ -5631,9 +5631,9 @@ FROM
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
                        AND   qsws.database_id = qsrs.database_id
-                       GROUP BY 
+                       GROUP BY
                            qsws.wait_category_desc
-                       ORDER BY 
+                       ORDER BY
                            SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
@@ -5646,7 +5646,7 @@ FROM
     END; /*End format output = 1 wait stats query*/
 
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -5691,7 +5691,7 @@ ORDER BY ' +
              END
     END
              + N' DESC
-OPTION(RECOMPILE);'   
+OPTION(RECOMPILE);'  
     + @nc10
     );
 
@@ -5745,30 +5745,30 @@ BEGIN
                 qspf.feature_desc,
                 qspf.feedback_data,
                 qspf.state_desc,
-                create_time = 
+                create_time =
                     SWITCHOFFSET
                     (
-                        qspf.create_time, 
+                        qspf.create_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
                     ),
-                last_updated_time = 
+                last_updated_time =
                     SWITCHOFFSET
                     (
-                        qspf.last_updated_time, 
+                        qspf.last_updated_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
                     )
             FROM #query_store_plan_feedback AS qspf
-            ORDER BY 
+            ORDER BY
                 qspf.plan_id
             OPTION(RECOMPILE);
         END;
@@ -5798,7 +5798,7 @@ BEGIN
                 qsqh.query_hint_failure_count,
                 qsqh.source_desc
             FROM #query_store_query_hints AS qsqh
-            ORDER BY 
+            ORDER BY
                 qsqh.query_id
             OPTION(RECOMPILE);
         END;
@@ -5825,7 +5825,7 @@ BEGIN
                 qsqv.parent_query_id,
                 qsqv.dispatcher_plan_id
             FROM #query_store_query_variant AS qsqv
-            ORDER BY 
+            ORDER BY
                 qsqv.parent_query_id
             OPTION(RECOMPILE);
         END;
@@ -5859,39 +5859,39 @@ BEGIN
                 qsq.object_name,
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
-                initial_compile_start_time = 
+                initial_compile_start_time =
                     SWITCHOFFSET
                     (
-                        qsq.initial_compile_start_time, 
+                        qsq.initial_compile_start_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
                     ),
-                last_compile_start_time = 
+                last_compile_start_time =
                     SWITCHOFFSET
                     (
-                        qsq.last_compile_start_time, 
+                        qsq.last_compile_start_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
                     ),
-                last_execution_time = 
+                last_execution_time =
                     SWITCHOFFSET
                     (
-                        qsq.last_execution_time, 
+                        qsq.last_execution_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
-                ),                               
+                ),                              
                 qsq.count_compiles,
                 qsq.avg_compile_duration_ms,
                 qsq.total_compile_duration_ms,
@@ -5937,7 +5937,7 @@ BEGIN
             ) AS qsqt
         ) AS x
         WHERE x.n = 1
-        ORDER BY 
+        ORDER BY
             x.query_id
         OPTION(RECOMPILE);
 
@@ -5990,7 +5990,7 @@ BEGIN
             qsqt.total_grant_mb IS NOT NULL
             OR qsqt.total_reserved_threads IS NOT NULL
         )
-        ORDER BY 
+        ORDER BY
             qsq.query_id
         OPTION(RECOMPILE);
 
@@ -6113,7 +6113,7 @@ BEGIN
             GROUP BY
                 qsws.wait_category_desc,
                 qsws.database_id
-            ORDER BY 
+            ORDER BY
                 SUM(qsws.total_query_wait_time_ms) DESC
             OPTION(RECOMPILE);
 
@@ -6124,7 +6124,7 @@ BEGIN
                 result =
                     '#query_store_wait_stats is empty' +
                     CASE
-                        WHEN   
+                        WHEN  
                         (
                                 @product_version = 13
                             AND @azure = 0
@@ -6175,7 +6175,7 @@ BEGIN
         FROM #query_store_replicas AS qsr
         JOIN #query_store_plan_forcing_locations AS qspfl
           ON qsr.replica_group_id = qspfl.replica_group_id
-        ORDER BY 
+        ORDER BY
             qsr.replica_group_id;
 
         END;
@@ -6191,7 +6191,7 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -6211,7 +6211,7 @@ BEGIN
         dqso.stale_query_threshold_days,
         dqso.max_plans_per_query,
         dqso.query_capture_mode_desc,'
-        +   
+        +  
         CASE
             WHEN
             (
@@ -6239,7 +6239,7 @@ BEGIN
     );
 
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -6284,30 +6284,30 @@ BEGIN
                 qspf.feature_desc,
                 qspf.feedback_data,
                 qspf.state_desc,
-                create_time = 
+                create_time =
                     SWITCHOFFSET
                     (
-                        qspf.create_time, 
+                        qspf.create_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
                     ),
-                last_updated_time = 
+                last_updated_time =
                     SWITCHOFFSET
                     (
-                        qspf.last_updated_time, 
+                        qspf.last_updated_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
                     )
             FROM #query_store_plan_feedback AS qspf
-            ORDER BY 
+            ORDER BY
                 qspf.plan_id
             OPTION(RECOMPILE);
         END;
@@ -6337,7 +6337,7 @@ BEGIN
                 qsqh.query_hint_failure_count,
                 qsqh.source_desc
             FROM #query_store_query_hints AS qsqh
-            ORDER BY 
+            ORDER BY
                 qsqh.query_id
             OPTION(RECOMPILE);
         END;
@@ -6364,7 +6364,7 @@ BEGIN
                 qsqv.parent_query_id,
                 qsqv.dispatcher_plan_id
             FROM #query_store_query_variant AS qsqv
-            ORDER BY 
+            ORDER BY
                 qsqv.parent_query_id
             OPTION(RECOMPILE);
         END;
@@ -6398,36 +6398,36 @@ BEGIN
                 qsq.object_name,
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
-                initial_compile_start_time = 
+                initial_compile_start_time =
                     SWITCHOFFSET
                     (
-                        qsq.initial_compile_start_time, 
+                        qsq.initial_compile_start_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
-                    ),            
-                last_compile_start_time = 
+                    ),           
+                last_compile_start_time =
                     SWITCHOFFSET
                     (
-                        qsq.last_compile_start_time, 
+                        qsq.last_compile_start_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
                     ),
-                last_execution_time = 
+                last_execution_time =
                     SWITCHOFFSET
                     (
-                        qsq.last_execution_time, 
+                        qsq.last_execution_time,
                         DATEPART
                         (
-                            TZOFFSET, 
-                            SYSDATETIMEOFFSET() 
+                            TZOFFSET,
+                            SYSDATETIMEOFFSET()
                               AT TIME ZONE @timezone
                         )
                     ),
@@ -6496,7 +6496,7 @@ BEGIN
             ) AS qsqt
         ) AS x
         WHERE x.n = 1
-        ORDER BY 
+        ORDER BY
             x.query_id
         OPTION(RECOMPILE);
 
@@ -6561,7 +6561,7 @@ BEGIN
             qsqt.total_grant_mb IS NOT NULL
             OR qsqt.total_reserved_threads IS NOT NULL
         )
-        ORDER BY 
+        ORDER BY
             qsq.query_id
         OPTION(RECOMPILE);
 
@@ -6690,7 +6690,7 @@ BEGIN
             GROUP BY
                 qsws.wait_category_desc,
                 qsws.database_id
-            ORDER BY 
+            ORDER BY
                 SUM(qsws.total_query_wait_time_ms) DESC
             OPTION(RECOMPILE);
 
@@ -6738,7 +6738,7 @@ BEGIN
         BEGIN
             SELECT
                 @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-            
+           
             SELECT
                 database_name =
                     DB_NAME(qsr.database_id),
@@ -6753,10 +6753,10 @@ BEGIN
             JOIN #query_store_plan_forcing_locations AS qspfl
               ON  qsr.replica_group_id = qspfl.replica_group_id
               AND qsr.database_id = qspfl.database_id
-            ORDER BY 
+            ORDER BY
                 qsr.replica_group_id
             OPTION(RECOMPILE);
-            
+           
         END;
         ELSE
         BEGIN
@@ -6770,7 +6770,7 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -6808,7 +6808,7 @@ BEGIN
         END
         +
         CASE
-            WHEN   
+            WHEN  
             (
                 @azure = 1
                 OR @product_version > 14
@@ -6854,32 +6854,32 @@ FROM
         sort =
             1,
         period =
-            N'query store data for period ' +   
+            N'query store data for period ' +  
             CONVERT
             (
-                nvarchar(10),   
+                nvarchar(10),  
                 ISNULL
                 (
-                    @start_date,   
+                    @start_date,  
                     DATEADD
                     (
-                        DAY,   
-                        -7,   
+                        DAY,  
+                        -7,  
                         DATEDIFF
                         (
-                            DAY,   
-                            0,   
+                            DAY,  
+                            0,  
                             SYSDATETIME()
                               AT TIME ZONE @timezone
                         )
                     )
-                ),   
+                ),  
                 23
-            ) +   
-            N' through ' +   
+            ) +  
+            N' through ' +  
             CONVERT
             (
-                nvarchar(10),   
+                nvarchar(10),  
                 ISNULL
                 (
                     @end_date,
@@ -6898,7 +6898,7 @@ FROM
             'to debug issues, use @debug = 1;',
         performance =
             'if this runs slowly, use to get query plans',
-        version_and_date =   
+        version_and_date =  
             N'version: ' + CONVERT(nvarchar(10), @version),
         thanks =
             'thanks for using sp_QuickieStore!'
@@ -6909,32 +6909,32 @@ FROM
         sort =
             2,
         period =
-            N'query store data for period ' +   
+            N'query store data for period ' +  
             CONVERT
             (
-                nvarchar(10),   
+                nvarchar(10),  
                 ISNULL
                 (
-                    @start_date,   
+                    @start_date,  
                     DATEADD
                     (
-                        DAY,   
-                        -7,   
+                        DAY,  
+                        -7,  
                         DATEDIFF
                         (
-                            DAY,   
-                            0,   
+                            DAY,  
+                            0,  
                             SYSDATETIME()
                               AT TIME ZONE @timezone
                         )
                     )
-                ),   
+                ),  
                 23
-            ) +   
-            N' through ' +   
+            ) +  
+            N' through ' +  
             CONVERT
             (
-                nvarchar(10),   
+                nvarchar(10),  
                 ISNULL
                 (
                     @end_date,
@@ -6953,12 +6953,12 @@ FROM
             'EXEC sp_QuickieStore @debug = 1;',
         performance =
             'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
-        version_and_date =   
+        version_and_date =  
             N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
         thanks =
             'i hope you find it useful, or whatever'
 ) AS x
-ORDER BY   
+ORDER BY  
     x.sort;
 
 END TRY
@@ -7007,7 +7007,7 @@ BEGIN
             @start_date,
         end_date =
             @end_date,
-        timezone = 
+        timezone =
             @timezone,
         execution_count =
             @execution_count,
@@ -7117,9 +7117,9 @@ BEGIN
             @troubleshoot_info,
         rc =
             @rc,
-       em =   
+       em =  
            @em,
-       fo =   
+       fo =  
            @fo;
 
     IF EXISTS
@@ -7134,7 +7134,7 @@ BEGIN
                 '#databases',
             d.*
         FROM #databases AS d
-        ORDER BY 
+        ORDER BY
             d.database_name
         OPTION(RECOMPILE);
     END;
@@ -7157,7 +7157,7 @@ BEGIN
                 '#distinct_plans',
             dp.*
         FROM #distinct_plans AS dp
-        ORDER BY 
+        ORDER BY
             dp.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7180,7 +7180,7 @@ BEGIN
                 '#procedure_plans',
             pp.*
         FROM #procedure_plans AS pp
-        ORDER BY 
+        ORDER BY
             pp.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7203,7 +7203,7 @@ BEGIN
                 '#query_types',
             qt.*
         FROM #query_types AS qt
-        ORDER BY 
+        ORDER BY
             qt.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7226,7 +7226,7 @@ BEGIN
                 '#include_plan_ids',
             ipi.*
         FROM #include_plan_ids AS ipi
-        ORDER BY 
+        ORDER BY
             ipi.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7249,7 +7249,7 @@ BEGIN
                 '#include_query_ids',
             iqi.*
         FROM #include_query_ids AS iqi
-        ORDER BY 
+        ORDER BY
             iqi.query_id
         OPTION(RECOMPILE);
     END;
@@ -7272,7 +7272,7 @@ BEGIN
                 '#include_query_hashes',
             iqh.*
         FROM #include_query_hashes AS iqh
-        ORDER BY 
+        ORDER BY
             iqh.query_hash
         OPTION(RECOMPILE);
     END;
@@ -7295,7 +7295,7 @@ BEGIN
                 '#include_plan_hashes',
             iph.*
         FROM #include_plan_hashes AS iph
-        ORDER BY 
+        ORDER BY
             iph.plan_hash
         OPTION(RECOMPILE);
     END;
@@ -7318,7 +7318,7 @@ BEGIN
                 '#include_sql_handles',
             ish.*
         FROM #include_sql_handles AS ish
-        ORDER BY 
+        ORDER BY
             ish.sql_handle
         OPTION(RECOMPILE);
     END;
@@ -7341,7 +7341,7 @@ BEGIN
                 '#ignore_plan_ids',
             ipi.*
         FROM #ignore_plan_ids AS ipi
-        ORDER BY 
+        ORDER BY
             ipi.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7364,7 +7364,7 @@ BEGIN
                 '#ignore_query_ids',
             iqi.*
         FROM #ignore_query_ids AS iqi
-        ORDER BY 
+        ORDER BY
             iqi.query_id
         OPTION(RECOMPILE);
     END;
@@ -7387,7 +7387,7 @@ BEGIN
                 '#ignore_query_hashes',
             iqh.*
         FROM #ignore_query_hashes AS iqh
-        ORDER BY 
+        ORDER BY
             iqh.query_hash
         OPTION(RECOMPILE);
     END;
@@ -7410,7 +7410,7 @@ BEGIN
                 '#ignore_plan_hashes',
             iph.*
         FROM #ignore_plan_hashes AS iph
-        ORDER BY 
+        ORDER BY
             iph.plan_hash
         OPTION(RECOMPILE);
     END;
@@ -7433,7 +7433,7 @@ BEGIN
                 '#ignore_sql_handles',
             ish.*
         FROM #ignore_sql_handles AS ish
-        ORDER BY 
+        ORDER BY
             ish.sql_handle
         OPTION(RECOMPILE);
     END;
@@ -7456,7 +7456,7 @@ BEGIN
                 '#query_text_search',
             qst.*
         FROM #query_text_search AS qst
-        ORDER BY 
+        ORDER BY
             qst.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7479,7 +7479,7 @@ BEGIN
                 '#wait_filter',
             wf.*
         FROM #wait_filter AS wf
-        ORDER BY 
+        ORDER BY
             wf.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7502,7 +7502,7 @@ BEGIN
                 '#maintenance_plans',
             mp.*
         FROM #maintenance_plans AS mp
-        ORDER BY 
+        ORDER BY
             mp.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7546,7 +7546,7 @@ BEGIN
                 '#query_store_plan',
             qsp.*
         FROM #query_store_plan AS qsp
-        ORDER BY 
+        ORDER BY
             qsp.plan_id, qsp.query_id
         OPTION(RECOMPILE);
     END;
@@ -7569,8 +7569,8 @@ BEGIN
                 '#query_store_query',
             qsq.*
         FROM #query_store_query AS qsq
-        ORDER BY 
-            qsq.query_id, 
+        ORDER BY
+            qsq.query_id,
             qsq.query_text_id
         OPTION(RECOMPILE);
     END;
@@ -7593,7 +7593,7 @@ BEGIN
                 '#query_store_query_text',
             qsqt.*
         FROM #query_store_query_text AS qsqt
-        ORDER BY 
+        ORDER BY
             qsqt.query_text_id
         OPTION(RECOMPILE);
     END;
@@ -7616,7 +7616,7 @@ BEGIN
                 '#dm_exec_query_stats ',
             deqs.*
         FROM #dm_exec_query_stats AS deqs
-        ORDER BY 
+        ORDER BY
             deqs.statement_sql_handle
         OPTION(RECOMPILE);
     END;
@@ -7639,7 +7639,7 @@ BEGIN
                 '#query_store_runtime_stats',
             qsrs.*
         FROM #query_store_runtime_stats AS qsrs
-        ORDER BY 
+        ORDER BY
             qsrs.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7666,7 +7666,7 @@ BEGIN
                 '#query_store_wait_stats',
             qsws.*
         FROM #query_store_wait_stats AS qsws
-        ORDER BY 
+        ORDER BY
             qsws.plan_id
         OPTION(RECOMPILE);
     END;
@@ -7705,7 +7705,7 @@ BEGIN
                 '#query_context_settings',
             qcs.*
         FROM #query_context_settings AS qcs
-        ORDER BY 
+        ORDER BY
             qcs.context_settings_id
         OPTION(RECOMPILE);
     END;
@@ -7730,7 +7730,7 @@ BEGIN
                     '#query_store_plan_feedback',
                 qspf.*
             FROM #query_store_plan_feedback AS qspf
-            ORDER BY 
+            ORDER BY
                 qspf.plan_feedback_id
             OPTION(RECOMPILE);
         END;
@@ -7753,7 +7753,7 @@ BEGIN
                     '#query_store_query_hints',
                 qsqh.*
             FROM #query_store_query_hints AS qsqh
-            ORDER BY 
+            ORDER BY
                 qsqh.query_hint_id
             OPTION(RECOMPILE);
         END;
@@ -7776,7 +7776,7 @@ BEGIN
                     '#query_store_query_variant',
                 qsqv.*
             FROM #query_store_query_variant AS qsqv
-            ORDER BY 
+            ORDER BY
                 qsqv.query_variant_query_id
             OPTION(RECOMPILE);
         END;
@@ -7801,7 +7801,7 @@ BEGIN
                         '#query_store_replicas',
                     qsr.*
                 FROM #query_store_replicas AS qsr
-                ORDER BY 
+                ORDER BY
                     qsr.replica_group_id
                 OPTION(RECOMPILE);
             END;
@@ -7824,7 +7824,7 @@ BEGIN
                         '#query_store_plan_forcing_locations',
                     qspfl.*
                 FROM #query_store_plan_forcing_locations AS qspfl
-                ORDER BY 
+                ORDER BY
                     qspfl.plan_forcing_location_id
                 OPTION(RECOMPILE);
             END;
@@ -7849,7 +7849,7 @@ BEGIN
                 '#troubleshoot_performance',
             tp.*
         FROM #troubleshoot_performance AS tp
-        ORDER BY 
+        ORDER BY
             tp.id
         OPTION(RECOMPILE);
     END;
