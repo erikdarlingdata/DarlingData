@@ -1409,6 +1409,5 @@ SELECT
 FROM #block_findings AS bf
 ORDER BY bf.check_id
 OPTION(RECOMPILE);
-
 END; --Final End
 GO

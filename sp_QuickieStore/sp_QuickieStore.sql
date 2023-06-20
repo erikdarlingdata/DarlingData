@@ -51,8 +51,9 @@ CREATE OR ALTER PROCEDURE
     @database_name sysname = NULL,
     @sort_order varchar(20) = 'cpu',
     @top bigint = 10,
-    @start_date datetime = NULL,
-    @end_date datetime = NULL,
+    @start_date datetimeoffset(7) = NULL,
+    @end_date datetimeoffset(7) = NULL,
+    @timezone sysname = 'UTC',
     @execution_count bigint = NULL,
     @duration_ms bigint = NULL,
     @execution_type_desc nvarchar(60) = NULL,
@@ -123,7 +124,6 @@ Helpful section! For help.
 */
 IF @help = 1
 BEGIN
-
     /*
     Introduction
     */
@@ -148,8 +148,9 @@ BEGIN
                 WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
                 WHEN N'@sort_order' THEN 'the runtime metric you want to prioritize results by'
                 WHEN N'@top' THEN 'the number of queries you want to pull back'
-                WHEN N'@start_date' THEN 'the begin date of your search'
-                WHEN N'@end_date' THEN 'the end date of your search'
+                WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
+                WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
+                WHEN N'@timezone' THEN 'user specified time zone to *display* query execution dates in'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
                 WHEN N'@duration_ms' THEN 'the minimum duration a query must have'
                 WHEN N'@execution_type_desc' THEN 'the type of execution you want to filter'
@@ -185,6 +186,7 @@ BEGIN
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
+                WHEN N'@timezone' THEN 'SELECT tzi.* FROM sys.time_zone_info AS tzi;'
                 WHEN N'@execution_count' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@duration_ms' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@execution_type_desc' THEN 'regular, aborted, exception'
@@ -220,6 +222,7 @@ BEGIN
                 WHEN N'@top' THEN '10'
                 WHEN N'@start_date' THEN 'the last seven days'
                 WHEN N'@end_date' THEN 'NULL'
+                WHEN N'@timezone' THEN 'UTC'
                 WHEN N'@execution_count' THEN 'NULL'
                 WHEN N'@duration_ms' THEN 'NULL'
                 WHEN N'@execution_type_desc' THEN 'NULL'
@@ -327,8 +330,8 @@ BEGIN
         mit_license_yo =
            'i am MIT licensed, so like, do whatever'
     UNION ALL
-      
-    SELECT   
+     
+    SELECT  
         mit_license_yo =
             'see printed messages for full license';
 
@@ -351,9 +354,7 @@ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVE
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ', 0, 1) WITH NOWAIT;
-
     RETURN;
-
 END; /*End @help section*/
 
 /*
@@ -1044,14 +1045,14 @@ INSERT
     database_name
 )
 SELECT
-    database_name = 
+    database_name =
         ISNULL(@database_name, DB_NAME())
 WHERE @get_all_databases = 0
 
 UNION ALL
 
 SELECT
-    database_name = 
+    database_name =
         d.name
 FROM sys.databases AS d
 WHERE @get_all_databases = 1
@@ -1145,8 +1146,8 @@ SELECT
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @parameters =
         N'@top bigint,
-          @start_date datetime,
-          @end_date datetime,
+          @start_date datetimeoffset(7),
+          @end_date datetimeoffset(7),
           @execution_count bigint,
           @duration_ms bigint,
           @execution_type_desc nvarchar(60),
@@ -1302,6 +1303,8 @@ and some shouldn't be empty strings
 SELECT
     @sort_order =
         ISNULL(@sort_order, 'cpu'),
+    @timezone =
+        ISNULL(@timezone, 'UTC'),
     @top =
         ISNULL(@top, 10),
     @expert_mode =
@@ -1413,7 +1416,6 @@ BEGIN
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -1449,7 +1451,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -1463,7 +1464,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END;
 
 IF @query_store_exists = 0
@@ -1481,21 +1481,18 @@ If you specified a procedure name, we need to figure out if there are any plans 
 */
 IF @procedure_name IS NOT NULL
 BEGIN
-
     SELECT
         @current_table = 'checking procedure existence',
         @sql = @isolation_level;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -1526,7 +1523,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -1540,10 +1536,9 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
-    IF (@procedure_exists = 0 
+    IF (@procedure_exists = 0
           AND @get_all_databases = 0)
         BEGIN
             RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s
@@ -1553,7 +1548,7 @@ Check that you spelled everything correctly and you''re in the right database',
         IF @get_all_databases = 0
         BEGIN
             RETURN;
-        END
+        END;
     END;
 END; /*End procedure existence checking*/
 
@@ -1667,7 +1662,6 @@ IF
       OR @new = 1
   )
 BEGIN
-
     SELECT
         @current_table = 'checking query store waits are enabled',
         @sql = @isolation_level;
@@ -1681,7 +1675,6 @@ BEGIN
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -1710,7 +1703,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -1724,7 +1716,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     IF @query_store_waits_enabled = 0
@@ -1735,7 +1726,6 @@ OPTION(RECOMPILE);' + @nc10;
             RETURN;
         END;
     END;
-
 END; /*End wait stats checks*/
 
 /*
@@ -1785,27 +1775,56 @@ BEGIN
         OPTION(RECOMPILE);
 END;
 
+/*Check that the selected @timezone is valid*/
+IF @timezone <> N'UTC'
+BEGIN
+    IF NOT EXISTS
+       (
+           SELECT
+               1/0
+           FROM sys.time_zone_info AS tzi
+           WHERE tzi.name = @timezone
+       )
+       BEGIN
+           RAISERROR('The time zone you chose (%s) is not valid. Please check sys.time_zone_info for a valid list.', 10, 1, @timezone) WITH NOWAIT;
+           RETURN;
+       END;
+END;
+
+
 /*
 Get filters ready, or whatever
 We're only going to pull some stuff from runtime stats and plans
 */
 
 IF @start_date IS NULL
+     AND @end_date IS NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIME()))' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIME() AT TIME ZONE ''UTC''))' + @nc10;
 END;
 
 IF @start_date IS NOT NULL
+   AND @end_date IS NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time >= @start_date' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time >= @start_date AT TIME ZONE ''UTC'' ' + @nc10;
 END;
 
-IF @end_date IS NOT NULL
+IF @start_date IS NULL
+     AND @end_date IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time < @end_date' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time BETWEEN DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET() AT TIME ZONE ''UTC''))
+                                   AND @end_date AT TIME ZONE ''UTC'' ' + @nc10;
+END;
+
+IF @start_date IS NOT NULL
+     AND @end_date IS NOT NULL
+BEGIN
+    SELECT
+        @where_clause += N'AND   qsrs.last_execution_time BETWEEN @start_date AT TIME ZONE ''UTC''
+                                   AND @end_date AT TIME ZONE ''UTC'' ' + @nc10;
 END;
 
 IF @execution_count IS NOT NULL
@@ -1837,21 +1856,18 @@ IF
       AND @procedure_exists = 1
   )
 BEGIN
-
     SELECT
         @current_table = 'inserting #procedure_plans',
         @sql = @isolation_level;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -1878,7 +1894,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -1892,7 +1907,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     SELECT
@@ -1903,7 +1917,6 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #procedure_plans AS pp
             WHERE pp.plan_id = qsrs.plan_id
         )'  + @nc10;
-
 END; /*End procedure filter table population*/
 
 
@@ -1916,21 +1929,18 @@ IF
       LEN(@query_type) > 0
   )
 BEGIN
-
     SELECT
         @current_table = 'inserting #query_types',
         @sql = @isolation_level;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -1940,8 +1950,8 @@ SELECT DISTINCT
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
    ON qsq.query_id = qsp.query_id
-WHERE qsq.object_id ' + 
-CASE 
+WHERE qsq.object_id ' +
+CASE
     WHEN LOWER(@query_type) LIKE 'a%'
     THEN N'= 0'
     ELSE N'<> 0'
@@ -1961,7 +1971,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -1975,7 +1984,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     SELECT
@@ -1986,7 +1994,6 @@ OPTION(RECOMPILE);' + @nc10;
             FROM #query_types AS qt
             WHERE qt.plan_id = qsrs.plan_id
         )'  + @nc10;
-
 END; /*End query type filter table population*/
 
 
@@ -2001,14 +2008,13 @@ IF
       OR @ignore_query_ids  IS NOT NULL
   )
 BEGIN
-
     IF @include_plan_ids IS NOT NULL
-    BEGIN      
-        SELECT   
-            @include_plan_ids =   
+    BEGIN     
+        SELECT  
+            @include_plan_ids =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_plan_ids)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_plan_ids)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2025,23 +2031,22 @@ BEGIN
             @include_plan_ids;
 
         SELECT
-           @where_clause += N'AND   EXISTS
+            @where_clause += N'AND   EXISTS
       (
          SELECT
             1/0
          FROM #include_plan_ids AS idi
          WHERE idi.plan_id = qsrs.plan_id
       )' + @nc10;
-
     END; /*End include plan ids*/
 
     IF @ignore_plan_ids IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_plan_ids =   
+        SELECT  
+            @ignore_plan_ids =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_plan_ids)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_plan_ids)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2058,23 +2063,22 @@ BEGIN
             @ignore_plan_ids;
 
         SELECT
-           @where_clause += N'AND   NOT EXISTS
+            @where_clause += N'AND   NOT EXISTS
       (
          SELECT
             1/0
          FROM #ignore_plan_ids AS idi
          WHERE idi.plan_id = qsrs.plan_id
       )' + @nc10;
-
     END; /*End ignore plan ids*/
 
     IF @include_query_ids IS NOT NULL
     BEGIN
-        SELECT   
-            @include_query_ids =   
+        SELECT  
+            @include_query_ids =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_query_ids)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_query_ids)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #include_query_ids',
@@ -2095,14 +2099,12 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2131,7 +2133,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2145,7 +2146,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2161,7 +2161,7 @@ OPTION(RECOMPILE);' + @nc10;
         IF @include_plan_ids IS NULL
         BEGIN
             SELECT
-               @where_clause += N'AND   EXISTS
+                @where_clause += N'AND   EXISTS
           (
              SELECT
                 1/0
@@ -2169,16 +2169,15 @@ OPTION(RECOMPILE);' + @nc10;
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
         END;
-
     END; /*End include query ids*/
 
     IF @ignore_query_ids IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_query_ids =   
+        SELECT  
+            @ignore_query_ids =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_query_ids)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_query_ids)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #ignore_query_ids',
@@ -2199,14 +2198,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2235,7 +2232,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2249,7 +2245,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2264,17 +2259,16 @@ OPTION(RECOMPILE);' + @nc10;
         */
         IF @ignore_plan_ids IS NULL
         BEGIN
-        SELECT
-               @where_clause += N'AND   NOT EXISTS
+            SELECT
+                @where_clause += N'AND   NOT EXISTS
           (
              SELECT
                 1/0
              FROM #ignore_plan_ids AS idi
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
-          END;
+        END;
     END; /*End ignore query ids*/
-
 END; /*End query and plan id filtering*/
 
 /*
@@ -2290,14 +2284,13 @@ IF
       OR @ignore_sql_handles   IS NOT NULL
   )
 BEGIN
-
     IF @include_query_hashes IS NOT NULL
     BEGIN
-        SELECT   
-            @include_query_hashes =   
+        SELECT  
+            @include_query_hashes =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_query_hashes)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_query_hashes)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2319,14 +2312,12 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2362,7 +2353,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2376,7 +2366,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2400,16 +2389,15 @@ OPTION(RECOMPILE);' + @nc10;
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
         END;
-
     END; /*End include query hashes*/
 
     IF @ignore_query_hashes IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_query_hashes =   
+        SELECT  
+            @ignore_query_hashes =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_query_hashes)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_query_hashes)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2431,14 +2419,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2474,7 +2460,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2488,7 +2473,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2503,7 +2487,7 @@ OPTION(RECOMPILE);' + @nc10;
         */
         IF @ignore_plan_ids IS NULL
         BEGIN
-        SELECT
+            SELECT
                @where_clause += N'AND   NOT EXISTS
           (
              SELECT
@@ -2516,11 +2500,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_plan_hashes IS NOT NULL
     BEGIN
-        SELECT   
-            @include_plan_hashes =   
+        SELECT  
+            @include_plan_hashes =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_plan_hashes)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_plan_hashes)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2542,14 +2526,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2578,7 +2560,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2592,7 +2573,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2616,16 +2596,15 @@ OPTION(RECOMPILE);' + @nc10;
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
         END;
-
     END; /*End include plan hashes*/
 
     IF @ignore_plan_hashes IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_plan_hashes =   
+        SELECT  
+            @ignore_plan_hashes =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_plan_hashes)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_plan_hashes)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2647,14 +2626,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2683,7 +2660,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2697,7 +2673,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2712,7 +2687,7 @@ OPTION(RECOMPILE);' + @nc10;
         */
         IF @ignore_plan_ids IS NULL
         BEGIN
-        SELECT
+            SELECT
                @where_clause += N'AND   NOT EXISTS
           (
              SELECT
@@ -2725,11 +2700,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_sql_handles IS NOT NULL
     BEGIN
-        SELECT   
-            @include_sql_handles =   
+        SELECT  
+            @include_sql_handles =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_sql_handles)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@include_sql_handles)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2758,7 +2733,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2801,7 +2775,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2815,7 +2788,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2831,7 +2803,7 @@ OPTION(RECOMPILE);' + @nc10;
         IF @include_plan_ids IS NULL
         BEGIN
             SELECT
-               @where_clause += N'AND   EXISTS
+                @where_clause += N'AND   EXISTS
           (
              SELECT
                 1/0
@@ -2839,16 +2811,15 @@ OPTION(RECOMPILE);' + @nc10;
              WHERE idi.plan_id = qsrs.plan_id
           )' + @nc10;
         END;
-
     END; /*End include plan hashes*/
 
     IF @ignore_sql_handles IS NOT NULL
     BEGIN
-        SELECT   
-            @ignore_sql_handles =   
+        SELECT  
+            @ignore_sql_handles =  
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_sql_handles)),   
-                CHAR(10), N''), CHAR(13), N''),   
+                (LTRIM(RTRIM(@ignore_sql_handles)),  
+                CHAR(10), N''), CHAR(13), N''),  
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2870,14 +2841,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -2920,7 +2889,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -2934,7 +2902,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*
@@ -2949,8 +2916,8 @@ OPTION(RECOMPILE);' + @nc10;
         */
         IF @ignore_plan_ids IS NULL
         BEGIN
-        SELECT
-               @where_clause += N'AND   NOT EXISTS
+            SELECT
+                @where_clause += N'AND   NOT EXISTS
           (
              SELECT
                 1/0
@@ -2959,12 +2926,10 @@ OPTION(RECOMPILE);' + @nc10;
           )' + @nc10;
           END;
     END; /*End ignore plan hashes*/
-
 END; /*End hash and handle filtering*/
 
 IF @query_text_search IS NOT NULL
 BEGIN
-
     IF
       (
           LEFT
@@ -3002,14 +2967,12 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -3069,7 +3032,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -3094,7 +3056,6 @@ OPTION(RECOMPILE);' + @nc10;
            FROM #query_text_search AS qst
            WHERE qst.plan_id = qsrs.plan_id
        )' + @nc10;
-
 END;
 
 /*
@@ -3102,23 +3063,19 @@ Validate wait stats stuff
 */
 IF @wait_filter IS NOT NULL
 BEGIN
-
     BEGIN
-
         SELECT
             @current_table = 'inserting #wait_filter',
             @sql = @isolation_level;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -3146,11 +3103,13 @@ CASE @wait_filter
      WHEN 'memory' THEN N'17'
 END
 + N'
-GROUP BY qsws.plan_id
-HAVING SUM(qsws.avg_query_wait_time_ms) > 1000.
-ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
+GROUP BY
+    qsws.plan_id
+HAVING
+    SUM(qsws.avg_query_wait_time_ms) > 1000.
+ORDER BY
+    SUM(qsws.avg_query_wait_time_ms) DESC
 OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
-
     END;
 
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -3167,7 +3126,6 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -3181,7 +3139,6 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     SELECT
@@ -3192,7 +3149,6 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
            FROM #wait_filter AS wf
            WHERE wf.plan_id = qsrs.plan_id
        )' + @nc10;
-
 END;
 
 
@@ -3206,14 +3162,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3250,7 +3204,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3264,7 +3217,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END;
 
 SELECT
@@ -3297,14 +3249,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3315,8 +3265,10 @@ FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
 WHERE 1 = 1
 ' + @where_clause
   + N'
-GROUP BY qsrs.plan_id
-ORDER BY MAX(' +
+GROUP
+    BY qsrs.plan_id
+ORDER BY
+    MAX(' +
 CASE @sort_order
      WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
      WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
@@ -3351,7 +3303,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3365,7 +3316,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End gathering plan ids*/
 
 /*
@@ -3377,14 +3327,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3436,7 +3384,6 @@ SELECT
 
 IF @new = 1
     BEGIN
-
         SELECT
             @sql += N'
     ((qsrs.avg_num_physical_io_reads * 8.) / 1024.),
@@ -3451,12 +3398,10 @@ IF @new = 1
     ((qsrs.last_tempdb_space_used * 8) / 1024.),
     ((qsrs.min_tempdb_space_used * 8) / 1024.),
     ((qsrs.max_tempdb_space_used * 8) / 1024.),';
-
     END;
 
 IF @new = 0
     BEGIN
-
         SELECT
             @sql += N'
     NULL,
@@ -3471,7 +3416,6 @@ IF @new = 0
     NULL,
     NULL,
     NULL,';
-
     END;
 
 SELECT
@@ -3536,7 +3480,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3550,7 +3493,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting runtime stats*/
 
 /*
@@ -3562,14 +3504,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3637,7 +3577,8 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE qsp.plan_id = qsrs.plan_id
     AND   qsp.is_online_index_plan = 0
-    ORDER BY qsp.last_execution_time DESC
+    ORDER BY
+        qsp.last_execution_time DESC
 ) AS qsp
 WHERE qsrs.database_id = @database_id
 OPTION(RECOMPILE, OPTIMIZE FOR (@plans_top = 9223372036854775807));' + @nc10;
@@ -3680,7 +3621,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3694,7 +3634,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting query plans*/
 
 /*
@@ -3706,14 +3645,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -3756,7 +3693,8 @@ CROSS APPLY
         qsq.*
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = qsp.query_id
-    ORDER BY qsq.last_execution_time DESC
+    ORDER
+        BY qsq.last_execution_time DESC
 ) AS qsq
 WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
@@ -3804,7 +3742,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3818,7 +3755,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting query details*/
 
 /*
@@ -3830,14 +3766,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 
@@ -3894,7 +3828,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -3908,7 +3841,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting query text*/
 
 /*
@@ -3921,14 +3853,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 INSERT
@@ -3986,7 +3916,8 @@ WHERE EXISTS
           FROM #query_store_query_text AS qsqt
           WHERE qsqt.statement_sql_handle = deqs.statement_sql_handle
       )
-GROUP BY deqs.statement_sql_handle
+GROUP BY
+    deqs.statement_sql_handle
 OPTION(RECOMPILE);
 
 SELECT
@@ -3994,7 +3925,6 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -4008,26 +3938,22 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting runtime stats*/
 
 /*Only update if we got anything*/
 IF @rc > 0
 BEGIN
-
     SELECT
         @current_table = 'updating #dm_exec_query_stats';
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     UPDATE qsqt
@@ -4059,7 +3985,6 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4073,9 +3998,7 @@ BEGIN
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
-
 END; /*End updating runtime stats*/
 
 /*
@@ -4088,14 +4011,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -4195,7 +4116,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -4209,7 +4129,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End getting query store settings*/
 
 /*
@@ -4227,21 +4146,18 @@ IF
           )
   )
 BEGIN
-
     SELECT
         @current_table = 'inserting #query_store_wait_stats',
         @sql = @isolation_level;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -4270,13 +4186,15 @@ CROSS APPLY
     AND   qsws.plan_id = qsrs.plan_id
     AND   qsws.wait_category > 0
     AND   qsws.min_query_wait_time_ms > 0
-    ORDER BY qsws.avg_query_wait_time_ms DESC
+    ORDER BY
+        qsws.avg_query_wait_time_ms DESC
 ) AS qsws
 WHERE qsrs.database_id = @database_id
 GROUP BY
     qsws.plan_id,
     qsws.wait_category_desc
-HAVING SUM(qsws.min_query_wait_time_ms) > 0.
+HAVING
+    SUM(qsws.min_query_wait_time_ms) > 0.
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
@@ -4300,7 +4218,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4314,9 +4231,7 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
-
 END; /*End getting wait stats*/
 
 /*
@@ -4328,14 +4243,12 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     EXEC sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
 
     SET STATISTICS XML ON;
-
 END;
 
 SELECT
@@ -4394,7 +4307,6 @@ EXEC sys.sp_executesql
 
 IF @troubleshoot_performance = 1
 BEGIN
-
     SET STATISTICS XML OFF;
 
     EXEC sys.sp_executesql
@@ -4408,7 +4320,6 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-
 END; /*End geting context settings*/
 
 /*
@@ -4508,7 +4419,6 @@ OPTION(RECOMPILE);
 
 IF @sql_2022_views = 1
 BEGIN
-
     /*query_store_plan_feedback*/
     SELECT
         @current_table = 'inserting #query_store_plan_feedback',
@@ -4516,14 +4426,12 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -4568,7 +4476,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4582,7 +4489,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     /*query_store_query_variant*/
@@ -4592,14 +4498,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -4636,7 +4540,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4650,7 +4553,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     /*query_store_query_hints*/
@@ -4660,14 +4562,12 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
 
         SET STATISTICS XML ON;
-
     END;
 
     SELECT
@@ -4710,7 +4610,6 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-
         SET STATISTICS XML OFF;
 
         EXEC sys.sp_executesql
@@ -4724,12 +4623,10 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     IF @ags_present = 1
     BEGIN
-
         /*query_store_plan_forcing_locations*/
         SELECT
             @current_table = 'inserting #query_store_plan_forcing_locations',
@@ -4737,14 +4634,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -4784,7 +4679,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -4798,7 +4692,6 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
 
         /*query_store_replicas*/
@@ -4808,14 +4701,12 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
-
         END;
 
         SELECT
@@ -4852,7 +4743,6 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-
             SET STATISTICS XML OFF;
 
             EXEC sys.sp_executesql
@@ -4866,11 +4756,8 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table nvarchar(100)',
                 @sql,
                 @current_table;
-
         END;
-
     END; /*End AG queries*/
-
 END; /*End SQL 2022 views*/
 
 IF @get_all_databases = 1
@@ -4883,12 +4770,13 @@ BEGIN
         #maintenance_plans;
     TRUNCATE TABLE
         #dm_exec_query_stats;
+    TRUNCATE TABLE
+        #query_types;
 END;
 
 FETCH NEXT
 FROM database_cursor
 INTO @database_name;
-
 END;
 
 CLOSE database_cursor;
@@ -4904,16 +4792,15 @@ IF EXISTS
       FROM #query_store_runtime_stats AS qsrs
    )
 BEGIN
-
     SELECT
         @sql = @isolation_level,
         @current_table = 'selecting final results';
 
     SELECT
-        @sql +=   
+        @sql +=  
         CONVERT
         (
-            nvarchar(MAX),   
+            nvarchar(MAX),  
         N'
 SELECT
     x.*
@@ -4930,12 +4817,11 @@ FROM
           AND @format_output = 0
       )
     BEGIN
-
         SELECT
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),             
+            nvarchar(MAX),            
             N'
     SELECT
         source =
@@ -4992,8 +4878,10 @@ FROM
                  ELSE
         N''
             END + N'
-        qsrs.first_execution_time,
-        qsrs.last_execution_time,
+        first_execution_time =
+            qsrs.first_execution_time AT TIME ZONE @timezone,
+        last_execution_time =
+            qsrs.last_execution_time AT TIME ZONE @timezone,
         qsrs.count_executions,
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
@@ -5083,7 +4971,6 @@ FROM
         END + N' DESC
             )'
         );
-
     END; /*End expert mode 1, format output 0 columns*/
 
     /*
@@ -5095,12 +4982,11 @@ FROM
           AND @format_output = 1
       )
     BEGIN
-
         SELECT
-            @sql +=   
+            @sql +=  
         CONVERT
         (
-            nvarchar(MAX),              
+            nvarchar(MAX),             
             N'
     SELECT
         source =
@@ -5161,8 +5047,10 @@ FROM
         (
             nvarchar(MAX),
             N'
-        qsrs.first_execution_time,
-        qsrs.last_execution_time,
+        first_execution_time =
+            qsrs.first_execution_time AT TIME ZONE @timezone,
+        last_execution_time =
+            qsrs.last_execution_time AT TIME ZONE @timezone,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
@@ -5253,7 +5141,6 @@ FROM
         END + N' DESC
             )'
         );
-
     END; /*End expert mode = 1, format output = 1*/
 
     /*
@@ -5265,12 +5152,11 @@ FROM
           AND @format_output = 0
       )
     BEGIN
-
         SELECT
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),              
+            nvarchar(MAX),             
             N'
     SELECT
         source =
@@ -5327,8 +5213,10 @@ FROM
                  ELSE
         N''
             END + N'
-        qsrs.first_execution_time,
-        qsrs.last_execution_time,
+        first_execution_time =
+            qsrs.first_execution_time AT TIME ZONE @timezone,
+        last_execution_time =
+            qsrs.last_execution_time AT TIME ZONE @timezone,
         qsrs.count_executions,
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
@@ -5385,7 +5273,6 @@ FROM
         END + N' DESC
             )'
         );
-
     END; /*End expert mode = 0, format output = 0*/
 
     /*
@@ -5397,12 +5284,11 @@ FROM
           AND @format_output = 1
       )
     BEGIN
-
         SELECT
-            @sql +=   
+            @sql +=  
         CONVERT
         (
-            nvarchar(MAX),              
+            nvarchar(MAX),             
             N'
     SELECT
         source =
@@ -5461,8 +5347,10 @@ FROM
         N''
             END
         + N'
-        qsrs.first_execution_time,
-        qsrs.last_execution_time,
+        first_execution_time =
+            qsrs.first_execution_time AT TIME ZONE @timezone,
+        last_execution_time =
+            qsrs.last_execution_time AT TIME ZONE @timezone,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
@@ -5504,7 +5392,7 @@ FROM
                 PARTITION BY
                     qsrs.plan_id
                 ORDER BY
-                    '   
+                    '  
         +
         CASE @sort_order
              WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
@@ -5519,14 +5407,13 @@ FROM
         END + N' DESC
             )'
         );
-
     END; /*End expert mode = 0, format output = 1*/
 
     /*
     Add on the from and stuff
     */
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -5563,7 +5450,8 @@ FROM
           ON qsqt.query_text_id = qsq.query_text_id
         WHERE qsq.query_id = qsp.query_id
         AND   qsq.query_id = qsp.query_id
-        ORDER BY qsq.last_execution_time DESC
+        ORDER BY
+            qsq.last_execution_time DESC
     ) AS qsqt
     CROSS APPLY
     (
@@ -5572,7 +5460,8 @@ FROM
         FROM #query_store_query AS qsq
         WHERE qsq.query_id = qsp.query_id
         AND   qsq.database_id = qsp.database_id
-        ORDER BY qsq.last_execution_time DESC
+        ORDER
+            BY qsq.last_execution_time DESC
     ) AS qsq'
     );
 
@@ -5585,9 +5474,8 @@ FROM
           AND @format_output = 0
       )
     BEGIN
-
         SELECT
-            @sql +=   
+            @sql +=  
         CONVERT
         (
             nvarchar(MAX),
@@ -5619,8 +5507,10 @@ FROM
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
                        AND   qsws.database_id = qsrs.database_id
-                       GROUP BY qsws.wait_category_desc
-                       ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
+                       GROUP BY
+                           qsws.wait_category_desc
+                       ORDER BY
+                           SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
                     1,
@@ -5629,7 +5519,6 @@ FROM
                 )
     ) AS w'
     );
-
     END; /*End format output = 0 wait stats query*/
 
     IF
@@ -5638,9 +5527,8 @@ FROM
           AND @format_output = 1
       )
     BEGIN
-
         SELECT
-            @sql +=   
+            @sql +=  
         CONVERT
         (
             nvarchar(MAX),
@@ -5671,8 +5559,10 @@ FROM
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
                        AND   qsws.database_id = qsrs.database_id
-                       GROUP BY qsws.wait_category_desc
-                       ORDER BY SUM(qsws.avg_query_wait_time_ms) DESC
+                       GROUP BY
+                           qsws.wait_category_desc
+                       ORDER BY
+                           SUM(qsws.avg_query_wait_time_ms) DESC
                        FOR XML PATH(''''), TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
                     1,
@@ -5681,11 +5571,10 @@ FROM
                 )
     ) AS w'
     );
-
     END; /*End format output = 1 wait stats query*/
 
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -5730,7 +5619,7 @@ ORDER BY ' +
              END
     END
              + N' DESC
-OPTION(RECOMPILE);'   
+OPTION(RECOMPILE);'  
     + @nc10
     );
 
@@ -5744,8 +5633,9 @@ OPTION(RECOMPILE);'
 
 
     EXEC sys.sp_executesql
-        @sql;
-
+        @sql,
+      N'@timezone sysname',
+        @timezone;
 END; /*End runtime stats main query*/
 ELSE
     BEGIN
@@ -5763,7 +5653,6 @@ IF
         AND @format_output = 0
   )
 BEGIN
-
     IF @sql_2022_views = 1
     BEGIN
         IF EXISTS
@@ -5773,7 +5662,6 @@ BEGIN
                FROM #query_store_plan_feedback AS qspf
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting plan feedback';
 
@@ -5785,10 +5673,13 @@ BEGIN
                 qspf.feature_desc,
                 qspf.feedback_data,
                 qspf.state_desc,
-                qspf.create_time,
-                qspf.last_updated_time
+                create_time =
+                    qspf.create_time AT TIME ZONE @timezone,
+                last_updated_time =
+                    qspf.last_updated_time AT TIME ZONE @timezone
             FROM #query_store_plan_feedback AS qspf
-            ORDER BY qspf.plan_id
+            ORDER BY
+                qspf.plan_id
             OPTION(RECOMPILE);
         END;
         ELSE
@@ -5804,7 +5695,6 @@ BEGIN
                FROM #query_store_query_hints AS qsqh
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting query hints';
 
@@ -5818,7 +5708,8 @@ BEGIN
                 qsqh.query_hint_failure_count,
                 qsqh.source_desc
             FROM #query_store_query_hints AS qsqh
-            ORDER BY qsqh.query_id
+            ORDER BY
+                qsqh.query_id
             OPTION(RECOMPILE);
         END;
         ELSE
@@ -5834,7 +5725,6 @@ BEGIN
                FROM #query_store_query_variant AS qsqv
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting query variants';
 
@@ -5845,7 +5735,8 @@ BEGIN
                 qsqv.parent_query_id,
                 qsqv.dispatcher_plan_id
             FROM #query_store_query_variant AS qsqv
-            ORDER BY qsqv.parent_query_id
+            ORDER BY
+                qsqv.parent_query_id
             OPTION(RECOMPILE);
         END;
         ELSE
@@ -5862,7 +5753,6 @@ BEGIN
             FROM #query_store_query AS qsq
        )
     BEGIN
-
         SELECT
             @current_table = 'selecting compilation stats';
 
@@ -5879,9 +5769,12 @@ BEGIN
                 qsq.object_name,
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
-                qsq.initial_compile_start_time,
-                qsq.last_compile_start_time,
-                qsq.last_execution_time,
+                initial_compile_start_time =
+                    qsq.initial_compile_start_time AT TIME ZONE @timezone,
+                last_compile_start_time =
+                    qsq.last_compile_start_time AT TIME ZONE @timezone,
+                last_execution_time =
+                    qsq.last_execution_time AT TIME ZONE @timezone,                             
                 qsq.count_compiles,
                 qsq.avg_compile_duration_ms,
                 qsq.total_compile_duration_ms,
@@ -5927,7 +5820,8 @@ BEGIN
             ) AS qsqt
         ) AS x
         WHERE x.n = 1
-        ORDER BY x.query_id
+        ORDER BY
+            x.query_id
         OPTION(RECOMPILE);
 
     END; /*End compilation stats query*/
@@ -5940,7 +5834,6 @@ BEGIN
 
     IF @rc > 0
     BEGIN
-
         SELECT
             @current_table = 'selecting resource stats';
 
@@ -5980,7 +5873,8 @@ BEGIN
             qsqt.total_grant_mb IS NOT NULL
             OR qsqt.total_reserved_threads IS NOT NULL
         )
-        ORDER BY qsq.query_id
+        ORDER BY
+            qsq.query_id
         OPTION(RECOMPILE);
 
     END; /*End resource stats query*/
@@ -5993,7 +5887,6 @@ BEGIN
 
     IF @new = 1
     BEGIN
-
         IF EXISTS
            (
                SELECT
@@ -6001,7 +5894,6 @@ BEGIN
                 FROM #query_store_wait_stats AS qsws
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting wait stats by query';
 
@@ -6104,7 +5996,8 @@ BEGIN
             GROUP BY
                 qsws.wait_category_desc,
                 qsws.database_id
-            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+            ORDER BY
+                SUM(qsws.total_query_wait_time_ms) DESC
             OPTION(RECOMPILE);
 
         END; /*End unformatted wait stats*/
@@ -6114,7 +6007,7 @@ BEGIN
                 result =
                     '#query_store_wait_stats is empty' +
                     CASE
-                        WHEN   
+                        WHEN  
                         (
                                 @product_version = 13
                             AND @azure = 0
@@ -6131,7 +6024,6 @@ BEGIN
                         ELSE ' for the queries in the results'
                     END;
         END;
-
     END; /*End wait stats queries*/
 
     IF
@@ -6150,7 +6042,6 @@ BEGIN
                  AND qsr.database_id = qspfl.database_id
            )
         BEGIN
-
         SELECT
             @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
 
@@ -6167,7 +6058,8 @@ BEGIN
         FROM #query_store_replicas AS qsr
         JOIN #query_store_plan_forcing_locations AS qspfl
           ON qsr.replica_group_id = qspfl.replica_group_id
-        ORDER BY qsr.replica_group_id;
+        ORDER BY
+            qsr.replica_group_id;
 
         END;
         ELSE
@@ -6182,7 +6074,7 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -6202,7 +6094,7 @@ BEGIN
         dqso.stale_query_threshold_days,
         dqso.max_plans_per_query,
         dqso.query_capture_mode_desc,'
-        +   
+        +  
         CASE
             WHEN
             (
@@ -6230,7 +6122,7 @@ BEGIN
     );
 
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -6244,7 +6136,6 @@ BEGIN
 
     EXEC sys.sp_executesql
         @sql;
-
 END; /*End expert mode format output = 0*/
 
 /*
@@ -6256,7 +6147,6 @@ IF
         AND @format_output = 1
   )
 BEGIN
-
     IF @sql_2022_views = 1
     BEGIN
         IF EXISTS
@@ -6266,7 +6156,6 @@ BEGIN
                FROM #query_store_plan_feedback AS qspf
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting plan feedback';
 
@@ -6278,10 +6167,13 @@ BEGIN
                 qspf.feature_desc,
                 qspf.feedback_data,
                 qspf.state_desc,
-                qspf.create_time,
-                qspf.last_updated_time
+                create_time =
+                    qspf.create_time AT TIME ZONE @timezone,
+                last_updated_time =
+                    qspf.last_updated_time AT TIME ZONE @timezone
             FROM #query_store_plan_feedback AS qspf
-            ORDER BY qspf.plan_id
+            ORDER BY
+                qspf.plan_id
             OPTION(RECOMPILE);
         END;
         ELSE
@@ -6297,7 +6189,6 @@ BEGIN
                FROM #query_store_query_hints AS qsqh
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting query hints';
 
@@ -6311,7 +6202,8 @@ BEGIN
                 qsqh.query_hint_failure_count,
                 qsqh.source_desc
             FROM #query_store_query_hints AS qsqh
-            ORDER BY qsqh.query_id
+            ORDER BY
+                qsqh.query_id
             OPTION(RECOMPILE);
         END;
         ELSE
@@ -6327,7 +6219,6 @@ BEGIN
                FROM #query_store_query_variant AS qsqv
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting query variants';
 
@@ -6338,7 +6229,8 @@ BEGIN
                 qsqv.parent_query_id,
                 qsqv.dispatcher_plan_id
             FROM #query_store_query_variant AS qsqv
-            ORDER BY qsqv.parent_query_id
+            ORDER BY
+                qsqv.parent_query_id
             OPTION(RECOMPILE);
         END;
         ELSE
@@ -6371,9 +6263,13 @@ BEGIN
                 qsq.object_name,
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
-                qsq.initial_compile_start_time,
-                qsq.last_compile_start_time,
-                qsq.last_execution_time,
+                initial_compile_start_time =
+                    qsq.initial_compile_start_time AT TIME ZONE @timezone,          
+                last_compile_start_time =
+                    qsq.last_compile_start_time AT TIME ZONE @timezone,
+
+                last_execution_time =
+                    qsq.last_execution_time AT TIME ZONE @timezone,
                 count_compiles =
                     FORMAT(qsq.count_compiles, 'N0'),
                 avg_compile_duration_ms =
@@ -6439,7 +6335,8 @@ BEGIN
             ) AS qsqt
         ) AS x
         WHERE x.n = 1
-        ORDER BY x.query_id
+        ORDER BY
+            x.query_id
         OPTION(RECOMPILE);
 
     END; /*End query store query, format output = 1*/
@@ -6452,7 +6349,6 @@ BEGIN
 
     IF @rc > 0
     BEGIN
-
         SELECT
             @current_table = 'selecting resource stats';
 
@@ -6504,7 +6400,8 @@ BEGIN
             qsqt.total_grant_mb IS NOT NULL
             OR qsqt.total_reserved_threads IS NOT NULL
         )
-        ORDER BY qsq.query_id
+        ORDER BY
+            qsq.query_id
         OPTION(RECOMPILE);
 
     END; /*End resource stats, format output = 1*/
@@ -6517,7 +6414,6 @@ BEGIN
 
     IF @new = 1
     BEGIN
-
         IF EXISTS
            (
                SELECT
@@ -6525,7 +6421,6 @@ BEGIN
                 FROM #query_store_wait_stats AS qsws
            )
         BEGIN
-
             SELECT
                 @current_table = 'selecting wait stats by query';
 
@@ -6634,7 +6529,8 @@ BEGIN
             GROUP BY
                 qsws.wait_category_desc,
                 qsws.database_id
-            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+            ORDER BY
+                SUM(qsws.total_query_wait_time_ms) DESC
             OPTION(RECOMPILE);
 
         END;
@@ -6679,27 +6575,27 @@ BEGIN
                  AND qsr.replica_group_id = qspfl.database_id
            )
         BEGIN
-
-        SELECT
-            @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-
-        SELECT
-            database_name =
-                DB_NAME(qsr.database_id),
-            qsr.replica_group_id,
-            qsr.role_type,
-            qsr.replica_name,
-            qspfl.plan_forcing_location_id,
-            qspfl.query_id,
-            qspfl.plan_id,
-            qspfl.replica_group_id
-        FROM #query_store_replicas AS qsr
-        JOIN #query_store_plan_forcing_locations AS qspfl
-          ON  qsr.replica_group_id = qspfl.replica_group_id
-          AND qsr.database_id = qspfl.database_id
-        ORDER BY qsr.replica_group_id
-        OPTION(RECOMPILE);
-
+            SELECT
+                @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
+           
+            SELECT
+                database_name =
+                    DB_NAME(qsr.database_id),
+                qsr.replica_group_id,
+                qsr.role_type,
+                qsr.replica_name,
+                qspfl.plan_forcing_location_id,
+                qspfl.query_id,
+                qspfl.plan_id,
+                qspfl.replica_group_id
+            FROM #query_store_replicas AS qsr
+            JOIN #query_store_plan_forcing_locations AS qspfl
+              ON  qsr.replica_group_id = qspfl.replica_group_id
+              AND qsr.database_id = qspfl.database_id
+            ORDER BY
+                qsr.replica_group_id
+            OPTION(RECOMPILE);
+           
         END;
         ELSE
         BEGIN
@@ -6713,7 +6609,7 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql +=   
+        @sql +=  
     CONVERT
     (
         nvarchar(MAX),
@@ -6751,7 +6647,7 @@ BEGIN
         END
         +
         CASE
-            WHEN   
+            WHEN  
             (
                 @azure = 1
                 OR @product_version > 14
@@ -6797,35 +6693,37 @@ FROM
         sort =
             1,
         period =
-            N'query store data for period ' +   
+            N'query store data for period ' +  
             CONVERT
             (
-                nvarchar(10),   
+                nvarchar(10),  
                 ISNULL
                 (
-                    @start_date,   
+                    @start_date,  
                     DATEADD
                     (
-                        DAY,   
-                        -7,   
+                        DAY,  
+                        -7,  
                         DATEDIFF
                         (
-                            DAY,   
-                            0,   
+                            DAY,  
+                            0,  
                             SYSDATETIME()
+                              AT TIME ZONE @timezone
                         )
                     )
-                ),   
+                ),  
                 23
-            ) +   
-            N' through ' +   
+            ) +  
+            N' through ' +  
             CONVERT
             (
-                nvarchar(10),   
+                nvarchar(10),  
                 ISNULL
                 (
                     @end_date,
                     SYSDATETIME()
+                      AT TIME ZONE @timezone
                 ),
                 23
             ),
@@ -6839,7 +6737,7 @@ FROM
             'to debug issues, use @debug = 1;',
         performance =
             'if this runs slowly, use to get query plans',
-        version_and_date =   
+        version_and_date =  
             N'version: ' + CONVERT(nvarchar(10), @version),
         thanks =
             'thanks for using sp_QuickieStore!'
@@ -6850,35 +6748,37 @@ FROM
         sort =
             2,
         period =
-            N'query store data for period ' +   
+            N'query store data for period ' +  
             CONVERT
             (
-                nvarchar(10),   
+                nvarchar(10),  
                 ISNULL
                 (
-                    @start_date,   
+                    @start_date,  
                     DATEADD
                     (
-                        DAY,   
-                        -7,   
+                        DAY,  
+                        -7,  
                         DATEDIFF
                         (
-                            DAY,   
-                            0,   
+                            DAY,  
+                            0,  
                             SYSDATETIME()
+                              AT TIME ZONE @timezone
                         )
                     )
-                ),   
+                ),  
                 23
-            ) +   
-            N' through ' +   
+            ) +  
+            N' through ' +  
             CONVERT
             (
-                nvarchar(10),   
+                nvarchar(10),  
                 ISNULL
                 (
                     @end_date,
                     SYSDATETIME()
+                      AT TIME ZONE @timezone
                 ),
                 23
             ),
@@ -6892,19 +6792,18 @@ FROM
             'EXEC sp_QuickieStore @debug = 1;',
         performance =
             'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
-        version_and_date =   
+        version_and_date =  
             N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
         thanks =
             'i hope you find it useful, or whatever'
 ) AS x
-ORDER BY   
+ORDER BY  
     x.sort;
 
 END TRY
 
 /*Error handling!*/
 BEGIN CATCH
-
     /*
     Where the error happened and the message
     */
@@ -6934,7 +6833,6 @@ Debug elements!
 */
 IF @debug = 1
 BEGIN
-
     SELECT
         parameter_type =
             'procedure_parameters',
@@ -6948,6 +6846,8 @@ BEGIN
             @start_date,
         end_date =
             @end_date,
+        timezone =
+            @timezone,
         execution_count =
             @execution_count,
         duration_ms =
@@ -7056,9 +6956,9 @@ BEGIN
             @troubleshoot_info,
         rc =
             @rc,
-       em =   
+       em =  
            @em,
-       fo =   
+       fo =  
            @fo;
 
     IF EXISTS
@@ -7073,7 +6973,8 @@ BEGIN
                 '#databases',
             d.*
         FROM #databases AS d
-        ORDER BY d.database_name
+        ORDER BY
+            d.database_name
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7095,7 +6996,8 @@ BEGIN
                 '#distinct_plans',
             dp.*
         FROM #distinct_plans AS dp
-        ORDER BY dp.plan_id
+        ORDER BY
+            dp.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7117,7 +7019,8 @@ BEGIN
                 '#procedure_plans',
             pp.*
         FROM #procedure_plans AS pp
-        ORDER BY pp.plan_id
+        ORDER BY
+            pp.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7139,7 +7042,8 @@ BEGIN
                 '#query_types',
             qt.*
         FROM #query_types AS qt
-        ORDER BY qt.plan_id
+        ORDER BY
+            qt.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7161,7 +7065,8 @@ BEGIN
                 '#include_plan_ids',
             ipi.*
         FROM #include_plan_ids AS ipi
-        ORDER BY ipi.plan_id
+        ORDER BY
+            ipi.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7183,7 +7088,8 @@ BEGIN
                 '#include_query_ids',
             iqi.*
         FROM #include_query_ids AS iqi
-        ORDER BY iqi.query_id
+        ORDER BY
+            iqi.query_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7205,7 +7111,8 @@ BEGIN
                 '#include_query_hashes',
             iqh.*
         FROM #include_query_hashes AS iqh
-        ORDER BY iqh.query_hash
+        ORDER BY
+            iqh.query_hash
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7227,7 +7134,8 @@ BEGIN
                 '#include_plan_hashes',
             iph.*
         FROM #include_plan_hashes AS iph
-        ORDER BY iph.plan_hash
+        ORDER BY
+            iph.plan_hash
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7249,7 +7157,8 @@ BEGIN
                 '#include_sql_handles',
             ish.*
         FROM #include_sql_handles AS ish
-        ORDER BY ish.sql_handle
+        ORDER BY
+            ish.sql_handle
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7271,7 +7180,8 @@ BEGIN
                 '#ignore_plan_ids',
             ipi.*
         FROM #ignore_plan_ids AS ipi
-        ORDER BY ipi.plan_id
+        ORDER BY
+            ipi.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7293,7 +7203,8 @@ BEGIN
                 '#ignore_query_ids',
             iqi.*
         FROM #ignore_query_ids AS iqi
-        ORDER BY iqi.query_id
+        ORDER BY
+            iqi.query_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7315,7 +7226,8 @@ BEGIN
                 '#ignore_query_hashes',
             iqh.*
         FROM #ignore_query_hashes AS iqh
-        ORDER BY iqh.query_hash
+        ORDER BY
+            iqh.query_hash
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7337,7 +7249,8 @@ BEGIN
                 '#ignore_plan_hashes',
             iph.*
         FROM #ignore_plan_hashes AS iph
-        ORDER BY iph.plan_hash
+        ORDER BY
+            iph.plan_hash
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7359,7 +7272,8 @@ BEGIN
                 '#ignore_sql_handles',
             ish.*
         FROM #ignore_sql_handles AS ish
-        ORDER BY ish.sql_handle
+        ORDER BY
+            ish.sql_handle
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7381,7 +7295,8 @@ BEGIN
                 '#query_text_search',
             qst.*
         FROM #query_text_search AS qst
-        ORDER BY qst.plan_id
+        ORDER BY
+            qst.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7403,7 +7318,8 @@ BEGIN
                 '#wait_filter',
             wf.*
         FROM #wait_filter AS wf
-        ORDER BY wf.plan_id
+        ORDER BY
+            wf.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7425,7 +7341,8 @@ BEGIN
                 '#maintenance_plans',
             mp.*
         FROM #maintenance_plans AS mp
-        ORDER BY mp.plan_id
+        ORDER BY
+            mp.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7468,7 +7385,8 @@ BEGIN
                 '#query_store_plan',
             qsp.*
         FROM #query_store_plan AS qsp
-        ORDER BY qsp.plan_id, qsp.query_id
+        ORDER BY
+            qsp.plan_id, qsp.query_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7490,7 +7408,9 @@ BEGIN
                 '#query_store_query',
             qsq.*
         FROM #query_store_query AS qsq
-        ORDER BY qsq.query_id, qsq.query_text_id
+        ORDER BY
+            qsq.query_id,
+            qsq.query_text_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7512,7 +7432,8 @@ BEGIN
                 '#query_store_query_text',
             qsqt.*
         FROM #query_store_query_text AS qsqt
-        ORDER BY qsqt.query_text_id
+        ORDER BY
+            qsqt.query_text_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7534,7 +7455,8 @@ BEGIN
                 '#dm_exec_query_stats ',
             deqs.*
         FROM #dm_exec_query_stats AS deqs
-        ORDER BY deqs.statement_sql_handle
+        ORDER BY
+            deqs.statement_sql_handle
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7556,7 +7478,8 @@ BEGIN
                 '#query_store_runtime_stats',
             qsrs.*
         FROM #query_store_runtime_stats AS qsrs
-        ORDER BY qsrs.plan_id
+        ORDER BY
+            qsrs.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7582,7 +7505,8 @@ BEGIN
                 '#query_store_wait_stats',
             qsws.*
         FROM #query_store_wait_stats AS qsws
-        ORDER BY qsws.plan_id
+        ORDER BY
+            qsws.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7620,7 +7544,8 @@ BEGIN
                 '#query_context_settings',
             qcs.*
         FROM #query_context_settings AS qcs
-        ORDER BY qcs.context_settings_id
+        ORDER BY
+            qcs.context_settings_id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7644,7 +7569,8 @@ BEGIN
                     '#query_store_plan_feedback',
                 qspf.*
             FROM #query_store_plan_feedback AS qspf
-            ORDER BY qspf.plan_feedback_id
+            ORDER BY
+                qspf.plan_feedback_id
             OPTION(RECOMPILE);
         END;
         ELSE
@@ -7666,7 +7592,8 @@ BEGIN
                     '#query_store_query_hints',
                 qsqh.*
             FROM #query_store_query_hints AS qsqh
-            ORDER BY qsqh.query_hint_id
+            ORDER BY
+                qsqh.query_hint_id
             OPTION(RECOMPILE);
         END;
         ELSE
@@ -7688,7 +7615,8 @@ BEGIN
                     '#query_store_query_variant',
                 qsqv.*
             FROM #query_store_query_variant AS qsqv
-            ORDER BY qsqv.query_variant_query_id
+            ORDER BY
+                qsqv.query_variant_query_id
             OPTION(RECOMPILE);
         END;
         ELSE
@@ -7712,7 +7640,8 @@ BEGIN
                         '#query_store_replicas',
                     qsr.*
                 FROM #query_store_replicas AS qsr
-                ORDER BY qsr.replica_group_id
+                ORDER BY
+                    qsr.replica_group_id
                 OPTION(RECOMPILE);
             END;
             ELSE
@@ -7734,7 +7663,8 @@ BEGIN
                         '#query_store_plan_forcing_locations',
                     qspfl.*
                 FROM #query_store_plan_forcing_locations AS qspfl
-                ORDER BY qspfl.plan_forcing_location_id
+                ORDER BY
+                    qspfl.plan_forcing_location_id
                 OPTION(RECOMPILE);
             END;
             ELSE
@@ -7758,7 +7688,8 @@ BEGIN
                 '#troubleshoot_performance',
             tp.*
         FROM #troubleshoot_performance AS tp
-        ORDER BY tp.id
+        ORDER BY
+            tp.id
         OPTION(RECOMPILE);
     END;
     ELSE
@@ -7767,12 +7698,8 @@ BEGIN
             result =
                 '#troubleshoot_performance is empty';
     END;
-
     RETURN; /*Stop doing anything, I guess*/
-
 END; /*End debug*/
-
 RETURN; /*Yeah sure why not?*/
-
 END;/*Final End*/
 GO
