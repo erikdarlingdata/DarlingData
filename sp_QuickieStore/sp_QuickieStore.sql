@@ -1786,7 +1786,7 @@ BEGIN
            WHERE tzi.name = @timezone
        )
        BEGIN
-           RAISERROR('The time zone you chose (%s is not valid. Please check sys.time_zone_info for a valid list.)', 10, 1, @timezone) WITH NOWAIT;
+           RAISERROR('The time zone you chose (%s) is not valid. Please check sys.time_zone_info for a valid list.', 10, 1, @timezone) WITH NOWAIT;
            RETURN;
        END;
 END;
