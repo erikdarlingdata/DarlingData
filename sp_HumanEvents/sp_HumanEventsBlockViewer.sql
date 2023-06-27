@@ -863,7 +863,7 @@ END;
     WHERE n.c.exist('@sqlhandle[ .= "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]') = 0
     OPTION(RECOMPILE);
 
-    IF @debug = 1 BEGIN SELECT '#available_plans' AS table_name, * FROM #available_plans AS wa WHERE wa.query_text LIKE '%EXEC%' OPTION(RECOMPILE); END;
+    IF @debug = 1 BEGIN SELECT '#available_plans' AS table_name, * FROM #available_plans AS wa OPTION(RECOMPILE); END;
     
     SELECT
         ap.available_plans,
