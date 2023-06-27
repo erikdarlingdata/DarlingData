@@ -8,13 +8,13 @@ SET STATISTICS TIME, IO OFF;
 GO
 
 /*
-██╗  ██╗██╗   ██╗███╗   ███╗ █████╗ ███╗   ██╗      
-██║  ██║██║   ██║████╗ ████║██╔══██╗████╗  ██║      
-███████║██║   ██║██╔████╔██║███████║██╔██╗ ██║      
-██╔══██║██║   ██║██║╚██╔╝██║██╔══██║██║╚██╗██║      
-██║  ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║██║ ╚████║      
-╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝      
-                                                    
+██╗  ██╗██╗   ██╗███╗   ███╗ █████╗ ███╗   ██╗     
+██║  ██║██║   ██║████╗ ████║██╔══██╗████╗  ██║     
+███████║██║   ██║██╔████╔██║███████║██╔██╗ ██║     
+██╔══██║██║   ██║██║╚██╔╝██║██╔══██║██║╚██╗██║     
+██║  ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║██║ ╚████║     
+╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝     
+                                                   
 ███████╗██╗   ██╗███████╗███╗   ██╗████████╗███████╗
 ██╔════╝██║   ██║██╔════╝████╗  ██║╚══██╔══╝██╔════╝
 █████╗  ██║   ██║█████╗  ██╔██╗ ██║   ██║   ███████╗
@@ -24,12 +24,12 @@ GO
 
 ██████╗ ██╗      ██████╗  ██████╗██╗  ██╗
 ██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝
-██████╔╝██║     ██║   ██║██║     █████╔╝ 
-██╔══██╗██║     ██║   ██║██║     ██╔═██╗ 
+██████╔╝██║     ██║   ██║██║     █████╔╝
+██╔══██╗██║     ██║   ██║██║     ██╔═██╗
 ██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗
 ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
-                                         
-██╗   ██╗██╗███████╗██╗    ██╗███████╗██████╗ 
+                                        
+██╗   ██╗██╗███████╗██╗    ██╗███████╗██████╗
 ██║   ██║██║██╔════╝██║    ██║██╔════╝██╔══██╗
 ██║   ██║██║█████╗  ██║ █╗ ██║█████╗  ██████╔╝
 ╚██╗ ██╔╝██║██╔══╝  ██║███╗██║██╔══╝  ██╔══██╗
@@ -57,7 +57,7 @@ IF OBJECT_ID('dbo.sp_HumanEventsBlockViewer') IS NULL
    END;
 GO
 
-ALTER PROCEDURE 
+ALTER PROCEDURE
     dbo.sp_HumanEventsBlockViewer
 (
     @session_name nvarchar(256) = N'keeper_HumanEvents_blocking',
@@ -78,14 +78,14 @@ SET STATISTICS XML OFF;
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-SELECT 
-    @version = '1.13', 
+SELECT
+    @version = '1.13',
     @version_date = '20221201';
 
 IF @help = 1
 BEGIN
     SELECT
-        introduction = 
+        introduction =
             'hi, i''m sp_HumanEventsBlockViewer!' UNION ALL
     SELECT  'you can use me in conjunction with sp_HumanEvents to quickly parse the sqlserver.blocked_process_report event' UNION ALL
     SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
@@ -142,44 +142,44 @@ BEGIN
     WHERE o.name = N'sp_HumanEventsBlockViewer'
     OPTION(RECOMPILE);
 
-    SELECT 
-        mit_license_yo = 'i am MIT licensed, so like, do whatever' 
-    
+    SELECT
+        mit_license_yo = 'i am MIT licensed, so like, do whatever'
+   
     UNION ALL
-    
-    SELECT 
+   
+    SELECT
         mit_license_yo = 'see printed messages for full license';
-    
+   
     RAISERROR('
 MIT License
 
-Copyright 2023 Darling Data, LLC 
+Copyright 2023 Darling Data, LLC
 
 https://www.erikdarlingdata.com/
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), 
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
-sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the 
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
 following conditions:
 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF 
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE 
-FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-', 0, 1) WITH NOWAIT; 
+', 0, 1) WITH NOWAIT;
 
     RETURN;
 END;
 
 /*Set some variables for better decision-making later*/
 DECLARE
-    @azure bit = 
-        CASE 
+    @azure bit =
+        CASE
             WHEN CONVERT
                  (
-                     int, 
+                     int,
                      SERVERPROPERTY('EngineEdition')
                  ) = 5
             THEN 1
@@ -188,7 +188,7 @@ DECLARE
     @session_id int,
     @target_session_id int,
     @file_name nvarchar(4000),
-    @inputbuf_bom nvarchar(1) = 
+    @inputbuf_bom nvarchar(1) =
         CONVERT(nvarchar(1), 0x0a00, 0);
 
 /*Use some sane defaults for input parameters*/
@@ -270,10 +270,10 @@ IF @azure = 0
 BEGIN
     IF NOT EXISTS
     (
-        SELECT 
+        SELECT
             1/0
         FROM sys.server_event_sessions AS ses
-        JOIN sys.dm_xe_sessions AS dxs 
+        JOIN sys.dm_xe_sessions AS dxs
           ON dxs.name = ses.name
         WHERE ses.name = @session_name
         AND   dxs.create_time IS NOT NULL
@@ -288,10 +288,10 @@ IF @azure = 1
 BEGIN
     IF NOT EXISTS
     (
-        SELECT 
+        SELECT
             1/0
         FROM sys.database_event_sessions AS ses
-        JOIN sys.dm_xe_database_sessions AS dxs 
+        JOIN sys.dm_xe_database_sessions AS dxs
           ON dxs.name = ses.name
         WHERE ses.name = @session_name
         AND   dxs.create_time IS NOT NULL
@@ -308,7 +308,7 @@ BEGIN
     IF @azure = 0
     BEGIN
         SELECT TOP (1)
-            @target_type = 
+            @target_type =
                 t.target_name
         FROM sys.dm_xe_sessions AS s
         JOIN sys.dm_xe_session_targets AS t
@@ -317,11 +317,11 @@ BEGIN
         ORDER BY t.target_name
         OPTION(RECOMPILE);
     END;
-    
+   
     IF @azure = 1
     BEGIN
         SELECT TOP (1)
-            @target_type = 
+            @target_type =
                 t.target_name
         FROM sys.dm_xe_database_sessions AS s
         JOIN sys.dm_xe_database_session_targets AS t
@@ -336,13 +336,13 @@ END;
 IF @target_type = N'ring_buffer'
 BEGIN
     IF @azure = 0
-    BEGIN   
+    BEGIN  
         INSERT
             #x WITH(TABLOCKX)
         (
             x
         )
-        SELECT 
+        SELECT
             x = TRY_CAST(t.target_data AS xml)
         FROM sys.dm_xe_session_targets AS t
         JOIN sys.dm_xe_sessions AS s
@@ -351,15 +351,15 @@ BEGIN
         AND   t.target_name = N'ring_buffer'
         OPTION(RECOMPILE);
     END;
-    
-    IF @azure = 1 
+   
+    IF @azure = 1
     BEGIN
         INSERT
             #x WITH(TABLOCKX)
         (
             x
         )
-        SELECT 
+        SELECT
             x = TRY_CAST(t.target_data AS xml)
         FROM sys.dm_xe_database_session_targets AS t
         JOIN sys.dm_xe_database_sessions AS s
@@ -371,32 +371,32 @@ BEGIN
 END;
 
 IF @target_type = N'event_file'
-BEGIN   
+BEGIN  
     IF @azure = 0
     BEGIN
         SELECT
-            @session_id = 
+            @session_id =
                 t.event_session_id,
-            @target_session_id = 
+            @target_session_id =
                 t.target_id
         FROM sys.server_event_session_targets t
         JOIN sys.server_event_sessions s
           ON s.event_session_id = t.event_session_id
-        WHERE t.name = @target_type 
+        WHERE t.name = @target_type
         AND   s.name = @session_name
         OPTION(RECOMPILE);
 
         SELECT
             @file_name =
-                CASE 
+                CASE
                     WHEN f.file_name LIKE N'%.xel'
                     THEN REPLACE(f.file_name, N'.xel', N'*.xel')
                     ELSE f.file_name + N'*.xel'
                 END
-        FROM 
+        FROM
         (
-            SELECT 
-                file_name = 
+            SELECT
+                file_name =
                     CONVERT
                     (
                         nvarchar(4000),
@@ -409,32 +409,32 @@ BEGIN
         ) AS f
         OPTION(RECOMPILE);
     END;
-    
+   
     IF @azure = 1
     BEGIN
         SELECT
-            @session_id = 
+            @session_id =
                 t.event_session_address,
-            @target_session_id = 
+            @target_session_id =
                 t.target_name
         FROM sys.dm_xe_database_session_targets t
-        JOIN sys.dm_xe_database_sessions s 
+        JOIN sys.dm_xe_database_sessions s
           ON s.address = t.event_session_address
-        WHERE t.target_name = @target_type 
+        WHERE t.target_name = @target_type
         AND   s.name = @session_name
         OPTION(RECOMPILE);
 
         SELECT
             @file_name =
-                CASE 
+                CASE
                     WHEN f.file_name LIKE N'%.xel'
                     THEN REPLACE(f.file_name, N'.xel', N'*.xel')
                     ELSE f.file_name + N'*.xel'
                 END
-        FROM 
+        FROM
         (
-            SELECT 
-                file_name = 
+            SELECT
+                file_name =
                     CONVERT
                     (
                         nvarchar(4000),
@@ -452,14 +452,14 @@ BEGIN
         #x WITH(TABLOCKX)
     (
         x
-    )    
+    )   
     SELECT
         x = TRY_CAST(f.event_data AS xml)
     FROM sys.fn_xe_file_target_read_file
          (
-             @file_name, 
-             NULL, 
-             NULL, 
+             @file_name,
+             NULL,
+             NULL,
              NULL
          ) AS f
     OPTION(RECOMPILE);
@@ -473,7 +473,7 @@ BEGIN
     (
         human_events_xml
     )
-    SELECT 
+    SELECT
         human_events_xml = e.x.query('.')
     FROM #x AS x
     CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
@@ -490,7 +490,7 @@ BEGIN
     (
         human_events_xml
     )
-    SELECT 
+    SELECT
         human_events_xml = e.x.query('.')
     FROM #x AS x
     CROSS APPLY x.x.nodes('/event') AS e(x)
@@ -505,19 +505,19 @@ BEGIN
     SELECT table_name = N'#blocking_xml', bx.* FROM #blocking_xml AS bx;
 END;
 
-    SELECT 
-        event_time = 
+    SELECT
+        event_time =
             DATEADD
             (
-                MINUTE, 
+                MINUTE,
                 DATEDIFF
                 (
-                    MINUTE, 
-                    GETUTCDATE(), 
+                    MINUTE,
+                    GETUTCDATE(),
                     SYSDATETIME()
-                ), 
+                ),
                 c.value('@timestamp', 'datetime2')
-            ),        
+            ),       
         database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
         database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
         object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
@@ -525,7 +525,7 @@ END;
         resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
         monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
         spid = bd.value('(process/@spid)[1]', 'int'),
-        ecid = bd.value('(process/@ecid)[1]', 'int'),            
+        ecid = bd.value('(process/@ecid)[1]', 'int'),           
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
         transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
@@ -551,7 +551,7 @@ END;
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     OPTION(RECOMPILE);
 
-    ALTER TABLE #blocked 
+    ALTER TABLE #blocked
     ADD query_text AS
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -559,24 +559,24 @@ END;
            query_text_pre COLLATE Latin1_General_BIN2,
        NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
-       NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?') 
+       NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
-    
+   
     IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
-    
-    SELECT 
-        event_time = 
+   
+    SELECT
+        event_time =
             DATEADD
             (
-                MINUTE, 
+                MINUTE,
                 DATEDIFF
                 (
-                    MINUTE, 
-                    GETUTCDATE(), 
+                    MINUTE,
+                    GETUTCDATE(),
                     SYSDATETIME()
-                ), 
+                ),
                 c.value('@timestamp', 'datetime2')
-            ),        
+            ),       
         database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
         database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
         object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
@@ -609,8 +609,8 @@ END;
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     OPTION(RECOMPILE);
-    
-    ALTER TABLE #blocking 
+   
+    ALTER TABLE #blocking
     ADD query_text AS
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -618,35 +618,35 @@ END;
            query_text_pre COLLATE Latin1_General_BIN2,
        NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
-       NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?') 
+       NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
 
     IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
-    
+   
     SELECT
         kheb.event_time,
         kheb.database_name,
-        contentious_object = 
+        contentious_object =
             ISNULL
             (
-                kheb.contentious_object, 
+                kheb.contentious_object,
                 N'Unresolved: ' +
                 N'database: ' +
                 kheb.database_name +
-                N' object_id: ' + 
-                RTRIM(kheb.object_id) 
+                N' object_id: ' +
+                RTRIM(kheb.object_id)
             ),
         kheb.activity,
         kheb.spid,
         kheb.ecid,
         query_text =
-            CASE 
+            CASE
                 WHEN kheb.query_text
                      LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
-                THEN 
+                THEN
                     (
                         SELECT
-                            [processing-instruction(query)] =                                       
+                            [processing-instruction(query)] =                                      
                                 OBJECT_SCHEMA_NAME
                                 (
                                         SUBSTRING
@@ -658,12 +658,12 @@ END;
                                         ,
                                         SUBSTRING
                                         (
-                                            kheb.query_text, 
-                                            CHARINDEX(N'Database Id = ', kheb.query_text) + 14, 
+                                            kheb.query_text,
+                                            CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
                                             CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
                                         )
-                                ) + 
-                                N'.' + 
+                                ) +
+                                N'.' +
                                 OBJECT_NAME
                                 (
                                      SUBSTRING
@@ -675,8 +675,8 @@ END;
                                      ,
                                      SUBSTRING
                                      (
-                                         kheb.query_text, 
-                                         CHARINDEX(N'Database Id = ', kheb.query_text) + 14, 
+                                         kheb.query_text,
+                                         CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
                                          CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
                                      )
                                 )
@@ -686,65 +686,63 @@ END;
                     )
                 ELSE
                     (
-                        SELECT 
-                            [processing-instruction(query)] = 
+                        SELECT
+                            [processing-instruction(query)] =
                                 kheb.query_text
                         FOR XML
                             PATH(N''),
                             TYPE
                     )
             END,
-        wait_time_ms = 
+        wait_time_ms =
             kheb.wait_time,
         kheb.status,
         kheb.isolation_level,
         kheb.lock_mode,
-        c_sh.sql_handles,
-        c_pn.proc_names,
         kheb.resource_owner_type,
         kheb.transaction_count,
         kheb.transaction_name,
         kheb.last_transaction_started,
         kheb.last_transaction_completed,
-        client_option_1 = 
+        client_option_1 =
             SUBSTRING
-            (    
-                CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 8 = 8 THEN ', ANSI_WARNINGS' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 16 = 16 THEN ', ANSI_PADDING' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 32 = 32 THEN ', ANSI_NULLS' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 64 = 64 THEN ', ARITHABORT' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 128 = 128 THEN ', ARITHIGNORE' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 256 = 256 THEN ', QUOTED_IDENTIFIER' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 512 = 512 THEN ', NOCOUNT' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 1024 = 1024 THEN ', ANSI_NULL_DFLT_ON' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 2048 = 2048 THEN ', ANSI_NULL_DFLT_OFF' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 4096 = 4096 THEN ', CONCAT_NULL_YIELDS_NULL' ELSE '' END + 
-                CASE WHEN kheb.clientoption1 & 8192 = 8192 THEN ', NUMERIC_ROUNDABORT' ELSE '' END + 
+            (   
+                CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 8 = 8 THEN ', ANSI_WARNINGS' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 16 = 16 THEN ', ANSI_PADDING' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 32 = 32 THEN ', ANSI_NULLS' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 64 = 64 THEN ', ARITHABORT' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 128 = 128 THEN ', ARITHIGNORE' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 256 = 256 THEN ', QUOTED_IDENTIFIER' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 512 = 512 THEN ', NOCOUNT' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 1024 = 1024 THEN ', ANSI_NULL_DFLT_ON' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 2048 = 2048 THEN ', ANSI_NULL_DFLT_OFF' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 4096 = 4096 THEN ', CONCAT_NULL_YIELDS_NULL' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 8192 = 8192 THEN ', NUMERIC_ROUNDABORT' ELSE '' END +
                 CASE WHEN kheb.clientoption1 & 16384 = 16384 THEN ', XACT_ABORT' ELSE '' END,
                 3,
                 8000
             ),
-        client_option_2 = 
+        client_option_2 =
             SUBSTRING
             (
-                CASE WHEN kheb.clientoption2 & 1024 = 1024 THEN ', DB CHAINING' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 2048 = 2048 THEN ', NUMERIC ROUNDABORT' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 4096 = 4096 THEN ', ARITHABORT' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 8192 = 8192 THEN ', ANSI PADDING' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 16384 = 16384 THEN ', ANSI NULL DEFAULT' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 65536 = 65536 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 131072 = 131072 THEN ', RECURSIVE TRIGGERS' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 1048576 = 1048576 THEN ', DEFAULT TO LOCAL CURSOR' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 8388608 = 8388608 THEN ', QUOTED IDENTIFIER' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 16777216 = 16777216 THEN ', AUTO CREATE STATISTICS' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 33554432 = 33554432 THEN ', CURSOR CLOSE ON COMMIT' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 67108864 = 67108864 THEN ', ANSI NULLS' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 268435456 = 268435456 THEN ', ANSI WARNINGS' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 536870912 = 536870912 THEN ', FULL TEXT ENABLED' ELSE '' END + 
-                CASE WHEN kheb.clientoption2 & 1073741824 = 1073741824 THEN ', AUTO UPDATE STATISTICS' ELSE '' END + 
+                CASE WHEN kheb.clientoption2 & 1024 = 1024 THEN ', DB CHAINING' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 2048 = 2048 THEN ', NUMERIC ROUNDABORT' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 4096 = 4096 THEN ', ARITHABORT' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 8192 = 8192 THEN ', ANSI PADDING' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 16384 = 16384 THEN ', ANSI NULL DEFAULT' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 65536 = 65536 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 131072 = 131072 THEN ', RECURSIVE TRIGGERS' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 1048576 = 1048576 THEN ', DEFAULT TO LOCAL CURSOR' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 8388608 = 8388608 THEN ', QUOTED IDENTIFIER' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 16777216 = 16777216 THEN ', AUTO CREATE STATISTICS' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 33554432 = 33554432 THEN ', CURSOR CLOSE ON COMMIT' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 67108864 = 67108864 THEN ', ANSI NULLS' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 268435456 = 268435456 THEN ', ANSI WARNINGS' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 536870912 = 536870912 THEN ', FULL TEXT ENABLED' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 1073741824 = 1073741824 THEN ', AUTO UPDATE STATISTICS' ELSE '' END +
                 CASE WHEN kheb.clientoption2 & 1469283328 = 1469283328 THEN ', ALL SETTABLE OPTIONS' ELSE '' END,
                 3,
                 8000
@@ -756,94 +754,73 @@ END;
         kheb.host_name,
         kheb.login_name,
         kheb.transaction_id,
+        kheb.database_id,
         kheb.blocked_process_report
     INTO #blocks
-    FROM 
-    (                
-        SELECT 
-            bg.*, 
-            contentious_object = 
+    FROM
+    (               
+        SELECT
+            bg.*,
+            contentious_object =
                 OBJECT_NAME
                 (
-                    bg.object_id, 
+                    bg.object_id,
                     bg.database_id
                 )
         FROM #blocking AS bg
-        WHERE (bg.database_name = @database_name 
+        WHERE (bg.database_name = @database_name
                OR @database_name IS NULL)
-        
-        UNION ALL 
-        
-        SELECT 
-            bd.*, 
-            contentious_object = 
+       
+        UNION ALL
+       
+        SELECT
+            bd.*,
+            contentious_object =
                 OBJECT_NAME
                 (
-                    bd.object_id, 
+                    bd.object_id,
                     bd.database_id
-                ) 
-        FROM #blocked AS bd      
-        WHERE (bd.database_name = @database_name 
+                )
+        FROM #blocked AS bd     
+        WHERE (bd.database_name = @database_name
                OR @database_name IS NULL)
     ) AS kheb
-    CROSS APPLY 
-    (
-      SELECT 
-          sql_handles = 
-              STUFF
-              (
-                  (
-                      SELECT DISTINCT
-                          ',' +
-                          ISNULL
-                          (
-                              n.c.value('@sqlhandle', 'varchar(130)'),
-                              ''
-                          )
-                      FROM kheb.blocked_process_report.nodes('//executionStack/frame') AS n(c)
-                      WHERE n.c.value('@sqlhandle', 'varchar(130)') <> 0x
-                      FOR XML
-                          PATH(''),
-                          TYPE
-                  ).value('./text()[1]', 'varchar(max)'),
-                  1,
-                  1,
-                  ''
-              )                    
-    ) AS c_sh
-    CROSS APPLY 
-    (
-      SELECT 
-          proc_names = 
-              STUFF
-              (
-                  (
-                      SELECT DISTINCT
-                          N',' +
-                          ISNULL
-                          (
-                              n.c.value('@procname', 'nvarchar(1024)'),
-                              N''
-                          )
-                      FROM kheb.blocked_process_report.nodes('//executionStack/frame') AS n(c)
-                      FOR XML
-                          PATH(''),
-                          TYPE
-                  ).value('./text()[1]', 'nvarchar(max)'),
-                  1,
-                  1,
-                  ''
-              )                    
-    ) AS c_pn
     OPTION(RECOMPILE);
-    
+
     SELECT
-        b.*
+        blocked_process_report =
+            'blocked_process_report',
+        b.event_time,
+        b.database_name,
+        b.contentious_object,
+        b.activity,
+        b.spid,
+        b.ecid,
+        b.query_text,
+        b.wait_time_ms,
+        b.status,
+        b.isolation_level,
+        b.lock_mode,
+        b.resource_owner_type,
+        b.transaction_count,
+        b.transaction_name,
+        b.last_transaction_started,
+        b.last_transaction_completed,
+        b.client_option_1,
+        b.client_option_2,
+        b.wait_resource,
+        b.priority,
+        b.log_used,
+        b.client_app,
+        b.host_name,
+        b.login_name,
+        b.transaction_id,
+        b.blocked_process_report
     FROM
     (
         SELECT
             b.*,
-            n = 
+            n =
                 ROW_NUMBER() OVER
                 (
                     PARTITION BY
@@ -856,15 +833,162 @@ END;
         FROM #blocks AS b
     ) AS b
     WHERE b.n = 1
-    AND   (b.contentious_object = @object_name 
+    AND   (b.contentious_object = @object_name
            OR @object_name IS NULL)
-    ORDER BY 
+    ORDER BY
         b.event_time DESC,
-        CASE 
-            WHEN b.activity = 'blocking' 
+        CASE
+            WHEN b.activity = 'blocking'
             THEN 1
-            ELSE 999 
+            ELSE 999
         END
+    OPTION(RECOMPILE);
+
+    SELECT DISTINCT
+        available_plans =
+            'available_plans',
+        b.database_name,
+        b.database_id,
+        query_text =
+            TRY_CAST(b.query_text AS nvarchar(MAX)),
+        sql_handle =
+            CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
+        stmtstart =
+            ISNULL(n.c.value('@stmtstart', 'int'), 0),
+        stmtend =
+            ISNULL(n.c.value('@stmtend', 'int'), -1)
+    INTO #available_plans
+    FROM #blocks AS b
+    CROSS APPLY b.blocked_process_report.nodes('//executionStack/frame') AS n(c)
+    WHERE n.c.exist('@sqlhandle[ .= "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]') = 0
+    OPTION(RECOMPILE);
+
+    IF @debug = 1 BEGIN SELECT '#available_plans' AS table_name, * FROM #available_plans AS wa WHERE wa.query_text LIKE '%EXEC%' OPTION(RECOMPILE); END;
+    
+    SELECT
+        ap.available_plans,
+        ap.database_name,
+        query_text =
+            TRY_CAST(ap.query_text AS xml),
+        ap.query_plan,
+        ap.creation_time,
+        ap.last_execution_time,
+        ap.execution_count,
+        ap.executions_per_second,
+        ap.total_worker_time_ms,
+        ap.avg_worker_time,
+        ap.total_elapsed_time_ms,
+        ap.avg_elapsed_time,
+        ap.total_logical_reads_mb,
+        ap.total_physical_reads_mb,
+        ap.min_num_physical_reads_mb,
+        ap.max_num_physical_reads_mb,
+        ap.total_logical_writes_mb,
+        ap.min_grant_mb,
+        ap.max_grant_mb,
+        ap.min_used_grant_mb,
+        ap.max_used_grant_mb,
+        ap.min_spills_mb,
+        ap.max_spills_mb,
+        ap.min_reserved_threads,
+        ap.max_reserved_threads,
+        ap.min_used_threads,
+        ap.max_used_threads,
+        ap.total_rows,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset
+    FROM
+    (
+        SELECT
+            *,
+            n =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        ap.sql_handle
+                    ORDER BY
+                        ap.sql_handle
+                )
+        FROM #available_plans AS ap
+        CROSS APPLY
+        (
+            SELECT TOP (1)
+                deqs.statement_start_offset,
+                deqs.statement_end_offset,
+                deqs.creation_time,
+                deqs.last_execution_time,
+                deqs.execution_count,
+                total_worker_time_ms =
+                    deqs.total_worker_time / 1000.,
+                avg_worker_time =
+                    CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
+                total_elapsed_time_ms =
+                    deqs.total_elapsed_time / 1000.,
+                avg_elapsed_time =
+                    CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
+                executions_per_second =
+                    ISNULL
+                    (
+                        execution_count /
+                            NULLIF
+                            (
+                                DATEDIFF
+                                (
+                                    SECOND,
+                                    deqs.creation_time,
+                                    deqs.last_execution_time
+                                ),
+                                0
+                            ),
+                            0
+                    ),
+                total_physical_reads_mb =
+                    deqs.total_physical_reads * 8. / 1024.,
+                total_logical_writes_mb =
+                    deqs.total_logical_writes * 8. / 1024.,
+                total_logical_reads_mb =
+                    deqs.total_logical_reads * 8. / 1024.,
+                min_num_physical_reads_mb =
+                    deqs.min_num_physical_reads * 8. / 1024.,
+                max_num_physical_reads_mb =
+                    deqs.max_num_physical_reads * 8. / 1024.,
+                min_grant_mb =
+                    deqs.min_grant_kb * 8. / 1024.,
+                max_grant_mb =
+                    deqs.max_grant_kb * 8. / 1024.,
+                min_used_grant_mb =
+                    deqs.min_used_grant_kb * 8. / 1024.,
+                max_used_grant_mb =
+                    deqs.max_used_grant_kb * 8. / 1024.,
+                min_spills_mb =
+                    deqs.min_spills * 8. / 1024.,
+                max_spills_mb =
+                    deqs.max_spills * 8. / 1024.,      
+                deqs.min_reserved_threads,
+                deqs.max_reserved_threads,
+                deqs.min_used_threads,
+                deqs.max_used_threads,
+                deqs.total_rows,
+                query_plan =
+                    TRY_CAST(deps.query_plan AS xml)
+            FROM sys.dm_exec_query_stats AS deqs
+            CROSS APPLY sys.dm_exec_text_query_plan
+            (
+                deqs.plan_handle,
+                deqs.statement_start_offset,
+                deqs.statement_end_offset
+            ) AS deps
+            WHERE deqs.sql_handle = ap.sql_handle
+            AND   deps.dbid = ap.database_id
+            ORDER BY
+                deqs.last_execution_time DESC
+        ) AS c
+    ) AS ap
+    WHERE ap.query_plan IS NOT NULL
+    AND   ap.n = 1
+    ORDER BY
+        ap.last_execution_time DESC
     OPTION(RECOMPILE);
 
 INSERT
@@ -893,24 +1017,24 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         1,
-    database_name = 
+    database_name =
         b.database_name,
-    object_name = 
+    object_name =
         N'-',
-    finding_group = 
+    finding_group =
         N'Database Locks',
-    finding = 
+    finding =
         N'The database ' +
-        b.database_name + 
+        b.database_name +
         N' has been involved in ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' blocking sessions.'
 FROM #blocks AS b
-WHERE (b.database_name = @database_name 
+WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
 GROUP BY b.database_name
 OPTION(RECOMPILE);
@@ -926,32 +1050,32 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         2,
-    database_name = 
+    database_name =
         b.database_name,
-    object_name = 
+    object_name =
         b.contentious_object,
-    finding_group = 
+    finding_group =
         N'Object Locks',
-    finding = 
+    finding =
         N'The object ' +
-        b.contentious_object + 
-        CASE 
+        b.contentious_object +
+        CASE
             WHEN b.contentious_object LIKE N'Unresolved%'
             THEN N''
-            ELSE N' in database ' + 
-                 b.database_name 
-        END + 
+            ELSE N' in database ' +
+                 b.database_name
+        END +
         N' has been involved in ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' blocking sessions.'
 FROM #blocks AS b
-WHERE (b.database_name = @database_name 
+WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
-GROUP BY 
+GROUP BY
     b.database_name,
     b.contentious_object
 OPTION(RECOMPILE);
@@ -966,33 +1090,33 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         3,
-    database_name = 
+    database_name =
         b.database_name,
-    object_name = 
+    object_name =
         N'You Might Need RCSI',
-    finding_group = 
+    finding_group =
         N'Blocking Involving Selects',
-    finding = 
+    finding =
         N'There have been ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' select queries involved in blocking sessions in ' +
         b.database_name +
         N'.'
 FROM #blocks AS b
-WHERE b.lock_mode IN 
+WHERE b.lock_mode IN
       (
           N'S',
           N'IS'
       )
-AND   (b.database_name = @database_name 
+AND   (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
-GROUP BY 
+GROUP BY
     b.database_name
-HAVING 
+HAVING
     COUNT_BIG(DISTINCT b.transaction_id) > 1
 OPTION(RECOMPILE);
 
@@ -1006,15 +1130,15 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         4,
-    database_name = 
+    database_name =
         b.database_name,
-    object_name = 
+    object_name =
         N'-',
-    finding_group = 
+    finding_group =
         N'Repeatable Read Blocking',
-    finding = 
+    finding =
         N'There have been ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' repeatable read queries involved in blocking sessions in ' +
@@ -1022,11 +1146,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'repeatable%'
-AND   (b.database_name = @database_name 
+AND   (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
-GROUP BY 
+GROUP BY
     b.database_name
 OPTION(RECOMPILE);
 
@@ -1041,15 +1165,15 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         5,
-    database_name = 
+    database_name =
         b.database_name,
-    object_name = 
+    object_name =
         N'-',
-    finding_group = 
+    finding_group =
         N'Serializable Blocking',
-    finding = 
+    finding =
         N'There have been ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' serializable queries involved in blocking sessions in ' +
@@ -1057,11 +1181,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'serializable%'
-AND   (b.database_name = @database_name 
+AND   (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
-GROUP BY 
+GROUP BY
     b.database_name
 OPTION(RECOMPILE);
 
@@ -1075,15 +1199,15 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         6,
-    database_name = 
+    database_name =
         b.database_name,
-    object_name = 
+    object_name =
         N'-',
-    finding_group = 
+    finding_group =
         N'Sleeping Query Blocking',
-    finding = 
+    finding =
         N'There have been ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' sleeping queries involved in blocking sessions in ' +
@@ -1091,11 +1215,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.status = N'sleeping'
-AND   (b.database_name = @database_name 
+AND   (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
-GROUP BY 
+GROUP BY
     b.database_name
 OPTION(RECOMPILE);
 
@@ -1109,15 +1233,15 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         7,
-    database_name = 
+    database_name =
         b.database_name,
-    object_name = 
+    object_name =
         N'-',
-    finding_group = 
+    finding_group =
         N'Implicit Transaction Blocking',
-    finding = 
+    finding =
         N'There have been ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' implicit transaction queries involved in blocking sessions in ' +
@@ -1125,11 +1249,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.transaction_name = N'implicit_transaction'
-AND   (b.database_name = @database_name 
+AND   (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
-GROUP BY 
+GROUP BY
     b.database_name
 OPTION(RECOMPILE);
 
@@ -1143,15 +1267,15 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         7,
-    database_name = 
+    database_name =
         b.database_name,
-    object_name = 
+    object_name =
         N'-',
-    finding_group = 
+    finding_group =
         N'User Transaction Blocking',
-    finding = 
+    finding =
         N'There have been ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' user transaction queries involved in blocking sessions in ' +
@@ -1159,11 +1283,11 @@ SELECT
         N'.'
 FROM #blocks AS b
 WHERE b.transaction_name = N'user_transaction'
-AND   (b.database_name = @database_name 
+AND   (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
-GROUP BY 
+GROUP BY
     b.database_name
 OPTION(RECOMPILE);
 
@@ -1208,9 +1332,9 @@ SELECT
         ) +
         N'.'
 FROM #blocks AS b
-WHERE (b.database_name = @database_name 
+WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
 GROUP BY
     b.database_name,
@@ -1226,15 +1350,15 @@ WITH
     SELECT
         b.database_name,
         b.transaction_id,
-        wait_time_ms = 
+        wait_time_ms =
             MAX(b.wait_time_ms)
     FROM #blocks AS b
-    WHERE (b.database_name = @database_name 
+    WHERE (b.database_name = @database_name
            OR @database_name IS NULL)
-    AND   (b.contentious_object = @object_name 
+    AND   (b.contentious_object = @object_name
            OR @object_name IS NULL)
-    GROUP BY 
-        b.database_name, 
+    GROUP BY
+        b.database_name,
         b.transaction_id
 )
 INSERT
@@ -1247,14 +1371,14 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         1000,
     b.database_name,
-    object_name = 
+    object_name =
         N'-',
-    finding_group = 
+    finding_group =
         N'Total database block wait time',
-    finding = 
+    finding =
         N'This database has had ' +
         CONVERT
         (
@@ -1293,7 +1417,7 @@ SELECT
           ) +
         N' [dd hh:mm:ss:ms] of deadlock wait time.'
 FROM b AS b
-WHERE (b.database_name = @database_name 
+WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
 GROUP BY
     b.database_name
@@ -1306,15 +1430,15 @@ WITH
         b.database_name,
         b.transaction_id,
         b.contentious_object,
-        wait_time_ms = 
+        wait_time_ms =
             MAX(b.wait_time_ms)
     FROM #blocks AS b
-    WHERE (b.database_name = @database_name 
+    WHERE (b.database_name = @database_name
            OR @database_name IS NULL)
-    AND   (b.contentious_object = @object_name 
+    AND   (b.contentious_object = @object_name
            OR @object_name IS NULL)
-    GROUP BY 
-        b.database_name, 
+    GROUP BY
+        b.database_name,
         b.contentious_object,
         b.transaction_id
 )
@@ -1328,14 +1452,14 @@ INSERT
     finding
 )
 SELECT
-    check_id = 
+    check_id =
         1001,
     b.database_name,
-    object_name = 
+    object_name =
         b.contentious_object,
-    finding_group = 
+    finding_group =
         N'Total database and object block wait time',
-    finding = 
+    finding =
         N'This object has had ' +
         CONVERT
         (
@@ -1375,9 +1499,9 @@ SELECT
         N' [dd hh:mm:ss:ms] of deadlock wait time in database ' +
         b.database_name
 FROM b AS b
-WHERE (b.database_name = @database_name 
+WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name 
+AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
 GROUP BY
     b.database_name,
@@ -1401,6 +1525,8 @@ SELECT
     finding = N'thanks for using me!';
 
 SELECT
+    findings =
+         'findings',
     bf.check_id,
     bf.database_name,
     bf.object_name,
