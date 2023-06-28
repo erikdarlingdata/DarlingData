@@ -850,8 +850,8 @@ OPTION(RECOMPILE);
 
 SELECT DISTINCT
     b.*
-INTO #available_plans    
-FROM 
+INTO #available_plans   
+FROM
 (
     SELECT
         available_plans =
@@ -875,9 +875,9 @@ FROM
             OR @database_name IS NULL)
     AND  (b.contentious_object = @object_name
             OR @object_name IS NULL)
-    
+   
     UNION ALL
-    
+   
     SELECT
         available_plans =
             'available_plans',
@@ -1021,7 +1021,6 @@ FROM
             deqs.statement_end_offset
         ) AS deps
         WHERE deqs.sql_handle = ap.sql_handle
-        AND   deps.dbid = ap.database_id
         ORDER BY
             deqs.last_execution_time DESC
     ) AS c

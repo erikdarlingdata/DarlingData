@@ -1148,6 +1148,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         N'@top bigint,
           @start_date datetimeoffset(7),
           @end_date datetimeoffset(7),
+          @timezone sysname,
           @execution_count bigint,
           @duration_ms bigint,
           @execution_type_desc nvarchar(60),
@@ -1801,14 +1802,14 @@ IF @start_date IS NULL
      AND @end_date IS NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIME() AT TIME ZONE ''UTC''))' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET() AT TIME ZONE ''UTC''))' + @nc10;
 END;
 
 IF @start_date IS NOT NULL
    AND @end_date IS NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time >= @start_date AT TIME ZONE ''UTC'' ' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time >= @start_date AT TIME ZONE @timezone AT TIME ZONE ''UTC'' ' + @nc10;
 END;
 
 IF @start_date IS NULL
@@ -1816,15 +1817,15 @@ IF @start_date IS NULL
 BEGIN
     SELECT
         @where_clause += N'AND   qsrs.last_execution_time BETWEEN DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET() AT TIME ZONE ''UTC''))
-                                   AND @end_date AT TIME ZONE ''UTC'' ' + @nc10;
+                                   AND @end_date AT TIME ZONE @timezone AT TIME ZONE ''UTC'' ' + @nc10;
 END;
 
 IF @start_date IS NOT NULL
      AND @end_date IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time BETWEEN @start_date AT TIME ZONE ''UTC''
-                                   AND @end_date AT TIME ZONE ''UTC'' ' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time BETWEEN @start_date AT TIME ZONE @timezone AT TIME ZONE ''UTC''
+                                   AND @end_date AT TIME ZONE @timezone AT TIME ZONE ''UTC'' ' + @nc10;
 END;
 
 IF @execution_count IS NOT NULL
@@ -3296,6 +3297,7 @@ EXEC sys.sp_executesql
     @top,
     @start_date,
     @end_date,
+    @timezone,
     @execution_count,
     @duration_ms,
     @execution_type_desc,
@@ -3473,6 +3475,7 @@ EXEC sys.sp_executesql
     @top,
     @start_date,
     @end_date,
+    @timezone,
     @execution_count,
     @duration_ms,
     @execution_type_desc,
@@ -6846,6 +6849,14 @@ BEGIN
             @start_date,
         end_date =
             @end_date,
+        start_date_timezone =
+            @start_date AT TIME ZONE @timezone,
+        end_date_timezone =
+            @end_date AT TIME ZONE @timezone,
+        start_date_utc =
+            @start_date AT TIME ZONE @timezone AT TIME ZONE 'UTC',
+        end_date_utc =
+            @end_date AT TIME ZONE @timezone AT TIME ZONE 'UTC',
         timezone =
             @timezone,
         execution_count =
