@@ -843,24 +843,48 @@ END;
             ELSE 999
         END
     OPTION(RECOMPILE);
-
-    SELECT DISTINCT
-        available_plans =
-            'available_plans',
-        b.database_name,
-        b.database_id,
-        query_text =
-            TRY_CAST(b.query_text AS nvarchar(MAX)),
-        sql_handle =
-            CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
-        stmtstart =
-            ISNULL(n.c.value('@stmtstart', 'int'), 0),
-        stmtend =
-            ISNULL(n.c.value('@stmtend', 'int'), -1)
-    INTO #available_plans
-    FROM #blocks AS b
-    CROSS APPLY b.blocked_process_report.nodes('//executionStack/frame') AS n(c)
-    WHERE n.c.exist('@sqlhandle[ .= "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]') = 0
+    
+    SELECT 
+        b.*
+    INTO #available_plans    
+    FROM 
+    (
+        SELECT
+            available_plans =
+                'available_plans',
+            b.database_name,
+            b.database_id,
+            query_text =
+                TRY_CAST(b.query_text AS nvarchar(MAX)),
+            sql_handle =
+                CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
+            stmtstart =
+                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+            stmtend =
+                ISNULL(n.c.value('@stmtend', 'int'), -1)
+        FROM #blocking AS b
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocked-process/process/executionStack/frame') AS n(c)
+        WHERE n.c.exist('@sqlhandle[ .= "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]') = 0
+        
+        UNION ALL
+        
+        SELECT
+            available_plans =
+                'available_plans',
+            b.database_name,
+            b.database_id,
+            query_text =
+                TRY_CAST(b.query_text AS nvarchar(MAX)),
+            sql_handle =
+                CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
+            stmtstart =
+                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+            stmtend =
+                ISNULL(n.c.value('@stmtend', 'int'), -1)
+        FROM #blocked AS b
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame') AS n(c)
+        WHERE n.c.exist('@sqlhandle[ .= "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]') = 0
+    ) AS b
     OPTION(RECOMPILE);
 
     IF @debug = 1 BEGIN SELECT '#available_plans' AS table_name, * FROM #available_plans AS wa OPTION(RECOMPILE); END;
