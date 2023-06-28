@@ -844,7 +844,7 @@ END;
         END
     OPTION(RECOMPILE);
     
-    SELECT 
+    SELECT DISTINCT
         b.*
     INTO #available_plans    
     FROM 
