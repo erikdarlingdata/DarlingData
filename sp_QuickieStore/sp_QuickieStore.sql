@@ -1802,30 +1802,30 @@ IF @start_date IS NULL
      AND @end_date IS NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET() AT TIME ZONE ''UTC''))' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET()))' + @nc10;
 END;
 
 IF @start_date IS NOT NULL
    AND @end_date IS NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time >= @start_date AT TIME ZONE @timezone AT TIME ZONE ''UTC'' ' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time >= @start_date AT TIME ZONE ''UTC''' + @nc10;
 END;
 
 IF @start_date IS NULL
      AND @end_date IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time BETWEEN DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET() AT TIME ZONE ''UTC''))
-                                   AND @end_date AT TIME ZONE @timezone AT TIME ZONE ''UTC'' ' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time BETWEEN DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET()))
+                                   AND @end_date AT TIME ZONE ''UTC''' + @nc10;
 END;
 
 IF @start_date IS NOT NULL
      AND @end_date IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time BETWEEN @start_date AT TIME ZONE @timezone AT TIME ZONE ''UTC''
-                                   AND @end_date AT TIME ZONE @timezone AT TIME ZONE ''UTC'' ' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time BETWEEN @start_date AT TIME ZONE ''UTC'' 
+                                   AND @end_date AT TIME ZONE ''UTC''' + @nc10;
 END;
 
 IF @execution_count IS NOT NULL
@@ -4883,8 +4883,12 @@ FROM
             END + N'
         first_execution_time =
             qsrs.first_execution_time AT TIME ZONE @timezone,
+        first_execution_time_utc = 
+            qsrs.first_execution_time,
         last_execution_time =
             qsrs.last_execution_time AT TIME ZONE @timezone,
+        last_execution_time_utc = 
+            qsrs.last_execution_time,
         qsrs.count_executions,
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
@@ -5052,8 +5056,12 @@ FROM
             N'
         first_execution_time =
             qsrs.first_execution_time AT TIME ZONE @timezone,
+        first_execution_time_utc =
+            qsrs.first_execution_time,
         last_execution_time =
             qsrs.last_execution_time AT TIME ZONE @timezone,
+        last_execution_time_utc =
+            qsrs.last_execution_time,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
@@ -5218,8 +5226,12 @@ FROM
             END + N'
         first_execution_time =
             qsrs.first_execution_time AT TIME ZONE @timezone,
+        first_execution_time_utc =
+            qsrs.first_execution_time,
         last_execution_time =
             qsrs.last_execution_time AT TIME ZONE @timezone,
+        last_execution_time_utc =
+            qsrs.last_execution_time,
         qsrs.count_executions,
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
@@ -5352,8 +5364,12 @@ FROM
         + N'
         first_execution_time =
             qsrs.first_execution_time AT TIME ZONE @timezone,
+        first_execution_time_utc =
+            qsrs.first_execution_time,
         last_execution_time =
             qsrs.last_execution_time AT TIME ZONE @timezone,
+        last_execution_time_utc =
+            qsrs.last_execution_time,
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
@@ -5774,10 +5790,16 @@ BEGIN
                 qsq.query_parameterization_type_desc,
                 initial_compile_start_time =
                     qsq.initial_compile_start_time AT TIME ZONE @timezone,
+                initial_compile_start_time_utc =
+                    qsq.initial_compile_start_time,
                 last_compile_start_time =
                     qsq.last_compile_start_time AT TIME ZONE @timezone,
+                last_compile_start_time_utc =
+                    qsq.last_compile_start_time,
                 last_execution_time =
-                    qsq.last_execution_time AT TIME ZONE @timezone,                             
+                    qsq.last_execution_time AT TIME ZONE @timezone,
+                last_execution_time_utc =
+                    qsq.last_execution_time,                  
                 qsq.count_compiles,
                 qsq.avg_compile_duration_ms,
                 qsq.total_compile_duration_ms,
@@ -6270,9 +6292,12 @@ BEGIN
                     qsq.initial_compile_start_time AT TIME ZONE @timezone,          
                 last_compile_start_time =
                     qsq.last_compile_start_time AT TIME ZONE @timezone,
-
+                last_compile_start_time_utc =
+                    qsq.last_compile_start_time,
                 last_execution_time =
                     qsq.last_execution_time AT TIME ZONE @timezone,
+                last_execution_time_utc =
+                    qsq.last_execution_time,
                 count_compiles =
                     FORMAT(qsq.count_compiles, 'N0'),
                 avg_compile_duration_ms =
