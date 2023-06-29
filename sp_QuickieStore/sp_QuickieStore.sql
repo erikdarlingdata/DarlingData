@@ -1802,7 +1802,7 @@ IF @start_date IS NULL
      AND @end_date IS NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET()))' + @nc10;
+        @where_clause += N'AND   qsrs.last_execution_time >= DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSUTCDATETIME()))' + @nc10;
 END;
 
 IF @start_date IS NOT NULL
@@ -1816,7 +1816,7 @@ IF @start_date IS NULL
      AND @end_date IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.last_execution_time BETWEEN DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSDATETIMEOFFSET()))
+        @where_clause += N'AND   qsrs.last_execution_time BETWEEN DATEADD(DAY, -7, DATEDIFF(DAY, 0, SYSUTCDATETIME()))
                                    AND @end_date AT TIME ZONE ''UTC''' + @nc10;
 END;
 
