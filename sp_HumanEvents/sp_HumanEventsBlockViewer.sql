@@ -262,7 +262,8 @@ CREATE TABLE
     database_name nvarchar(256) NULL,
     object_name nvarchar(1000) NULL,
     finding_group nvarchar(100) NULL,
-    finding nvarchar(4000) NULL
+    finding nvarchar(4000) NULL,
+    sort_order bigint
 );
 
 /*Look to see if the session exists and is running*/
@@ -850,8 +851,8 @@ OPTION(RECOMPILE);
 
 SELECT DISTINCT
     b.*
-INTO #available_plans    
-FROM 
+INTO #available_plans   
+FROM
 (
     SELECT
         available_plans =
@@ -875,9 +876,9 @@ FROM
             OR @database_name IS NULL)
     AND  (b.contentious_object = @object_name
             OR @object_name IS NULL)
-    
+   
     UNION ALL
-    
+   
     SELECT
         available_plans =
             'available_plans',
@@ -1021,7 +1022,6 @@ FROM
             deqs.statement_end_offset
         ) AS deps
         WHERE deqs.sql_handle = ap.sql_handle
-        AND   deps.dbid = ap.database_id
         ORDER BY
             deqs.last_execution_time DESC
     ) AS c
@@ -1039,14 +1039,16 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id = -1,
     database_name = N'erikdarlingdata.com',
     object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
-    finding = N'blocking for period ' + CONVERT(nvarchar(10), @start_date, 23) + N' through ' + CONVERT(nvarchar(10), @end_date, 23) + N'.';
+    finding = N'blocking for period ' + CONVERT(nvarchar(10), @start_date, 23) + N' through ' + CONVERT(nvarchar(10), @end_date, 23) + N'.',
+    1
 
 INSERT
     #block_findings
@@ -1055,7 +1057,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1071,7 +1074,9 @@ SELECT
         b.database_name +
         N' has been involved in ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' blocking sessions.'
+        N' blocking sessions.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
@@ -1088,7 +1093,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1110,7 +1116,9 @@ SELECT
         END +
         N' has been involved in ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' blocking sessions.'
+        N' blocking sessions.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
@@ -1128,7 +1136,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1144,7 +1153,9 @@ SELECT
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' select queries involved in blocking sessions in ' +
         b.database_name +
-        N'.'
+        N'.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.lock_mode IN
       (
@@ -1168,7 +1179,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1184,7 +1196,9 @@ SELECT
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' repeatable read queries involved in blocking sessions in ' +
         b.database_name +
-        N'.'
+        N'.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'repeatable%'
 AND   (b.database_name = @database_name
@@ -1203,7 +1217,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1219,7 +1234,9 @@ SELECT
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' serializable queries involved in blocking sessions in ' +
         b.database_name +
-        N'.'
+        N'.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'serializable%'
 AND   (b.database_name = @database_name
@@ -1237,7 +1254,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1253,7 +1271,9 @@ SELECT
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' sleeping queries involved in blocking sessions in ' +
         b.database_name +
-        N'.'
+        N'.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.status = N'sleeping'
 AND   (b.database_name = @database_name
@@ -1271,7 +1291,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1287,7 +1308,9 @@ SELECT
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' implicit transaction queries involved in blocking sessions in ' +
         b.database_name +
-        N'.'
+        N'.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.transaction_name = N'implicit_transaction'
 AND   (b.database_name = @database_name
@@ -1305,7 +1328,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1321,7 +1345,9 @@ SELECT
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' user transaction queries involved in blocking sessions in ' +
         b.database_name +
-        N'.'
+        N'.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.transaction_name = N'user_transaction'
 AND   (b.database_name = @database_name
@@ -1339,7 +1365,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id = 8,
@@ -1371,7 +1398,9 @@ SELECT
             b.host_name,
             N'UNKNOWN'
         ) +
-        N'.'
+        N'.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
@@ -1409,7 +1438,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1456,7 +1486,9 @@ SELECT
               ),
               14
           ) +
-        N' [dd hh:mm:ss:ms] of deadlock wait time.'
+        N' [dd hh:mm:ss:ms] of lock wait time.',
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
 FROM b AS b
 WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
@@ -1490,7 +1522,8 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id =
@@ -1537,8 +1570,10 @@ SELECT
               ),
               14
           ) +
-        N' [dd hh:mm:ss:ms] of deadlock wait time in database ' +
-        b.database_name
+        N' [dd hh:mm:ss:ms] of lock wait time in database ' +
+        b.database_name,
+   sort_order =     
+       ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
 FROM b AS b
 WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
@@ -1556,14 +1591,16 @@ INSERT
     database_name,
     object_name,
     finding_group,
-    finding
+    finding,
+    sort_order
 )
 SELECT
     check_id = 2147483647,
     database_name = N'erikdarlingdata.com',
     object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
-    finding = N'thanks for using me!';
+    finding = N'thanks for using me!',
+    2147483647
 
 SELECT
     findings =
@@ -1574,7 +1611,9 @@ SELECT
     bf.finding_group,
     bf.finding
 FROM #block_findings AS bf
-ORDER BY bf.check_id
+ORDER BY 
+    bf.check_id,
+    bf.sort_order
 OPTION(RECOMPILE);
 END; --Final End
 GO
