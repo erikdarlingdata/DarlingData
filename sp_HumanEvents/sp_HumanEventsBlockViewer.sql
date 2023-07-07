@@ -923,8 +923,6 @@ SELECT
     ap.avg_elapsed_time,
     ap.total_logical_reads_mb,
     ap.total_physical_reads_mb,
-    ap.min_num_physical_reads_mb,
-    ap.max_num_physical_reads_mb,
     ap.total_logical_writes_mb,
     ap.min_grant_mb,
     ap.max_grant_mb,
@@ -991,10 +989,6 @@ FROM
                 deqs.total_logical_writes * 8. / 1024.,
             total_logical_reads_mb =
                 deqs.total_logical_reads * 8. / 1024.,
-            min_num_physical_reads_mb =
-                deqs.min_num_physical_reads * 8. / 1024.,
-            max_num_physical_reads_mb =
-                deqs.max_num_physical_reads * 8. / 1024.,
             min_grant_mb =
                 deqs.min_grant_kb * 8. / 1024.,
             max_grant_mb =
