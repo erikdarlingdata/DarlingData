@@ -261,7 +261,7 @@ SELECT
             SELECT
                 offline_cpus =
                     (SELECT COUNT_BIG(*) FROM sys.dm_os_schedulers dos WHERE dos.is_online = 0),
-        ',
+',
         @cpu_details_from nvarchar(MAX) = N'
             FROM sys.dm_os_sys_info AS osi
             FOR XML
@@ -274,7 +274,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @total_physical_memory_gb bigint,
         @cpu_utilization xml = N'',
         @low_memory xml = N'',
-        @disk_check nvarchar(MAX) = N'';
+        @disk_check nvarchar(MAX) = N'',
+        @live_plans bit = 
+            CASE 
+                WHEN OBJECT_ID('sys.dm_exec_query_statistics_xml') IS NOT NULL 
+                THEN CONVERT(bit, 1)
+                ELSE 0
+            END;
 
     DECLARE
         @file_metrics table
@@ -751,14 +757,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 SELECT
                                     total_data_files =
                                         COUNT_BIG(*),
-                                    min_size_mb =
-                                        MIN(mf.size * 8) / 1024,
-                                    max_size_mb =
-                                        MAX(mf.size * 8) / 1024,
-                                    min_growth_increment_mb =
-                                        MIN(mf.growth * 8) / 1024,
-                                    max_growth_increment_mb =
-                                        MAX(mf.growth * 8) / 1024,
+                                    min_size_gb =
+                                        MIN(mf.size * 8) / 1024 / 1024,
+                                    max_size_gb =
+                                        MAX(mf.size * 8) / 1024 / 1024,
+                                    min_growth_increment_gb =
+                                        MIN(mf.growth * 8) / 1024 / 1024,
+                                    max_growth_increment_gb =
+                                        MAX(mf.growth * 8) / 1024 / 1024,
                                     scheduler_total_count =
                                         (
                                             SELECT
@@ -775,14 +781,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         tempdb_space_used =
                             (
                                 SELECT
-                                    free_space_mb =
-                                        SUM(d.unallocated_extent_page_count * 8) / 1024,
-                                    user_objects_mb =
-                                        SUM(d.user_object_reserved_page_count * 8) / 1024,
-                                    version_store_mb =
-                                        SUM(d.version_store_reserved_page_count * 8) / 1024,
-                                    internal_objects_mb =
-                                        SUM(d.internal_object_reserved_page_count * 8) / 1024
+                                    free_space_gb =
+                                        SUM(d.unallocated_extent_page_count * 8) / 1024 / 1024,
+                                    user_objects_gb =
+                                        SUM(d.user_object_reserved_page_count * 8) / 1024 / 1024,
+                                    version_store_gb =
+                                        SUM(d.version_store_reserved_page_count * 8) / 1024 / 1024,
+                                    internal_objects_gb =
+                                        SUM(d.internal_object_reserved_page_count * 8) / 1024 / 1024
                                 FROM tempdb.sys.dm_db_file_space_usage AS d
                                 WHERE d.database_id = 2
                                 FOR XML
@@ -793,10 +799,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             (
                                 SELECT
                                     t.session_id,
-                                    tempdb_allocations_mb =
-                                        SUM(t.tempdb_allocations * 8) / 1024,
-                                    tempdb_current_mb =
-                                        SUM(t.tempdb_current * 8) / 1024
+                                    tempdb_allocations_gb =
+                                        SUM(t.tempdb_allocations * 8) / 1024 / 1024,
+                                    tempdb_current_gb =
+                                        SUM(t.tempdb_current * 8) / 1024 / 1024
                                 FROM
                                 (
                                     SELECT
@@ -865,9 +871,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     decimal(38, 2),
                     SUM
                     (
-                        ' + CONVERT
-                            (
-                                nvarchar(MAX),
+                        ' +
+            CONVERT
+               (
+                   nvarchar(MAX),
                           CASE @pages_kb
                                WHEN 1
                                THEN
@@ -924,19 +931,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         decimal(38, 2),
                         SUM
                         (
-                        ' + CONVERT
-                            (
-                                nvarchar(MAX),
-                          CASE @pages_kb
-                               WHEN 1
-                               THEN
+                        ' + CASE @pages_kb
+                                 WHEN 1
+                                 THEN
                         N'    domc.pages_kb '
-                               ELSE
+                                 ELSE
                         N'    domc.single_pages_kb +
                             domc.multi_pages_kb '
-                          END
-                            )
-                        + N'
+                            END + N'
                         ) / 1024. / 1024.
                     )
             FROM sys.dm_os_memory_clerks AS domc
@@ -946,9 +948,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             HAVING
                SUM
                (
-                   ' + CONVERT
-                       (
-                           nvarchar(MAX),
+                   ' + 
                       CASE @pages_kb
                            WHEN 1
                            THEN
@@ -956,9 +956,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                            ELSE
                     N'domc.single_pages_kb +
                     domc.multi_pages_kb '
-                      END
-                       )
-                    + N'
+                      END + N'
                ) / 1024. / 1024. > 0.
             ORDER BY
                 memory_used_gb DESC
@@ -1003,14 +1001,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             SELECT
                 @total_physical_memory_gb =
-                    CEILING(dosm.total_physical_memory_kb / 1024.)
+                    CEILING(dosm.total_physical_memory_kb / 1024. / 1024.)
                 FROM sys.dm_os_sys_memory AS dosm;
         END;
         IF @azure = 1
         BEGIN
             SELECT
                 @total_physical_memory_gb =
-                    SUM(dosi.committed_target_kb) / 1024.
+                    SUM(dosi.committed_target_kb / 1024. / 1024.)
             FROM sys.dm_os_sys_info dosi;
         END;
 
@@ -1086,9 +1084,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
             deqrs.resource_semaphore_id,
             total_database_size_gb =
                 @database_size_out_gb,
-            total_physical_memory_mb =
+            total_physical_memory_gb =
                 @total_physical_memory_gb,
-            max_server_memory_mb =
+            max_server_memory_gb =
                 (
                     SELECT
                         CONVERT
@@ -1098,25 +1096,25 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         )
                     FROM sys.configurations AS c
                     WHERE c.name = N'max server memory (MB)'
-                ),
+                ) / 1024,
             memory_model =
                 (
                     SELECT
                         inf.sql_memory_model_desc
                     FROM sys.dm_os_sys_info AS inf
                 ),
-            target_memory_mb =
-                CONVERT(decimal(38, 2), (deqrs.target_memory_kb / 1024.)),
-            max_target_memory_mb =
-                CONVERT(decimal(38, 2), (deqrs.max_target_memory_kb / 1024.)),
-            total_memory_mb =
-                CONVERT(decimal(38, 2), (deqrs.total_memory_kb / 1024.)),
-            available_memory_mb =
-                CONVERT(decimal(38, 2), (deqrs.available_memory_kb / 1024.)),
-            granted_memory_mb =
-                CONVERT(decimal(38, 2), (deqrs.granted_memory_kb / 1024.)),
-            used_memory_mb =
-                CONVERT(decimal(38, 2), (deqrs.used_memory_kb / 1024.)),
+            target_memory_gb =
+                CONVERT(decimal(38, 2), (deqrs.target_memory_kb / 1024. / 1024.)),
+            max_target_memory_gb =
+                CONVERT(decimal(38, 2), (deqrs.max_target_memory_kb / 1024. / 1024.)),
+            total_memory_gb =
+                CONVERT(decimal(38, 2), (deqrs.total_memory_kb / 1024. / 1024.)),
+            available_memory_gb =
+                CONVERT(decimal(38, 2), (deqrs.available_memory_kb / 1024. / 1024.)),
+            granted_memory_gb =
+                CONVERT(decimal(38, 2), (deqrs.granted_memory_kb / 1024. / 1024.)),
+            used_memory_gb =
+                CONVERT(decimal(38, 2), (deqrs.used_memory_kb / 1024. / 1024.)),
             deqrs.grantee_count,
             deqrs.waiter_count,
             deqrs.timeout_error_count,
@@ -1242,51 +1240,46 @@ OPTION(MAXDOP 1, RECOMPILE);',
                   CASE
                       WHEN @skip_plan_xml = 0
                       THEN N'
-                deqp.query_plan,'
-                      ELSE N''
-                  END
-                  ) + CONVERT
-                      (
-                          nvarchar(MAX),
+                deqp.query_plan,' +
+                      CASE
+                          WHEN @live_plans = 1
+                          THEN N'
+                live_query_plan = 
+                    deqs.query_plan,'
+                          ELSE N''
+                      END
+                  END + 
                           N'
                 deqmg.request_time,
                 deqmg.grant_time,
                 wait_time_seconds =
                     (deqmg.wait_time_ms / 1000.),
-                requested_memory_mb =
-                    CONVERT(decimal(38, 2), (deqmg.requested_memory_kb / 1024.)),
-                granted_memory_mb =
-                    CONVERT(decimal(38, 2), (deqmg.granted_memory_kb / 1024.)),
-                used_memory_mb =
-                    CONVERT(decimal(38, 2), (deqmg.used_memory_kb / 1024.)),
-                max_used_memory_mb =
-                    CONVERT(decimal(38, 2), (deqmg.max_used_memory_kb / 1024.)),
-                ideal_memory_mb =
-                    CONVERT(decimal(38, 2), (deqmg.ideal_memory_kb / 1024.)),
-                required_memory_mb =
-                    CONVERT(decimal(38, 2), (deqmg.required_memory_kb / 1024.)),
+                requested_memory_gb =
+                    CONVERT(decimal(38, 2), (deqmg.requested_memory_kb / 1024. / 1024.)),
+                granted_memory_gb =
+                    CONVERT(decimal(38, 2), (deqmg.granted_memory_kb / 1024. / 1024.)),
+                used_memory_gb =
+                    CONVERT(decimal(38, 2), (deqmg.used_memory_kb / 1024. / 1024.)),
+                max_used_memory_gb =
+                    CONVERT(decimal(38, 2), (deqmg.max_used_memory_kb / 1024. / 1024.)),
+                ideal_memory_gb =
+                    CONVERT(decimal(38, 2), (deqmg.ideal_memory_kb / 1024. / 1024.)),
+                required_memory_gb =
+                    CONVERT(decimal(38, 2), (deqmg.required_memory_kb / 1024. / 1024.)),
                 deqmg.queue_id,
                 deqmg.wait_order,
                 deqmg.is_next_candidate,
                 waits.wait_type,
                 wait_duration_seconds =
                     (waits.wait_duration_ms / 1000.),
-                deqmg.dop,'
-                      )
-                + CONVERT
-                  (
-                      nvarchar(MAX),
-                      CASE
-                          WHEN @helpful_new_columns = 1
-                          THEN N'
+                deqmg.dop,' + 
+                    CASE
+                        WHEN @helpful_new_columns = 1
+                        THEN N'
                 deqmg.reserved_worker_count,
                 deqmg.used_worker_count,'
-                          ELSE N''
-                      END
-                  ) + CONVERT
-                      (
-                          nvarchar(MAX),
-                          N'
+                        ELSE N''
+                    END + N'
                 deqmg.plan_handle
             FROM sys.dm_exec_query_memory_grants AS deqmg
             OUTER APPLY
@@ -1298,10 +1291,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ORDER BY dowt.wait_duration_ms DESC
             ) AS waits
             OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
-            OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest
+            OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest' +
+                CASE
+                    WHEN @live_plans = 1
+                    THEN N'
+            OUTER APPLY sys.dm_exec_query_statistics_xml(deqmg.plan_handle) AS deqs'
+                    ELSE N''
+                END +
+           N'
             WHERE deqmg.session_id <> @@SPID
             ORDER BY
-                requested_memory_mb DESC,
+                requested_memory_gb DESC,
                 deqmg.request_time
             OPTION(MAXDOP 1, RECOMPILE);
             '
@@ -1673,16 +1673,25 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 FOR XML PATH(''''),
                                 TYPE
                     ),'
-                + CASE
+                + 
+                CONVERT
+                (
+                    nvarchar(MAX),                
+                CASE
                       WHEN @skip_plan_xml = 0
-                      THEN CONVERT
-                           (
-                               nvarchar(MAX),
-                               N'
-                deqp.query_plan,'
-                           )
-                      ELSE CONVERT(nvarchar(MAX), N'')
+                      THEN N'
+                deqp.query_plan,' +
+                          CASE 
+                              WHEN @live_plans = 1
+                              THEN
+                           N'
+                live_query_plan = 
+                    deqs.query_plan,'
+                              ELSE N''
+                          END
+                      ELSE N''
                   END
+                )
                 + CONVERT
                   (
                       nvarchar(MAX),
@@ -1711,8 +1720,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 der.reads,
                 der.writes,
                 der.logical_reads,
-                granted_query_memory_mb =
-                    (der.granted_query_memory / 128.),
+                granted_query_memory_gb =
+                    CONVERT(decimal(38, 2), (der.granted_query_memory / 128. / 1024.)),
                 transaction_isolation_level =
                     CASE
                         WHEN der.transaction_isolation_level = 0
@@ -1764,10 +1773,18 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       nvarchar(MAX),
                       N'
             FROM sys.dm_exec_requests AS der
-            CROSS APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
-            CROSS APPLY sys.dm_exec_query_plan(der.plan_handle) AS deqp
+            OUTER APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
+            OUTER APPLY sys.dm_exec_query_plan(der.plan_handle) AS deqp' +
+                CASE
+                    WHEN @live_plans = 1
+                    THEN N'
+            OUTER APPLY sys.dm_exec_query_statistics_xml(der.plan_handle) AS deqs'
+                    ELSE N''
+                END +
+            N'
             WHERE der.session_id <> @@SPID
             AND   der.session_id >= 50
+            AND   dest.text LIKE N''_%''
             ORDER BY '
             + CASE
                   WHEN @cool_new_columns = 1
