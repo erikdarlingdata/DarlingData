@@ -89,7 +89,7 @@ BEGIN
             'hi, i''m sp_HumanEventsBlockViewer!' UNION ALL
     SELECT  'you can use me in conjunction with sp_HumanEvents to quickly parse the sqlserver.blocked_process_report event' UNION ALL
     SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
-    SELECT  'it will also work with another extended event session using the ring buffer as a target to capture blocking' UNION ALL
+    SELECT  'it will also work with another extended event session to capture blocking' UNION ALL
     SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
     SELECT  'from your loving sql server consultant, erik darling: erikdarlingdata.com';
 
@@ -486,8 +486,7 @@ BEGIN
     FROM #x AS x
     CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
     WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
-    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date")]') = 1
-    AND   e.x.exist('@timestamp[. <  sql:variable("@end_date")]') = 1
+    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
 END;
 
@@ -503,8 +502,7 @@ BEGIN
     FROM #x AS x
     CROSS APPLY x.x.nodes('/event') AS e(x)
     WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
-    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date")]') = 1
-    AND   e.x.exist('@timestamp[. <  sql:variable("@end_date")]') = 1
+    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
 END;
 
@@ -526,10 +524,8 @@ BEGIN
         WHERE fx.object_name = N'sp_server_diagnostics_component_result'
     ) AS xml
     CROSS APPLY xml.sp_server_diagnostics_component_result.nodes('/event') AS e(x)
-    WHERE e.x.exist('@timestamp[. >= sql:variable("@start_date")]') = 1
-    AND   e.x.exist('@timestamp[. <  sql:variable("@end_date")]') = 1
-    AND   e.x.exist('(data[@name="component"]/text[.="QUERY_PROCESSING"])') = 1
-    AND   e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
+    WHERE e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
+    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
 
     IF @debug = 1 BEGIN SELECT * FROM #sp_server_diagnostics_component_result AS ssdcr; END;
@@ -575,12 +571,12 @@ BEGIN
         log_used = bd.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
         clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-        activity = CASE WHEN bd.exist('/blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
+        activity = CASE WHEN bd.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
         blocked_process_report = bd.query('.')
     INTO #blocked_sh
     FROM #blocking_xml_sh AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-    OUTER APPLY oa.c.nodes('/blocked-process-report/blocked-process') AS bd(bd)
+    OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     WHERE bd.exist('process/@spid') = 1
     OPTION(RECOMPILE);
    
@@ -623,7 +619,7 @@ BEGIN
     INTO #blocking_sh
     FROM #blocking_xml_sh AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-    OUTER APPLY oa.c.nodes('/blocked-process-report/blocking-process') AS bg(bg)
+    OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     WHERE bg.exist('process/@spid') = 1
     OPTION(RECOMPILE);
    
@@ -1030,7 +1026,7 @@ SELECT
 INTO #blocked
 FROM #blocking_xml AS bx
 OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-OUTER APPLY oa.c.nodes('/blocked-process-report/blocked-process') AS bd(bd)
+OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
 OPTION(RECOMPILE);
 
 ALTER TABLE #blocked
@@ -1090,7 +1086,7 @@ SELECT
 INTO #blocking
 FROM #blocking_xml AS bx
 OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
-OUTER APPLY oa.c.nodes('/blocked-process-report/blocking-process') AS bg(bg)
+OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
 
 ALTER TABLE #blocking
