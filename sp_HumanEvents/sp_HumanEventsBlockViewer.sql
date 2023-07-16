@@ -190,7 +190,9 @@ DECLARE
     @file_name nvarchar(4000),
     @is_system_health bit = 0,
     @inputbuf_bom nvarchar(1) =
-        CONVERT(nvarchar(1), 0x0a00, 0);
+        CONVERT(nvarchar(1), 0x0a00, 0),
+    @start_date_original datetime2 = @start_date,
+    @end_date_original datetime2 = @end_date;
 
 /*Use some sane defaults for input parameters*/
 SELECT
@@ -218,7 +220,18 @@ SELECT
                         )
                     )
                 )
-            ELSE @start_date
+            ELSE
+                DATEADD
+                (
+                    MINUTE,
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        SYSDATETIME(),
+                        GETUTCDATE()
+                    ),
+                    @start_date
+                )
         END,
     @end_date =
         CASE
@@ -239,7 +252,18 @@ SELECT
                         SYSDATETIME()
                     )
                 )
-            ELSE @end_date
+            ELSE
+                DATEADD
+                (
+                    MINUTE,
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        SYSDATETIME(),
+                        GETUTCDATE()
+                    ),
+                    @end_date
+                )
         END,
     @is_system_health =
         CASE
@@ -917,7 +941,7 @@ BEGIN
                 executions_per_second =
                     ISNULL
                     (
-                        execution_count /
+                        deqs.execution_count /
                             NULLIF
                             (
                                 DATEDIFF
@@ -1446,7 +1470,7 @@ FROM
             executions_per_second =
                 ISNULL
                 (
-                    execution_count /
+                    deqs.execution_count /
                         NULLIF
                         (
                             DATEDIFF
@@ -1517,7 +1541,7 @@ SELECT
     database_name = N'erikdarlingdata.com',
     object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
-    finding = N'blocking for period ' + CONVERT(nvarchar(10), @start_date, 23) + N' through ' + CONVERT(nvarchar(10), @end_date, 23) + N'.',
+    finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
     1;
 
 INSERT
