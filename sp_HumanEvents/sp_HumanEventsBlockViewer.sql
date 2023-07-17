@@ -994,7 +994,7 @@ BEGIN
     WHERE ap.query_plan IS NOT NULL
     AND   ap.n = 1
     ORDER BY
-        ap.last_execution_time DESC
+        ap.avg_worker_time_ms DESC
     OPTION(RECOMPILE);
     RETURN;
     /*End system health section, skips checks because most of them won't run*/
@@ -1523,7 +1523,7 @@ FROM
 WHERE ap.query_plan IS NOT NULL
 AND   ap.n = 1
 ORDER BY
-    ap.last_execution_time DESC
+    ap.avg_worker_time_ms DESC
 OPTION(RECOMPILE);
 
 INSERT
