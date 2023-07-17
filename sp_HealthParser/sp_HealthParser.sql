@@ -156,7 +156,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         N'SNI_HTTP_ACCEPT', N'SOS_WORK_DISPATCHER', N'SP_SERVER_DIAGNOSTICS_SLEEP', N'SQLTRACE_BUFFER_FLUSH',  N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
         N'SQLTRACE_WAIT_ENTRIES', N'UCS_SESSION_REGISTRATION', N'VDI_CLIENT_OTHER', N'WAIT_FOR_RESULTS', N'WAITFOR', N'WAITFOR_TASKSHUTDOWN', N'WAIT_XTP_RECOVERY',
         N'WAIT_XTP_HOST_WAIT', N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', N'WAIT_XTP_CKPT_CLOSE', N'XE_DISPATCHER_JOIN', N'XE_DISPATCHER_WAIT', N'XE_TIMER_EVENT',
-        N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF'
+        N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF'
     );
    
     CREATE TABLE
@@ -450,7 +450,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             0
         )
     ORDER BY
-        event_time_rounded
+        event_time_rounded DESC,
+        total_wait_time_ms DESC
     OPTION(RECOMPILE);
    
     /*Grab waits by duration*/
@@ -528,7 +529,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             0
         )
     ORDER BY
-        event_time_rounded
+        event_time_rounded DESC,
+        td.average_wait_time_ms DESC
     OPTION(RECOMPILE);
    
     /*Grab IO stuff*/
@@ -573,7 +575,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ISNULL(i.longestPendingRequests_filePath, 'N/A')
     FROM #io AS i
     ORDER BY
-        i.event_time
+        i.event_time DESC
     OPTION(RECOMPILE);
    
     /*Grab CPU details*/
@@ -624,7 +626,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         sd.didBlockingOccur
     FROM #scheduler_details AS sd
     ORDER BY
-        sd.event_time
+        sd.event_time DESC
     OPTION(RECOMPILE);
    
     /*Grab memory details*/
@@ -713,7 +715,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         m.last_os_error
     FROM #memory AS m
     ORDER BY
-        m.event_time
+        m.event_time DESC
     OPTION(RECOMPILE);
        
     /*Grab health stuff*/
@@ -772,7 +774,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         h.BadPagesFixed
     FROM #health AS h
     ORDER BY
-        h.event_time
+        h.event_time DESC
     OPTION(RECOMPILE);
    
     /*Grab useless stuff*/
@@ -836,7 +838,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         u.cpuTimeMs
     FROM #useless AS u
     ORDER BY
-        u.event_time
+        u.event_time DESC,
+        u.cpuTimeMs DESC
     OPTION(RECOMPILE);
    
     /*Grab blocking stuff*/
@@ -1279,6 +1282,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ap.query_plan IS NOT NULL
     AND   ap.n = 1
     ORDER BY
-        ap.last_execution_time DESC
+        ap.avg_worker_time_ms DESC
     OPTION(RECOMPILE);
 END; /*Final End*/
