@@ -1124,6 +1124,64 @@ PERSISTED;
 
 IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
 
+SELECT 
+    monitor_loop = c.value('(//@monitorLoop)[1]', 'int'), 
+    blocking_spid = blocking.value('(process/@spid)[1]', 'int'),
+    blocking_ecid = blocking.value('(process/@ecid)[1]', 'int'),
+    blocked_spid = blocked.value('(process/@spid)[1]', 'int'),
+    blocked_ecid = blocked.value('(process/@ecid)[1]', 'int'),
+    level = 0,
+    order_string = cast('' as varchar(max)),
+    blocked_process_report = c.query('.')
+INTO #blocking_hierarchy
+FROM #blocking_xml AS bx
+OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS blocking(blocking) /* cardinality should be 0,1 */
+OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS blocked(blocked); /* cardinality should be 0-many */
+
+WITH blockheads AS 
+(
+    SELECT monitor_loop, blocking_spid, blocking_ecid
+    FROM #blocking_hierarchy
+    EXCEPT 
+    SELECT monitor_loop, blocked_spid, blocked_ecid
+    FROM #blocking_hierarchy
+),
+hierarchy AS 
+(
+    SELECT 
+        monitor_loop, 
+        spid = blocking_spid, 
+        ecid = blocking_ecid, 
+        level = 0,
+        order_string = cast(monitor_loop as varchar(max)) + ':' + cast(blocking_spid as varchar(max))
+    FROM blockheads
+
+    UNION ALL
+
+    SELECT 
+        bh.monitor_loop, 
+        bh.blocked_spid, 
+        bh.blocked_ecid, 
+        h.level + 1,
+        h.order_string + '/' + cast(blocked_spid as varchar(max))
+    FROM hierarchy h
+    JOIN #blocking_hierarchy bh 
+        ON bh.monitor_loop = h.monitor_loop
+        AND bh.blocking_spid = h.spid
+        AND bh.blocking_ecid = h.ecid
+)
+UPDATE #blocking_hierarchy
+SET level = h.level,
+    order_string = h.order_string
+FROM #blocking_hierarchy bs
+JOIN hierarchy h
+    ON h.monitor_loop = bs.monitor_loop
+    AND h.spid = bs.blocking_spid
+    AND h.ecid = bs.blocking_ecid;
+
+IF @debug = 1 BEGIN SELECT '#blocking_hierarchy' AS table_name, * FROM #blocking_hierarchy OPTION(RECOMPILE); END;
+
 SELECT
     kheb.event_time,
     kheb.database_name,
