@@ -626,15 +626,13 @@ PERSISTED;
 
 IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
 
-SELECT 
+SELECT DISTINCT
     monitor_loop = c.value('(//@monitorLoop)[1]', 'int'), 
     blocking_spid = blocking.value('(process/@spid)[1]', 'int'),
     blocking_ecid = blocking.value('(process/@ecid)[1]', 'int'),
     blocked_spid = blocked.value('(process/@spid)[1]', 'int'),
     blocked_ecid = blocked.value('(process/@ecid)[1]', 'int'),
-    level = 0,
-    order_string = cast('' as varchar(max)),
-    blocked_process_report = c.query('.')
+    level = 0
 INTO #blocking_hierarchy
 FROM #blocking_xml AS bx
 OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
@@ -655,8 +653,7 @@ hierarchy AS
         monitor_loop, 
         spid = blocking_spid, 
         ecid = blocking_ecid, 
-        level = 0,
-        order_string = cast(monitor_loop as varchar(max)) + ':' + cast(blocking_spid as varchar(max))
+        level = 1
     FROM blockheads
 
     UNION ALL
@@ -665,8 +662,7 @@ hierarchy AS
         bh.monitor_loop, 
         bh.blocked_spid, 
         bh.blocked_ecid, 
-        h.level + 1,
-        h.order_string + '/' + cast(blocked_spid as varchar(max))
+        h.level + 1
     FROM hierarchy h
     JOIN #blocking_hierarchy bh 
         ON bh.monitor_loop = h.monitor_loop
@@ -674,8 +670,7 @@ hierarchy AS
         AND bh.blocking_ecid = h.ecid
 )
 UPDATE #blocking_hierarchy
-SET level = h.level,
-    order_string = h.order_string
+SET level = h.level
 FROM #blocking_hierarchy bs
 JOIN hierarchy h
     ON h.monitor_loop = bs.monitor_loop
@@ -698,6 +693,16 @@ SELECT
             RTRIM(kheb.object_id)
         ),
     kheb.activity,
+    blocking_tree = 
+        CASE
+            WHEN bh.level is null 
+            THEN  '(' + CAST(kheb.spid as varchar(max)) + ':' + CAST((kheb.ecid) as varchar(max)) + ') Lead Blocker'
+            ELSE 
+                REPLICATE(' > ', bh.[level]) + 
+                '(' + CAST(kheb.spid as varchar(max)) + ':' + CAST((kheb.ecid) as varchar(max)) 
+                + ') blocked by (' 
+                + CAST(bh.blocking_spid as varchar(max)) + ':' + CAST((bh.blocking_ecid) as varchar(max)) + ')' 
+        END,
     kheb.spid,
     kheb.ecid,
     query_text =
@@ -847,6 +852,11 @@ FROM
     WHERE (bd.database_name = @database_name
            OR @database_name IS NULL)
 ) AS kheb
+LEFT JOIN #blocking_hierarchy bh
+    ON bh.monitor_loop = kheb.monitor_loop
+    AND bh.blocked_spid = kheb.spid
+    AND bh.blocked_ecid = kheb.ecid
+
 OPTION(RECOMPILE);
 
 SELECT
@@ -857,6 +867,7 @@ SELECT
     b.currentdbname,
     b.contentious_object,
     b.activity,
+    b.blocking_tree,
     b.spid,
     b.ecid,
     b.query_text,
