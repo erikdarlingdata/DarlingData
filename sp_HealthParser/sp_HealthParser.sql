@@ -530,7 +530,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     ORDER BY
         event_time_rounded DESC,
-        td.average_wait_time_ms DESC
+        average_wait_time_ms DESC
     OPTION(RECOMPILE);
    
     /*Grab IO stuff*/
