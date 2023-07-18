@@ -1021,8 +1021,10 @@ SELECT
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
     resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
     monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
-    spid = bd.value('(process/@spid)[1]', 'int'),
-    ecid = bd.value('(process/@ecid)[1]', 'int'),           
+    blocking_spid = bg.value('(process/@spid)[1]', 'int'),
+    blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
+    blocked_spid = bd.value('(process/@spid)[1]', 'int'),
+    blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
     query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
     wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
     transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
@@ -1042,12 +1044,15 @@ SELECT
     clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
     currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
     currentdbid = bd.value('(process/@currentdb)[1]', 'int'),
+    blocking_level = 0,
+    sort_order = cast('' as varchar(max)),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
     blocked_process_report = c.query('.')
 INTO #blocked
 FROM #blocking_xml AS bx
 OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
+OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
 
 ALTER TABLE #blocked
@@ -1060,6 +1065,12 @@ ADD query_text AS
    NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
    NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
 PERSISTED;
+
+ALTER TABLE #blocked
+ADD blocking_desc AS 
+    '(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')' PERSISTED,
+    blocked_desc AS
+    '(' + CAST(blocked_spid AS VARCHAR(max)) + ':' + CAST(blocked_ecid AS VARCHAR(max)) + ')' PERSISTED;
 
 IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
 
@@ -1082,8 +1093,10 @@ SELECT
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
     resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
     monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
-    spid = bg.value('(process/@spid)[1]', 'int'),
-    ecid = bg.value('(process/@ecid)[1]', 'int'),
+    blocking_spid = bg.value('(process/@spid)[1]', 'int'),
+    blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
+    blocked_spid = bd.value('(process/@spid)[1]', 'int'),
+    blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
     query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
     wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
     transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(256)'),
@@ -1102,12 +1115,12 @@ SELECT
     clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
     clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
     currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-    currentdbid = bg.value('(process/@currentdb)[1]', 'int'),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
     blocked_process_report = c.query('.')
 INTO #blocking
 FROM #blocking_xml AS bx
 OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
 
@@ -1149,33 +1162,48 @@ hierarchy AS
 (
     SELECT 
         monitor_loop, 
-        spid = blocking_spid, 
-        ecid = blocking_ecid, 
-        level = 1
-    FROM blockheads
+        blocking_desc,
+        blocked_desc,
+        level = 0,
+        sort_order = blocking_desc + ' <-- ' + blocked_desc
+    FROM #blocking b
+    WHERE NOT EXISTS (
+        SELECT *
+        FROM #blocking b2
+        WHERE b2.monitor_loop = b.monitor_loop
+        AND b2.blocked_desc = b.blocking_desc
+    )
 
     UNION ALL
 
     SELECT 
-        bh.monitor_loop, 
-        bh.blocked_spid, 
-        bh.blocked_ecid, 
-        h.level + 1
+        bg.monitor_loop,
+        bg.blocking_desc,
+        bg.blocked_desc,
+        h.level + 1,
+        h.sort_order + ' ' + bg.blocking_desc + ' <-- ' + bg.blocked_desc
     FROM hierarchy h
-    JOIN #blocking_hierarchy bh 
-        ON bh.monitor_loop = h.monitor_loop
-        AND bh.blocking_spid = h.spid
-        AND bh.blocking_ecid = h.ecid
+    JOIN #blocking bg
+        ON bg.monitor_loop = h.monitor_loop
+        AND bg.blocking_desc = h.blocked_desc
 )
-UPDATE #blocking_hierarchy
-SET level = h.level
-FROM #blocking_hierarchy bs
+UPDATE #blocked
+SET blocking_level = h.level,
+    sort_order = h.sort_order
+FROM #blocked b
 JOIN hierarchy h
-    ON h.monitor_loop = bs.monitor_loop
-    AND h.spid = bs.blocking_spid
-    AND h.ecid = bs.blocking_ecid;
+    ON h.monitor_loop = b.monitor_loop
+    AND h.blocking_desc = b.blocking_desc
+    AND h.blocked_desc = b.blocked_desc;
 
-IF @debug = 1 BEGIN SELECT '#blocking_hierarchy' AS table_name, * FROM #blocking_hierarchy OPTION(RECOMPILE); END;
+UPDATE #blocking
+SET blocking_level = bd.blocking_level,
+    sort_order = bd.sort_order
+FROM #blocking bg
+JOIN #blocked bd
+    ON bd.monitor_loop = bg.monitor_loop
+    AND bd.blocking_desc = bg.blocking_desc
+    AND bd.blocked_desc = bg.blocked_desc;
 
 SELECT
     kheb.event_time,
@@ -1192,17 +1220,24 @@ SELECT
         ),
     kheb.activity,
     blocking_tree = 
-        CASE
-            WHEN bh.level is null 
-            THEN  '(' + CAST(kheb.spid as varchar(max)) + ':' + CAST((kheb.ecid) as varchar(max)) + ') Lead Blocker'
-            ELSE 
-                REPLICATE(' > ', bh.[level]) + 
-                '(' + CAST(kheb.spid as varchar(max)) + ':' + CAST((kheb.ecid) as varchar(max)) 
-                + ') blocked by (' 
-                + CAST(bh.blocking_spid as varchar(max)) + ':' + CAST((bh.blocking_ecid) as varchar(max)) + ')' 
+        REPLICATE (' > ', kheb.blocking_level) + 
+        CASE kheb.activity
+            WHEN 'blocking' 
+            THEN '(' + kheb.blocking_desc + ') is blocking (' + kheb.blocked_desc + ')'
+            ELSE ' > (' + kheb.blocked_desc + ') is blocked by (' + kheb.blocking_desc + ')'
         END,
-    kheb.spid,
-    kheb.ecid,
+    spid = 
+        CASE kheb.activity
+            WHEN 'blocking' 
+            THEN kheb.blocking_spid
+            ELSE kheb.blocked_spid
+        END,
+    ecid =
+        CASE kheb.activity
+            WHEN 'blocking' 
+            THEN kheb.blocking_ecid
+            ELSE kheb.blocked_ecid
+        END,    
     query_text =
         CASE
             WHEN kheb.query_text
@@ -1320,7 +1355,6 @@ SELECT
     kheb.transaction_id,
     kheb.database_id,
     kheb.currentdbname,
-    kheb.currentdbid,
     kheb.blocked_process_report
 INTO #blocks
 FROM
@@ -1351,11 +1385,6 @@ FROM
     WHERE (bd.database_name = @database_name
            OR @database_name IS NULL)
 ) AS kheb
-LEFT JOIN #blocking_hierarchy bh
-    ON bh.monitor_loop = kheb.monitor_loop
-    AND bh.blocked_spid = kheb.spid
-    AND bh.blocked_ecid = kheb.ecid
-
 OPTION(RECOMPILE);
 
 SELECT
@@ -1409,7 +1438,7 @@ WHERE b.n = 1
 AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
 ORDER BY
-    b.event_time DESC,
+    b.sort_order,
     CASE
         WHEN b.activity = 'blocking'
         THEN -1
