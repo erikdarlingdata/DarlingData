@@ -570,13 +570,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         intervalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@intervalLongIos)[1]', 'bigint'),
         totalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@totalLongIos)[1]', 'bigint'),
         longestPendingRequests_duration_ms =
-            CONVERT(decimal(38, 2), w.x.value('(/event/data[@name="data"]/value/ioSubsystem/longestPendingRequests/pendingRequest[1]/@duration)[1]','bigint') / 1000.),
+            CONVERT(decimal(38, 2), w2.x2.value('@duration', 'bigint') / 1000.),
         longestPendingRequests_filePath =
-            w.x.value('(/event/data[@name="data"]/value/ioSubsystem/longestPendingRequests/pendingRequest[1]/@filePath)[1]','nvarchar(500)'),
+            w2.x2.value('@filePath', 'nvarchar(500)'),
         xml = w.x.query('.')
     INTO #io
     FROM #sp_server_diagnostics_component_result AS wi
     CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
+    OUTER APPLY w.x.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
     WHERE w.x.exist('(data[@name="component"]/text[.="IO_SUBSYSTEM"])') = 1
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
@@ -594,10 +595,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         i.intervalLongIos,
         i.totalLongIos,
         longestPendingRequests_duration_ms =
-            ISNULL(i.longestPendingRequests_duration_ms, 0),
+            ISNULL(SUM(i.longestPendingRequests_duration_ms), 0),
         longestPendingRequests_filePath =
             ISNULL(i.longestPendingRequests_filePath, 'N/A')
     FROM #io AS i
+    GROUP BY 
+        i.event_time,
+        i.state,
+        i.ioLatchTimeouts,
+        i.intervalLongIos,
+        i.totalLongIos,
+        ISNULL(i.longestPendingRequests_filePath, 'N/A')
     ORDER BY
         i.event_time DESC
     OPTION(RECOMPILE);
