@@ -188,7 +188,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /*Grab data from the wait info component*/
         SELECT
             @sql = N'
-        SELECT TOP (9223372036854775807)
+        SELECT
             xml.wait_info
         FROM
         (
@@ -203,8 +203,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
    
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
-        INSERT INTO #wait_info WITH (TABLOCK)
-            (wait_info)
+        INSERT INTO 
+            #wait_info WITH (TABLOCK)
+        (
+            wait_info
+        )
         EXEC sys.sp_executesql
             @sql,
             @params,
@@ -230,8 +233,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
        
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
-        INSERT INTO #sp_server_diagnostics_component_result WITH(TABLOCK)
-            (sp_server_diagnostics_component_result)
+        INSERT INTO 
+            #sp_server_diagnostics_component_result WITH(TABLOCK)
+        (
+            sp_server_diagnostics_component_result
+        )
         EXEC sys.sp_executesql
             @sql,
             @params,
@@ -263,12 +269,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE fx.object_name = N''wait_info''
         ) AS xml
         CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
-        WHERE e.x.exist(''@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]'') = 1
+        CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
+        WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
 
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
-        INSERT INTO #wait_info WITH (TABLOCK)
-            (wait_info)
+        INSERT INTO 
+            #wait_info WITH (TABLOCK)
+        (
+            wait_info
+        )
         EXEC sys.sp_executesql
             @sql,
             @params,
@@ -290,12 +300,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE fx.object_name = N''sp_server_diagnostics_component_result''
         ) AS xml
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
-        WHERE e.x.exist(''@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]'') = 1
+        CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
+        WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
    
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
-        INSERT INTO #sp_server_diagnostics_component_result WITH(TABLOCK)
-            (sp_server_diagnostics_component_result)
+        INSERT INTO 
+            #sp_server_diagnostics_component_result WITH(TABLOCK)
+        (
+            sp_server_diagnostics_component_result
+        )
         EXEC sys.sp_executesql
             @sql,
             @params,
