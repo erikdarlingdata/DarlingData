@@ -156,7 +156,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         N'SNI_HTTP_ACCEPT', N'SOS_WORK_DISPATCHER', N'SP_SERVER_DIAGNOSTICS_SLEEP', N'SQLTRACE_BUFFER_FLUSH',  N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
         N'SQLTRACE_WAIT_ENTRIES', N'UCS_SESSION_REGISTRATION', N'VDI_CLIENT_OTHER', N'WAIT_FOR_RESULTS', N'WAITFOR', N'WAITFOR_TASKSHUTDOWN', N'WAIT_XTP_RECOVERY',
         N'WAIT_XTP_HOST_WAIT', N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', N'WAIT_XTP_CKPT_CLOSE', N'XE_DISPATCHER_JOIN', N'XE_DISPATCHER_WAIT', N'XE_TIMER_EVENT',
-        N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF'
+        N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF', N'DBMIRROR_DBM_MUTEX', N'DBMIRROR_SEND'
     );
    
     CREATE TABLE
@@ -188,7 +188,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /*Grab data from the wait info component*/
         SELECT
             @sql = N'
-        SELECT TOP (9223372036854775807)
+        SELECT
             xml.wait_info
         FROM
         (
@@ -203,8 +203,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
    
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
-        INSERT INTO #wait_info WITH (TABLOCK)
-            (wait_info)
+        INSERT INTO 
+            #wait_info WITH (TABLOCK)
+        (
+            wait_info
+        )
         EXEC sys.sp_executesql
             @sql,
             @params,
@@ -230,8 +233,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
        
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
-        INSERT INTO #sp_server_diagnostics_component_result WITH(TABLOCK)
-            (sp_server_diagnostics_component_result)
+        INSERT INTO 
+            #sp_server_diagnostics_component_result WITH(TABLOCK)
+        (
+            sp_server_diagnostics_component_result
+        )
         EXEC sys.sp_executesql
             @sql,
             @params,
@@ -263,12 +269,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE fx.object_name = N''wait_info''
         ) AS xml
         CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
-        WHERE e.x.exist(''@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]'') = 1
+        CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
+        WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
 
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
-        INSERT INTO #wait_info WITH (TABLOCK)
-            (wait_info)
+        INSERT INTO 
+            #wait_info WITH (TABLOCK)
+        (
+            wait_info
+        )
         EXEC sys.sp_executesql
             @sql,
             @params,
@@ -290,12 +300,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE fx.object_name = N''sp_server_diagnostics_component_result''
         ) AS xml
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
-        WHERE e.x.exist(''@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]'') = 1
+        CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
+        WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
    
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
-        INSERT INTO #sp_server_diagnostics_component_result WITH(TABLOCK)
-            (sp_server_diagnostics_component_result)
+        INSERT INTO 
+            #sp_server_diagnostics_component_result WITH(TABLOCK)
+        (
+            sp_server_diagnostics_component_result
+        )
         EXEC sys.sp_executesql
             @sql,
             @params,
@@ -463,7 +477,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     ORDER BY
         event_time_rounded DESC,
-        total_wait_time_ms DESC
+        waits DESC
     OPTION(RECOMPILE);
    
     /*Grab waits by duration*/
@@ -548,7 +562,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     ORDER BY
         event_time_rounded DESC,
-        average_wait_time_ms DESC
+        total_wait_time_ms DESC
     OPTION(RECOMPILE);
    
     /*Grab IO stuff*/
