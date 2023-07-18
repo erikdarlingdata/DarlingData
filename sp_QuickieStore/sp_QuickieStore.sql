@@ -5073,7 +5073,11 @@ FROM
         qsrs.max_tempdb_space_used_mb,'
                  ELSE
         N''
-            END + N'
+            END + 
+            CONVERT
+            (
+                nvarchar(MAX),
+                N'
         qsrs.context_settings,
         n =
             ROW_NUMBER() OVER
@@ -5094,6 +5098,7 @@ FROM
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
+            )
         );
     END; /*End expert mode 1, format output 0 columns*/
 
@@ -5269,7 +5274,11 @@ FROM
         max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
-            END + N'
+            END + 
+            CONVERT
+            (
+                nvarchar(MAX),
+                N'
         qsrs.context_settings,
         n =
             ROW_NUMBER() OVER
@@ -5290,6 +5299,7 @@ FROM
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
+            )
         );
     END; /*End expert mode = 1, format output = 1*/
 
@@ -5426,7 +5436,11 @@ FROM
         qsrs.total_tempdb_space_used_mb,'
                  ELSE
         N''
-            END + N'
+            END + 
+            CONVERT
+            (
+                nvarchar(MAX),
+                N'
         qsrs.context_settings,
         n =
             ROW_NUMBER() OVER
@@ -5448,6 +5462,7 @@ FROM
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
+            )
         );
     END; /*End expert mode = 0, format output = 0*/
 
@@ -5586,7 +5601,11 @@ FROM
         total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
-            END + N'
+            END + 
+            CONVERT
+            (
+                nvarchar(MAX),
+                N'
         qsrs.context_settings,
         n =
             ROW_NUMBER() OVER
@@ -5608,6 +5627,7 @@ FROM
              ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
+            )
         );
     END; /*End expert mode = 0, format output = 1*/
 

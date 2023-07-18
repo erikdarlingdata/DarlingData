@@ -667,8 +667,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
           AND vfs.database_id = f.database_id'
         END +
         N'
-        WHERE vfs.io_stall_read_ms > 0
-        AND   vfs.io_stall_write_ms > 0;'
+        WHERE vfs.num_of_reads > 0
+        AND   vfs.num_of_writes > 0;'
         );
        
         IF @debug = 1
