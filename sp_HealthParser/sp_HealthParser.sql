@@ -306,8 +306,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     
     IF @debug = 1 
     BEGIN 
-        SELECT TOP (100) table_name = '#wait_info, top 100 rows', * FROM #wait_info AS wi;
-        SELECT TOP (100) table_name = '#sp_server_diagnostics_component_result, top 100 rows', * FROM #sp_server_diagnostics_component_result AS ssdcr; 
+        SELECT TOP (100) table_name = '#wait_info, top 100 rows', x.* FROM #wait_info AS x;
+        SELECT TOP (100) table_name = '#sp_server_diagnostics_component_result, top 100 rows', x.* FROM #sp_server_diagnostics_component_result AS x; 
     END;
 
     /*Parse out the wait_info data*/
@@ -329,7 +329,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         signal_duration_ms = CONVERT(decimal(38, 2), w.x.value('(data[@name="signal_duration"]/value/text())[1]', 'bigint') / 1000.),
         wait_resource = w.x.value('(data[@name="wait_resource"]/value/text())[1]', 'nvarchar(256)'),
         sql_text_pre = w.x.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(max)'),
-        session_id = w.x.value('(action[@name="session_id"]/value/text())[1]', 'bigint')
+        session_id = w.x.value('(action[@name="session_id"]/value/text())[1]', 'bigint'),
+        xml = w.x.query('.')
     INTO #waits_queries
     FROM #wait_info AS wi
     CROSS APPLY wi.wait_info.nodes('//event') AS w(x)
@@ -355,6 +356,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#waits_queries, top 100 rows', x.* FROM #waits_queries AS x ORDER BY x.event_time DESC;
+    END;
    
     SELECT
         wq.event_time,
@@ -395,7 +401,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
         waits = w2.x2.value('@waits', 'bigint'),
         average_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@averageWaitTime', 'bigint') / 1000.),
-        max_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@maxWaitTime', 'bigint') / 1000.)
+        max_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@maxWaitTime', 'bigint') / 1000.),
+        xml = w.x.query('.')
     INTO #topwaits_count
     FROM #sp_server_diagnostics_component_result AS wi
     CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
@@ -410,6 +417,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
           )
     OPTION(RECOMPILE);
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#topwaits_count, top 100 rows', x.* FROM #topwaits_count AS x ORDER BY x.event_time DESC;
+    END;
    
     SELECT
         event_time_rounded =
@@ -474,7 +486,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
         waits = w2.x2.value('@waits', 'bigint'),
         average_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@averageWaitTime', 'bigint') / 1000.),
-        max_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@maxWaitTime', 'bigint') / 1000.)
+        max_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@maxWaitTime', 'bigint') / 1000.),
+        xml = w.x.query('.')
     INTO #topwaits_duration
     FROM #sp_server_diagnostics_component_result AS wi
     CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
@@ -489,6 +502,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
           )
     OPTION(RECOMPILE);
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#topwaits_duration, top 100 rows', x.* FROM #topwaits_duration AS x ORDER BY x.event_time DESC;
+    END;
    
     SELECT
         event_time_rounded =
@@ -554,13 +572,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         longestPendingRequests_duration_ms =
             CONVERT(decimal(38, 2), w.x.value('(/event/data[@name="data"]/value/ioSubsystem/longestPendingRequests/pendingRequest[1]/@duration)[1]','bigint') / 1000.),
         longestPendingRequests_filePath =
-            w.x.value('(/event/data[@name="data"]/value/ioSubsystem/longestPendingRequests/pendingRequest[1]/@filePath)[1]','nvarchar(500)')
+            w.x.value('(/event/data[@name="data"]/value/ioSubsystem/longestPendingRequests/pendingRequest[1]/@filePath)[1]','nvarchar(500)'),
+        xml = w.x.query('.')
     INTO #io
     FROM #sp_server_diagnostics_component_result AS wi
     CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
     WHERE w.x.exist('(data[@name="component"]/text[.="IO_SUBSYSTEM"])') = 1
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#io, top 100 rows', x.* FROM #io AS x ORDER BY x.event_time DESC;
+    END;
    
     SELECT
         i.event_time,
@@ -603,13 +627,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         oldestPendingTaskWaitingTime = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@oldestPendingTaskWaitingTime)[1]', 'bigint'),
         hasUnresolvableDeadlockOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasUnresolvableDeadlockOccurred)[1]', 'bit'),
         hasDeadlockedSchedulersOccurred = w.x.value('(/event/data[@name="data"]/value/queryProcessing/@hasDeadlockedSchedulersOccurred)[1]', 'bit'),
-        didBlockingOccur = w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
+        didBlockingOccur = w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report'),
+        xml = w.x.query('.')
     INTO #scheduler_details
     FROM #sp_server_diagnostics_component_result AS wi
     CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
     WHERE w.x.exist('(data[@name="component"]/text[.="QUERY_PROCESSING"])') = 1
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#scheduler_details, top 100 rows', x.* FROM #scheduler_details AS x ORDER BY x.event_time DESC;
+    END;
    
     SELECT
         sd.event_time,
@@ -648,10 +678,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         isAnyPoolOutOfMemory = r.c.value('@isAnyPoolOutOfMemory', 'bit'),
         processOutOfMemoryPeriod = r.c.value('@processOutOfMemoryPeriod', 'bigint'),
         name = r.c.value('(//memoryReport/@name)[1]', 'varchar(128)'),
-        available_physical_memory_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Available Physical Memory"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-        available_virtual_memory_gb =  CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Available Virtual Memory"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-        available_paging_file_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Available Paging File"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-        working_set_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Working Set"]]/@value)[1]', 'bigint') / 1024. / 1024.),
+        available_physical_memory_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Available Physical Memory"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
+        available_virtual_memory_gb =  CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Available Virtual Memory"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
+        available_paging_file_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Available Paging File"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
+        working_set_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Working Set"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
         percent_of_committed_memory_in_ws = r.c.value('(//memoryReport/entry[@description[.="Percent of Committed Memory in WS"]]/@value)[1]', 'bigint'),
         page_faults = r.c.value('(//memoryReport/entry[@description[.="Page Faults"]]/@value)[1]', 'bigint'),
         system_physical_memory_high = r.c.value('(//memoryReport/entry[@description[.="System physical memory high"]]/@value)[1]', 'bigint'),
@@ -673,12 +703,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_alloc_potential = r.c.value('(//memoryReport/entry[@description[.="Page Alloc Potential"]]/@value)[1]', 'bigint'),
         numa_growth_phase = r.c.value('(//memoryReport/entry[@description[.="NUMA Growth Phase"]]/@value)[1]', 'bigint'),
         last_oom_factor = r.c.value('(//memoryReport/entry[@description[.="Last OOM Factor"]]/@value)[1]', 'bigint'),
-        last_os_error = r.c.value('(//memoryReport/entry[@description[.="Last OS Error"]]/@value)[1]', 'bigint')
+        last_os_error = r.c.value('(//memoryReport/entry[@description[.="Last OS Error"]]/@value)[1]', 'bigint'),
+        xml = r.c.query('.')
     INTO #memory
     FROM #sp_server_diagnostics_component_result AS s
     CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
     WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @low_memory_only OR @low_memory_only IS NULL)
     OPTION(RECOMPILE);
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#memory, top 100 rows', x.* FROM #memory AS x ORDER BY x.event_time DESC;
+    END;
    
     SELECT
         m.event_time,
@@ -746,7 +782,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         systemCpuUtilization = w.x.value('(/event/data[@name="data"]/value/system/@systemCpuUtilization)[1]', 'bigint'),
         sqlCpuUtilization = w.x.value('(/event/data[@name="data"]/value/system/@sqlCpuUtilization)[1]', 'bigint'),
         BadPagesDetected = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesDetected)[1]', 'bigint'),
-        BadPagesFixed = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesFixed)[1]', 'bigint')
+        BadPagesFixed = w.x.value('(/event/data[@name="data"]/value/system/@BadPagesFixed)[1]', 'bigint'),
+        xml = w.x.query('.')
     INTO #health
     FROM #sp_server_diagnostics_component_result AS wi
     CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
@@ -754,6 +791,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
    
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#health, top 100 rows', x.* FROM #health AS x ORDER BY x.event_time DESC;
+    END;
+
     SELECT
         h.event_time,
         finding = 'overall system health',
@@ -817,7 +859,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         cpuUtilization =
             w2.x2.value('@cpuUtilization', 'bigint'),
         cpuTimeMs =
-            w2.x2.value('@cpuTimeMs', 'bigint')
+            w2.x2.value('@cpuTimeMs', 'bigint'),
+        xml = w2.x2.query('.')
     INTO #useless
     FROM #sp_server_diagnostics_component_result AS wi
     CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
@@ -826,6 +869,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   w.x.exist('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') = 1
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#useless, top 100 rows', x.* FROM #useless AS x ORDER BY x.event_time DESC;
+    END;
    
     SELECT
         u.event_time,
@@ -864,6 +912,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#blocking_xml, top 100 rows', x.* FROM #blocking_xml AS x ORDER BY x.event_time DESC;
+    END;
    
     /*Blocked queries*/
     SELECT
@@ -905,6 +958,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#blocked, top 100 rows', x.* FROM #blocked AS x ORDER BY x.event_time DESC;
+    END;
    
     /*Blocking queries*/
     SELECT
@@ -946,6 +1004,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#blocking, top 100 rows', x.* FROM #blocking AS x ORDER BY x.event_time DESC;
+    END;
    
     /*Put it together*/
     SELECT TOP (9223372036854775807)
@@ -1084,6 +1147,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                OR @database_name IS NULL)
     ) AS kheb
     OPTION(RECOMPILE);
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#blocks, top 100 rows', x.* FROM #blocks AS x ORDER BY x.event_time DESC;
+    END;
    
     SELECT
         b.event_time,
@@ -1106,7 +1174,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         b.log_used,
         b.client_app,
         b.host_name,
-        b.login_name
+        b.login_name,
+        b.blocked_process_report
     FROM #blocks AS b
     ORDER BY
         b.event_time DESC,
@@ -1164,6 +1233,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 OR @database_name IS NULL)
     ) AS b
     OPTION(RECOMPILE);
+
+    IF @debug = 1 
+    BEGIN 
+        SELECT TOP (100) table_name = '#available_plans, top 100 rows', x.* FROM #available_plans AS x ORDER BY x.event_time DESC;
+    END;
    
     SELECT
         ap.event_time,
