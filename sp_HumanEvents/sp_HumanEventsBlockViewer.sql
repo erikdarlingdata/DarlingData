@@ -90,7 +90,7 @@ BEGIN
     SELECT  'you can use me in conjunction with sp_HumanEvents to quickly parse the sqlserver.blocked_process_report event' UNION ALL
     SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
     SELECT  'it will also work with another extended event session using the ring buffer as a target to capture blocking' UNION ALL
-    SELECT  'all scripts and documentation are available here: 0' UNION ALL
+    SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
     SELECT  'from your loving sql server consultant, erik darling: erikdarlingdata.com';
 
     SELECT
