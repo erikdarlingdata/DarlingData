@@ -36,7 +36,6 @@ CREATE OR ALTER PROCEDURE
     @start_date datetimeoffset(7) = NULL, /*Begin date for events*/
     @end_date datetimeoffset(7) = NULL, /*End date for events*/
     @warnings_only bit = NULL, /*Only show results from recorded warnings*/
-    @low_memory_only bit = NULL, /*Only show memory conditions when low*/
     @database_name sysname = NULL, /*Filter to a specific database for blocking)*/
     @wait_duration_ms bigint = 0, /*Minimum duration to show query waits*/
     @wait_round_interval_minutes bigint = 60, /*Nearest interval to round wait stats to*/
@@ -105,34 +104,81 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               @end_date datetimeoffset(7)';
    
     SELECT
-        @start_date = /*convert to utc*/
-            ISNULL
-            (
-                @start_date,
-                DATEADD
-                (
-                    DAY,
-                    -7,
-                    SYSDATETIMEOFFSET()
-                )
-            ) AT TIME ZONE 'UTC',
-        @end_date = /*convert to utc*/
-            ISNULL
-            (
-                @end_date,
-                DATEADD
-                (
-                    DAY,
-                    1,
-                    SYSDATETIMEOFFSET()
-                )
-            ) AT TIME ZONE 'UTC',
+        @start_date =
+            CASE
+                WHEN @start_date IS NULL
+                THEN
+                    DATEADD
+                    (
+                        MINUTE,
+                        DATEDIFF
+                        (
+                            MINUTE,
+                            SYSDATETIME(),
+                            GETUTCDATE()
+                        ),
+                        ISNULL
+                        (
+                            @start_date,
+                            DATEADD
+                            (
+                                DAY,
+                                -7,
+                                SYSDATETIME()
+                            )
+                        )
+                    )
+                ELSE
+                    DATEADD
+                    (
+                        MINUTE,
+                        DATEDIFF
+                        (
+                            MINUTE,
+                            SYSDATETIME(),
+                            GETUTCDATE()
+                        ),
+                        @start_date
+                    )
+            END,
+        @end_date =
+            CASE
+                WHEN @end_date IS NULL
+                THEN
+                    DATEADD
+                    (
+                        MINUTE,
+                        DATEDIFF
+                        (
+                            MINUTE,
+                            SYSDATETIME(),
+                            GETUTCDATE()
+                        ),
+                        ISNULL
+                        (
+                            @end_date,
+                            SYSDATETIME()
+                        )
+                    )
+                ELSE
+                    DATEADD
+                    (
+                        MINUTE,
+                        DATEDIFF
+                        (
+                            MINUTE,
+                            SYSDATETIME(),
+                            GETUTCDATE()
+                        ),
+                        @end_date
+                    )
+            END,
         @wait_duration_ms = /*convert to microseconds*/
             @wait_duration_ms * 1000, 
         @wait_round_interval_minutes = /*do this i guess?*/
             CASE 
-                WHEN @wait_round_interval_minutes = 0
-                THEN NULL
+                WHEN @wait_round_interval_minutes < 1
+                THEN 1
                 ELSE @wait_round_interval_minutes
             END;
    
@@ -203,6 +249,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
    
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
+        
         INSERT INTO 
             #wait_info WITH (TABLOCK)
         (
@@ -213,6 +260,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @params,
             @start_date,
             @end_date;
+        
         IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
       
         /*Grab data from the sp_server_diagnostics_component_result component*/
@@ -233,6 +281,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
        
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
+        
         INSERT INTO 
             #sp_server_diagnostics_component_result WITH(TABLOCK)
         (
@@ -243,6 +292,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @params,
             @start_date,
             @end_date;
+        
         IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
     END;
    
@@ -274,6 +324,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
 
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
+        
         INSERT INTO 
             #wait_info WITH (TABLOCK)
         (
@@ -284,6 +335,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @params,
             @start_date,
             @end_date;
+       
        IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
 
         /*Grab data from the sp_server_diagnostics_component_result component*/
@@ -305,6 +357,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
    
         IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
+        
         INSERT INTO 
             #sp_server_diagnostics_component_result WITH(TABLOCK)
         (
@@ -315,6 +368,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @params,
             @start_date,
             @end_date;
+        
         IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
     END;
     
@@ -730,7 +784,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     INTO #memory
     FROM #sp_server_diagnostics_component_result AS s
     CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
-    WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @low_memory_only OR @low_memory_only IS NULL)
+    WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
 
     IF @debug = 1 
@@ -740,6 +794,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
    
     SELECT
         m.event_time,
+        finding = 'memory conditions',
         m.lastNotification,
         m.outOfMemoryExceptions,
         m.isAnyPoolOutOfMemory,
@@ -908,7 +963,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         u.cpuTimeMs
     FROM #useless AS u
     ORDER BY
-        u.event_time DESC,
         u.cpuTimeMs DESC
     OPTION(RECOMPILE);
    
@@ -1033,7 +1087,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
    
     /*Put it together*/
-    SELECT TOP (9223372036854775807)
+    SELECT
         kheb.event_time,
         kheb.currentdbname,
         kheb.activity,
@@ -1154,7 +1208,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     INTO #blocks
     FROM
     (             
-        SELECT TOP (9223372036854775807)
+        SELECT
             bg.*
         FROM #blocking AS bg
         WHERE (bg.currentdbname = @database_name
@@ -1162,7 +1216,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
      
         UNION ALL
      
-        SELECT TOP (9223372036854775807)
+        SELECT
             bd.*
         FROM #blocked AS bd   
         WHERE (bd.currentdbname = @database_name

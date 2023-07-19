@@ -1450,7 +1450,7 @@ SELECT
 I need to tweak this so the WHERE clause on the last execution column
 works correctly as >= @start_date and < @end_date, otherwise there are no results
 */
-IF @start_date = @end_date
+IF @start_date >= @end_date
 BEGIN
     SELECT
         @end_date = 
@@ -1458,14 +1458,14 @@ BEGIN
             (
                 DAY,
                 1,
-                @end_date
+                @start_date
             ),
         @end_date_original = 
             DATEADD
             (
                 DAY,
                 1,
-                @end_date_original
+                @start_date_original
             );
 END;
 /*
@@ -1917,11 +1917,11 @@ END;
 Get filters ready, or whatever
 We're only going to pull some stuff from runtime stats and plans
 */
-IF (@start_date < @end_date)
+IF (@start_date <= @end_date)
 BEGIN
     SELECT
         @where_clause += N'AND   qsrs.last_execution_time >= @start_date
-                           AND   qsrs.last_execution_time <  @end_date' + @nc10;
+AND   qsrs.last_execution_time <  @end_date' + @nc10;
 END;
 
 /*Other filters*/
