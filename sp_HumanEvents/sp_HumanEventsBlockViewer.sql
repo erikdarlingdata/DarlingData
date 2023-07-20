@@ -571,7 +571,7 @@ PERSISTED;
 
 ALTER TABLE #blocked
 ADD blocking_desc AS 
-    '(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')' PERSISTED,
+    ISNULL('(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')', 'unresolved process') PERSISTED,
     blocked_desc AS
     '(' + CAST(blocked_spid AS VARCHAR(max)) + ':' + CAST(blocked_ecid AS VARCHAR(max)) + ')' PERSISTED;
 
@@ -642,7 +642,7 @@ PERSISTED;
 
 ALTER TABLE #blocking
 ADD blocking_desc AS 
-    '(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')' PERSISTED,
+    ISNULL('(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')', 'unresolved process') PERSISTED,
     blocked_desc AS
     '(' + CAST(blocked_spid AS VARCHAR(max)) + ':' + CAST(blocked_ecid AS VARCHAR(max)) + ')' PERSISTED;
     
