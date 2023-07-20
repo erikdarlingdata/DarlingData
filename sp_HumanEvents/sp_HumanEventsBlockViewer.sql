@@ -1068,7 +1068,7 @@ PERSISTED;
 
 ALTER TABLE #blocked
 ADD blocking_desc AS 
-    '(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')' PERSISTED,
+    ISNULL('(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')', 'unresolved process') PERSISTED,
     blocked_desc AS
     '(' + CAST(blocked_spid AS VARCHAR(max)) + ':' + CAST(blocked_ecid AS VARCHAR(max)) + ')' PERSISTED;
 
@@ -1134,6 +1134,13 @@ ADD query_text AS
    NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
    NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
 PERSISTED;
+
+ALTER TABLE #blocking
+ADD blocking_desc AS 
+    '(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')' PERSISTED,
+    blocked_desc AS
+    '(' + CAST(blocked_spid AS VARCHAR(max)) + ':' + CAST(blocked_ecid AS VARCHAR(max)) + ')' PERSISTED;
+    
 
 IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
 
