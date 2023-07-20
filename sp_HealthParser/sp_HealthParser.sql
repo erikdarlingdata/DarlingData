@@ -513,7 +513,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AVG(tc.average_wait_time_ms) +
             MAX(tc.max_wait_time_ms),
         average_wait_time_ms = CONVERT(decimal(38, 2), AVG(tc.average_wait_time_ms)),
-        max_wait_time_s = CONVERT(decimal(38, 2), MAX(tc.max_wait_time_ms / 1000.))
+        max_wait_time_ms = CONVERT(decimal(38, 2), MAX(tc.max_wait_time_ms))
     FROM #topwaits_count AS tc
     GROUP BY
         tc.wait_type,
@@ -598,7 +598,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AVG(td.average_wait_time_ms) +
             MAX(td.max_wait_time_ms),
         average_wait_time_ms = CONVERT(decimal(38, 2), AVG(td.average_wait_time_ms)),
-        max_wait_time_s = CONVERT(decimal(38, 2), MAX(td.max_wait_time_ms / 1000.))
+        max_wait_time_ms = CONVERT(decimal(38, 2), MAX(td.max_wait_time_ms))
     FROM #topwaits_duration AS td
     GROUP BY
         td.wait_type,
@@ -662,7 +662,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         i.ioLatchTimeouts,
         i.intervalLongIos,
         i.totalLongIos,
-        longestPendingRequests_duration_ms =
+        longestPendingRequests_duration_s =
             ISNULL(SUM(i.longestPendingRequests_duration_ms), 0),
         longestPendingRequests_filePath =
             ISNULL(i.longestPendingRequests_filePath, 'N/A')
@@ -1016,7 +1016,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
         clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
         activity = CASE WHEN bd.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
-        blocked_process_report = bd.query('.')
+        blocked_process_report = bd.query('//blocked-process-report')
     INTO #blocked
     FROM #blocking_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
@@ -1062,7 +1062,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
         clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
         activity = CASE WHEN bg.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
-        blocked_process_report = bg.query('.')
+        blocked_process_report = bg.query('//blocked-process-report')
     INTO #blocking
     FROM #blocking_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
