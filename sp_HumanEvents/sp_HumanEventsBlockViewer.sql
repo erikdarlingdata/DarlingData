@@ -246,11 +246,7 @@ SELECT
                         SYSDATETIME(),
                         GETUTCDATE()
                     ),
-                    ISNULL
-                    (
-                        @end_date,
-                        SYSDATETIME()
-                    )
+                    SYSDATETIME()
                 )
             ELSE
                 DATEADD
@@ -2080,7 +2076,7 @@ OPTION(RECOMPILE);
 
 INSERT
     #block_findings
-(
+()
     check_id,
     database_name,
     object_name,
