@@ -246,11 +246,7 @@ SELECT
                         SYSDATETIME(),
                         GETUTCDATE()
                     ),
-                    ISNULL
-                    (
-                        @end_date,
-                        SYSDATETIME()
-                    )
+                    SYSDATETIME()
                 )
             ELSE
                 DATEADD
@@ -1044,7 +1040,8 @@ SELECT
     log_used = bd.value('(process/@logused)[1]', 'bigint'),
     clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
     clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-    currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
+    currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
+    currentdbid = bd.value('(process/@currentdb)[1]', 'int'),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
     blocked_process_report = c.query('.')
 INTO #blocked
@@ -1105,6 +1102,7 @@ SELECT
     clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
     clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
     currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
+    currentdbid = bg.value('(process/@currentdb)[1]', 'int'),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
     blocked_process_report = c.query('.')
 INTO #blocking
@@ -1259,6 +1257,7 @@ SELECT
     kheb.transaction_id,
     kheb.database_id,
     kheb.currentdbname,
+    kheb.currentdbid,
     kheb.blocked_process_report
 INTO #blocks
 FROM
@@ -1344,8 +1343,8 @@ ORDER BY
     b.event_time DESC,
     CASE
         WHEN b.activity = 'blocking'
-        THEN 1
-        ELSE 999
+        THEN -1
+        ELSE +1
     END
 OPTION(RECOMPILE);
 
@@ -1360,6 +1359,7 @@ FROM
         b.database_name,
         b.database_id,
         b.currentdbname,
+        b.currentdbid,
         b.contentious_object,
         query_text =
             TRY_CAST(b.query_text AS nvarchar(MAX)),
@@ -1385,6 +1385,7 @@ FROM
         b.database_name,
         b.database_id,
         b.currentdbname,
+        b.currentdbid,
         b.contentious_object,
         query_text =
             TRY_CAST(b.query_text AS nvarchar(MAX)),
@@ -1453,7 +1454,7 @@ FROM
     FROM #available_plans AS ap
     OUTER APPLY
     (
-        SELECT TOP (1)
+        SELECT
             deqs.statement_start_offset,
             deqs.statement_end_offset,
             deqs.creation_time,
@@ -1516,15 +1517,14 @@ FROM
             deqs.statement_end_offset
         ) AS deps
         WHERE deqs.sql_handle = ap.sql_handle
-        ORDER BY
-            deqs.last_execution_time DESC
+        AND   deps.dbid IN (ap.database_id, ap.currentdbid)
     ) AS c
 ) AS ap
 WHERE ap.query_plan IS NOT NULL
 AND   ap.n = 1
 ORDER BY
     ap.avg_worker_time_ms DESC
-OPTION(RECOMPILE);
+OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 
 INSERT
     #block_findings
