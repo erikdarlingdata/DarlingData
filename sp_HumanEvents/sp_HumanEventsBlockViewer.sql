@@ -548,7 +548,7 @@ SELECT
     clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
     currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
     blocking_level = 0,
-    sort_order = cast('' as varchar(max)),
+    sort_order = cast('' as varchar(400)),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
     blocked_process_report = c.query('.')
 INTO #blocked
@@ -571,9 +571,12 @@ PERSISTED;
 
 ALTER TABLE #blocked
 ADD blocking_desc AS 
-    ISNULL('(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')', 'unresolved process') PERSISTED,
+    ISNULL('(' + CAST(blocking_spid AS VARCHAR(10)) + ':' + CAST(blocking_ecid AS VARCHAR(10)) + ')', 'unresolved process') PERSISTED,
     blocked_desc AS
-    '(' + CAST(blocked_spid AS VARCHAR(max)) + ':' + CAST(blocked_ecid AS VARCHAR(max)) + ')' PERSISTED;
+    '(' + CAST(blocked_spid AS VARCHAR(10)) + ':' + CAST(blocked_ecid AS VARCHAR(10)) + ')' PERSISTED;
+
+CREATE CLUSTERED INDEX ix_blocking on #blocked(monitor_loop, blocking_desc);
+CREATE NONCLUSTERED INDEX ix_blocked on #blocked(monitor_loop, blocked_desc);    
 
 IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
 
@@ -619,7 +622,7 @@ SELECT
     clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
     currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
     blocking_level = 0,
-    sort_order = cast('' as varchar(max)),
+    sort_order = cast('' as varchar(400)),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
     blocked_process_report = c.query('.')
 INTO #blocking
@@ -642,10 +645,12 @@ PERSISTED;
 
 ALTER TABLE #blocking
 ADD blocking_desc AS 
-    ISNULL('(' + CAST(blocking_spid AS VARCHAR(max)) + ':' + CAST(blocking_ecid AS VARCHAR(max)) + ')', 'unresolved process') PERSISTED,
+    ISNULL('(' + CAST(blocking_spid AS VARCHAR(10)) + ':' + CAST(blocking_ecid AS VARCHAR(10)) + ')', 'unresolved process') PERSISTED,
     blocked_desc AS
-    '(' + CAST(blocked_spid AS VARCHAR(max)) + ':' + CAST(blocked_ecid AS VARCHAR(max)) + ')' PERSISTED;
-    
+    '(' + CAST(blocked_spid AS VARCHAR(10)) + ':' + CAST(blocked_ecid AS VARCHAR(10)) + ')' PERSISTED;
+
+CREATE CLUSTERED INDEX ix_blocking on #blocking(monitor_loop, blocking_desc);
+CREATE NONCLUSTERED INDEX ix_blocked on #blocking(monitor_loop, blocked_desc);    
 
 IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
 
@@ -656,7 +661,7 @@ WITH hierarchy AS
         blocking_desc,
         blocked_desc,
         level = 0,
-        sort_order = blocking_desc + ' <-- ' + blocked_desc
+        sort_order = cast(blocking_desc + ' <-- ' + blocked_desc as varchar(400))
     FROM #blocking b
     WHERE NOT EXISTS (
         SELECT *
@@ -672,7 +677,7 @@ WITH hierarchy AS
         bg.blocking_desc,
         bg.blocked_desc,
         h.level + 1,
-        h.sort_order + ' ' + bg.blocking_desc + ' <-- ' + bg.blocked_desc
+        cast(h.sort_order + ' ' + bg.blocking_desc + ' <-- ' + bg.blocked_desc as varchar(400))
     FROM hierarchy h
     JOIN #blocking bg
         ON bg.monitor_loop = h.monitor_loop
