@@ -930,7 +930,7 @@ BEGIN
         deqs.max_used_threads,
         deqs.total_rows
     INTO #dm_exec_query_stats_sh
-    FROM sys.dm_exec_query_stats AS deqs
+    FROM sys.dm_exec_query_stats AS deqs;
 
     CREATE CLUSTERED INDEX
         deqs_sh
@@ -1074,7 +1074,7 @@ SELECT
     currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
     currentdbid = bd.value('(process/@currentdb)[1]', 'int'),
     blocking_level = 0,
-    sort_order = cast('' as varchar(400)),
+    sort_order = CAST('' AS varchar(400)),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
     blocked_process_report = c.query('.')
 INTO #blocked
@@ -1097,12 +1097,31 @@ PERSISTED;
 
 ALTER TABLE #blocked
 ADD blocking_desc AS 
-    ISNULL('(' + CAST(blocking_spid AS VARCHAR(10)) + ':' + CAST(blocking_ecid AS VARCHAR(10)) + ')', 'unresolved process') PERSISTED,
+        ISNULL
+        (
+            '(' + 
+            CAST(blocking_spid AS varchar(10)) + 
+            ':' + 
+            CAST(blocking_ecid AS varchar(10)) + 
+            ')', 
+            'unresolved process'
+        ) PERSISTED,
     blocked_desc AS
-    '(' + CAST(blocked_spid AS VARCHAR(10)) + ':' + CAST(blocked_ecid AS VARCHAR(10)) + ')' PERSISTED;
+        '(' + 
+        CAST(blocked_spid AS varchar(10)) + 
+        ':' + 
+        CAST(blocked_ecid AS varchar(10)) + 
+        ')' PERSISTED;
 
-CREATE CLUSTERED INDEX ix_blocking on #blocked(monitor_loop, blocking_desc);
-CREATE NONCLUSTERED INDEX ix_blocked on #blocked(monitor_loop, blocked_desc);    
+CREATE CLUSTERED INDEX 
+    blocking 
+ON #blocked
+    (monitor_loop, blocking_desc);
+
+CREATE INDEX 
+    blocked 
+ON #blocked
+    (monitor_loop, blocked_desc);    
 
 IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
 
@@ -1149,7 +1168,7 @@ SELECT
     currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
     currentdbid = bg.value('(process/@currentdb)[1]', 'int'),
     blocking_level = 0,
-    sort_order = cast('' as varchar(400)),
+    sort_order = CAST('' AS varchar(400)),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
     blocked_process_report = c.query('.')
 INTO #blocking
@@ -1172,29 +1191,57 @@ PERSISTED;
 
 ALTER TABLE #blocking
 ADD blocking_desc AS 
-    ISNULL('(' + CAST(blocking_spid AS VARCHAR(10)) + ':' + CAST(blocking_ecid AS VARCHAR(10)) + ')', 'unresolved process') PERSISTED,
+        ISNULL
+        (
+            '(' + 
+            CAST(blocking_spid AS varchar(10)) + 
+            ':' + 
+            CAST(blocking_ecid AS varchar(10)) + 
+            ')', 
+            'unresolved process'
+        ) PERSISTED,
     blocked_desc AS
-    '(' + CAST(blocked_spid AS VARCHAR(10)) + ':' + CAST(blocked_ecid AS VARCHAR(10)) + ')' PERSISTED;
+        '(' + 
+        CAST(blocked_spid AS varchar(10)) + 
+        ':' + 
+        CAST(blocked_ecid AS varchar(10)) + 
+        ')' PERSISTED;
 
-CREATE CLUSTERED INDEX ix_blocking on #blocking(monitor_loop, blocking_desc);
-CREATE NONCLUSTERED INDEX ix_blocked on #blocking(monitor_loop, blocked_desc);    
+CREATE CLUSTERED INDEX 
+    blocking 
+ON #blocking
+    (monitor_loop, blocking_desc);
+
+CREATE INDEX 
+    blocked 
+ON #blocking
+    (monitor_loop, blocked_desc);    
 
 IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
 
-WITH hierarchy AS 
+WITH 
+    hierarchy AS 
 (
     SELECT 
-        monitor_loop, 
+        b.monitor_loop, 
         blocking_desc,
         blocked_desc,
         level = 0,
-        sort_order = cast(blocking_desc + ' <-- ' + blocked_desc as varchar(400))
+        sort_order = 
+            CAST
+            (
+                blocking_desc + 
+                ' <-- ' + 
+                blocked_desc AS varchar(400)
+            )
     FROM #blocking b
-    WHERE NOT EXISTS (
-        SELECT *
+    WHERE NOT EXISTS 
+    (
+        SELECT 
+            1/0
         FROM #blocking b2
         WHERE b2.monitor_loop = b.monitor_loop
-        AND b2.blocked_desc = b.blocking_desc
+        AND   b2.blocked_desc = b.blocking_desc
     )
 
     UNION ALL
@@ -1204,29 +1251,41 @@ WITH hierarchy AS
         bg.blocking_desc,
         bg.blocked_desc,
         h.level + 1,
-        cast(h.sort_order + ' ' + bg.blocking_desc + ' <-- ' + bg.blocked_desc as varchar(400))
+        sort_order = 
+            CAST
+            (
+                h.sort_order + 
+                ' ' + 
+                bg.blocking_desc + 
+                ' <-- ' + 
+                bg.blocked_desc AS varchar(400)
+            )
     FROM hierarchy h
     JOIN #blocking bg
-        ON bg.monitor_loop = h.monitor_loop
-        AND bg.blocking_desc = h.blocked_desc
+      ON  bg.monitor_loop = h.monitor_loop
+      AND bg.blocking_desc = h.blocked_desc
 )
 UPDATE #blocked
-SET blocking_level = h.level,
+SET 
+    blocking_level = h.level,
     sort_order = h.sort_order
 FROM #blocked b
 JOIN hierarchy h
-    ON h.monitor_loop = b.monitor_loop
-    AND h.blocking_desc = b.blocking_desc
-    AND h.blocked_desc = b.blocked_desc;
+  ON  h.monitor_loop = b.monitor_loop
+  AND h.blocking_desc = b.blocking_desc
+  AND h.blocked_desc = b.blocked_desc
+OPTION(RECOMPILE);
 
 UPDATE #blocking
-SET blocking_level = bd.blocking_level,
+SET 
+    blocking_level = bd.blocking_level,
     sort_order = bd.sort_order
 FROM #blocking bg
 JOIN #blocked bd
-    ON bd.monitor_loop = bg.monitor_loop
-    AND bd.blocking_desc = bg.blocking_desc
-    AND bd.blocked_desc = bg.blocked_desc;
+  ON  bd.monitor_loop = bg.monitor_loop
+  AND bd.blocking_desc = bg.blocking_desc
+  AND bd.blocked_desc = bg.blocked_desc
+OPTION(RECOMPILE);
 
 SELECT
     kheb.event_time,
@@ -1243,23 +1302,23 @@ SELECT
         ),
     kheb.activity,
     blocking_tree = 
-        REPLICATE (' > ', kheb.blocking_level) + 
+        REPLICATE(' > ', kheb.blocking_level) + 
         CASE kheb.activity
-            WHEN 'blocking' 
-            THEN '(' + kheb.blocking_desc + ') is blocking (' + kheb.blocked_desc + ')'
-            ELSE ' > (' + kheb.blocked_desc + ') is blocked by (' + kheb.blocking_desc + ')'
+             WHEN 'blocking' 
+             THEN '(' + kheb.blocking_desc + ') is blocking (' + kheb.blocked_desc + ')'
+             ELSE ' > (' + kheb.blocked_desc + ') is blocked by (' + kheb.blocking_desc + ')'
         END,
     spid = 
         CASE kheb.activity
-            WHEN 'blocking' 
-            THEN kheb.blocking_spid
-            ELSE kheb.blocked_spid
+             WHEN 'blocking' 
+             THEN kheb.blocking_spid
+             ELSE kheb.blocked_spid
         END,
     ecid =
         CASE kheb.activity
-            WHEN 'blocking' 
-            THEN kheb.blocking_ecid
-            ELSE kheb.blocked_ecid
+             WHEN 'blocking' 
+             THEN kheb.blocking_ecid
+             ELSE kheb.blocked_ecid
         END,    
     query_text =
         CASE
