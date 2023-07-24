@@ -816,7 +816,8 @@ BEGIN
         b.log_used,
         b.client_app,
         b.host_name,
-        b.login_name
+        b.login_name,
+        b.blocked_process_report
     FROM #blocks_sh AS b
     ORDER BY
         b.event_time DESC,
@@ -845,9 +846,8 @@ BEGIN
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'int'), -1)
         FROM #blocks_sh AS b
-        CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame') AS n(c)
-        WHERE n.c.exist('@sqlhandle[ .= "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]') = 0
-        AND  (b.currentdbname = @database_name
+        CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        WHERE (b.currentdbname = @database_name
                 OR @database_name IS NULL)
       
         UNION ALL
@@ -865,9 +865,8 @@ BEGIN
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'int'), -1)
         FROM #blocks_sh AS b
-        CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame') AS n(c)
-        WHERE n.c.exist('@sqlhandle[ .= "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]') = 0
-        AND  (b.currentdbname = @database_name
+        CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        WHERE (b.currentdbname = @database_name
                 OR @database_name IS NULL)
     ) AS b
     OPTION(RECOMPILE);
