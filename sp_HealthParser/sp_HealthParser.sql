@@ -62,8 +62,66 @@ BEGIN
             introduction =
                 'hi, i''m sp_HealthParser!' UNION ALL
         SELECT  'you can use me to examine the contents of the system_health extended event session' UNION ALL
-        SELECT  'i apologize if i take a long time, i have to do a lot of crap with XML' UNION ALL
+        SELECT  'i apologize if i take a long time, i have to do a lot of XML processing' UNION ALL
         SELECT  'from your loving sql server consultant, erik darling: erikdarlingdata.com';
+
+        /*
+        Parameters
+        */
+        SELECT
+            parameter_name =
+                ap.name,
+            data_type = t.name,
+            description =
+                CASE
+                    ap.name
+                    WHEN N'@start_date' THEN N'earliest date to show data for, will be internally converted to UTC'
+                    WHEN N'@end_date' THEN N'latest date to show data for, will be internally converted to UTC'
+                    WHEN N'@warnings_only' THEN N'only show rows where a warning was reported'
+                    WHEN N'@database_name' THEN N'database name to show blocking events for'
+                    WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
+                    WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
+                    WHEN N'@version' THEN N'OUTPUT; for support'
+                    WHEN N'@version_date' THEN N'OUTPUT; for support'
+                    WHEN N'@help' THEN N'how you got here'
+                    WHEN N'@debug' THEN N'prints dynamic sql, selects from temp tables'
+                END,
+            valid_inputs =
+                CASE
+                    ap.name
+                    WHEN N'@start_date' THEN N'a reasonable date'
+                    WHEN N'@end_date' THEN N'a reasonable date'
+                    WHEN N'@warnings_only' THEN N'NULL, 0, 1'
+                    WHEN N'@database_name' THEN N'the name of a database'
+                    WHEN N'@wait_duration_ms' THEN N'the minimum duration of a wait for queries with interesting waits'
+                    WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for top wait stats by count and duration'
+                    WHEN N'@version' THEN N'none'
+                    WHEN N'@version_date' THEN N'none'
+                    WHEN N'@help' THEN N'0 or 1'
+                    WHEN N'@debug' THEN N'0 or 1'
+                END,
+            defaults =
+                CASE
+                    ap.name
+                    WHEN N'@start_date' THEN N'seven days back'
+                    WHEN N'@end_date' THEN N'current date'
+                    WHEN N'@warnings_only' THEN N'0'
+                    WHEN N'@database_name' THEN N'NULL'
+                    WHEN N'@wait_duration_ms' THEN N'0'
+                    WHEN N'@wait_round_interval_minutes' THEN N'60'
+                    WHEN N'@version' THEN N'none; OUTPUT'
+                    WHEN N'@version_date' THEN N'none; OUTPUT'
+                    WHEN N'@help' THEN N'0'
+                    WHEN N'@debug' THEN N'0'
+                END
+        FROM sys.all_parameters AS ap
+        INNER JOIN sys.all_objects AS o
+          ON ap.object_id = o.object_id
+        INNER JOIN sys.types AS t
+          ON  ap.system_type_id = t.system_type_id
+          AND ap.user_type_id = t.user_type_id
+        WHERE o.name = N'sp_HealthParser'
+        OPTION(MAXDOP 1, RECOMPILE);
 
         SELECT
             mit_license_yo = 'i am MIT licensed, so like, do whatever'
@@ -204,6 +262,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         N'WAIT_XTP_HOST_WAIT', N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', N'WAIT_XTP_CKPT_CLOSE', N'XE_DISPATCHER_JOIN', N'XE_DISPATCHER_WAIT', N'XE_TIMER_EVENT',
         N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF', N'DBMIRROR_DBM_MUTEX', N'DBMIRROR_SEND'
     );
+
+    IF @debug = 1 BEGIN SELECT table_name = '#ignore', i.* FROM #ignore AS i ORDER BY i.wait_type; END;
    
     CREATE TABLE
         #wait_info
@@ -248,7 +308,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
    
-        IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
+        IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
         
         INSERT INTO 
             #wait_info WITH (TABLOCK)
@@ -280,7 +340,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
        
-        IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
+        IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
         
         INSERT INTO 
             #sp_server_diagnostics_component_result WITH(TABLOCK)
@@ -323,7 +383,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
 
-        IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
+        IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
         
         INSERT INTO 
             #wait_info WITH (TABLOCK)
@@ -356,7 +416,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
    
-        IF @debug = 1 BEGIN SET STATISTICS XML ON; END;
+        IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
         
         INSERT INTO 
             #sp_server_diagnostics_component_result WITH(TABLOCK)
@@ -1016,7 +1076,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
         clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
         activity = CASE WHEN bd.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
-        blocked_process_report = bd.query('//blocked-process-report')
+        blocked_process_report = bd.query('.')
     INTO #blocked
     FROM #blocking_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
@@ -1062,7 +1122,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
         clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
         activity = CASE WHEN bg.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
-        blocked_process_report = bg.query('//blocked-process-report')
+        blocked_process_report = bg.query('.')
     INTO #blocking
     FROM #blocking_xml AS bx
     OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
@@ -1265,32 +1325,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /*Grab available plans from the cache*/
     SELECT DISTINCT
         b.*
-    INTO #available_plans 
+    INTO #available_plans
     FROM
     (
         SELECT
-            b.event_time,
-            finding  =
-                'available_plans',
-            b.currentdbname,
-            query_text =
-                TRY_CAST(b.query_text AS nvarchar(MAX)),
-            sql_handle =
-                CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
-            stmtstart =
-                ISNULL(n.c.value('@stmtstart', 'int'), 0),
-            stmtend =
-                ISNULL(n.c.value('@stmtend', 'int'), -1)
-        FROM #blocks AS b
-        CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame') AS n(c)
-        WHERE n.c.exist('@sqlhandle[ .= "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]') = 0
-        AND  (b.currentdbname = @database_name
-                OR @database_name IS NULL)
-     
-        UNION ALL
-     
-        SELECT
-            b.event_time,
             finding =
                 'available_plans',
             b.currentdbname,
@@ -1303,20 +1341,103 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'int'), -1)
         FROM #blocks AS b
-        CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame') AS n(c)
-        WHERE n.c.exist('@sqlhandle[ .= "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"]') = 0
-        AND  (b.currentdbname = @database_name
+        CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        WHERE (b.currentdbname = @database_name
+                OR @database_name IS NULL)
+      
+        UNION ALL
+      
+        SELECT
+            finding =
+                'available_plans',
+            b.currentdbname,
+            query_text =
+                TRY_CAST(b.query_text AS nvarchar(MAX)),
+            sql_handle =
+                CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
+            stmtstart =
+                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+            stmtend =
+                ISNULL(n.c.value('@stmtend', 'int'), -1)
+        FROM #blocks AS b
+        CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        WHERE (b.currentdbname = @database_name
                 OR @database_name IS NULL)
     ) AS b
     OPTION(RECOMPILE);
 
     IF @debug = 1 
     BEGIN 
-        SELECT TOP (100) table_name = '#available_plans, top 100 rows', x.* FROM #available_plans AS x ORDER BY x.event_time DESC;
+        SELECT TOP (100) table_name = '#available_plans, top 100 rows', x.* FROM #available_plans AS x;
     END;
    
     SELECT
-        ap.event_time,
+        deqs.sql_handle,
+        deqs.plan_handle,
+        deqs.statement_start_offset,
+        deqs.statement_end_offset,
+        deqs.creation_time,
+        deqs.last_execution_time,
+        deqs.execution_count,
+        total_worker_time_ms =
+            deqs.total_worker_time / 1000.,
+        avg_worker_time_ms =
+            CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
+        total_elapsed_time_ms =
+            deqs.total_elapsed_time / 1000.,
+        avg_elapsed_time =
+            CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
+        executions_per_second =
+            ISNULL
+            (
+                deqs.execution_count /
+                    NULLIF
+                    (
+                        DATEDIFF
+                        (
+                            SECOND,
+                            deqs.creation_time,
+                            deqs.last_execution_time
+                        ),
+                        0
+                    ),
+                    0
+            ),
+        total_physical_reads_mb =
+            deqs.total_physical_reads * 8. / 1024.,
+        total_logical_writes_mb =
+            deqs.total_logical_writes * 8. / 1024.,
+        total_logical_reads_mb =
+            deqs.total_logical_reads * 8. / 1024.,
+        min_grant_mb =
+            deqs.min_grant_kb * 8. / 1024.,
+        max_grant_mb =
+            deqs.max_grant_kb * 8. / 1024.,
+        min_used_grant_mb =
+            deqs.min_used_grant_kb * 8. / 1024.,
+        max_used_grant_mb =
+            deqs.max_used_grant_kb * 8. / 1024.,
+        min_spills_mb =
+            deqs.min_spills * 8. / 1024.,
+        max_spills_mb =
+            deqs.max_spills * 8. / 1024.,     
+        deqs.min_reserved_threads,
+        deqs.max_reserved_threads,
+        deqs.min_used_threads,
+        deqs.max_used_threads,
+        deqs.total_rows
+    INTO #dm_exec_query_stats_sh
+    FROM sys.dm_exec_query_stats AS deqs;
+
+    CREATE CLUSTERED INDEX
+        deqs_sh
+    ON #dm_exec_query_stats_sh
+    (
+        sql_handle,
+        plan_handle
+    );
+   
+    SELECT
         ap.finding,
         ap.currentdbname,
         query_text =
@@ -1350,74 +1471,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM
     (
         SELECT
-            *,
-            n =
-                ROW_NUMBER() OVER
-                (
-                    PARTITION BY
-                        ap.sql_handle
-                    ORDER BY
-                        ap.sql_handle
-                )
+            ap.*,
+            c.statement_start_offset,
+            c.statement_end_offset,
+            c.creation_time,
+            c.last_execution_time,
+            c.execution_count,
+            c.total_worker_time_ms,
+            c.avg_worker_time_ms,
+            c.total_elapsed_time_ms,
+            c.avg_elapsed_time,
+            c.executions_per_second,
+            c.total_physical_reads_mb,
+            c.total_logical_writes_mb,
+            c.total_logical_reads_mb,
+            c.min_grant_mb,
+            c.max_grant_mb,
+            c.min_used_grant_mb,
+            c.max_used_grant_mb,
+            c.min_spills_mb,
+            c.max_spills_mb,
+            c.min_reserved_threads,
+            c.max_reserved_threads,
+            c.min_used_threads,
+            c.max_used_threads,
+            c.total_rows,
+            c.query_plan
         FROM #available_plans AS ap
         OUTER APPLY
         (
-            SELECT TOP (1)
-                deqs.statement_start_offset,
-                deqs.statement_end_offset,
-                deqs.creation_time,
-                deqs.last_execution_time,
-                deqs.execution_count,
-                total_worker_time_ms =
-                    CONVERT(decimal(38, 2), deqs.total_worker_time / 1000.),
-                avg_worker_time_ms =
-                    CONVERT(decimal(38, 2), deqs.total_worker_time / 1000. / deqs.execution_count),
-                total_elapsed_time_ms =
-                    deqs.total_elapsed_time / 1000.,
-                avg_elapsed_time =
-                    CONVERT(decimal(38, 2), deqs.total_elapsed_time / 1000. / deqs.execution_count),
-                executions_per_second =
-                    ISNULL
-                    (
-                        deqs.execution_count /
-                            NULLIF
-                            (
-                                DATEDIFF
-                                (
-                                    SECOND,
-                                    deqs.creation_time,
-                                    deqs.last_execution_time
-                                ),
-                                0
-                            ),
-                            0
-                    ),
-                total_physical_reads_mb =
-                    CONVERT(decimal(38, 2), deqs.total_physical_reads * 8. / 1024.),
-                total_logical_writes_mb =
-                    CONVERT(decimal(38, 2), deqs.total_logical_writes * 8. / 1024.),
-                total_logical_reads_mb =
-                    CONVERT(decimal(38, 2), deqs.total_logical_reads * 8. / 1024.),
-                min_grant_mb =
-                    CONVERT(decimal(38, 2), deqs.min_grant_kb * 8. / 1024.),
-                max_grant_mb =
-                    CONVERT(decimal(38, 2), deqs.max_grant_kb * 8. / 1024.),
-                min_used_grant_mb =
-                    CONVERT(decimal(38, 2), deqs.min_used_grant_kb * 8. / 1024.),
-                max_used_grant_mb =
-                    CONVERT(decimal(38, 2), deqs.max_used_grant_kb * 8. / 1024.),
-                min_spills_mb =
-                    CONVERT(decimal(38, 2), deqs.min_spills * 8. / 1024.),
-                max_spills_mb =
-                    CONVERT(decimal(38, 2), deqs.max_spills * 8. / 1024.),    
-                deqs.min_reserved_threads,
-                deqs.max_reserved_threads,
-                deqs.min_used_threads,
-                deqs.max_used_threads,
-                deqs.total_rows,
+            SELECT
+                deqs.*,
                 query_plan =
                     TRY_CAST(deps.query_plan AS xml)
-            FROM sys.dm_exec_query_stats AS deqs
+            FROM #dm_exec_query_stats_sh AS deqs
             OUTER APPLY sys.dm_exec_text_query_plan
             (
                 deqs.plan_handle,
@@ -1425,13 +1512,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 deqs.statement_end_offset
             ) AS deps
             WHERE deqs.sql_handle = ap.sql_handle
-            ORDER BY
-                deqs.last_execution_time DESC
         ) AS c
     ) AS ap
     WHERE ap.query_plan IS NOT NULL
-    AND   ap.n = 1
     ORDER BY
         ap.avg_worker_time_ms DESC
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 END; /*Final End*/
