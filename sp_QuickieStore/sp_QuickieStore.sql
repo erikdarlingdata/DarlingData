@@ -130,10 +130,11 @@ BEGIN
     SELECT
         introduction =
            'hi, i''m sp_QuickieStore!' UNION ALL
-    SELECT 'you got me from https://www.erikdarlingdata.com/sp_quickiestore/' UNION ALL
+    SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData/tree/main/sp_QuickieStore' UNION ALL
     SELECT 'i can be used to quickly grab misbehaving queries from query store' UNION ALL
     SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
-    SELECT 'so what can you do, and how do you do it? read below!';
+    SELECT 'so what can you do, and how do you do it? read below!' UNION ALL
+    SELECT  'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
 
     /*
     Parameters
