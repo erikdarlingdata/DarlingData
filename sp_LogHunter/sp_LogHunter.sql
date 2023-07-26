@@ -336,13 +336,13 @@ BEGIN
         ('Perform a restore if necessary'), ('Autogrow of file'), ('Bringing down database'), ('hot add'), ('Server shut down'), ('Customer Support Services'), ('stack overflow'),
         ('inconsistency.'), ('invalid'), ('time out occurred'), ('The transaction log for database'), ('The virtual log file sequence'), ('Cannot accept virtual log file sequence'),
         ('The transaction in database'), ('Shutting down the server'), ('Shutting down database'), ('Error releasing reserved log space'), ('Cannot load the Query Store metadata'),
-        ('Cannot acquire'), ('SQL Server evaluation period has expired'), ('Terminating server'), ('SQL Server has been configured for lightweight pooling'), ('IOCP'),
+        ('Cannot acquire'), ('SQL Server evaluation period has expired'), ('terminat'), ('SQL Server has been configured for lightweight pooling'), ('IOCP'),
         ('Not enough memory for the configured number of locks'), ('The tempdb database data files are not configured with the same initial size and autogrowth settings'),
         ('The SQL Server image'), ('affinity'), ('SQL Server is starting'), ('Ignoring trace flag '), ('20 physical cores'), ('System error'), ('No free space'),
-        ('SQL Server is terminating'), ('Warning ******************'), ('SQL Server should be restarted'), ('Server name is'), ('Could not connect'), ('yielding'),
-        ('worker thread'), ('A new connection was rejected'), ('A significant part of sql server process memory has been paged out'), ('Dispatcher'), ('I/O requests taking longer than'),
-        ('killed'), ('SQL Server could not start'), ('SQL Server cannot start'), ('System Manufacturer:'), ('columnstore'), ('timed out'), ('inconsistent'), ('flushcache'),
-        ('Recovery for availability database'), ('currently busy'), ('The service is experiencing a problem'), ('The service account is'), ('Total Log Writer threads'), ('thread pool')       
+        ('Warning ******************'), ('SQL Server should be restarted'), ('Server name is'), ('Could not connect'), ('yielding'), ('worker thread'), ('A new connection was rejected'), 
+        ('A significant part of sql server process memory has been paged out'), ('Dispatcher'), ('I/O requests taking longer than'), ('killed'), ('SQL Server could not start'), 
+        ('SQL Server cannot start'), ('System Manufacturer:'), ('columnstore'), ('timed out'), ('inconsistent'), ('flushcache'), ('Recovery for availability database'), ('currently busy'), 
+        ('The service is experiencing a problem'), ('The service account is'), ('Total Log Writer threads'), ('thread pool'), ('debug'), ('resolving')  
     ) AS v (search_string)
     CROSS JOIN
     (
