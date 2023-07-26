@@ -175,16 +175,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             SYSDATETIME(),
                             GETUTCDATE()
                         ),
-                        ISNULL
-                        (
-                            @start_date,
-                            DATEADD
+                        DATEADD
                             (
                                 DAY,
                                 -7,
                                 SYSDATETIME()
                             )
-                        )
                     )
                 ELSE
                     DATEADD
@@ -212,11 +208,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             SYSDATETIME(),
                             GETUTCDATE()
                         ),
-                        ISNULL
-                        (
-                            @end_date,
-                            SYSDATETIME()
-                        )
+                        SYSDATETIME()
                     )
                 ELSE
                     DATEADD
@@ -1416,11 +1408,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         min_used_grant_mb =
             deqs.min_used_grant_kb * 8. / 1024.,
         max_used_grant_mb =
-            deqs.max_used_grant_kb * 8. / 1024.,
-        min_spills_mb =
-            deqs.min_spills * 8. / 1024.,
-        max_spills_mb =
-            deqs.max_spills * 8. / 1024.,     
+            deqs.max_used_grant_kb * 8. / 1024.,  
         deqs.min_reserved_threads,
         deqs.max_reserved_threads,
         deqs.min_used_threads,
@@ -1458,8 +1446,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ap.max_grant_mb,
         ap.min_used_grant_mb,
         ap.max_used_grant_mb,
-        ap.min_spills_mb,
-        ap.max_spills_mb,
         ap.min_reserved_threads,
         ap.max_reserved_threads,
         ap.min_used_threads,
@@ -1489,8 +1475,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             c.max_grant_mb,
             c.min_used_grant_mb,
             c.max_used_grant_mb,
-            c.min_spills_mb,
-            c.max_spills_mb,
             c.min_reserved_threads,
             c.max_reserved_threads,
             c.min_used_threads,

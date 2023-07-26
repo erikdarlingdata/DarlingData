@@ -94,7 +94,8 @@ BEGIN
     SELECT N'misuse of this procedure can harm performance' UNION ALL   
     SELECT N'be very careful about introducing observer overhead, especially when gathering query plans' UNION ALL   
     SELECT N'be even more careful when setting up permanent sessions!' UNION ALL   
-    SELECT N'for additional support: http://bit.ly/sp_HumanEvents';   
+    SELECT N'for additional support: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
+    SELECT N'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
     
     
     /*Introduction*/   
@@ -2652,7 +2653,7 @@ BEGIN
                     GETUTCDATE(),    
                     SYSDATETIME()   
                 ),    
-                c.value('@timestamp', 'datetime2')   
+                c.value('@timestamp', 'datetime2') 
             ),           
         database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),   
         database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),   
