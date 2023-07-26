@@ -1783,44 +1783,44 @@ BEGIN
                         GETUTCDATE(),    
                         SYSDATETIME()   
                     ),    
-                    c.value('@timestamp', 'datetime2')   
+                    oa.c.value('@timestamp', 'datetime2')   
                 ),   
-            event_type = c.value('@name', 'nvarchar(256)'),   
-            database_name = c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
-            object_name = c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
-            sql_text = c.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(MAX)'),   
-            statement = c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),   
-            showplan_xml = c.query('(data[@name="showplan_xml"]/value/*)[1]'),   
-            cpu_ms = c.value('(data[@name="cpu_time"]/value/text())[1]', 'bigint') / 1000.,   
-            logical_reads = (c.value('(data[@name="logical_reads"]/value/text())[1]', 'bigint') * 8) / 1024.,   
-            physical_reads = (c.value('(data[@name="physical_reads"]/value/text())[1]', 'bigint') * 8) / 1024.,   
-            duration_ms = c.value('(data[@name="duration"]/value/text())[1]', 'bigint') / 1000.,   
-            writes = (c.value('(data[@name="writes"]/value/text())[1]', 'bigint') * 8) / 1024.,   
-            spills_mb = (c.value('(data[@name="spills"]/value/text())[1]', 'bigint') * 8) / 1024.,   
-            row_count = c.value('(data[@name="row_count"]/value/text())[1]', 'bigint'),   
-            estimated_rows = c.value('(data[@name="estimated_rows"]/value/text())[1]', 'bigint'),   
-            dop = c.value('(data[@name="dop"]/value/text())[1]', 'int'),   
-            serial_ideal_memory_mb = c.value('(data[@name="serial_ideal_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
-            requested_memory_mb = c.value('(data[@name="requested_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
-            used_memory_mb = c.value('(data[@name="used_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
-            ideal_memory_mb = c.value('(data[@name="ideal_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
-            granted_memory_mb = c.value('(data[@name="granted_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
+            event_type = oa.c.value('@name', 'nvarchar(256)'),   
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
+            sql_text = oa.c.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(MAX)'),   
+            statement = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),   
+            showplan_xml = oa.c.query('(data[@name="showplan_xml"]/value/*)[1]'),   
+            cpu_ms = oa.c.value('(data[@name="cpu_time"]/value/text())[1]', 'bigint') / 1000.,   
+            logical_reads = (oa.c.value('(data[@name="logical_reads"]/value/text())[1]', 'bigint') * 8) / 1024.,   
+            physical_reads = (oa.c.value('(data[@name="physical_reads"]/value/text())[1]', 'bigint') * 8) / 1024.,   
+            duration_ms = oa.c.value('(data[@name="duration"]/value/text())[1]', 'bigint') / 1000.,   
+            writes = (oa.c.value('(data[@name="writes"]/value/text())[1]', 'bigint') * 8) / 1024.,   
+            spills_mb = (oa.c.value('(data[@name="spills"]/value/text())[1]', 'bigint') * 8) / 1024.,   
+            row_count = oa.c.value('(data[@name="row_count"]/value/text())[1]', 'bigint'),   
+            estimated_rows = oa.c.value('(data[@name="estimated_rows"]/value/text())[1]', 'bigint'),   
+            dop = oa.c.value('(data[@name="dop"]/value/text())[1]', 'int'),   
+            serial_ideal_memory_mb = oa.c.value('(data[@name="serial_ideal_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
+            requested_memory_mb = oa.c.value('(data[@name="requested_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
+            used_memory_mb = oa.c.value('(data[@name="used_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
+            ideal_memory_mb = oa.c.value('(data[@name="ideal_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
+            granted_memory_mb = oa.c.value('(data[@name="granted_memory_kb"]/value/text())[1]', 'bigint') / 1024.,   
             query_plan_hash_signed =    
                 CONVERT   
                 (   
                     binary(8),    
-                    c.value('(action[@name="query_plan_hash_signed"]/value/text())[1]', 'bigint')   
+                    oa.c.value('(action[@name="query_plan_hash_signed"]/value/text())[1]', 'bigint')   
                 ),   
             query_hash_signed =    
                 CONVERT   
                 (   
                     binary(8),    
-                    c.value('(action[@name="query_hash_signed"]/value/text())[1]', 'bigint')   
+                    oa.c.value('(action[@name="query_hash_signed"]/value/text())[1]', 'bigint')   
                 ),   
-            plan_handle = c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)')   
+            plan_handle = oa.c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)')   
         FROM #human_events_xml AS xet   
         OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)   
-        WHERE c.exist('(action[@name="query_hash_signed"]/value[. != 0])') = 1   
+        WHERE oa.c.exist('(action[@name="query_hash_signed"]/value[. != 0])') = 1   
     )   
     SELECT    
         q.*   
@@ -2125,19 +2125,19 @@ BEGIN
                         GETUTCDATE(),    
                         SYSDATETIME()   
                     ),    
-                    c.value('@timestamp', 'datetime2')   
+                    oa.c.value('@timestamp', 'datetime2')   
                 ),   
-            event_type = c.value('@name', 'nvarchar(256)'),   
-            database_name = c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
-            object_name = c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
-            statement_text = c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),   
-            compile_cpu_ms = c.value('(data[@name="cpu_time"]/value/text())[1]', 'bigint'),   
-            compile_duration_ms = c.value('(data[@name="duration"]/value/text())[1]', 'bigint')   
+            event_type = oa.c.value('@name', 'nvarchar(256)'),   
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
+            statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),   
+            compile_cpu_ms = oa.c.value('(data[@name="cpu_time"]/value/text())[1]', 'bigint'),   
+            compile_duration_ms = oa.c.value('(data[@name="duration"]/value/text())[1]', 'bigint')   
         INTO #compiles_1   
         FROM #human_events_xml AS xet   
         OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)   
-        WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 1   
-        AND   c.exist('@name[.= "sql_statement_post_compile"]') = 1   
+        WHERE oa.c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 1   
+        AND   oa.c.exist('@name[.= "sql_statement_post_compile"]') = 1   
         ORDER BY event_time;   
        
         ALTER TABLE #compiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;   
@@ -2209,12 +2209,12 @@ BEGIN
                         GETUTCDATE(),    
                         SYSDATETIME()   
                     ),    
-                    c.value('@timestamp', 'datetime2')   
+                    oa.c.value('@timestamp', 'datetime2')   
                 ),   
-            event_type = c.value('@name', 'nvarchar(256)'),   
-            database_name = c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
-            object_name = c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
-            statement_text = c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)')   
+            event_type = oa.c.value('@name', 'nvarchar(256)'),   
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
+            statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)')   
         INTO #compiles_0   
         FROM #human_events_xml AS xet   
         OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)   
@@ -2260,29 +2260,29 @@ BEGIN
                         GETUTCDATE(),    
                         SYSDATETIME()   
                     ),    
-                    c.value('@timestamp', 'datetime2')   
+                    oa.c.value('@timestamp', 'datetime2')   
                 ),   
-            event_type = c.value('@name', 'nvarchar(256)'),   
-            database_name = c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
-            sql_text = c.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(MAX)'),   
-            compile_cpu_time_ms = c.value('(data[@name="compile_cpu_time"]/value/text())[1]', 'bigint') / 1000.,   
-            compile_duration_ms = c.value('(data[@name="compile_duration"]/value/text())[1]', 'bigint') / 1000.,   
-            query_param_type = c.value('(data[@name="query_param_type"]/value/text())[1]', 'int'),   
-            is_cached = c.value('(data[@name="is_cached"]/value/text())[1]', 'bit'),   
-            is_recompiled = c.value('(data[@name="is_recompiled"]/value/text())[1]', 'bit'),   
-            compile_code = c.value('(data[@name="compile_code"]/text)[1]', 'nvarchar(256)'),                     
-            has_literals = c.value('(data[@name="has_literals"]/value/text())[1]', 'bit'),   
-            is_parameterizable = c.value('(data[@name="is_parameterizable"]/value/text())[1]', 'bit'),   
-            parameterized_values_count = c.value('(data[@name="parameterized_values_count"]/value/text())[1]', 'bigint'),   
-            query_plan_hash = c.value('xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])', 'binary(8)'),   
-            query_hash = c.value('xs:hexBinary((data[@name="query_hash"]/value/text())[1])', 'binary(8)'),   
-            plan_handle = c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)'),    
-            statement_sql_hash = c.value('xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])', 'varbinary(64)')   
+            event_type = oa.c.value('@name', 'nvarchar(256)'),   
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
+            sql_text = oa.c.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(MAX)'),   
+            compile_cpu_time_ms = oa.c.value('(data[@name="compile_cpu_time"]/value/text())[1]', 'bigint') / 1000.,   
+            compile_duration_ms = oa.c.value('(data[@name="compile_duration"]/value/text())[1]', 'bigint') / 1000.,   
+            query_param_type = oa.c.value('(data[@name="query_param_type"]/value/text())[1]', 'int'),   
+            is_cached = oa.c.value('(data[@name="is_cached"]/value/text())[1]', 'bit'),   
+            is_recompiled = oa.c.value('(data[@name="is_recompiled"]/value/text())[1]', 'bit'),   
+            compile_code = oa.c.value('(data[@name="compile_code"]/text)[1]', 'nvarchar(256)'),                     
+            has_literals = oa.c.value('(data[@name="has_literals"]/value/text())[1]', 'bit'),   
+            is_parameterizable = oa.c.value('(data[@name="is_parameterizable"]/value/text())[1]', 'bit'),   
+            parameterized_values_count = oa.c.value('(data[@name="parameterized_values_count"]/value/text())[1]', 'bigint'),   
+            query_plan_hash = oa.c.value('xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])', 'binary(8)'),   
+            query_hash = oa.c.value('xs:hexBinary((data[@name="query_hash"]/value/text())[1])', 'binary(8)'),   
+            plan_handle = oa.c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)'),    
+            statement_sql_hash = oa.c.value('xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])', 'varbinary(64)')   
         INTO #parameterization   
         FROM #human_events_xml AS xet   
         OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)   
-        WHERE c.exist('@name[. = "query_parameterization_data"]') = 1   
-        AND   c.exist('(data[@name="is_recompiled"]/value[. = "false"])') = 1   
+        WHERE oa.c.exist('@name[. = "query_parameterization_data"]') = 1   
+        AND   oa.c.exist('(data[@name="is_recompiled"]/value[. = "false"])') = 1   
         ORDER BY event_time;   
            
         IF @debug = 1 BEGIN SELECT N'#parameterization' AS table_name, * FROM #parameterization AS p; END;   
@@ -2367,19 +2367,19 @@ IF @compile_events = 1
                         GETUTCDATE(),    
                         SYSDATETIME()   
                     ),    
-                    c.value('@timestamp', 'datetime2')   
+                    oa.c.value('@timestamp', 'datetime2')   
                 ),   
-            event_type = c.value('@name', 'nvarchar(256)'),   
-            database_name = c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
-            object_name = c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
-            recompile_cause = c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)'),   
-            statement_text = c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),   
-            recompile_cpu_ms = c.value('(data[@name="cpu_time"]/value/text())[1]', 'bigint'),   
-            recompile_duration_ms = c.value('(data[@name="duration"]/value/text())[1]', 'bigint')   
+            event_type = oa.c.value('@name', 'nvarchar(256)'),   
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
+            recompile_cause = oa.c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)'),   
+            statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),   
+            recompile_cpu_ms = oa.c.value('(data[@name="cpu_time"]/value/text())[1]', 'bigint'),   
+            recompile_duration_ms = oa.c.value('(data[@name="duration"]/value/text())[1]', 'bigint')   
         INTO #recompiles_1   
         FROM #human_events_xml AS xet   
         OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)   
-        WHERE c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 0   
+        WHERE oa.c.exist('(data[@name="is_recompile"]/value[. = "false"])') = 0   
         ORDER BY event_time;   
            
         ALTER TABLE #recompiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;   
@@ -2451,13 +2451,13 @@ IF @compile_events = 1
                         GETUTCDATE(),    
                         SYSDATETIME()   
                     ),    
-                    c.value('@timestamp', 'datetime2')   
+                    oa.c.value('@timestamp', 'datetime2')   
                 ),   
-            event_type = c.value('@name', 'nvarchar(256)'),   
-            database_name = c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
-            object_name = c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
-            recompile_cause = c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)'),   
-            statement_text = c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)')   
+            event_type = oa.c.value('@name', 'nvarchar(256)'),   
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),   
+            recompile_cause = oa.c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)'),   
+            statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)')   
         INTO #recompiles_0   
         FROM #human_events_xml AS xet   
         OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)   
@@ -2508,32 +2508,32 @@ BEGIN
                         GETUTCDATE(),    
                         SYSDATETIME()   
                     ),    
-                    c.value('@timestamp', 'datetime2')   
+                    oa.c.value('@timestamp', 'datetime2')   
                 ),   
-            event_type = c.value('@name', 'nvarchar(256)'),   
-            database_name = c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
-            wait_type = c.value('(data[@name="wait_type"]/text)[1]', 'nvarchar(256)'),   
-            duration_ms = c.value('(data[@name="duration"]/value/text())[1]', 'bigint') ,   
-            signal_duration_ms = c.value('(data[@name="signal_duration"]/value/text())[1]', 'bigint'),   
+            event_type = oa.c.value('@name', 'nvarchar(256)'),   
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),                   
+            wait_type = oa.c.value('(data[@name="wait_type"]/text)[1]', 'nvarchar(256)'),   
+            duration_ms = oa.c.value('(data[@name="duration"]/value/text())[1]', 'bigint') ,   
+            signal_duration_ms = oa.c.value('(data[@name="signal_duration"]/value/text())[1]', 'bigint'),   
             wait_resource =    
                 CASE    
                     WHEN @v = 11    
                     THEN N'Not Available < 2014'    
-                    ELSE c.value('(data[@name="wait_resource"]/value/text())[1]', 'nvarchar(256)')    
+                    ELSE oa.c.value('(data[@name="wait_resource"]/value/text())[1]', 'nvarchar(256)')    
                 END,   
            query_plan_hash_signed =    
                CONVERT   
                (   
                    binary(8),    
-                   c.value('(action[@name="query_plan_hash_signed"]/value/text())[1]', 'bigint')   
+                   oa.c.value('(action[@name="query_plan_hash_signed"]/value/text())[1]', 'bigint')   
                ),   
             query_hash_signed =    
                 CONVERT   
                 (   
                     binary(8),    
-                    c.value('(action[@name="query_hash_signed"]/value/text())[1]', 'bigint')   
+                    oa.c.value('(action[@name="query_hash_signed"]/value/text())[1]', 'bigint')   
                 ),   
-            plan_handle = c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)')   
+            plan_handle = oa.c.value('xs:hexBinary((action[@name="plan_handle"]/value/text())[1])', 'varbinary(64)')   
         FROM    
         (   
             SELECT TOP (2147483647)    
@@ -2642,110 +2642,152 @@ END;
    
 IF LOWER(@event_type) LIKE N'%lock%'   
 BEGIN   
-    SELECT    
-        event_time =    
-            DATEADD   
-            (   
-                MINUTE,    
-                DATEDIFF   
-                (   
-                    MINUTE,    
-                    GETUTCDATE(),    
-                    SYSDATETIME()   
-                ),    
-                c.value('@timestamp', 'datetime2') 
-            ),           
-        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),   
-        database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),   
-        object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),   
-        transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),   
-        resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),   
-        monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),   
-        spid = bd.value('(process/@spid)[1]', 'int'),   
-        ecid = bd.value('(process/@ecid)[1]', 'int'),               
-        query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),   
-        wait_time = bd.value('(process/@waittime)[1]', 'bigint'),   
-        transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),   
-        last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),   
-        last_transaction_completed = CONVERT(datetime2, NULL),   
-        wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),   
-        lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),   
-        status = bd.value('(process/@status)[1]', 'nvarchar(10)'),   
-        priority = bd.value('(process/@priority)[1]', 'int'),   
-        transaction_count = bd.value('(process/@trancount)[1]', 'int'),   
-        client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),   
-        host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),   
-        login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),   
-        isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),   
-        log_used = bd.value('(process/@logused)[1]', 'bigint'),   
-        clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),   
-        clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),   
-        activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,   
-        blocked_process_report = c.query('.')   
-    INTO #blocked   
-    FROM #human_events_xml AS bx   
-    OUTER APPLY bx.human_events_xml.nodes('//event') AS oa(c)   
-    OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd);   
+    SELECT
+        event_time =
+            DATEADD
+            (
+                MINUTE,
+                DATEDIFF
+                (
+                    MINUTE,
+                    GETUTCDATE(),
+                    SYSDATETIME()
+                ),
+                oa.c.value('@timestamp', 'datetime2')
+            ),       
+        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
+        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
+        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+        transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
+        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
+        monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'int'),
+        blocking_spid = bg.value('(process/@spid)[1]', 'int'),
+        blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
+        blocked_spid = bd.value('(process/@spid)[1]', 'int'),
+        blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
+        query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+        wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
+        transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
+        last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
+        last_transaction_completed = CONVERT(datetime2, NULL),
+        wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+        lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
+        status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
+        priority = bd.value('(process/@priority)[1]', 'int'),
+        transaction_count = bd.value('(process/@trancount)[1]', 'int'),
+        client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
+        host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
+        login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
+        isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
+        log_used = bd.value('(process/@logused)[1]', 'bigint'),
+        clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
+        clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
+        currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
+        currentdbid = bd.value('(process/@currentdb)[1]', 'int'),
+        blocking_level = 0,
+        sort_order = CAST('' AS varchar(400)),
+        activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
+        blocked_process_report = oa.c.query('.')
+    INTO #blocked
+    FROM #human_events_xml AS bx
+    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
+    OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
+    OPTION(RECOMPILE); 
+
+    ALTER TABLE #blocked
+    ADD query_text AS
+       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+           query_text_pre COLLATE Latin1_General_BIN2,
+       NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+       NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+       NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
+    PERSISTED;
+    
+    ALTER TABLE #blocked
+    ADD blocking_desc AS 
+            ISNULL
+            (
+                '(' + 
+                CAST(blocking_spid AS varchar(10)) + 
+                ':' + 
+                CAST(blocking_ecid AS varchar(10)) + 
+                ')', 
+                'unresolved process'
+            ) PERSISTED,
+        blocked_desc AS
+            '(' + 
+            CAST(blocked_spid AS varchar(10)) + 
+            ':' + 
+            CAST(blocked_ecid AS varchar(10)) + 
+            ')' PERSISTED;
+    
+    CREATE CLUSTERED INDEX 
+        blocking 
+    ON #blocked
+        (monitor_loop, blocking_desc);
+    
+    CREATE INDEX 
+        blocked 
+    ON #blocked
+        (monitor_loop, blocked_desc);
        
     IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa; END;   
    
-    SELECT    
-        event_time =    
-            DATEADD   
-            (   
-                MINUTE,    
-                DATEDIFF   
-                (   
-                    MINUTE,    
-                    GETUTCDATE(),    
-                    SYSDATETIME()   
-                ),    
-                c.value('@timestamp', 'datetime2')   
-            ),           
-        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),   
-        database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),   
-        object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),   
-        transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),   
-        resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),   
-        monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),   
-        spid = bg.value('(process/@spid)[1]', 'int'),   
-        ecid = bg.value('(process/@ecid)[1]', 'int'),   
-        query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),   
-        wait_time = bg.value('(process/@waittime)[1]', 'bigint'),   
-        transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(256)'),   
-        last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),   
-        last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),   
-        wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),   
-        lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),   
-        status = bg.value('(process/@status)[1]', 'nvarchar(10)'),   
-        priority = bg.value('(process/@priority)[1]', 'int'),   
-        transaction_count = bg.value('(process/@trancount)[1]', 'int'),   
-        client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),   
-        host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),   
-        login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),   
-        isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),   
-        log_used = bg.value('(process/@logused)[1]', 'bigint'),   
-        clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),   
-        clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),   
-        activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,   
-        blocked_process_report = c.query('.')   
-    INTO #blocking   
-    FROM #human_events_xml AS bx   
-    OUTER APPLY bx.human_events_xml.nodes('//event') AS oa(c)   
-    OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg);   
-   
-    IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa; END;   
-   
-    ALTER TABLE #blocked    
-    ADD query_text AS  
-       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(   
-       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(   
-       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(   
-           query_text_pre COLLATE Latin1_General_BIN2,   
-       NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),   
-       NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),   
-       NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')    
-    PERSISTED;   
+    SELECT
+        event_time =
+            DATEADD
+            (
+                MINUTE,
+                DATEDIFF
+                (
+                    MINUTE,
+                    GETUTCDATE(),
+                    SYSDATETIME()
+                ),
+                oa.c.value('@timestamp', 'datetime2')
+            ),       
+        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
+        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
+        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+        transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
+        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
+        monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'int'),
+        blocking_spid = bg.value('(process/@spid)[1]', 'int'),
+        blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
+        blocked_spid = bd.value('(process/@spid)[1]', 'int'),
+        blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
+        query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+        wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
+        transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(256)'),
+        last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
+        last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
+        wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+        lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
+        status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
+        priority = bg.value('(process/@priority)[1]', 'int'),
+        transaction_count = bg.value('(process/@trancount)[1]', 'int'),
+        client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
+        host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
+        login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
+        isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
+        log_used = bg.value('(process/@logused)[1]', 'bigint'),
+        clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+        clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+        currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
+        currentdbid = bg.value('(process/@currentdb)[1]', 'int'),
+        blocking_level = 0,
+        sort_order = CAST('' AS varchar(400)),
+        activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
+        blocked_process_report = oa.c.query('.')  
+    INTO #blocking 
+    FROM #human_events_xml AS bx    
+    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
+    OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
+    OPTION(RECOMPILE); 
    
     ALTER TABLE #blocking    
     ADD query_text AS
@@ -2756,213 +2798,556 @@ BEGIN
        NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),   
        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),   
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')    
-    PERSISTED;   
+    PERSISTED;  
+
+    ALTER TABLE #blocking
+    ADD blocking_desc AS 
+            ISNULL
+            (
+                '(' + 
+                CAST(blocking_spid AS varchar(10)) + 
+                ':' + 
+                CAST(blocking_ecid AS varchar(10)) + 
+                ')', 
+                'unresolved process'
+            ) PERSISTED,
+        blocked_desc AS
+            '(' + 
+            CAST(blocked_spid AS varchar(10)) + 
+            ':' + 
+            CAST(blocked_ecid AS varchar(10)) + 
+            ')' PERSISTED;
+    
+    CREATE CLUSTERED INDEX 
+        blocking 
+    ON #blocking
+        (monitor_loop, blocking_desc);
+    
+    CREATE INDEX 
+        blocked 
+    ON #blocking
+        (monitor_loop, blocked_desc);
+    
+    IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa; END; 
+
+    WITH 
+        hierarchy AS 
+    (
+        SELECT 
+            b.monitor_loop, 
+            blocking_desc,
+            blocked_desc,
+            level = 0,
+            sort_order = 
+                CAST
+                (
+                    blocking_desc + 
+                    ' <-- ' + 
+                    blocked_desc AS varchar(400)
+                )
+        FROM #blocking b
+        WHERE NOT EXISTS 
+        (
+            SELECT 
+                1/0
+            FROM #blocking b2
+            WHERE b2.monitor_loop = b.monitor_loop
+            AND   b2.blocked_desc = b.blocking_desc
+        )
+    
+        UNION ALL
+    
+        SELECT 
+            bg.monitor_loop,
+            bg.blocking_desc,
+            bg.blocked_desc,
+            h.level + 1,
+            sort_order = 
+                CAST
+                (
+                    h.sort_order + 
+                    ' ' + 
+                    bg.blocking_desc + 
+                    ' <-- ' + 
+                    bg.blocked_desc AS varchar(400)
+                )
+        FROM hierarchy h
+        JOIN #blocking bg
+          ON  bg.monitor_loop = h.monitor_loop
+          AND bg.blocking_desc = h.blocked_desc
+    )
+    UPDATE #blocked
+    SET 
+        blocking_level = h.level,
+        sort_order = h.sort_order
+    FROM #blocked b
+    JOIN hierarchy h
+      ON  h.monitor_loop = b.monitor_loop
+      AND h.blocking_desc = b.blocking_desc
+      AND h.blocked_desc = b.blocked_desc
+    OPTION(RECOMPILE);
+    
+    UPDATE #blocking
+    SET 
+        blocking_level = bd.blocking_level,
+        sort_order = bd.sort_order
+    FROM #blocking bg
+    JOIN #blocked bd
+      ON  bd.monitor_loop = bg.monitor_loop
+      AND bd.blocking_desc = bg.blocking_desc
+      AND bd.blocked_desc = bg.blocked_desc
+    OPTION(RECOMPILE);
    
-    SELECT   
-        kheb.event_time,   
-        kheb.database_name,   
-        contentious_object =    
-            ISNULL   
+    SELECT
+        kheb.event_time,
+        kheb.database_name,
+        contentious_object =
+            ISNULL
+            (
+                kheb.contentious_object,
+                N'Unresolved: ' +
+                N'database: ' +
+                kheb.database_name +
+                N' object_id: ' +
+                RTRIM(kheb.object_id)
+            ),
+        kheb.activity,
+        blocking_tree = 
+            REPLICATE(' > ', kheb.blocking_level) + 
+            CASE kheb.activity
+                 WHEN 'blocking' 
+                 THEN '(' + kheb.blocking_desc + ') is blocking (' + kheb.blocked_desc + ')'
+                 ELSE ' > (' + kheb.blocked_desc + ') is blocked by (' + kheb.blocking_desc + ')'
+            END,
+        spid = 
+            CASE kheb.activity
+                 WHEN 'blocking' 
+                 THEN kheb.blocking_spid
+                 ELSE kheb.blocked_spid
+            END,
+        ecid =
+            CASE kheb.activity
+                 WHEN 'blocking' 
+                 THEN kheb.blocking_ecid
+                 ELSE kheb.blocked_ecid
+            END,    
+        query_text =
+            CASE
+                WHEN kheb.query_text
+                     LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
+                THEN
+                    (
+                        SELECT
+                            [processing-instruction(query)] =                                      
+                                OBJECT_SCHEMA_NAME
+                                (
+                                        SUBSTRING
+                                        (
+                                            kheb.query_text,
+                                            CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
+                                            LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
+                                        )
+                                        ,
+                                        SUBSTRING
+                                        (
+                                            kheb.query_text,
+                                            CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
+                                            CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
+                                        )
+                                ) +
+                                N'.' +
+                                OBJECT_NAME
+                                (
+                                     SUBSTRING
+                                     (
+                                         kheb.query_text,
+                                         CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
+                                         LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
+                                     )
+                                     ,
+                                     SUBSTRING
+                                     (
+                                         kheb.query_text,
+                                         CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
+                                         CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
+                                     )
+                                )
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    )
+                ELSE
+                    (
+                        SELECT
+                            [processing-instruction(query)] =
+                                kheb.query_text
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    )
+            END,
+        wait_time_ms =
+            kheb.wait_time,
+        kheb.status,
+        kheb.isolation_level,
+        kheb.lock_mode,
+        kheb.resource_owner_type,
+        kheb.transaction_count,
+        kheb.transaction_name,
+        kheb.last_transaction_started,
+        kheb.last_transaction_completed,
+        client_option_1 =
+            SUBSTRING
             (   
-                kheb.contentious_object,    
-                N'Unresolved'   
-            ),   
-        kheb.activity,   
-        kheb.monitor_loop,   
-        kheb.spid,   
-        kheb.ecid,   
-        query_text =   
-    CASE    
-        WHEN kheb.query_text   
-        LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'   
-        THEN    
-            (   
-                SELECT   
-                    [processing-instruction(query)] =                                          
-                        OBJECT_SCHEMA_NAME   
-                        (   
-                                SUBSTRING   
-                                (   
-                                    kheb.query_text,   
-                                    CHARINDEX(N'Object Id = ', kheb.query_text) + 12,   
-                                    LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)   
-                                )   
-                                ,   
-                                SUBSTRING   
-                                (   
-                                    kheb.query_text,    
-                                    CHARINDEX(N'Database Id = ', kheb.query_text) + 14,    
-                                    CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)   
-                                )   
-                        ) +    
-                        N'.' +    
-                        OBJECT_NAME   
-                        (   
-                             SUBSTRING   
-                             (   
-                                 kheb.query_text,   
-                                 CHARINDEX(N'Object Id = ', kheb.query_text) + 12,   
-                                 LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)   
-                             )   
-                             ,   
-                             SUBSTRING   
-                             (   
-                                 kheb.query_text,    
-                                 CHARINDEX(N'Database Id = ', kheb.query_text) + 14,    
-                                 CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)   
-                             )   
-                        )   
-                FOR XML   
-                    PATH(N''),   
-                    TYPE   
-            )   
-        ELSE   
-            (   
-                SELECT    
-                    [processing-instruction(query)] =    
-                        kheb.query_text   
-                FOR XML   
-                    PATH(N''),   
-                    TYPE   
-            )   
-    END,   
-        wait_time_ms =    
-            kheb.wait_time,   
-        kheb.status,   
-        kheb.isolation_level,   
-        c.sql_handles,   
-        kheb.resource_owner_type,   
-        kheb.lock_mode,   
-        kheb.transaction_count,   
-        kheb.transaction_name,   
-        kheb.last_transaction_started,   
-        kheb.last_transaction_completed,   
-        client_option_1 =    
-            SUBSTRING   
-            (       
-                CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 8 = 8 THEN ', ANSI_WARNINGS' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 16 = 16 THEN ', ANSI_PADDING' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 32 = 32 THEN ', ANSI_NULLS' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 64 = 64 THEN ', ARITHABORT' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 128 = 128 THEN ', ARITHIGNORE' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 256 = 256 THEN ', QUOTED_IDENTIFIER' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 512 = 512 THEN ', NOCOUNT' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 1024 = 1024 THEN ', ANSI_NULL_DFLT_ON' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 2048 = 2048 THEN ', ANSI_NULL_DFLT_OFF' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 4096 = 4096 THEN ', CONCAT_NULL_YIELDS_NULL' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 8192 = 8192 THEN ', NUMERIC_ROUNDABORT' ELSE '' END +    
-                CASE WHEN kheb.clientoption1 & 16384 = 16384 THEN ', XACT_ABORT' ELSE '' END,   
-                3,   
-                8000   
-            ),   
-        client_option_2 =    
-            SUBSTRING   
-            (   
-                CASE WHEN kheb.clientoption2 & 1024 = 1024 THEN ', DB CHAINING' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 2048 = 2048 THEN ', NUMERIC ROUNDABORT' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 4096 = 4096 THEN ', ARITHABORT' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 8192 = 8192 THEN ', ANSI PADDING' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 16384 = 16384 THEN ', ANSI NULL DEFAULT' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 65536 = 65536 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 131072 = 131072 THEN ', RECURSIVE TRIGGERS' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 1048576 = 1048576 THEN ', DEFAULT TO LOCAL CURSOR' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 8388608 = 8388608 THEN ', QUOTED IDENTIFIER' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 16777216 = 16777216 THEN ', AUTO CREATE STATISTICS' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 33554432 = 33554432 THEN ', CURSOR CLOSE ON COMMIT' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 67108864 = 67108864 THEN ', ANSI NULLS' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 268435456 = 268435456 THEN ', ANSI WARNINGS' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 536870912 = 536870912 THEN ', FULL TEXT ENABLED' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 1073741824 = 1073741824 THEN ', AUTO UPDATE STATISTICS' ELSE '' END +    
-                CASE WHEN kheb.clientoption2 & 1469283328 = 1469283328 THEN ', ALL SETTABLE OPTIONS' ELSE '' END,   
-                3,   
-                8000   
-            ),   
-        kheb.wait_resource,   
-        kheb.priority,   
-        kheb.log_used,   
-        kheb.client_app,   
-        kheb.host_name,   
-        kheb.login_name,   
-        kheb.transaction_id,   
-        kheb.blocked_process_report   
-    INTO #blocks   
-    FROM    
-    (                   
-        SELECT    
-            bg.*,    
-            contentious_object =    
-                OBJECT_NAME   
-                (   
-                    bg.object_id,    
-                    bg.database_id   
-                )   
-        FROM #blocking AS bg   
-           
-        UNION ALL    
-           
-        SELECT    
-            bd.*,    
-            contentious_object =    
-                OBJECT_NAME   
-                (   
-                    bd.object_id,    
-                    bd.database_id   
-                )    
-        FROM #blocked AS bd              
-    ) AS kheb   
-    CROSS APPLY    
-    (   
-      SELECT    
-          sql_handles =    
-              STUFF   
-              (   
-                  (   
-                      SELECT DISTINCT   
-                          ',' +   
-                          RTRIM   
-                          (   
-                              n.c.value('@sqlhandle', 'varchar(130)')   
-                          )   
-                      FROM kheb.blocked_process_report.nodes('//executionStack/frame') AS n(c)   
-                      FOR XML   
-                          PATH(N''),   
-                          TYPE   
-                  ).value('./text()[1]', 'varchar(max)'),   
-                  1,   
-                  1,   
-                  ''   
-              )                       
-     ) AS c;   
+                CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 8 = 8 THEN ', ANSI_WARNINGS' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 16 = 16 THEN ', ANSI_PADDING' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 32 = 32 THEN ', ANSI_NULLS' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 64 = 64 THEN ', ARITHABORT' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 128 = 128 THEN ', ARITHIGNORE' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 256 = 256 THEN ', QUOTED_IDENTIFIER' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 512 = 512 THEN ', NOCOUNT' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 1024 = 1024 THEN ', ANSI_NULL_DFLT_ON' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 2048 = 2048 THEN ', ANSI_NULL_DFLT_OFF' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 4096 = 4096 THEN ', CONCAT_NULL_YIELDS_NULL' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 8192 = 8192 THEN ', NUMERIC_ROUNDABORT' ELSE '' END +
+                CASE WHEN kheb.clientoption1 & 16384 = 16384 THEN ', XACT_ABORT' ELSE '' END,
+                3,
+                8000
+            ),
+        client_option_2 =
+            SUBSTRING
+            (
+                CASE WHEN kheb.clientoption2 & 1024 = 1024 THEN ', DB CHAINING' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 2048 = 2048 THEN ', NUMERIC ROUNDABORT' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 4096 = 4096 THEN ', ARITHABORT' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 8192 = 8192 THEN ', ANSI PADDING' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 16384 = 16384 THEN ', ANSI NULL DEFAULT' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 65536 = 65536 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 131072 = 131072 THEN ', RECURSIVE TRIGGERS' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 1048576 = 1048576 THEN ', DEFAULT TO LOCAL CURSOR' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 8388608 = 8388608 THEN ', QUOTED IDENTIFIER' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 16777216 = 16777216 THEN ', AUTO CREATE STATISTICS' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 33554432 = 33554432 THEN ', CURSOR CLOSE ON COMMIT' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 67108864 = 67108864 THEN ', ANSI NULLS' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 268435456 = 268435456 THEN ', ANSI WARNINGS' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 536870912 = 536870912 THEN ', FULL TEXT ENABLED' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 1073741824 = 1073741824 THEN ', AUTO UPDATE STATISTICS' ELSE '' END +
+                CASE WHEN kheb.clientoption2 & 1469283328 = 1469283328 THEN ', ALL SETTABLE OPTIONS' ELSE '' END,
+                3,
+                8000
+            ),
+        kheb.wait_resource,
+        kheb.priority,
+        kheb.log_used,
+        kheb.client_app,
+        kheb.host_name,
+        kheb.login_name,
+        kheb.transaction_id,
+        kheb.database_id,
+        kheb.currentdbname,
+        kheb.currentdbid,
+        kheb.blocked_process_report,
+        kheb.sort_order
+    INTO #blocks
+    FROM
+    (               
+        SELECT
+            bg.*,
+            contentious_object =
+                OBJECT_NAME
+                (
+                    bg.object_id,
+                    bg.database_id
+                )
+        FROM #blocking AS bg
+        WHERE (bg.database_name = @database_name
+               OR @database_name IS NULL)
+       
+        UNION ALL
+       
+        SELECT
+            bd.*,
+            contentious_object =
+                OBJECT_NAME
+                (
+                    bd.object_id,
+                    bd.database_id
+                )
+        FROM #blocked AS bd     
+        WHERE (bd.database_name = @database_name
+               OR @database_name IS NULL)
+    ) AS kheb
+    OPTION(RECOMPILE);
    
-    SELECT   
-        b.*   
-    FROM   
-    (   
-        SELECT   
-            b.*,   
-            n =    
-                ROW_NUMBER() OVER   
-                (   
-                    PARTITION BY   
-                        b.transaction_id,   
-                        b.spid,   
-                        b.ecid   
-                    ORDER BY   
-                        b.event_time DESC   
-                )   
-        FROM #blocks AS b   
-    ) AS b   
-    WHERE b.n = 1   
-    ORDER BY    
-        b.event_time DESC,   
-        CASE    
-            WHEN b.activity = 'blocking'    
-            THEN 1   
-            ELSE 999    
-        END;   
+    SELECT
+        blocked_process_report =
+            'blocked_process_report',
+        b.event_time,
+        b.database_name,
+        b.currentdbname,
+        b.contentious_object,
+        b.activity,
+        b.blocking_tree,
+        b.spid,
+        b.ecid,
+        b.query_text,
+        b.wait_time_ms,
+        b.status,
+        b.isolation_level,
+        b.lock_mode,
+        b.resource_owner_type,
+        b.transaction_count,
+        b.transaction_name,
+        b.last_transaction_started,
+        b.last_transaction_completed,
+        b.client_option_1,
+        b.client_option_2,
+        b.wait_resource,
+        b.priority,
+        b.log_used,
+        b.client_app,
+        b.host_name,
+        b.login_name,
+        b.transaction_id,
+        b.blocked_process_report
+    FROM
+    (
+        SELECT
+            b.*,
+            n =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        b.transaction_id,
+                        b.spid,
+                        b.ecid
+                    ORDER BY
+                        b.event_time DESC
+                )
+        FROM #blocks AS b
+    ) AS b
+    WHERE b.n = 1
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    ORDER BY
+        b.sort_order,
+        CASE
+            WHEN b.activity = 'blocking'
+            THEN -1
+            ELSE +1
+        END
+    OPTION(RECOMPILE);   
+
+    SELECT DISTINCT
+        b.*
+    INTO #available_plans   
+    FROM
+    (
+        SELECT
+            available_plans =
+                'available_plans',
+            b.database_name,
+            b.database_id,
+            b.currentdbname,
+            b.currentdbid,
+            b.contentious_object,
+            query_text =
+                TRY_CAST(b.query_text AS nvarchar(MAX)),
+            sql_handle =
+                CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
+            stmtstart =
+                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+            stmtend =
+                ISNULL(n.c.value('@stmtend', 'int'), -1)
+        FROM #blocks AS b
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        WHERE (b.database_name = @database_name
+                OR @database_name IS NULL)
+        AND  (b.contentious_object = @object_name
+                OR @object_name IS NULL)
+       
+        UNION ALL
+       
+        SELECT
+            available_plans =
+                'available_plans',
+            b.database_name,
+            b.database_id,
+            b.currentdbname,
+            b.currentdbid,
+            b.contentious_object,
+            query_text =
+                TRY_CAST(b.query_text AS nvarchar(MAX)),
+            sql_handle =
+                CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
+            stmtstart =
+                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+            stmtend =
+                ISNULL(n.c.value('@stmtend', 'int'), -1)
+        FROM #blocks AS b
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        WHERE (b.database_name = @database_name
+                OR @database_name IS NULL)
+        AND  (b.contentious_object = @object_name
+                OR @object_name IS NULL)
+    ) AS b
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1 BEGIN SELECT '#available_plans' AS table_name, * FROM #available_plans AS wa OPTION(RECOMPILE); END;
+    
+    SELECT
+        deqs.sql_handle,
+        deqs.plan_handle,
+        deqs.statement_start_offset,
+        deqs.statement_end_offset,
+        deqs.creation_time,
+        deqs.last_execution_time,
+        deqs.execution_count,
+        total_worker_time_ms =
+            deqs.total_worker_time / 1000.,
+        avg_worker_time_ms =
+            CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
+        total_elapsed_time_ms =
+            deqs.total_elapsed_time / 1000.,
+        avg_elapsed_time =
+            CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
+        executions_per_second =
+            ISNULL
+            (
+                deqs.execution_count /
+                    NULLIF
+                    (
+                        DATEDIFF
+                        (
+                            SECOND,
+                            deqs.creation_time,
+                            deqs.last_execution_time
+                        ),
+                        0
+                    ),
+                    0
+            ),
+        total_physical_reads_mb =
+            deqs.total_physical_reads * 8. / 1024.,
+        total_logical_writes_mb =
+            deqs.total_logical_writes * 8. / 1024.,
+        total_logical_reads_mb =
+            deqs.total_logical_reads * 8. / 1024.,
+        min_grant_mb =
+            deqs.min_grant_kb * 8. / 1024.,
+        max_grant_mb =
+            deqs.max_grant_kb * 8. / 1024.,
+        min_used_grant_mb =
+            deqs.min_used_grant_kb * 8. / 1024.,
+        max_used_grant_mb =
+            deqs.max_used_grant_kb * 8. / 1024.,   
+        deqs.min_reserved_threads,
+        deqs.max_reserved_threads,
+        deqs.min_used_threads,
+        deqs.max_used_threads,
+        deqs.total_rows
+    INTO #dm_exec_query_stats
+    FROM sys.dm_exec_query_stats AS deqs
+    WHERE EXISTS
+    (
+       SELECT
+           1/0
+       FROM #available_plans AS ap
+       WHERE ap.sql_handle = deqs.sql_handle
+    )
+    AND deqs.query_hash IS NOT NULL;
+    
+    CREATE CLUSTERED INDEX 
+        deqs 
+    ON #dm_exec_query_stats
+    (
+        sql_handle, 
+        plan_handle
+    );
+    
+    SELECT
+        ap.available_plans,
+        ap.database_name,
+        ap.currentdbname,
+        query_text =
+            TRY_CAST(ap.query_text AS xml),
+        ap.query_plan,
+        ap.creation_time,
+        ap.last_execution_time,
+        ap.execution_count,
+        ap.executions_per_second,
+        ap.total_worker_time_ms,
+        ap.avg_worker_time_ms,
+        ap.total_elapsed_time_ms,
+        ap.avg_elapsed_time,
+        ap.total_logical_reads_mb,
+        ap.total_physical_reads_mb,
+        ap.total_logical_writes_mb,
+        ap.min_grant_mb,
+        ap.max_grant_mb,
+        ap.min_used_grant_mb,
+        ap.max_used_grant_mb,
+        ap.min_reserved_threads,
+        ap.max_reserved_threads,
+        ap.min_used_threads,
+        ap.max_used_threads,
+        ap.total_rows,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset
+    FROM
+    (
+    
+        SELECT
+            ap.*,
+            c.statement_start_offset,
+            c.statement_end_offset,
+            c.creation_time,
+            c.last_execution_time,
+            c.execution_count,
+            c.total_worker_time_ms,
+            c.avg_worker_time_ms,
+            c.total_elapsed_time_ms,
+            c.avg_elapsed_time,
+            c.executions_per_second,
+            c.total_physical_reads_mb,
+            c.total_logical_writes_mb,
+            c.total_logical_reads_mb,
+            c.min_grant_mb,
+            c.max_grant_mb,
+            c.min_used_grant_mb,
+            c.max_used_grant_mb,
+            c.min_reserved_threads,
+            c.max_reserved_threads,
+            c.min_used_threads,
+            c.max_used_threads,
+            c.total_rows,
+            c.query_plan
+        FROM #available_plans AS ap
+        OUTER APPLY
+        (
+            SELECT
+                deqs.*,
+                query_plan =
+                    TRY_CAST(deps.query_plan AS xml)
+            FROM #dm_exec_query_stats deqs
+            OUTER APPLY sys.dm_exec_text_query_plan
+            (
+                deqs.plan_handle,
+                deqs.statement_start_offset,
+                deqs.statement_end_offset
+            ) AS deps
+            WHERE deqs.sql_handle = ap.sql_handle
+            AND   deps.dbid IN (ap.database_id, ap.currentdbid)
+        ) AS c
+    ) AS ap
+    WHERE ap.query_plan IS NOT NULL
+    ORDER BY
+        ap.avg_worker_time_ms DESC
+    OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 END;   
    
 /* End magic happening */   
@@ -3234,13 +3619,13 @@ BEGIN
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +   
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +   
                                  N'  database_name sysname NULL, wait_type nvarchar(60) NULL, duration_ms bigint NULL, signal_duration_ms bigint NULL, ' + @nc10 +   
-                                 N'  wait_resource nvarchar(256) NULL,  query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, plan_handle varbinary(64) NULL );'   
+                                 N'  wait_resource nvarchar(256) NULL, query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, plan_handle varbinary(64) NULL );'   
                             WHEN @event_type_check LIKE N'%lock%'   
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +   
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, ' + @nc10 +   
                                  N'  activity nvarchar(20) NULL, database_name sysname NULL, database_id integer NULL, object_id bigint NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + @nc10 +   
                                  N'  transaction_id bigint NULL, resource_owner_type nvarchar(256) NULL, monitor_loop integer NULL, spid integer NULL, ecid integer NULL, query_text nvarchar(MAX) NULL, ' +    
-                                 N'  wait_time bigint NULL, transaction_name nvarchar(256) NULL,  last_transaction_started nvarchar(30) NULL, wait_resource nvarchar(100) NULL, ' + @nc10 +   
+                                 N'  wait_time bigint NULL, transaction_name nvarchar(256) NULL, last_transaction_started nvarchar(30) NULL, wait_resource nvarchar(100) NULL, ' + @nc10 +   
                                  N'  lock_mode nvarchar(10) NULL, status nvarchar(10) NULL, priority integer NULL, transaction_count integer NULL, ' + @nc10 +   
                                  N'  client_app sysname NULL, host_name sysname NULL, login_name sysname NULL, isolation_level nvarchar(30) NULL, sql_handle varbinary(64) NULL, blocked_process_report XML NULL );'   
                             WHEN @event_type_check LIKE N'%quer%'   
@@ -3248,18 +3633,18 @@ BEGIN
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL, ' + @nc10 +   
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, sql_text nvarchar(MAX) NULL, statement nvarchar(MAX) NULL, ' + @nc10 +   
                                  N'  showplan_xml XML NULL, cpu_ms decimal(18,2) NULL, logical_reads decimal(18,2) NULL, ' + @nc10 +   
-                                 N'  physical_reads decimal(18,2) NULL,  duration_ms decimal(18,2) NULL, writes_mb decimal(18,2) NULL,' + @nc10 +   
+                                 N'  physical_reads decimal(18,2) NULL, duration_ms decimal(18,2) NULL, writes_mb decimal(18,2) NULL,' + @nc10 +   
                                  N'  spills_mb decimal(18,2) NULL, row_count decimal(18,2) NULL, estimated_rows decimal(18,2) NULL, dop integer NULL,  ' + @nc10 +   
                                  N'  serial_ideal_memory_mb decimal(18,2) NULL, requested_memory_mb decimal(18,2) NULL, used_memory_mb decimal(18,2) NULL, ideal_memory_mb decimal(18,2) NULL, ' + @nc10 +   
                                  N'  granted_memory_mb decimal(18,2) NULL, query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, plan_handle varbinary(64) NULL );'   
                             WHEN @event_type_check LIKE N'%recomp%'   
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +   
-                                 N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL,  event_type sysname NULL,  ' + @nc10 +   
+                                 N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +   
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, recompile_cause nvarchar(256) NULL, statement_text nvarchar(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '   
                                  + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms bigint NULL, compile_duration_ms bigint NULL );' ELSE N' );' END   
                             WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'   
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +   
-                                 N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL,  event_type sysname NULL,  ' + @nc10 +   
+                                 N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +   
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, statement_text nvarchar(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '   
                                  + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms bigint NULL, compile_duration_ms bigint NULL );' ELSE N' );' END   
                                  + CASE WHEN @parameterization_events = 1    
@@ -3667,15 +4052,15 @@ FROM
                     MINUTE,    
                     GETUTCDATE(),    
                     SYSDATETIME()   
-                ), c.value(''@timestamp'', ''datetime2'')   
+                ), oa.c.value(''@timestamp'', ''datetime2'')   
             ) AS event_time,           
             ''blocked'' AS activity,   
-            DB_NAME(c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'')) AS database_name,   
-            c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'') AS database_id,   
-            c.value(''(data[@name="object_id"]/value/text())[1]'', ''int'') AS object_id,   
-            c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint'') AS transaction_id,   
-            c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)'') AS resource_owner_type,   
-            c.value(''(//@monitorLoop)[1]'', ''int'') AS monitor_loop,   
+            DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'')) AS database_name,   
+            oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'') AS database_id,   
+            oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''int'') AS object_id,   
+            oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint'') AS transaction_id,   
+            oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)'') AS resource_owner_type,   
+            oa.c.value(''(//@monitorLoop)[1]'', ''int'') AS monitor_loop,   
             bd.value(''(process/@spid)[1]'', ''int'') AS spid,   
             bd.value(''(process/@ecid)[1]'', ''int'') AS ecid,   
             bd.value(''(process/inputbuf/text())[1]'', ''nvarchar(MAX)'') AS text,   
@@ -3696,11 +4081,11 @@ FROM
                 varbinary(64),    
                 bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)'')   
             ) AS sqlhandle,   
-            c.query(''.'') AS process_report   
+            oa.c.query(''.'') AS process_report   
         FROM #human_events_xml_internal AS xet   
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
         OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)   
-        WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
+        WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
            
         UNION ALL   
            
@@ -3715,15 +4100,15 @@ FROM
                     GETUTCDATE(),    
                     SYSDATETIME()   
                 ),    
-                c.value(''@timestamp'', ''datetime2'')   
+                oa.c.value(''@timestamp'', ''datetime2'')   
             ) AS event_time,           
             ''blocking'' AS activity,   
-            DB_NAME(c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'')) AS database_name,   
-            c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'') AS database_id,   
-            c.value(''(data[@name="object_id"]/value/text())[1]'', ''int'') AS object_id,   
-            c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint'') AS transaction_id,   
-            c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)'') AS resource_owner_type,   
-            c.value(''(//@monitorLoop)[1]'', ''int'') AS monitor_loop,   
+            DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'')) AS database_name,   
+            oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'') AS database_id,   
+            oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''int'') AS object_id,   
+            oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint'') AS transaction_id,   
+            oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)'') AS resource_owner_type,   
+            oa.c.value(''(//@monitorLoop)[1]'', ''int'') AS monitor_loop,   
             bg.value(''(process/@spid)[1]'', ''int'') AS spid,   
             bg.value(''(process/@ecid)[1]'', ''int'') AS ecid,   
             bg.value(''(process/inputbuf/text())[1]'', ''nvarchar(MAX)'') AS text,   
@@ -3740,11 +4125,11 @@ FROM
             bg.value(''(process/@loginname)[1]'', ''nvarchar(256)'') AS loginname,   
             bg.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)'') AS isolationlevel,   
             NULL AS sqlhandle,   
-            c.query(''.'') AS process_report   
+            oa.c.query(''.'') AS process_report   
         FROM #human_events_xml_internal AS xet   
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
         OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)   
-        WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
+        WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
     ) AS x   
 ) AS x   
 WHERE NOT EXISTS   
@@ -3772,10 +4157,10 @@ JOIN
     SELECT    
         @@SERVERNAME AS server_name,          
         ''blocked'' AS activity,   
-        c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'') AS database_id,   
-        c.value(''(data[@name="object_id"]/value/text())[1]'', ''int'') AS object_id,   
-        c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint'') AS transaction_id,   
-        c.value(''(//@monitorLoop)[1]'', ''int'') AS monitor_loop,   
+        oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'') AS database_id,   
+        oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''int'') AS object_id,   
+        oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint'') AS transaction_id,   
+        oa.c.value(''(//@monitorLoop)[1]'', ''int'') AS monitor_loop,   
         bd.value(''(process/@spid)[1]'', ''int'') AS spid,   
         bd.value(''(process/@ecid)[1]'', ''int'') AS ecid,   
         bd.value(''(process/@waittime)[1]'', ''bigint'') AS waittime,   
@@ -3785,7 +4170,7 @@ JOIN
     FROM #human_events_xml_internal AS xet   
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)   
-    WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
+    WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 ) AS x   
     ON    x.database_id = x2.database_id   
     AND   x.object_id = x2.object_id   
@@ -3814,43 +4199,43 @@ JOIN
             GETUTCDATE(),    
             SYSDATETIME()   
         ),    
-        c.value(''@timestamp'', ''datetime2'')   
+        oa.c.value(''@timestamp'', ''datetime2'')   
     ) AS event_time,   
-    c.value(''@name'', ''nvarchar(256)'') AS event_type,   
-    c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,                   
-    c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],   
-    c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)'') AS sql_text,   
-    c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement,   
-    c.query(''(data[@name="showplan_xml"]/value/*)[1]'') AS [showplan_xml],   
-    c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') / 1000. AS cpu_ms,   
-   (c.value(''(data[@name="logical_reads"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS logical_reads,   
-   (c.value(''(data[@name="physical_reads"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS physical_reads,   
-    c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') / 1000. AS duration_ms,   
-   (c.value(''(data[@name="writes"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS writes_mb,   
-   (c.value(''(data[@name="spills"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS spills_mb,   
-    c.value(''(data[@name="row_count"]/value/text())[1]'', ''bigint'') AS row_count,   
-    c.value(''(data[@name="estimated_rows"]/value/text())[1]'', ''bigint'') AS estimated_rows,   
-    c.value(''(data[@name="dop"]/value/text())[1]'', ''int'') AS dop,   
-    c.value(''(data[@name="serial_ideal_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS serial_ideal_memory_mb,   
-    c.value(''(data[@name="requested_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS requested_memory_mb,   
-    c.value(''(data[@name="used_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS used_memory_mb,   
-    c.value(''(data[@name="ideal_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS ideal_memory_mb,   
-    c.value(''(data[@name="granted_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS granted_memory_mb,   
+    oa.c.value(''@name'', ''nvarchar(256)'') AS event_type,   
+    oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,                   
+    oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],   
+    oa.c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)'') AS sql_text,   
+    oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement,   
+    oa.c.query(''(data[@name="showplan_xml"]/value/*)[1]'') AS [showplan_xml],   
+    oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') / 1000. AS cpu_ms,   
+   (oa.c.value(''(data[@name="logical_reads"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS logical_reads,   
+   (oa.c.value(''(data[@name="physical_reads"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS physical_reads,   
+    oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') / 1000. AS duration_ms,   
+   (oa.c.value(''(data[@name="writes"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS writes_mb,   
+   (oa.c.value(''(data[@name="spills"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS spills_mb,   
+    oa.c.value(''(data[@name="row_count"]/value/text())[1]'', ''bigint'') AS row_count,   
+    oa.c.value(''(data[@name="estimated_rows"]/value/text())[1]'', ''bigint'') AS estimated_rows,   
+    oa.c.value(''(data[@name="dop"]/value/text())[1]'', ''int'') AS dop,   
+    oa.c.value(''(data[@name="serial_ideal_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS serial_ideal_memory_mb,   
+    oa.c.value(''(data[@name="requested_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS requested_memory_mb,   
+    oa.c.value(''(data[@name="used_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS used_memory_mb,   
+    oa.c.value(''(data[@name="ideal_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS ideal_memory_mb,   
+    oa.c.value(''(data[@name="granted_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS granted_memory_mb,   
     CONVERT   
     (   
         binary(8),    
-        c.value(''(action[@name="query_plan_hash_signed"]/value/text())[1]'', ''bigint'')   
+        oa.c.value(''(action[@name="query_plan_hash_signed"]/value/text())[1]'', ''bigint'')   
     ) AS query_plan_hash_signed,   
     CONVERT   
     (   
         binary(8),    
-        c.value(''(action[@name="query_hash_signed"]/value/text())[1]'', ''bigint'')   
+        oa.c.value(''(action[@name="query_hash_signed"]/value/text())[1]'', ''bigint'')   
     ) AS query_hash_signed,   
-    c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)'') AS plan_handle   
+    oa.c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)'') AS plan_handle   
 FROM #human_events_xml_internal AS xet   
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
-WHERE c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
-AND   c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '   
+WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
+AND   oa.c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '   
                        WHEN @event_type_check LIKE N'%recomp%' /*Recompiles!*/   
                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
                             N'( server_name, event_time,  event_type,  ' + @nc10 +   
@@ -3866,18 +4251,18 @@ AND   c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '
             MINUTE,    
             GETUTCDATE(),    
             SYSDATETIME()   
-        ), c.value(''@timestamp'', ''datetime2'')   
+        ), oa.c.value(''@timestamp'', ''datetime2'')   
     ) AS event_time,   
-    c.value(''@name'', ''nvarchar(256)'') AS event_type,   
-    c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,                   
-    c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],   
-    c.value(''(data[@name="recompile_cause"]/text)[1]'', ''nvarchar(256)'') AS recompile_cause,   
-    c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement_text '   
+    oa.c.value(''@name'', ''nvarchar(256)'') AS event_type,   
+    oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,                   
+    oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],   
+    oa.c.value(''(data[@name="recompile_cause"]/text)[1]'', ''nvarchar(256)'') AS recompile_cause,   
+    oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement_text '   
    + CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/   
           THEN    
    N'  ,    
-    c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') AS compile_cpu_ms,   
-    c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') AS compile_duration_ms'   
+    oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') AS compile_cpu_ms,   
+    oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') AS compile_duration_ms'   
           ELSE N''   
      END + N'   
 FROM #human_events_xml_internal AS xet   
@@ -3886,10 +4271,10 @@ WHERE 1 = 1 '
       + CASE WHEN @compile_events = 1 /*Same here, where we need to filter data*/   
              THEN    
 N'   
-AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 0 '   
+AND oa.c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 0 '   
              ELSE N''   
         END + N'   
-AND c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
+AND oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 ORDER BY event_time;'   
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%' /*Compiles!*/   
                        THEN N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + @nc10 +    
@@ -3907,17 +4292,17 @@ ORDER BY event_time;'
             GETUTCDATE(),    
             SYSDATETIME()   
         ),    
-        c.value(''@timestamp'', ''datetime2'')   
+        oa.c.value(''@timestamp'', ''datetime2'')   
     ) AS event_time,   
-    c.value(''@name'', ''nvarchar(256)'') AS event_type,   
-    c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,                   
-    c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],   
-    c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement_text '   
+    oa.c.value(''@name'', ''nvarchar(256)'') AS event_type,   
+    oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,                   
+    oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],   
+    oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement_text '   
    + CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/   
           THEN    
    N'  ,    
-    c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') AS compile_cpu_ms,   
-    c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') AS compile_duration_ms'   
+    oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') AS compile_cpu_ms,   
+    oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') AS compile_duration_ms'   
           ELSE N''   
      END + N'   
 FROM #human_events_xml_internal AS xet   
@@ -3926,11 +4311,11 @@ WHERE 1 = 1 '
       + CASE WHEN @compile_events = 1 /*Just like above*/   
              THEN    
 N'    
-AND c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 1 '   
+AND oa.c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 1 '   
              ELSE N''   
         END + N'   
-AND   c.exist(''@name[.= "sql_statement_post_compile"]'') = 1   
-AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
+AND   oa.c.exist(''@name[.= "sql_statement_post_compile"]'') = 1   
+AND   oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 ORDER BY event_time;' + @nc10   
                             + CASE WHEN @parameterization_events = 1 /*The query_parameterization_data XE is only 2017+*/   
                                    THEN    
@@ -3950,29 +4335,29 @@ ORDER BY event_time;' + @nc10
             GETUTCDATE(),    
             SYSDATETIME()   
         ),    
-        c.value(''@timestamp'', ''datetime2'')   
+        oa.c.value(''@timestamp'', ''datetime2'')   
     ) AS event_time,   
-    c.value(''@name'', ''nvarchar(256)'') AS event_type,   
-    c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,                   
-    c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)'') AS sql_text,   
-    c.value(''(data[@name="compile_cpu_time"]/value/text())[1]'', ''bigint'') / 1000. AS compile_cpu_time_ms,   
-    c.value(''(data[@name="compile_duration"]/value/text())[1]'', ''bigint'') / 1000. AS compile_duration_ms,   
-    c.value(''(data[@name="query_param_type"]/value/text())[1]'', ''int'') AS query_param_type,   
-    c.value(''(data[@name="is_cached"]/value/text())[1]'', ''bit'') AS is_cached,   
-    c.value(''(data[@name="is_recompiled"]/value/text())[1]'', ''bit'') AS is_recompiled,   
-    c.value(''(data[@name="compile_code"]/text)[1]'', ''nvarchar(256)'') AS compile_code,                     
-    c.value(''(data[@name="has_literals"]/value/text())[1]'', ''bit'') AS has_literals,   
-    c.value(''(data[@name="is_parameterizable"]/value/text())[1]'', ''bit'') AS is_parameterizable,   
-    c.value(''(data[@name="parameterized_values_count"]/value/text())[1]'', ''bigint'') AS parameterized_values_count,   
-    c.value(''xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])'', ''binary(8)'') AS query_plan_hash,   
-    c.value(''xs:hexBinary((data[@name="query_hash"]/value/text())[1])'', ''binary(8)'') AS query_hash,   
-    c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)'') AS plan_handle,    
-    c.value(''xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])'', ''varbinary(64)'') AS statement_sql_hash   
+    oa.c.value(''@name'', ''nvarchar(256)'') AS event_type,   
+    oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,                   
+    oa.c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)'') AS sql_text,   
+    oa.c.value(''(data[@name="compile_cpu_time"]/value/text())[1]'', ''bigint'') / 1000. AS compile_cpu_time_ms,   
+    oa.c.value(''(data[@name="compile_duration"]/value/text())[1]'', ''bigint'') / 1000. AS compile_duration_ms,   
+    oa.c.value(''(data[@name="query_param_type"]/value/text())[1]'', ''int'') AS query_param_type,   
+    oa.c.value(''(data[@name="is_cached"]/value/text())[1]'', ''bit'') AS is_cached,   
+    oa.c.value(''(data[@name="is_recompiled"]/value/text())[1]'', ''bit'') AS is_recompiled,   
+    oa.c.value(''(data[@name="compile_code"]/text)[1]'', ''nvarchar(256)'') AS compile_code,                     
+    oa.c.value(''(data[@name="has_literals"]/value/text())[1]'', ''bit'') AS has_literals,   
+    oa.c.value(''(data[@name="is_parameterizable"]/value/text())[1]'', ''bit'') AS is_parameterizable,   
+    oa.c.value(''(data[@name="parameterized_values_count"]/value/text())[1]'', ''bigint'') AS parameterized_values_count,   
+    oa.c.value(''xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])'', ''binary(8)'') AS query_plan_hash,   
+    oa.c.value(''xs:hexBinary((data[@name="query_hash"]/value/text())[1])'', ''binary(8)'') AS query_hash,   
+    oa.c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)'') AS plan_handle,    
+    oa.c.value(''xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])'', ''varbinary(64)'') AS statement_sql_hash   
 FROM #human_events_xml_internal AS xet   
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
-WHERE c.exist(''@name[.= "query_parameterization_data"]'') = 1   
-AND   c.exist(''(data[@name="is_recompiled"]/value[. = "false"])'') = 1   
-AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
+WHERE oa.c.exist(''@name[.= "query_parameterization_data"]'') = 1   
+AND   oa.c.exist(''(data[@name="is_recompiled"]/value[. = "false"])'') = 1   
+AND   oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 ORDER BY event_time;'   
                                    ELSE N''    
                               END     
