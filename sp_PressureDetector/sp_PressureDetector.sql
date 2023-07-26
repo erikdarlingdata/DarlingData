@@ -78,13 +78,14 @@ BEGIN
     SELECT
         introduction =
            'hi, i''m sp_PressureDetector!' UNION ALL
-    SELECT 'you got me from https://www.erikdarlingdata.com/sp_pressuredetector/' UNION ALL
+    SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData/tree/main/sp_PressureDetector' UNION ALL
     SELECT 'i''m a lightweight tool for monitoring cpu and memory pressure' UNION ALL
     SELECT 'i''ll tell you: ' UNION ALL
     SELECT ' * what''s currently consuming memory on your server' UNION ALL
     SELECT ' * wait stats relevant to cpu, memory, and disk' UNION ALL
     SELECT ' * how many worker threads and how much memory you have available' UNION ALL
-    SELECT ' * running queries that are using cpu and memory';
+    SELECT ' * running queries that are using cpu and memory' UNION ALL
+    SELECT 'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
 
     /*
     Parameters
