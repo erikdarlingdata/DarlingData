@@ -1415,7 +1415,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         deqs.max_used_threads,
         deqs.total_rows
     INTO #dm_exec_query_stats_sh
-    FROM sys.dm_exec_query_stats AS deqs;
+    FROM sys.dm_exec_query_stats AS deqs
+    WHERE EXISTS
+    (
+       SELECT
+           1/0
+       FROM #available_plans AS ap
+       WHERE ap.sql_handle = deqs.sql_handle
+    )
+    AND deqs.query_hash IS NOT NULL;
 
     CREATE CLUSTERED INDEX
         deqs_sh
