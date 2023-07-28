@@ -152,12 +152,14 @@ BEGIN
         RETURN;
     END;
   
+    /*Check if we're using RDS*/
     IF OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log') IS NOT NULL
     BEGIN
        RAISERROR(N'This will not run on Amazon RDS with rdsadmin.dbo.rds_read_error_log because it doesn''t support search strings', 11, 1) WITH NOWAIT;
        RETURN;
     END;
 
+    /*Check if we're unfortunate*/
     IF
     (
         SELECT
@@ -172,6 +174,7 @@ BEGIN
        RETURN;
     END;
 
+    /*Validate the language id*/
     IF NOT EXISTS
     (
         SELECT
@@ -183,7 +186,8 @@ BEGIN
        RAISERROR(N'%is not not a valid language_id in sys.messages.', 11, 1, @language_id) WITH NOWAIT;
        RETURN;
     END;
-  
+    
+    /*Fix days back a little bit*/
     IF @days_back = 0
     BEGIN
         SELECT
@@ -202,6 +206,7 @@ BEGIN
             DaysBack = @days_back;
     END;
 
+    /*variables for the variable gods*/
     DECLARE
         @c nvarchar(4000),
         @l_log int = 0,
@@ -209,7 +214,8 @@ BEGIN
         @t_searches int = 0,
         @l_count int = 1,
         @stopper bit = 0;
-
+    
+    /*temp tables for holding things*/
     CREATE TABLE
         #error_log
     (
@@ -254,6 +260,14 @@ BEGIN
             )
     );
 
+    CREATE TABLE
+        #errors
+    (
+        id int PRIMARY KEY IDENTITY,
+        command nvarchar(4000)
+    );
+
+    /*get all the error logs*/
     INSERT
         #enum
     (
@@ -263,24 +277,21 @@ BEGIN
     )
     EXEC sys.sp_enumerrorlogs;
 
-    CREATE TABLE
-        #errors
-    (
-        id int PRIMARY KEY IDENTITY,
-        command nvarchar(4000)
-    );
-
     IF @debug = 1 BEGIN SELECT table_name = '#enum before delete', e.* FROM #enum AS e; END;
 
-    DELETE e
+    /*filter out log files we won't use*/
+    DELETE 
+        e WITH(TABLOCKX)
     FROM #enum AS e
     WHERE e.log_date < DATEADD(DAY, @days_back, SYSDATETIME())
     AND   e.archive > 0
     OPTION(RECOMPILE);
 
+    /*maybe you only want the first one anyway*/
     IF @first_log_only = 1
     BEGIN
-        DELETE e
+        DELETE 
+            e WITH(TABLOCKX)
         FROM #enum AS e
         WHERE e.archive > 1
         OPTION(RECOMPILE);
@@ -288,6 +299,7 @@ BEGIN
 
     IF @debug = 1 BEGIN SELECT table_name = '#enum after delete', e.* FROM #enum AS e; END;
 
+    /*insert some canary values for things that we should always hit. look a little further back for these.*/
     INSERT
         #search
     (
@@ -308,11 +320,12 @@ BEGIN
     (
         SELECT
             days_back =
-                N'"' + CONVERT(nvarchar(10), DATEADD(DAY, 90, SYSDATETIME()), 112) + N'"'
+                N'"' + CONVERT(nvarchar(10), DATEADD(DAY, CASE WHEN @days_back < 90 THEN 90 ELSE @days_back END, SYSDATETIME()), 112) + N'"'
     ) AS c
     WHERE @custom_message_only = 0
     OPTION(RECOMPILE);
 
+    /*these are the search strings we currently care about*/
     INSERT
         #search
     (
@@ -325,24 +338,24 @@ BEGIN
         c.days_back
     FROM
     (
-    VALUES
-        ('Fatal error'), ('corrupt'), ('insufficient'), ('SQL Server is shutting down'), ('DBCC CHECKDB'), ('Attempt to fetch logical page'),
-        ('Wait for redo catchup for the database'), ('Restart the server to resolve this problem'), ('Error occurred'), ('running low'), ('unexpected'),
-        ('fail'), ('contact'), ('This is a severe system-level error'), ('incorrect'), ('allocate'), ('allocation'), ('Timeout occurred'), ('memory manager'),
-        ('operating system'), ('serious error'), ('Error while allocating'), ('cannot obtain a LOCK resource'), ('Server halted'), ('spawn'), ('Internal Error'),
-        ('BobMgr'), ('Sort is retrying the read'), ('Shutting down SQL Server'), ('resumed'), ('repair the database'), ('buffer'), ('I/O Completion Port'),
-        ('assert'), ('integrity'), ('latch'), ('Errors occurred during recovery while rolling back a transaction'), ('SQL Server is exiting'), ('SQL Server is unable to run'),
-        ('Recovery is unable to defer error'), ('suspect'), ('restore the database'), ('checkpoint'), ('version store is full'), ('Setting database option'),
-        ('Perform a restore if necessary'), ('Autogrow of file'), ('Bringing down database'), ('hot add'), ('Server shut down'), ('Customer Support Services'), ('stack overflow'),
-        ('inconsistency.'), ('invalid'), ('time out occurred'), ('The transaction log for database'), ('The virtual log file sequence'), ('Cannot accept virtual log file sequence'),
-        ('The transaction in database'), ('Shutting down the server'), ('Shutting down database'), ('Error releasing reserved log space'), ('Cannot load the Query Store metadata'),
-        ('Cannot acquire'), ('SQL Server evaluation period has expired'), ('terminat'), ('SQL Server has been configured for lightweight pooling'), ('IOCP'),
-        ('Not enough memory for the configured number of locks'), ('The tempdb database data files are not configured with the same initial size and autogrowth settings'),
-        ('The SQL Server image'), ('affinity'), ('SQL Server is starting'), ('Ignoring trace flag '), ('20 physical cores'), ('System error'), ('No free space'),
-        ('Warning ******************'), ('SQL Server should be restarted'), ('Server name is'), ('Could not connect'), ('yielding'), ('worker thread'), ('A new connection was rejected'), 
-        ('A significant part of sql server process memory has been paged out'), ('Dispatcher'), ('I/O requests taking longer than'), ('killed'), ('SQL Server could not start'), 
-        ('SQL Server cannot start'), ('System Manufacturer:'), ('columnstore'), ('timed out'), ('inconsistent'), ('flushcache'), ('Recovery for availability database'), ('currently busy'), 
-        ('The service is experiencing a problem'), ('The service account is'), ('Total Log Writer threads'), ('thread pool'), ('debug'), ('resolving')  
+        VALUES
+            ('Fatal error'), ('corrupt'), ('insufficient'), ('SQL Server is shutting down'), ('DBCC CHECKDB'), ('Attempt to fetch logical page'),
+            ('Wait for redo catchup for the database'), ('Restart the server to resolve this problem'), ('Error occurred'), ('running low'), ('unexpected'),
+            ('fail'), ('contact'), ('This is a severe system-level error'), ('incorrect'), ('allocate'), ('allocation'), ('Timeout occurred'), ('memory manager'),
+            ('operating system'), ('serious error'), ('Error while allocating'), ('cannot obtain a LOCK resource'), ('Server halted'), ('spawn'), ('Internal Error'),
+            ('BobMgr'), ('Sort is retrying the read'), ('Shutting down SQL Server'), ('resumed'), ('repair the database'), ('buffer'), ('I/O Completion Port'),
+            ('assert'), ('integrity'), ('latch'), ('Errors occurred during recovery while rolling back a transaction'), ('SQL Server is exiting'), ('SQL Server is unable to run'),
+            ('Recovery is unable to defer error'), ('suspect'), ('restore the database'), ('checkpoint'), ('version store is full'), ('Setting database option'),
+            ('Perform a restore if necessary'), ('Autogrow of file'), ('Bringing down database'), ('hot add'), ('Server shut down'), ('Customer Support Services'), ('stack overflow'),
+            ('inconsistency.'), ('invalid'), ('time out occurred'), ('The transaction log for database'), ('The virtual log file sequence'), ('Cannot accept virtual log file sequence'),
+            ('The transaction in database'), ('Shutting down the server'), ('Shutting down database'), ('Error releasing reserved log space'), ('Cannot load the Query Store metadata'),
+            ('Cannot acquire'), ('SQL Server evaluation period has expired'), ('terminat'), ('SQL Server has been configured for lightweight pooling'), ('IOCP'),
+            ('Not enough memory for the configured number of locks'), ('The tempdb database data files are not configured with the same initial size and autogrowth settings'),
+            ('The SQL Server image'), ('affinity'), ('SQL Server is starting'), ('Ignoring trace flag '), ('20 physical cores'), ('System error'), ('No free space'),
+            ('Warning ******************'), ('SQL Server should be restarted'), ('Server name is'), ('Could not connect'), ('yielding'), ('worker thread'), ('A new connection was rejected'), 
+            ('A significant part of sql server process memory has been paged out'), ('Dispatcher'), ('I/O requests taking longer than'), ('killed'), ('SQL Server could not start'), 
+            ('SQL Server cannot start'), ('System Manufacturer:'), ('columnstore'), ('timed out'), ('inconsistent'), ('flushcache'), ('Recovery for availability database'), ('currently busy'), 
+            ('The service is experiencing a problem'), ('The service account is'), ('Total Log Writer threads'), ('thread pool'), ('debug'), ('resolving')  
     ) AS v (search_string)
     CROSS JOIN
     (
@@ -353,6 +366,7 @@ BEGIN
     WHERE @custom_message_only = 0
     OPTION(RECOMPILE);   
 
+    /*deal with a custom search string here*/
     INSERT
         #search
     (
@@ -394,6 +408,7 @@ BEGIN
         RAISERROR('@t_searches: %i', 0, 1, @t_searches) WITH NOWAIT;
     END;
    
+    /*start the loops*/
     WHILE @l_log <= @h_log
     BEGIN
         DECLARE
@@ -495,8 +510,9 @@ BEGIN
     END;
     IF @debug = 1 BEGIN RAISERROR('Ended cursor', 0, 1) WITH NOWAIT; END;
 
+    /*get rid of some messages we don't care about*/
     DELETE
-        el
+        el WITH(TABLOCKX)
     FROM #error_log AS el
     WHERE el.text LIKE N'DBCC TRACEON 3604%'
     OR    el.text LIKE N'DBCC TRACEOFF 3604%'
