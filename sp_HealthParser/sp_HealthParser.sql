@@ -301,7 +301,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         #x
     (
         x xml NOT NULL
-    )
+    );
    
     /*
     The column timestamp_utc is 2017+ only, but terribly broken:
@@ -421,7 +421,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
         CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
         WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
-        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
+        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
 
         IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
         
@@ -458,7 +458,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
         CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
         WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
-        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
+        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
    
         IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
         
@@ -488,7 +488,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         	    ISNULL
         		(
         		    TRY_CAST(t.target_data AS xml), 
-        			CONVERT(xml, N'<x></x>')
+        			CONVERT(xml, N'.')
                 )
         FROM sys.dm_xe_session_targets AS t
         JOIN sys.dm_xe_sessions AS s
@@ -507,13 +507,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ) AS x
         CROSS APPLY x.x.nodes('//event') AS e(x)
         WHERE 1 = 1 
-        AND   e.x.exist('@timestamp[. >= sql:variable("@StartDate") and .< sql:variable("@EndDate")]') = 1
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
         AND   e.x.exist('@name[.= "security_error_ring_buffer_recorded"]') = 0
         AND   e.x.exist('@name[.= "error_reported"]') = 0
         AND   e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 0
         AND   e.x.exist('@name[.= "connectivity_ring_buffer_recorded"]') = 0
         OPTION(RECOMPILE);
-    END
+    END;
 
     
     IF @debug = 1 

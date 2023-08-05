@@ -480,7 +480,7 @@ BEGIN
                     (
                         @c
                     );           
-                END CATCH
+                END CATCH;
             END;
            
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;
