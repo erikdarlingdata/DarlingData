@@ -3968,7 +3968,10 @@ END;
                     @table_sql =    
                         CASE    
                         WHEN @event_type_check LIKE N'%wait%' /*Wait stats!*/   
-                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
+                        THEN CONVERT
+                             (
+                                 nvarchar(MAX),
+                             N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
                              N'( server_name, event_time, event_type, database_name, wait_type, duration_ms, ' + @nc10 +   
                              N'  signal_duration_ms, wait_resource,  query_plan_hash_signed, query_hash_signed, plan_handle )' + @nc10 +   
                              N'SELECT    
@@ -4008,10 +4011,14 @@ FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
 WHERE c.exist(''(data[@name="duration"]/value/text()[. > 0])'') = 1    
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1;'   
+                             )
                         WHEN @event_type_check LIKE N'%lock%' /*Blocking!*/   
                                                               /*To cut down on nonsense, I'm only inserting new blocking scenarios*/   
                                                               /*Any existing blocking scenarios will update the blocking duration*/   
-                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
+                        THEN CONVERT
+                             (
+                                 nvarchar(MAX),
+                             N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
                              N'( server_name, event_time, activity, database_name, database_id, object_id, ' + @nc10 +   
                              N'  transaction_id, resource_owner_type, monitor_loop, spid, ecid, query_text, wait_time, ' + @nc10 +   
                              N'  transaction_name,  last_transaction_started, wait_resource, lock_mode, status, priority, ' + @nc10 +   
@@ -4181,8 +4188,13 @@ JOIN
     AND   x.hostname = x2.host_name   
     AND   x.loginname = x2.login_name;   
 '   
+                             )
                        WHEN @event_type_check LIKE N'%quer%' /*Queries!*/   
-                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
+                       THEN 
+                            CONVERT
+                            (
+                                nvarchar(MAX),
+                            N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
                             N'( server_name, event_time, event_type, database_name, object_name, sql_text, statement, ' + @nc10 +   
                             N'  showplan_xml, cpu_ms, logical_reads, physical_reads, duration_ms, writes_mb, ' + @nc10 +   
                             N'  spills_mb, row_count, estimated_rows, dop,  serial_ideal_memory_mb, ' + @nc10 +   
@@ -4236,8 +4248,13 @@ FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
 WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 AND   oa.c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '   
+                            )
                        WHEN @event_type_check LIKE N'%recomp%' /*Recompiles!*/   
-                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
+                       THEN 
+                            CONVERT
+                            (
+                                nvarchar(MAX),
+                            N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
                             N'( server_name, event_time,  event_type,  ' + @nc10 +   
                             N'  database_name, object_name, recompile_cause, statement_text '   
                             + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END + @nc10 +   
@@ -4276,8 +4293,13 @@ AND oa.c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 0 '
         END + N'   
 AND oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 ORDER BY event_time;'   
+                            )
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%' /*Compiles!*/   
-                       THEN N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + @nc10 +    
+                       THEN 
+                            CONVERT
+                            (
+                                nvarchar(MAX),
+                            N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + @nc10 +    
                             N'( server_name, event_time,  event_type,  ' + @nc10 +   
                             N'  database_name, object_name, statement_text '   
                             + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END + @nc10 +   
@@ -4320,6 +4342,9 @@ ORDER BY event_time;' + @nc10
                             + CASE WHEN @parameterization_events = 1 /*The query_parameterization_data XE is only 2017+*/   
                                    THEN    
                             @nc10 +    
+                                CONVERT
+                                (
+                                    nvarchar(MAX),
                             N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N'_parameterization' + N' WITH(TABLOCK) ' + @nc10 +    
                             N'( server_name, event_time,  event_type, database_name, sql_text, compile_cpu_time_ms, ' + @nc10 +   
                             N'  compile_duration_ms, query_param_type, is_cached, is_recompiled, compile_code, has_literals, ' + @nc10 +   
@@ -4359,8 +4384,10 @@ WHERE oa.c.exist(''@name[.= "query_parameterization_data"]'') = 1
 AND   oa.c.exist(''(data[@name="is_recompiled"]/value[. = "false"])'') = 1   
 AND   oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 ORDER BY event_time;'   
+                                )
                                    ELSE N''    
-                              END     
+                              END
+                            )
                        ELSE N''   
                   END;   
                
