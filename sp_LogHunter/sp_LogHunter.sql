@@ -46,8 +46,8 @@ CREATE OR ALTER PROCEDURE
     @days_back int = -7, /*How many days back you want to look in the error logs*/
     @custom_message nvarchar(4000) = NULL, /*If there's something you specifically want to search for*/
     @custom_message_only bit = 0, /*If you only want to search for this specific thing*/
-    @language_id int = 1033, /*If you want to use a language other than English*/
     @first_log_only bit = 0, /*If you only want to search the first log file*/
+    @language_id int = 1033, /*If you want to use a language other than English*/
     @help bit = 0, /*Get help*/
     @debug bit = 0, /*Prints messages and selects from temp tables*/
     @version varchar(30) = NULL OUTPUT,
@@ -81,8 +81,8 @@ BEGIN
                      WHEN N'@days_back' THEN 'how many days back you want to search the logs'
                      WHEN N'@custom_message' THEN 'if you want to search for a custom string'
                      WHEN N'@custom_message_only' THEN 'only search for the custom string'
-                     WHEN N'@language_id' THEN 'to use something other than English'
                      WHEN N'@first_log_only' THEN 'only search through the first error log'
+                     WHEN N'@language_id' THEN 'to use something other than English'
                      WHEN N'@help' THEN 'how you got here'
                      WHEN N'@debug' THEN 'dumps raw temp table contents'
                      WHEN N'@version' THEN 'OUTPUT; for support'
@@ -93,8 +93,8 @@ BEGIN
                      WHEN N'@days_back' THEN 'an integer; will be converted to a negative number automatically'
                      WHEN N'@custom_message' THEN 'something specific you want to search for. no wildcards or substitions.'
                      WHEN N'@custom_message_only' THEN 'NULL, 0, 1'
-                     WHEN N'@language_id' THEN 'SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id;'
                      WHEN N'@first_log_only' THEN 'NULL, 0, 1'
+                     WHEN N'@language_id' THEN 'SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id;'
                      WHEN N'@help' THEN 'NULL, 0, 1'
                      WHEN N'@debug' THEN 'NULL, 0, 1'
                      WHEN N'@version' THEN 'OUTPUT; for support'
@@ -105,8 +105,8 @@ BEGIN
                      WHEN N'@days_back' THEN '-7'
                      WHEN N'@custom_message' THEN 'NULL'
                      WHEN N'@custom_message_only' THEN '0'
-                     WHEN N'@language_id' THEN '1033'
                      WHEN N'@first_log_only' THEN '0'
+                     WHEN N'@language_id' THEN '1033'
                      WHEN N'@help' THEN '0'
                      WHEN N'@debug' THEN '0'
                      WHEN N'@version' THEN 'none; OUTPUT'
@@ -206,6 +206,13 @@ BEGIN
             DaysBack = @days_back;
     END;
 
+    /*Fix custom message only if NULL*/
+    IF @custom_message_only IS NULL
+    BEGIN
+        SELECT
+            @custom_message_only = 0;
+    END;
+
     /*variables for the variable gods*/
     DECLARE
         @c nvarchar(4000),
@@ -219,8 +226,8 @@ BEGIN
     CREATE TABLE
         #error_log
     (
-        log_date datetime ,
-        process_info nvarchar(100) ,
+        log_date datetime,
+        process_info nvarchar(100),
         text nvarchar(4000)
     ) ;
    
@@ -257,7 +264,7 @@ BEGIN
                 + N', '
                 + search_order
                 + N';'
-            )
+            ) PERSISTED
     );
 
     CREATE TABLE
@@ -414,8 +421,10 @@ BEGIN
         DECLARE
             c
         CURSOR
-            LOCAL
-            STATIC
+            LOCAL 
+            SCROLL 
+            DYNAMIC 
+            READ_ONLY
         FOR
         SELECT
             command
@@ -424,7 +433,7 @@ BEGIN
         IF @debug = 1 BEGIN RAISERROR('Opening cursor', 0, 1) WITH NOWAIT; END;
         OPEN c;
         
-        FETCH NEXT
+        FETCH FIRST
         FROM c
         INTO @c;
 
@@ -471,7 +480,7 @@ BEGIN
                     (
                         @c
                     );           
-                END CATCH
+                END CATCH;
             END;
            
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;

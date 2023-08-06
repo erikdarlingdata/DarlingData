@@ -159,7 +159,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'',
         @params nvarchar(MAX) =
             N'@start_date datetimeoffset(7),
-              @end_date datetimeoffset(7)';
+              @end_date datetimeoffset(7)',
+        @azure bit  = 
+            CASE
+                WHEN
+                    CONVERT
+                    (
+                        int,
+                        SERVERPROPERTY('EngineEdition')
+                    ) = 5
+                THEN 1
+                ELSE 0
+            END,
+        @mi bit  = 
+            CASE
+                WHEN
+                    CONVERT
+                    (
+                        int,
+                        SERVERPROPERTY('EngineEdition')
+                    ) = 8
+                THEN 1
+                ELSE 0
+            END;
+
+    IF @azure = 1
+    BEGIN
+        RAISERROR(N'This won''t work in Azure because it''s horrible', 11, 1) WITH NOWAIT;
+        RETURN;
+    END;
    
     SELECT
         @start_date =
@@ -260,13 +288,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE
         #wait_info
     (
-        wait_info xml
+        wait_info xml NOT NULL
     );
    
     CREATE TABLE
         #sp_server_diagnostics_component_result
     (
-        sp_server_diagnostics_component_result xml
+        sp_server_diagnostics_component_result xml NOT NULL
+    );
+
+    CREATE TABLE 
+        #x
+    (
+        x xml NOT NULL
     );
    
     /*
@@ -282,12 +316,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
         AND   ac.name = N'timestamp_utc'
     )
+    AND @mi = 0
     BEGIN
         /*Grab data from the wait info component*/
         SELECT
             @sql = N'
         SELECT
-            xml.wait_info
+            ISNULL
+            (
+                xml.wait_info,
+                CONVERT(xml, N''.'')
+            )
         FROM
         (
             SELECT
@@ -319,7 +358,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             @sql = N'
         SELECT
-            xml.sp_server_diagnostics_component_result
+            ISNULL
+            (
+                xml.sp_server_diagnostics_component_result,
+                CONVERT(xml, N''.'')
+            )
         FROM
         (
             SELECT
@@ -356,12 +399,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
         AND   ac.name = N'timestamp_utc'
     )
+    AND @mi = 0
     BEGIN
         /*Grab data from the wait info component*/
         SELECT
             @sql = N'
         SELECT
-            xml.wait_info
+            ISNULL
+            (
+                xml.wait_info,
+                CONVERT(xml, N''.'')
+            )
         FROM
         (
             SELECT
@@ -373,7 +421,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
         CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
         WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
-        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
+        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
 
         IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
         
@@ -394,7 +442,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             @sql = N'
         SELECT
-            xml.sp_server_diagnostics_component_result
+            ISNULL
+            (
+                xml.sp_server_diagnostics_component_result,
+                CONVERT(xml, N''.'')
+            )
         FROM
         (
             SELECT
@@ -406,7 +458,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
         CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
         WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
-        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));'
+        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
    
         IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
         
@@ -423,6 +475,46 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         
         IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
     END;
+
+    IF @mi = 1
+    BEGIN
+        INSERT
+            #x WITH(TABLOCKX)
+        (
+            x
+        )
+        SELECT
+            x = 
+        	    ISNULL
+        		(
+        		    TRY_CAST(t.target_data AS xml), 
+        			CONVERT(xml, N'.')
+                )
+        FROM sys.dm_xe_session_targets AS t
+        JOIN sys.dm_xe_sessions AS s
+          ON s.address = t.event_session_address
+        WHERE s.name = 'system_health'
+        AND   t.target_name = N'ring_buffer'
+        OPTION(RECOMPILE);
+        
+        SELECT
+            x = e.x.query('.')
+        FROM 
+        (
+            SELECT
+                x
+            FROM #x
+        ) AS x
+        CROSS APPLY x.x.nodes('//event') AS e(x)
+        WHERE 1 = 1 
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        AND   e.x.exist('@name[.= "security_error_ring_buffer_recorded"]') = 0
+        AND   e.x.exist('@name[.= "error_reported"]') = 0
+        AND   e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 0
+        AND   e.x.exist('@name[.= "connectivity_ring_buffer_recorded"]') = 0
+        OPTION(RECOMPILE);
+    END;
+
     
     IF @debug = 1 
     BEGIN 
