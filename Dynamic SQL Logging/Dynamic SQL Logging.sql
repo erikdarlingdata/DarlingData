@@ -96,14 +96,14 @@ BEGIN
         @run_hash,
         SYSDATETIME(),
         SUSER_NAME(),
-        cpu_time,
-        total_elapsed_time,
+        r.cpu_time,
+        r.total_elapsed_time,
         physical_reads_mb =
-            ((reads - logical_reads) * 8.) / 1024.,
+            ((r.reads - r.logical_reads) * 8.) / 1024.,
         logical_reads_mb =
-            (logical_reads * 8.) / 1024.,
+            (r.logical_reads * 8.) / 1024.,
         writes_mb =
-            (writes * 8.) / 1024.,
+            (r.writes * 8.) / 1024.,
         @sql AS statement_text,
         execution_text =
             (
@@ -111,8 +111,8 @@ BEGIN
                     deib.event_info
                 FROM sys.dm_exec_input_buffer(@spid, 0) AS deib
             )
-    FROM sys.dm_exec_requests
-    WHERE session_id = @spid
+    FROM sys.dm_exec_requests AS r
+    WHERE r.session_id = @spid
     OPTION(RECOMPILE);
 
     SET @guid_out = @run_hash;
@@ -145,6 +145,5 @@ BEGIN
     OPTION(RECOMPILE);
     RETURN;
 END;
-
 END;
 GO

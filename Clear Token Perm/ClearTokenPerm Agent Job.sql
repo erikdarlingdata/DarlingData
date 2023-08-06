@@ -41,7 +41,6 @@ IF NOT EXISTS
     AND   category_class = 1
 )
 BEGIN
-
     EXEC @ReturnCode = msdb.dbo.sp_add_category
         @class = N'JOB',
         @type = N'LOCAL',
@@ -49,7 +48,6 @@ BEGIN
 
     IF (@@ERROR <> 0 OR @ReturnCode <> 0)
         GOTO QuitWithRollback;
-
 END;
 
 
