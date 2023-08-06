@@ -3613,8 +3613,8 @@ BEGIN
             BEGIN   
             RAISERROR(N'Generating create table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;   
                 SELECT    
-                    @table_sql =    
-                        CASE    
+                    @table_sql = CAST(N'' AS nvarchar(max)) +
+                        CAST(CASE
                             WHEN @event_type_check LIKE N'%wait%'   
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +   
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +   
@@ -3641,13 +3641,13 @@ BEGIN
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +   
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +   
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, recompile_cause nvarchar(256) NULL, statement_text nvarchar(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '   
-                                 + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms bigint NULL, compile_duration_ms bigint NULL );' ELSE N' );' END   
+                                 +CAST(CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms bigint NULL, compile_duration_ms bigint NULL );' ELSE N' );' END AS nvarchar(max))
                             WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'   
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +   
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +   
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, statement_text nvarchar(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '   
-                                 + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms bigint NULL, compile_duration_ms bigint NULL );' ELSE N' );' END   
-                                 + CASE WHEN @parameterization_events = 1    
+                                 + CAST(CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms bigint NULL, compile_duration_ms bigint NULL );' ELSE N' );' END AS nvarchar(max))
+                                 + CAST(CASE WHEN @parameterization_events = 1
                                         THEN    
                                  @nc10 +    
                                  N'CREATE TABLE ' + @object_name_check + N'_parameterization' + @nc10 +   
@@ -3656,11 +3656,11 @@ BEGIN
                                  N'  is_cached bit NULL, is_recompiled bit NULL, compile_code nvarchar(256) NULL, has_literals bit NULL, is_parameterizable bit NULL, parameterized_values_count bigint NULL, ' + @nc10 +   
                                  N'  query_plan_hash binary(8) NULL, query_hash binary(8) NULL, plan_handle varbinary(64) NULL, statement_sql_hash varbinary(64) NULL );'   
                                         ELSE N''    
-                                   END     
+                                   END AS nvarchar(max))
                             ELSE N''   
+                      END AS nvarchar(max));
                       END;             
-            END;           
-               
+
             IF @debug = 1 BEGIN RAISERROR(@table_sql, 0, 1) WITH NOWAIT; END;   
             EXEC sys.sp_executesql    
                 @table_sql;   
@@ -3965,15 +3965,10 @@ END;
             BEGIN   
             RAISERROR(N'Generating insert table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;   
                 SELECT    
-                    @table_sql = CONVERT
-                                 (
-                                     nvarchar(MAX),  
-                        CASE    
+                    @table_sql =  CAST(N'' AS nvarchar(max)) +
+                    CAST(CASE
                         WHEN @event_type_check LIKE N'%wait%' /*Wait stats!*/   
-                        THEN CONVERT
-                             (
-                                 nvarchar(MAX),
-                             N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
+                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +
                              N'( server_name, event_time, event_type, database_name, wait_type, duration_ms, ' + @nc10 +   
                              N'  signal_duration_ms, wait_resource,  query_plan_hash_signed, query_hash_signed, plan_handle )' + @nc10 +   
                              N'SELECT    
@@ -3994,15 +3989,11 @@ END;
         c.value(''(data[@name="wait_type"]/text)[1]'', ''nvarchar(256)'') AS wait_type,   
         c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'')  AS duration_ms,   
         c.value(''(data[@name="signal_duration"]/value/text())[1]'', ''bigint'') AS signal_duration_ms,' + @nc10 +   
-CONVERT
-(
-    nvarchar(MAX), 
-CASE    
+CAST(CASE
     WHEN @v = 11 /*We can't get the wait resource on older versions of SQL Server*/   
     THEN N'        ''Not Available < 2014'', ' + @nc10   
     ELSE N'        c.value(''(data[@name="wait_resource"]/value/text())[1]'', ''nvarchar(256)'')  AS wait_resource, ' + @nc10   
-END
-) + CONVERT(nvarchar(MAX), N'        CONVERT   
+    END AS nvarchar(max))+ N'        CONVERT
                 (   
                     binary(8),    
                     c.value(''(action[@name="query_plan_hash_signed"]/value/text())[1]'', ''bigint'')   
@@ -4016,20 +4007,16 @@ END
 FROM #human_events_xml_internal AS xet   
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
 WHERE c.exist(''(data[@name="duration"]/value/text()[. > 0])'') = 1    
-AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1;') 
-                             )
+AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1;'
                         WHEN @event_type_check LIKE N'%lock%' /*Blocking!*/   
                                                               /*To cut down on nonsense, I'm only inserting new blocking scenarios*/   
                                                               /*Any existing blocking scenarios will update the blocking duration*/   
-                        THEN CONVERT
-                             (
-                                 nvarchar(MAX),
-                             N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
+                        THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +
                              N'( server_name, event_time, activity, database_name, database_id, object_id, ' + @nc10 +   
                              N'  transaction_id, resource_owner_type, monitor_loop, spid, ecid, query_text, wait_time, ' + @nc10 +   
                              N'  transaction_name,  last_transaction_started, wait_resource, lock_mode, status, priority, ' + @nc10 +   
                              N'  transaction_count, client_app, host_name, login_name, isolation_level, sql_handle, blocked_process_report )' + @nc10 +   
-CONVERT(nvarchar(MAX), N'   
+N'
 SELECT server_name, event_time, activity, database_name, database_id, object_id,    
        transaction_id, resource_owner_type, monitor_loop, spid, ecid, text, waittime,    
        transactionname,  lasttranstarted, wait_resource, lockmode, status, priority,    
@@ -4193,19 +4180,15 @@ JOIN
     AND   x.clientapp = x2.client_app   
     AND   x.hostname = x2.host_name   
     AND   x.loginname = x2.login_name;   
-'                                ))
+'
                        WHEN @event_type_check LIKE N'%quer%' /*Queries!*/   
-                       THEN 
-                            CONVERT
-                            (
-                                nvarchar(MAX),
-                            N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
+                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +
                             N'( server_name, event_time, event_type, database_name, object_name, sql_text, statement, ' + @nc10 +   
                             N'  showplan_xml, cpu_ms, logical_reads, physical_reads, duration_ms, writes_mb, ' + @nc10 +   
                             N'  spills_mb, row_count, estimated_rows, dop,  serial_ideal_memory_mb, ' + @nc10 +   
                             N'  requested_memory_mb, used_memory_mb, ideal_memory_mb, granted_memory_mb, ' + @nc10 +   
                             N'  query_plan_hash_signed, query_hash_signed, plan_handle )' + @nc10 +   
-                            CONVERT(nvarchar(MAX), N'SELECT    
+                            N'SELECT
     @@SERVERNAME,    
     DATEADD   
     (   
@@ -4253,17 +4236,12 @@ FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
 WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 AND   oa.c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '   
-                            ))
                        WHEN @event_type_check LIKE N'%recomp%' /*Recompiles!*/   
-                       THEN 
-                            CONVERT
-                            (
-                                nvarchar(MAX),
-                            N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +    
+                       THEN N'INSERT INTO ' + @object_name_check + N' WITH(TABLOCK) ' + @nc10 +
                             N'( server_name, event_time,  event_type,  ' + @nc10 +   
                             N'  database_name, object_name, recompile_cause, statement_text '   
-                            + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END) + @nc10 +   
-                            CONVERT(nvarchar(MAX), N'SELECT    
+                            + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END + @nc10 +
+                            N'SELECT
     @@SERVERNAME,   
     DATEADD   
     (   
@@ -4280,35 +4258,30 @@ AND   oa.c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '
     oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],   
     oa.c.value(''(data[@name="recompile_cause"]/text)[1]'', ''nvarchar(256)'') AS recompile_cause,   
     oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement_text '   
-   + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/   
+   + CAST( CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/
           THEN    
    N'  ,    
     oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') AS compile_cpu_ms,   
     oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') AS compile_duration_ms'   
           ELSE N''   
-     END) + N'   
+     END AS nvarchar(max)) + N'
 FROM #human_events_xml_internal AS xet   
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
 WHERE 1 = 1 '   
-      + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 /*Same here, where we need to filter data*/   
+      + CAST(CASE WHEN @compile_events = 1 /*Same here, where we need to filter data*/
              THEN    
 N'   
 AND oa.c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 0 '   
              ELSE N''   
-        END) + CONVERT(nvarchar(MAX), N'   
+        END AS nvarchar(max)) + N'
 AND oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 ORDER BY event_time;'   
-                            )))
                        WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%' /*Compiles!*/   
-                       THEN 
-                            CONVERT
-                            (
-                                nvarchar(MAX),
-                            N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + @nc10 +    
+                       THEN N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N' WITH(TABLOCK) ' + @nc10 +
                             N'( server_name, event_time,  event_type,  ' + @nc10 +   
                             N'  database_name, object_name, statement_text '   
-                            + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END) + @nc10 +   
-                            CONVERT(nvarchar(MAX), N'SELECT    
+                            + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END + @nc10 +
+                            N'SELECT
     @@SERVERNAME,   
     DATEADD   
     (   
@@ -4325,37 +4298,33 @@ ORDER BY event_time;'
     oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,                   
     oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],   
     oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement_text '   
-   + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/   
+   + CAST(CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/
           THEN    
    N'  ,    
     oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') AS compile_cpu_ms,   
     oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') AS compile_duration_ms'   
           ELSE N''   
-     END) + N'   
+     END AS nvarchar(max)) + N'
 FROM #human_events_xml_internal AS xet   
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)   
 WHERE 1 = 1 '   
-      + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 /*Just like above*/   
+      + CAST(CASE WHEN @compile_events = 1 /*Just like above*/
              THEN    
 N'    
 AND oa.c.exist(''(data[@name="is_recompile"]/value[. = "false"])'') = 1 '   
              ELSE N''   
-        END) + CONVERT(nvarchar(MAX), N'   
+        END AS nvarchar(max)) + N'
 AND   oa.c.exist(''@name[.= "sql_statement_post_compile"]'') = 1   
 AND   oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
 ORDER BY event_time;' + @nc10
-        )))
-                            + CASE WHEN @parameterization_events = 1 /*The query_parameterization_data XE is only 2017+*/   
+                            + CAST(CASE WHEN @parameterization_events = 1 /*The query_parameterization_data XE is only 2017+*/
                                    THEN    
                             @nc10 +    
-                                CONVERT
-                                (
-                                    nvarchar(MAX),
                             N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N'_parameterization' + N' WITH(TABLOCK) ' + @nc10 +    
                             N'( server_name, event_time,  event_type, database_name, sql_text, compile_cpu_time_ms, ' + @nc10 +   
                             N'  compile_duration_ms, query_param_type, is_cached, is_recompiled, compile_code, has_literals, ' + @nc10 +   
                             N'  is_parameterizable, parameterized_values_count, query_plan_hash, query_hash, plan_handle, statement_sql_hash ) ' + @nc10 +   
-                            CONVERT(nvarchar(MAX), N'SELECT    
+                            N'SELECT
     @@SERVERNAME,   
     DATEADD   
     (   
@@ -4389,12 +4358,12 @@ OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE oa.c.exist(''@name[.= "query_parameterization_data"]'') = 1   
 AND   oa.c.exist(''(data[@name="is_recompiled"]/value[. = "false"])'') = 1   
 AND   oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
-ORDER BY event_time;'))                            
+ORDER BY event_time;'
                                    ELSE N''    
-                              END                        
+                              END AS nvarchar(max))
                        ELSE N''   
-                  END
-                  );   
+                  END AS nvarchar(max));
+
                
             /* this table is only used for the inserts, hence the "internal" in the name */   
             IF @azure = 0   
