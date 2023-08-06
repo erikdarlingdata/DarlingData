@@ -50,7 +50,8 @@ DECLARE
 IF OBJECT_ID(N'dbo.ClearTokenPermLogging') IS NULL
 BEGIN
 
-    CREATE TABLE dbo.ClearTokenPermLogging
+    CREATE TABLE
+        dbo.ClearTokenPermLogging
     (
         id bigint IDENTITY PRIMARY KEY,
         cache_size_gb decimal(38,2) NOT NULL,
