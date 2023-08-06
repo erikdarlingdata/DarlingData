@@ -4389,10 +4389,9 @@ OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE oa.c.exist(''@name[.= "query_parameterization_data"]'') = 1   
 AND   oa.c.exist(''(data[@name="is_recompiled"]/value[. = "false"])'') = 1   
 AND   oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1   
-ORDER BY event_time;'))                                
+ORDER BY event_time;'))                            
                                    ELSE N''    
-                              END
-                            
+                              END                        
                        ELSE N''   
                   END
                   );   
