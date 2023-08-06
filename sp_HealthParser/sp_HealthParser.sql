@@ -322,11 +322,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             @sql = N'
         SELECT
-            ISNULL
-            (
-                xml.wait_info,
-                CONVERT(xml, N''.'')
-            )
+            wait_info =
+                ISNULL
+                (
+                    xml.wait_info,
+                    CONVERT(xml, N''.'')
+                )
         FROM
         (
             SELECT
@@ -358,11 +359,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             @sql = N'
         SELECT
-            ISNULL
-            (
-                xml.sp_server_diagnostics_component_result,
-                CONVERT(xml, N''.'')
-            )
+            sp_server_diagnostics_component_result =
+                ISNULL
+                (
+                    xml.sp_server_diagnostics_component_result,
+                    CONVERT(xml, N''.'')
+                )
         FROM
         (
             SELECT
@@ -405,11 +407,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             @sql = N'
         SELECT
-            ISNULL
-            (
-                xml.wait_info,
-                CONVERT(xml, N''.'')
-            )
+            wait_info =
+                ISNULL
+                (
+                    xml.wait_info,
+                    CONVERT(xml, N''.'')
+                )
         FROM
         (
             SELECT
@@ -442,11 +445,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             @sql = N'
         SELECT
-            ISNULL
-            (
-                xml.sp_server_diagnostics_component_result,
-                CONVERT(xml, N''.'')
-            )
+            sp_server_diagnostics_component_result =
+                ISNULL
+                (
+                    xml.sp_server_diagnostics_component_result,
+                    CONVERT(xml, N''.'')
+                )
         FROM
         (
             SELECT
@@ -478,6 +482,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     IF @mi = 1
     BEGIN
+        
+        SELECT
+            preamble =
+                'You have reached the Managed Instance section of the code'
+        UNION ALL
+        SELECT
+            preamble =
+                'It read from the ring buffer, which may be truncated'
+        UNION ALL
+        SELECT
+            preamble =
+                'This code is not yet complete and is a work currently in progress';
+
         INSERT
             #x WITH(TABLOCKX)
         (
@@ -493,7 +510,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_xe_session_targets AS t
         JOIN sys.dm_xe_sessions AS s
           ON s.address = t.event_session_address
-        WHERE s.name = 'system_health'
+        WHERE s.name = N'system_health'
         AND   t.target_name = N'ring_buffer'
         OPTION(RECOMPILE);
         
