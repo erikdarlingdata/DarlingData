@@ -1022,6 +1022,7 @@ DECLARE
     @isolation_level nvarchar(MAX),
     @parameters nvarchar(4000),
     @plans_top bigint,
+    @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(MAX),
     @procedure_exists bit,
@@ -1156,10 +1157,17 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @execution_count bigint,
           @duration_ms bigint,
           @execution_type_desc nvarchar(60),
-          @database_id int',
+          @database_id int,
+          @queries_top bigint',
     @plans_top =
         CASE
             WHEN @include_plan_ids IS NULL
+            THEN 1
+            ELSE 10
+         END,
+    @queries_top =
+        CASE
+            WHEN @include_query_ids IS NULL
             THEN 1
             ELSE 10
          END,
@@ -3398,7 +3406,8 @@ EXEC sys.sp_executesql
     @execution_count,
     @duration_ms,
     @execution_type_desc,
-    @database_id;
+    @database_id,
+    @queries_top;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -3523,7 +3532,7 @@ SELECT
 FROM #distinct_plans AS dp
 CROSS APPLY
 (
-    SELECT TOP (1)
+    SELECT TOP (@queries_top)
         qsrs.*
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     WHERE qsrs.plan_id = dp.plan_id
@@ -3543,7 +3552,7 @@ CASE @sort_order
      ELSE N'qsrs.avg_cpu_time'
 END + N' DESC
 ) AS qsrs
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 
 IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
@@ -3575,7 +3584,8 @@ EXEC sys.sp_executesql
     @execution_count,
     @duration_ms,
     @execution_type_desc,
-    @database_id;
+    @database_id,
+    @queries_top;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -7282,6 +7292,8 @@ BEGIN
             @parameters,
         plans_top =
             @plans_top,
+        queries_top =
+            @queries_top,
         nc10 =
             @nc10,
         where_clause =
