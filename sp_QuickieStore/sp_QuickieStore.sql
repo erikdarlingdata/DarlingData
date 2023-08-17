@@ -116,8 +116,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.0',
-    @version_date = '20230801';
+    @version = '4.1',
+    @version_date = '20230901';
 
 /*
 Helpful section! For help.
@@ -1022,6 +1022,7 @@ DECLARE
     @isolation_level nvarchar(MAX),
     @parameters nvarchar(4000),
     @plans_top bigint,
+    @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(MAX),
     @procedure_exists bit,
@@ -1156,10 +1157,17 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @execution_count bigint,
           @duration_ms bigint,
           @execution_type_desc nvarchar(60),
-          @database_id int',
+          @database_id int,
+          @queries_top bigint',
     @plans_top =
         CASE
             WHEN @include_plan_ids IS NULL
+            THEN 1
+            ELSE 10
+         END,
+    @queries_top =
+        CASE
+            WHEN @include_query_ids IS NULL
             THEN 1
             ELSE 10
          END,
@@ -1454,14 +1462,14 @@ works correctly as >= @start_date and < @end_date, otherwise there are no result
 IF @start_date >= @end_date
 BEGIN
     SELECT
-        @end_date = 
+        @end_date =
             DATEADD
             (
                 DAY,
                 1,
                 @start_date
             ),
-        @end_date_original = 
+        @end_date_original =
             DATEADD
             (
                 DAY,
@@ -3398,7 +3406,8 @@ EXEC sys.sp_executesql
     @execution_count,
     @duration_ms,
     @execution_type_desc,
-    @database_id;
+    @database_id,
+    @queries_top;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -3523,7 +3532,7 @@ SELECT
 FROM #distinct_plans AS dp
 CROSS APPLY
 (
-    SELECT TOP (1)
+    SELECT TOP (@queries_top)
         qsrs.*
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     WHERE qsrs.plan_id = dp.plan_id
@@ -3543,7 +3552,7 @@ CASE @sort_order
      ELSE N'qsrs.avg_cpu_time'
 END + N' DESC
 ) AS qsrs
-OPTION(RECOMPILE);' + @nc10;
+OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 
 IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
 
@@ -3575,7 +3584,8 @@ EXEC sys.sp_executesql
     @execution_count,
     @duration_ms,
     @execution_type_desc,
-    @database_id;
+    @database_id,
+    @queries_top;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -4978,9 +4988,9 @@ FROM
         N''
             END + N'
         first_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -4993,9 +5003,9 @@ FROM
         first_execution_time_utc =
             qsrs.first_execution_time,
         last_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5074,7 +5084,7 @@ FROM
         qsrs.max_tempdb_space_used_mb,'
                  ELSE
         N''
-            END + 
+            END +
             CONVERT
             (
                 nvarchar(MAX),
@@ -5178,9 +5188,9 @@ FROM
             nvarchar(MAX),
             N'
         first_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5193,9 +5203,9 @@ FROM
         first_execution_time_utc =
             qsrs.first_execution_time,
         last_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5275,7 +5285,7 @@ FROM
         max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
-            END + 
+            END +
             CONVERT
             (
                 nvarchar(MAX),
@@ -5375,9 +5385,9 @@ FROM
         N''
             END + N'
         first_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5390,9 +5400,9 @@ FROM
         first_execution_time_utc =
             qsrs.first_execution_time,
         last_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5437,7 +5447,7 @@ FROM
         qsrs.total_tempdb_space_used_mb,'
                  ELSE
         N''
-            END + 
+            END +
             CONVERT
             (
                 nvarchar(MAX),
@@ -5540,9 +5550,9 @@ FROM
             END
         + N'
         first_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5555,9 +5565,9 @@ FROM
         first_execution_time_utc =
             qsrs.first_execution_time,
         last_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5602,7 +5612,7 @@ FROM
         total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
-            END + 
+            END +
             CONVERT
             (
                 nvarchar(MAX),
@@ -5899,9 +5909,9 @@ BEGIN
                 qspf.feedback_data,
                 qspf.state_desc,
                 create_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -5914,9 +5924,9 @@ BEGIN
                 create_time_utc =
                     qspf.create_time,
                 last_updated_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6021,9 +6031,9 @@ BEGIN
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
                 initial_compile_start_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6036,9 +6046,9 @@ BEGIN
                 initial_compile_start_time_utc =
                     qsq.initial_compile_start_time,
                 last_compile_start_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6051,9 +6061,9 @@ BEGIN
                 last_compile_start_time_utc =
                     qsq.last_compile_start_time,
                 last_execution_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6458,9 +6468,9 @@ BEGIN
                 qspf.feedback_data,
                 qspf.state_desc,
                 create_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6473,9 +6483,9 @@ BEGIN
                 create_time_utc =
                     qspf.create_time,
                 last_updated_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6580,9 +6590,9 @@ BEGIN
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
                 initial_compile_start_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6595,9 +6605,9 @@ BEGIN
                 initial_compile_start_time_utc = 
                     qsq.initial_compile_start_time,
                 last_compile_start_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6610,9 +6620,9 @@ BEGIN
                 last_compile_start_time_utc =
                     qsq.last_compile_start_time,
                 last_execution_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -7282,6 +7292,8 @@ BEGIN
             @parameters,
         plans_top =
             @plans_top,
+        queries_top =
+            @queries_top,
         nc10 =
             @nc10,
         where_clause =

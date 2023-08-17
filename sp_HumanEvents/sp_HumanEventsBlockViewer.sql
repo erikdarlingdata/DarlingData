@@ -79,8 +79,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '3.0',
-    @version_date = '20230801';
+    @version = '3.1',
+    @version_date = '20230901';
 
 IF @help = 1
 BEGIN
@@ -1043,7 +1043,7 @@ SELECT
     blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
     query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
     wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-    transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
+    transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(512)'),
     last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
     last_transaction_completed = CONVERT(datetime2, NULL),
     wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
@@ -1137,7 +1137,7 @@ SELECT
     blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
     query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
     wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
-    transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(256)'),
+    transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(512)'),
     last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
     last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
     wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
