@@ -116,8 +116,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.0',
-    @version_date = '20230801';
+    @version = '4.1',
+    @version_date = '20230901';
 
 /*
 Helpful section! For help.
@@ -1462,14 +1462,14 @@ works correctly as >= @start_date and < @end_date, otherwise there are no result
 IF @start_date >= @end_date
 BEGIN
     SELECT
-        @end_date = 
+        @end_date =
             DATEADD
             (
                 DAY,
                 1,
                 @start_date
             ),
-        @end_date_original = 
+        @end_date_original =
             DATEADD
             (
                 DAY,
@@ -4988,9 +4988,9 @@ FROM
         N''
             END + N'
         first_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5003,9 +5003,9 @@ FROM
         first_execution_time_utc =
             qsrs.first_execution_time,
         last_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5084,7 +5084,7 @@ FROM
         qsrs.max_tempdb_space_used_mb,'
                  ELSE
         N''
-            END + 
+            END +
             CONVERT
             (
                 nvarchar(MAX),
@@ -5188,9 +5188,9 @@ FROM
             nvarchar(MAX),
             N'
         first_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5203,9 +5203,9 @@ FROM
         first_execution_time_utc =
             qsrs.first_execution_time,
         last_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5285,7 +5285,7 @@ FROM
         max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
-            END + 
+            END +
             CONVERT
             (
                 nvarchar(MAX),
@@ -5385,9 +5385,9 @@ FROM
         N''
             END + N'
         first_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5400,9 +5400,9 @@ FROM
         first_execution_time_utc =
             qsrs.first_execution_time,
         last_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5447,7 +5447,7 @@ FROM
         qsrs.total_tempdb_space_used_mb,'
                  ELSE
         N''
-            END + 
+            END +
             CONVERT
             (
                 nvarchar(MAX),
@@ -5550,9 +5550,9 @@ FROM
             END
         + N'
         first_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5565,9 +5565,9 @@ FROM
         first_execution_time_utc =
             qsrs.first_execution_time,
         last_execution_time =
-            CASE 
+            CASE
                 WHEN @timezone IS NULL
-                THEN 
+                THEN
                     DATEADD
                     (
                         MINUTE,
@@ -5612,7 +5612,7 @@ FROM
         total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
-            END + 
+            END +
             CONVERT
             (
                 nvarchar(MAX),
@@ -5909,9 +5909,9 @@ BEGIN
                 qspf.feedback_data,
                 qspf.state_desc,
                 create_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -5924,9 +5924,9 @@ BEGIN
                 create_time_utc =
                     qspf.create_time,
                 last_updated_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6031,9 +6031,9 @@ BEGIN
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
                 initial_compile_start_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6046,9 +6046,9 @@ BEGIN
                 initial_compile_start_time_utc =
                     qsq.initial_compile_start_time,
                 last_compile_start_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6061,9 +6061,9 @@ BEGIN
                 last_compile_start_time_utc =
                     qsq.last_compile_start_time,
                 last_execution_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6468,9 +6468,9 @@ BEGIN
                 qspf.feedback_data,
                 qspf.state_desc,
                 create_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6483,9 +6483,9 @@ BEGIN
                 create_time_utc =
                     qspf.create_time,
                 last_updated_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6590,9 +6590,9 @@ BEGIN
                 qsq.query_text_id,
                 qsq.query_parameterization_type_desc,
                 initial_compile_start_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6605,9 +6605,9 @@ BEGIN
                 initial_compile_start_time_utc = 
                     qsq.initial_compile_start_time,
                 last_compile_start_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
@@ -6620,9 +6620,9 @@ BEGIN
                 last_compile_start_time_utc =
                     qsq.last_compile_start_time,
                 last_execution_time =
-                    CASE 
+                    CASE
                         WHEN @timezone IS NULL
-                        THEN 
+                        THEN
                             DATEADD
                             (
                                 MINUTE,
