@@ -8,20 +8,20 @@ SET STATISTICS TIME, IO OFF;
 GO
 
 /*
-██╗  ██╗███████╗ █████╗ ██╗  ████████╗██╗  ██╗ 
-██║  ██║██╔════╝██╔══██╗██║  ╚══██╔══╝██║  ██║ 
-███████║█████╗  ███████║██║     ██║   ███████║ 
-██╔══██║██╔══╝  ██╔══██║██║     ██║   ██╔══██║ 
-██║  ██║███████╗██║  ██║███████╗██║   ██║  ██║ 
-╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝  ╚═╝ 
-                                               
+██╗  ██╗███████╗ █████╗ ██╗  ████████╗██╗  ██╗
+██║  ██║██╔════╝██╔══██╗██║  ╚══██╔══╝██║  ██║
+███████║█████╗  ███████║██║     ██║   ███████║
+██╔══██║██╔══╝  ██╔══██║██║     ██║   ██╔══██║
+██║  ██║███████╗██║  ██║███████╗██║   ██║  ██║
+╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝  ╚═╝
+                                              
 ██████╗  █████╗ ██████╗ ███████╗███████╗██████╗
 ██╔══██╗██╔══██╗██╔══██╗██╔════╝██╔════╝██╔══██╗
 ██████╔╝███████║██████╔╝███████╗█████╗  ██████╔╝
 ██╔═══╝ ██╔══██║██╔══██╗╚════██║██╔══╝  ██╔══██╗
 ██║     ██║  ██║██║  ██║███████║███████╗██║  ██║
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
-                                               
+                                              
 
 Copyright 2023 Darling Data, LLC
 https://www.erikdarlingdata.com/
@@ -49,12 +49,13 @@ RECOMPILE
 AS
 BEGIN
     SET STATISTICS XML OFF;
-    SET NOCOUNT, XACT_ABORT ON;
+    SET NOCOUNT ON;
+    SET XACT_ABORT OFF;
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1b',
-        @version_date = '20230801';
+        @version = '1.0',
+        @version_date = '20230901';
 
     IF @help = 1
     BEGIN
@@ -71,7 +72,8 @@ BEGIN
         SELECT
             parameter_name =
                 ap.name,
-            data_type = t.name,
+            data_type =
+                t.name,
             description =
                 CASE
                     ap.name
@@ -125,12 +127,12 @@ BEGIN
 
         SELECT
             mit_license_yo = 'i am MIT licensed, so like, do whatever'
-       
+      
         UNION ALL
-       
+      
         SELECT
             mit_license_yo = 'see printed messages for full license';
-       
+      
         RAISERROR('
 MIT License
 
@@ -150,7 +152,7 @@ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVE
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ', 0, 1) WITH NOWAIT;
-   
+  
         RETURN;
     END;
 
@@ -160,7 +162,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @params nvarchar(MAX) =
             N'@start_date datetimeoffset(7),
               @end_date datetimeoffset(7)',
-        @azure bit  = 
+        @azure bit  =
             CASE
                 WHEN
                     CONVERT
@@ -171,7 +173,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
-        @mi bit  = 
+        @mi bit  =
             CASE
                 WHEN
                     CONVERT
@@ -181,14 +183,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ) = 8
                 THEN 1
                 ELSE 0
-            END;
+            END,
+        @dbid integer =
+            DB_ID(@database_name);
 
     IF @azure = 1
     BEGIN
         RAISERROR(N'This won''t work in Azure because it''s horrible', 11, 1) WITH NOWAIT;
         RETURN;
     END;
-   
+  
     SELECT
         @start_date =
             CASE
@@ -204,11 +208,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             GETUTCDATE()
                         ),
                         DATEADD
-                            (
-                                DAY,
-                                -7,
-                                SYSDATETIME()
-                            )
+                        (
+                            DAY,
+                            -7,
+                            SYSDATETIME()
+                        )
                     )
                 ELSE
                     DATEADD
@@ -252,14 +256,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     )
             END,
         @wait_duration_ms = /*convert to microseconds*/
-            @wait_duration_ms * 1000, 
+            @wait_duration_ms * 1000,
         @wait_round_interval_minutes = /*do this i guess?*/
-            CASE 
+            CASE
                 WHEN @wait_round_interval_minutes < 1
                 THEN 1
                 ELSE @wait_round_interval_minutes
             END;
-   
+  
     /*The more you ignore waits, the worser they get*/
     SELECT
         dows.wait_type
@@ -284,25 +288,37 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     );
 
     IF @debug = 1 BEGIN SELECT table_name = '#ignore', i.* FROM #ignore AS i ORDER BY i.wait_type; END;
-   
+  
     CREATE TABLE
         #wait_info
     (
         wait_info xml NOT NULL
     );
-   
+  
     CREATE TABLE
         #sp_server_diagnostics_component_result
     (
         sp_server_diagnostics_component_result xml NOT NULL
     );
 
-    CREATE TABLE 
+    CREATE TABLE
+        #xml_deadlock_report
+    (
+        xml_deadlock_report xml NOT NULL
+    );
+
+    CREATE TABLE
         #x
     (
         x xml NOT NULL
     );
-   
+
+    CREATE TABLE
+        #ring_buffer
+    (
+        ring_buffer xml NOT NULL
+    );
+  
     /*
     The column timestamp_utc is 2017+ only, but terribly broken:
     https://dba.stackexchange.com/q/323147/32281
@@ -326,7 +342,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ISNULL
                 (
                     xml.wait_info,
-                    CONVERT(xml, N''.'')
+                    CONVERT(xml, N''<event>event</event>'')
                 )
         FROM
         (
@@ -339,10 +355,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ) AS xml
         CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
-   
+  
         IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
-        
-        INSERT INTO 
+       
+        INSERT INTO
             #wait_info WITH (TABLOCK)
         (
             wait_info
@@ -352,9 +368,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @params,
             @start_date,
             @end_date;
-        
+       
         IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
-      
+     
         /*Grab data from the sp_server_diagnostics_component_result component*/
         SELECT
             @sql = N'
@@ -363,7 +379,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ISNULL
                 (
                     xml.sp_server_diagnostics_component_result,
-                    CONVERT(xml, N''.'')
+                    CONVERT(xml, N''<event>event</event>'')
                 )
         FROM
         (
@@ -376,10 +392,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ) AS xml
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
-       
+      
         IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
-        
-        INSERT INTO 
+       
+        INSERT INTO
             #sp_server_diagnostics_component_result WITH(TABLOCK)
         (
             sp_server_diagnostics_component_result
@@ -389,10 +405,47 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @params,
             @start_date,
             @end_date;
-        
+
+        IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
+
+        /*Grab data from the xml_deadlock_report component*/
+        SELECT
+            @sql = N'
+        SELECT
+            xml_deadlock_report =
+                ISNULL
+                (
+                    xml.xml_deadlock_report,
+                    CONVERT(xml, N''<event>event</event>'')
+                )
+        FROM
+        (
+            SELECT
+                xml_deadlock_report =
+                    TRY_CAST(fx.event_data AS xml)
+            FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
+            WHERE fx.object_name = N''xml_deadlock_report''
+            AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
+        ) AS xml
+        CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
+        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
+      
+        IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
+       
+        INSERT INTO
+            #xml_deadlock_report WITH(TABLOCK)
+        (
+            xml_deadlock_report
+        )
+        EXEC sys.sp_executesql
+            @sql,
+            @params,
+            @start_date,
+            @end_date;
+       
         IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
     END;
-   
+  
     IF NOT EXISTS
     (
         SELECT
@@ -411,7 +464,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ISNULL
                 (
                     xml.wait_info,
-                    CONVERT(xml, N''.'')
+                    CONVERT(xml, N''<event>event</event>'')
                 )
         FROM
         (
@@ -427,8 +480,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
 
         IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
-        
-        INSERT INTO 
+       
+        INSERT INTO
             #wait_info WITH (TABLOCK)
         (
             wait_info
@@ -438,7 +491,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @params,
             @start_date,
             @end_date;
-       
+      
        IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
 
         /*Grab data from the sp_server_diagnostics_component_result component*/
@@ -449,7 +502,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ISNULL
                 (
                     xml.sp_server_diagnostics_component_result,
-                    CONVERT(xml, N''.'')
+                    CONVERT(xml, N''<event>event</event>'')
                 )
         FROM
         (
@@ -463,10 +516,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
         WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
         OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
-   
+  
         IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
-        
-        INSERT INTO 
+       
+        INSERT INTO
             #sp_server_diagnostics_component_result WITH(TABLOCK)
         (
             sp_server_diagnostics_component_result
@@ -476,36 +529,61 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @params,
             @start_date,
             @end_date;
-        
+       
+        IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
+
+        /*Grab data from the xml_deadlock_report component*/
+        SELECT
+            @sql = N'
+        SELECT
+            xml_deadlock_report =
+                ISNULL
+                (
+                    xml.xml_deadlock_report,
+                    CONVERT(xml, N''<event>event</event>'')
+                )
+        FROM
+        (
+            SELECT
+                xml_deadlock_report =
+                    TRY_CAST(fx.event_data AS xml)
+            FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
+            WHERE fx.object_name = N''xml_deadlock_report''
+        ) AS xml
+        CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
+        CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
+        WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
+        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
+  
+        IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
+       
+        INSERT INTO
+            #xml_deadlock_report WITH(TABLOCK)
+        (
+            xml_deadlock_report
+        )
+        EXEC sys.sp_executesql
+            @sql,
+            @params,
+            @start_date,
+            @end_date;
+       
         IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
     END;
 
     IF @mi = 1
     BEGIN
-        
-        SELECT
-            preamble =
-                'You have reached the Managed Instance section of the code'
-        UNION ALL
-        SELECT
-            preamble =
-                'It read from the ring buffer, which may be truncated'
-        UNION ALL
-        SELECT
-            preamble =
-                'This code is not yet complete and is a work currently in progress';
-
         INSERT
             #x WITH(TABLOCKX)
         (
             x
         )
         SELECT
-            x = 
-        	    ISNULL
-        		(
-        		    TRY_CAST(t.target_data AS xml), 
-        			CONVERT(xml, N'.')
+            x =
+                ISNULL
+                (
+                    TRY_CAST(t.target_data AS xml),
+                    CONVERT(xml, N'<event>event</event>')
                 )
         FROM sys.dm_xe_session_targets AS t
         JOIN sys.dm_xe_sessions AS s
@@ -513,45 +591,91 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE s.name = N'system_health'
         AND   t.target_name = N'ring_buffer'
         OPTION(RECOMPILE);
-        
+
+        IF @debug = 1 BEGIN SELECT TOP (100) table_name = '#x, top 100 rows', x.* FROM #x AS x; END;
+       
+        INSERT
+            #ring_buffer WITH(TABLOCK)
+        (
+            ring_buffer
+        )
         SELECT
             x = e.x.query('.')
-        FROM 
+        FROM
         (
             SELECT
                 x
             FROM #x
         ) AS x
         CROSS APPLY x.x.nodes('//event') AS e(x)
-        WHERE 1 = 1 
+        WHERE 1 = 1
         AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
         AND   e.x.exist('@name[.= "security_error_ring_buffer_recorded"]') = 0
         AND   e.x.exist('@name[.= "error_reported"]') = 0
         AND   e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 0
         AND   e.x.exist('@name[.= "connectivity_ring_buffer_recorded"]') = 0
+        AND   e.x.exist('@name[.= "scheduler_monitor_system_health_ring_buffer_recorded"]') = 0
+        OPTION(RECOMPILE);
+
+        IF @debug = 1 BEGIN SELECT TOP (100) table_name = '#ring_buffer, top 100 rows', x.* FROM #ring_buffer AS x; END;
+
+        INSERT
+            #wait_info WITH(TABLOCK)
+        (
+            wait_info
+        )
+        SELECT
+            e.x.query('.')
+        FROM #ring_buffer AS rb
+        CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+        WHERE e.x.exist('@name[.= "wait_info"]') = 1
+        OPTION(RECOMPILE);
+
+        INSERT
+            #sp_server_diagnostics_component_result WITH(TABLOCK)
+        (
+            sp_server_diagnostics_component_result
+        )
+        SELECT
+            e.x.query('.')
+        FROM #ring_buffer AS rb
+        CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+        WHERE e.x.exist('@name[.= "sp_server_diagnostics_component_result"]') = 1
+        OPTION(RECOMPILE);
+
+        INSERT
+            #xml_deadlock_report WITH(TABLOCK)
+        (
+            xml_deadlock_report
+        )
+        SELECT
+            e.x.query('.')
+        FROM #ring_buffer AS rb
+        CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+        WHERE e.x.exist('@name[.= "xml_deadlock_report"]') = 1
         OPTION(RECOMPILE);
     END;
-
-    
-    IF @debug = 1 
-    BEGIN 
+  
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#wait_info, top 100 rows', x.* FROM #wait_info AS x;
-        SELECT TOP (100) table_name = '#sp_server_diagnostics_component_result, top 100 rows', x.* FROM #sp_server_diagnostics_component_result AS x; 
+        SELECT TOP (100) table_name = '#sp_server_diagnostics_component_result, top 100 rows', x.* FROM #sp_server_diagnostics_component_result AS x;
+        SELECT TOP (100) table_name = '#xml_deadlock_report, top 100 rows', x.* FROM #xml_deadlock_report AS x;
     END;
 
     /*Parse out the wait_info data*/
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                w.x.value('@timestamp', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                w.x.value('@timestamp', 'datetime2')
             ),
         wait_type = w.x.value('(data[@name="wait_type"]/text/text())[1]', 'nvarchar(60)'),
         duration_ms = CONVERT(decimal(38, 2), w.x.value('(data[@name="duration"]/value/text())[1]', 'bigint') / 1000.),
@@ -574,26 +698,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               WHERE w.x.exist('(data[@name="wait_type"]/text/text())[1][.= sql:column("i.wait_type")]') = 1
           )
     OPTION(RECOMPILE);
-   
+       
     ALTER TABLE #waits_queries
     ADD query_text AS
-       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-           sql_text_pre COLLATE Latin1_General_BIN2,
-       NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
-       NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
-       NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
+        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+            sql_text_pre COLLATE Latin1_General_BIN2,
+        NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
-
-    IF @debug = 1 
-    BEGIN 
+       
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#waits_queries, top 100 rows', x.* FROM #waits_queries AS x ORDER BY x.event_time DESC;
     END;
-   
+       
     SELECT
-        wq.event_time,
         finding = 'queries with significant waits',
+        wq.event_time,
         wq.wait_type,
         wq.duration_ms,
         wq.signal_duration_ms,
@@ -612,20 +736,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         wq.duration_ms DESC
     OPTION(RECOMPILE);
-   
+      
     /*Waits by count*/
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                w.x.value('@timestamp', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                w.x.value('@timestamp', 'datetime2')
             ),
         wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
         waits = w2.x2.value('@waits', 'bigint'),
@@ -646,27 +770,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
           )
     OPTION(RECOMPILE);
-
-    IF @debug = 1 
-    BEGIN 
+       
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#topwaits_count, top 100 rows', x.* FROM #topwaits_count AS x ORDER BY x.event_time DESC;
     END;
-   
+       
     SELECT
+        finding = 'waits by count',
         event_time_rounded =
             DATEADD
             (
-                MINUTE, 
+                MINUTE,
                 DATEDIFF
                 (
-                    MINUTE, 
-                    0, 
+                    MINUTE,
+                    0,
                     tc.event_time
                 ) / @wait_round_interval_minutes *
-                    @wait_round_interval_minutes, 
+                    @wait_round_interval_minutes,
                 0
             ),
-        finding = 'waits by count',
         tc.wait_type,
         waits = SUM(CONVERT(bigint, tc.waits)),
         total_wait_time_ms =
@@ -680,34 +804,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         tc.wait_type,
         DATEADD
         (
-            MINUTE, 
+            MINUTE,
             DATEDIFF
             (
-                MINUTE, 
-                0, 
+                MINUTE,
+                0,
                 tc.event_time
             ) / @wait_round_interval_minutes *
-                @wait_round_interval_minutes, 
+                @wait_round_interval_minutes,
             0
         )
     ORDER BY
         event_time_rounded DESC,
         waits DESC
     OPTION(RECOMPILE);
-   
+       
     /*Grab waits by duration*/
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                w.x.value('@timestamp', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                w.x.value('@timestamp', 'datetime2')
             ),
         name = w.x.value('@name', 'nvarchar(256)'),
         component = w.x.value('(data[@name="component"]/text/text())[1]', 'nvarchar(256)'),
@@ -731,27 +855,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
           )
     OPTION(RECOMPILE);
-
-    IF @debug = 1 
-    BEGIN 
+       
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#topwaits_duration, top 100 rows', x.* FROM #topwaits_duration AS x ORDER BY x.event_time DESC;
     END;
-   
+       
     SELECT
+        finding = 'waits by duration',
         event_time_rounded =
             DATEADD
             (
-                MINUTE, 
+                MINUTE,
                 DATEDIFF
                 (
-                    MINUTE, 
-                    0, 
+                    MINUTE,
+                    0,
                     td.event_time
-                ) / @wait_round_interval_minutes * 
-                    @wait_round_interval_minutes, 
+                ) / @wait_round_interval_minutes *
+                    @wait_round_interval_minutes,
                 0
             ),
-        finding = 'waits by duration',
         td.wait_type,
         waits = SUM(CONVERT(bigint, td.waits)),
         total_wait_time_ms =
@@ -765,13 +889,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         td.wait_type,
         DATEADD
         (
-            MINUTE, 
+            MINUTE,
             DATEDIFF
             (
-                MINUTE, 
-                0, 
+                MINUTE,
+                0,
                 td.event_time
-            ) / @wait_round_interval_minutes * 
+            ) / @wait_round_interval_minutes *
                 @wait_round_interval_minutes,
             0
         )
@@ -779,20 +903,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         event_time_rounded DESC,
         total_wait_time_ms DESC
     OPTION(RECOMPILE);
-   
+  
     /*Grab IO stuff*/
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                w.x.value('@timestamp', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                w.x.value('@timestamp', 'datetime2')
             ),
         state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
         ioLatchTimeouts = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@ioLatchTimeouts)[1]', 'bigint'),
@@ -811,14 +935,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
 
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#io, top 100 rows', x.* FROM #io AS x ORDER BY x.event_time DESC;
     END;
-   
+  
     SELECT
-        i.event_time,
         finding = 'potential io issues',
+        i.event_time,
         i.state,
         i.ioLatchTimeouts,
         i.intervalLongIos,
@@ -828,7 +952,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         longestPendingRequests_filePath =
             ISNULL(i.longestPendingRequests_filePath, 'N/A')
     FROM #io AS i
-    GROUP BY 
+    GROUP BY
         i.event_time,
         i.state,
         i.ioLatchTimeouts,
@@ -838,20 +962,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         i.event_time DESC
     OPTION(RECOMPILE);
-   
+  
     /*Grab CPU details*/
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                w.x.value('@timestamp', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                w.x.value('@timestamp', 'datetime2')
             ),
         name = w.x.value('@name', 'nvarchar(256)'),
         component = w.x.value('(data[@name="component"]/text/text())[1]', 'nvarchar(256)'),
@@ -873,14 +997,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
 
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#scheduler_details, top 100 rows', x.* FROM #scheduler_details AS x ORDER BY x.event_time DESC;
     END;
-   
+  
     SELECT
-        sd.event_time,
         finding = 'cpu task details',
+        sd.event_time,
         sd.state,
         sd.maxWorkers,
         sd.workersCreated,
@@ -895,20 +1019,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         sd.event_time DESC
     OPTION(RECOMPILE);
-   
+  
     /*Grab memory details*/
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                s.sp_server_diagnostics_component_result.value('(//@timestamp)[1]', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                s.sp_server_diagnostics_component_result.value('(//@timestamp)[1]', 'datetime2')
             ),
         lastNotification = r.c.value('@lastNotification', 'varchar(128)'),
         outOfMemoryExceptions = r.c.value('@outOfMemoryExceptions', 'bigint'),
@@ -948,14 +1072,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
 
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#memory, top 100 rows', x.* FROM #memory AS x ORDER BY x.event_time DESC;
     END;
-   
+  
     SELECT
-        m.event_time,
         finding = 'memory conditions',
+        m.event_time,
         m.lastNotification,
         m.outOfMemoryExceptions,
         m.isAnyPoolOutOfMemory,
@@ -991,27 +1115,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         m.event_time DESC
     OPTION(RECOMPILE);
-       
+      
     /*Grab health stuff*/
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                w.x.value('@timestamp', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                w.x.value('@timestamp', 'datetime2')
             ),
         state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
         spinlockBackoffs = w.x.value('(/event/data[@name="data"]/value/system/@spinlockBackoffs)[1]', 'bigint'),
-        sickSpinlockType = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),     
+        sickSpinlockType = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),    
         sickSpinlockTypeAfterAv = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockTypeAfterAv)[1]', 'nvarchar(256)'),
-        latchWarnings = w.x.value('(/event/data[@name="data"]/value/system/@latchWarnings)[1]', 'bigint'),            
-        isAccessViolationOccurred = w.x.value('(/event/data[@name="data"]/value/system/@isAccessViolationOccurred)[1]', 'bigint'), 
+        latchWarnings = w.x.value('(/event/data[@name="data"]/value/system/@latchWarnings)[1]', 'bigint'),           
+        isAccessViolationOccurred = w.x.value('(/event/data[@name="data"]/value/system/@isAccessViolationOccurred)[1]', 'bigint'),
         writeAccessViolationCount = w.x.value('(/event/data[@name="data"]/value/system/@writeAccessViolationCount)[1]', 'bigint'),
         totalDumpRequests = w.x.value('(/event/data[@name="data"]/value/system/@totalDumpRequests)[1]', 'bigint'),
         intervalDumpRequests = w.x.value('(/event/data[@name="data"]/value/system/@intervalDumpRequests)[1]', 'bigint'),
@@ -1028,15 +1152,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE w.x.exist('(data[@name="component"]/text[.="SYSTEM"])') = 1
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
-   
-    IF @debug = 1 
-    BEGIN 
+  
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#health, top 100 rows', x.* FROM #health AS x ORDER BY x.event_time DESC;
     END;
 
     SELECT
-        h.event_time,
         finding = 'overall system health',
+        h.event_time,
         h.state,
         h.spinlockBackoffs,
         h.sickSpinlockType,
@@ -1056,20 +1180,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         h.event_time DESC
     OPTION(RECOMPILE);
-   
+  
     /*Grab useless stuff*/
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                w.x.value('(//@timestamp)[1]', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                w.x.value('(//@timestamp)[1]', 'datetime2')
             ),
         sessionId =
             w2.x2.value('@sessionId', 'bigint'),
@@ -1108,14 +1232,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
 
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#useless, top 100 rows', x.* FROM #useless AS x ORDER BY x.event_time DESC;
     END;
-   
+  
     SELECT
-        u.event_time,
         finding = 'cpu intensive requests',
+        u.event_time,
         u.sessionId,
         u.requestId,
         u.command,
@@ -1126,20 +1250,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         u.cpuTimeMs DESC
     OPTION(RECOMPILE);
-   
+  
     /*Grab blocking stuff*/
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                w.x.value('(//@timestamp)[1]', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                w.x.value('(//@timestamp)[1]', 'datetime2')
             ),
         human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
     INTO #blocking_xml
@@ -1150,17 +1274,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
 
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#blocking_xml, top 100 rows', x.* FROM #blocking_xml AS x ORDER BY x.event_time DESC;
     END;
-   
+  
     /*Blocked queries*/
     SELECT
         bx.event_time,
-        currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),  
+        currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'), 
         spid = bd.value('(process/@spid)[1]', 'int'),
-        ecid = bd.value('(process/@ecid)[1]', 'int'),         
+        ecid = bd.value('(process/@ecid)[1]', 'int'),        
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
         lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
@@ -1184,7 +1308,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     WHERE bd.exist('process/@spid') = 1
     OPTION(RECOMPILE);
-   
+  
     ALTER TABLE #blocked
     ADD query_text AS
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -1196,11 +1320,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
 
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#blocked, top 100 rows', x.* FROM #blocked AS x ORDER BY x.event_time DESC;
     END;
-   
+  
     /*Blocking queries*/
     SELECT
         bx.event_time,
@@ -1230,7 +1354,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     WHERE bg.exist('process/@spid') = 1
     OPTION(RECOMPILE);
-   
+  
     ALTER TABLE #blocking
     ADD query_text AS
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -1242,11 +1366,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
 
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#blocking, top 100 rows', x.* FROM #blocking AS x ORDER BY x.event_time DESC;
     END;
-   
+  
     /*Put it together*/
     SELECT
         kheb.event_time,
@@ -1261,7 +1385,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN
                     (
                         SELECT
-                            [processing-instruction(query)] =                                    
+                            [processing-instruction(query)] =                                   
                                 OBJECT_SCHEMA_NAME
                                 (
                                         SUBSTRING
@@ -1318,7 +1442,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         kheb.last_transaction_completed,
         client_option_1 =
             SUBSTRING
-            ( 
+            (
                 CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +
                 CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +
                 CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +
@@ -1368,31 +1492,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         kheb.blocked_process_report
     INTO #blocks
     FROM
-    (             
+    (            
         SELECT
             bg.*
         FROM #blocking AS bg
         WHERE (bg.currentdbname = @database_name
                OR @database_name IS NULL)
-     
+    
         UNION ALL
-     
+    
         SELECT
             bd.*
-        FROM #blocked AS bd   
+        FROM #blocked AS bd  
         WHERE (bd.currentdbname = @database_name
                OR @database_name IS NULL)
     ) AS kheb
     OPTION(RECOMPILE);
 
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#blocks, top 100 rows', x.* FROM #blocks AS x ORDER BY x.event_time DESC;
     END;
-   
+  
     SELECT
-        b.event_time,
         finding = 'blocked process report',
+        b.event_time,
         b.currentdbname,
         b.activity,
         b.spid,
@@ -1422,7 +1546,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE +1
         END
     OPTION(RECOMPILE);
-   
+  
     /*Grab available plans from the cache*/
     SELECT DISTINCT
         b.*
@@ -1431,7 +1555,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT
             finding =
-                'available_plans',
+                'available plans for blocking',
             b.currentdbname,
             query_text =
                 TRY_CAST(b.query_text AS nvarchar(MAX)),
@@ -1445,12 +1569,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.currentdbname = @database_name
                 OR @database_name IS NULL)
-      
+     
         UNION ALL
-      
+     
         SELECT
             finding =
-                'available_plans',
+                CONVERT(varchar(30), 'available plans for blocking'),
             b.currentdbname,
             query_text =
                 TRY_CAST(b.query_text AS nvarchar(MAX)),
@@ -1467,11 +1591,275 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ) AS b
     OPTION(RECOMPILE);
 
-    IF @debug = 1 
-    BEGIN 
+    SELECT
+        x.xml_deadlock_report,
+        event_date = x.xml_deadlock_report.value('(event/@timestamp)[1]', 'datetime2'),
+        victim_id = x.xml_deadlock_report.value('(//deadlock/victim-list/victimProcess/@id)[1]', 'nvarchar(256)'),
+        deadlock_graph = x.xml_deadlock_report.query('/event/data/value/deadlock')
+    INTO #deadlocks
+    FROM #xml_deadlock_report AS x
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT TOP (100) table_name = '#deadlocks, top 100 rows', x.* FROM #deadlocks AS x;
+    END;
+
+    SELECT
+        x.event_date,
+        x.id,
+        x.victim_id,
+        database_name =
+            ISNULL
+            (
+                DB_NAME(x.database_id),
+                N'UNKNOWN'
+            ),
+        x.current_database_name,
+        x.query_text_pre,
+        x.priority,
+        x.log_used,
+        x.wait_time,
+        x.transaction_name,
+        x.last_tran_started,
+        x.last_batch_started,
+        x.last_batch_completed,
+        x.lock_mode,
+        x.status,
+        x.transaction_count,
+        x.client_app,
+        x.host_name,
+        x.login_name,
+        x.isolation_level,
+        client_option_1 =
+            SUBSTRING
+            (
+                CASE WHEN x.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +
+                CASE WHEN x.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +
+                CASE WHEN x.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +
+                CASE WHEN x.clientoption1 & 8 = 8 THEN ', ANSI_WARNINGS' ELSE '' END +
+                CASE WHEN x.clientoption1 & 16 = 16 THEN ', ANSI_PADDING' ELSE '' END +
+                CASE WHEN x.clientoption1 & 32 = 32 THEN ', ANSI_NULLS' ELSE '' END +
+                CASE WHEN x.clientoption1 & 64 = 64 THEN ', ARITHABORT' ELSE '' END +
+                CASE WHEN x.clientoption1 & 128 = 128 THEN ', ARITHIGNORE' ELSE '' END +
+                CASE WHEN x.clientoption1 & 256 = 256 THEN ', QUOTED_IDENTIFIER' ELSE '' END +
+                CASE WHEN x.clientoption1 & 512 = 512 THEN ', NOCOUNT' ELSE '' END +
+                CASE WHEN x.clientoption1 & 1024 = 1024 THEN ', ANSI_NULL_DFLT_ON' ELSE '' END +
+                CASE WHEN x.clientoption1 & 2048 = 2048 THEN ', ANSI_NULL_DFLT_OFF' ELSE '' END +
+                CASE WHEN x.clientoption1 & 4096 = 4096 THEN ', CONCAT_NULL_YIELDS_NULL' ELSE '' END +
+                CASE WHEN x.clientoption1 & 8192 = 8192 THEN ', NUMERIC_ROUNDABORT' ELSE '' END +
+                CASE WHEN x.clientoption1 & 16384 = 16384 THEN ', XACT_ABORT' ELSE '' END,
+                3,
+                500
+            ),
+        client_option_2 =
+            SUBSTRING
+            (
+                CASE WHEN x.clientoption2 & 1024 = 1024 THEN ', DB CHAINING' ELSE '' END +
+                CASE WHEN x.clientoption2 & 2048 = 2048 THEN ', NUMERIC ROUNDABORT' ELSE '' END +
+                CASE WHEN x.clientoption2 & 4096 = 4096 THEN ', ARITHABORT' ELSE '' END +
+                CASE WHEN x.clientoption2 & 8192 = 8192 THEN ', ANSI PADDING' ELSE '' END +
+                CASE WHEN x.clientoption2 & 16384 = 16384 THEN ', ANSI NULL DEFAULT' ELSE '' END +
+                CASE WHEN x.clientoption2 & 65536 = 65536 THEN ', CONCAT NULL YIELDS NULL' ELSE '' END +
+                CASE WHEN x.clientoption2 & 131072 = 131072 THEN ', RECURSIVE TRIGGERS' ELSE '' END +
+                CASE WHEN x.clientoption2 & 1048576 = 1048576 THEN ', DEFAULT TO LOCAL CURSOR' ELSE '' END +
+                CASE WHEN x.clientoption2 & 8388608 = 8388608 THEN ', QUOTED IDENTIFIER' ELSE '' END +
+                CASE WHEN x.clientoption2 & 16777216 = 16777216 THEN ', AUTO CREATE STATISTICS' ELSE '' END +
+                CASE WHEN x.clientoption2 & 33554432 = 33554432 THEN ', CURSOR CLOSE ON COMMIT' ELSE '' END +
+                CASE WHEN x.clientoption2 & 67108864 = 67108864 THEN ', ANSI NULLS' ELSE '' END +
+                CASE WHEN x.clientoption2 & 268435456 = 268435456 THEN ', ANSI WARNINGS' ELSE '' END +
+                CASE WHEN x.clientoption2 & 536870912 = 536870912 THEN ', FULL TEXT ENABLED' ELSE '' END +
+                CASE WHEN x.clientoption2 & 1073741824 = 1073741824 THEN ', AUTO UPDATE STATISTICS' ELSE '' END +
+                CASE WHEN x.clientoption2 & 1469283328 = 1469283328 THEN ', ALL SETTABLE OPTIONS' ELSE '' END,
+                3,
+                500
+            ),
+        x.deadlock_resources,
+        x.deadlock_graph,       
+        x.process_xml
+    INTO #deadlocks_parsed
+    FROM
+    (
+        SELECT
+            event_date =
+                DATEADD
+                (
+                    MINUTE,
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ),
+                    d.event_date
+                ),
+            d.victim_id,
+            d.deadlock_graph,
+            id = e.x.value('@id', 'nvarchar(256)'),
+            database_id = e.x.value('@currentdb', 'bigint'),
+            current_database_name = e.x.value('@currentdbname', 'nvarchar(256)'),
+            priority = e.x.value('@priority', 'smallint'),
+            log_used = e.x.value('@logused', 'bigint'),
+            wait_time = e.x.value('@waittime', 'bigint'),
+            transaction_name = e.x.value('@transactionname', 'nvarchar(256)'),
+            last_tran_started = e.x.value('@lasttranstarted', 'datetime'),
+            last_batch_started = e.x.value('@lastbatchstarted', 'datetime'),
+            last_batch_completed = e.x.value('@lastbatchcompleted', 'datetime'),
+            lock_mode = e.x.value('@lockMode', 'nvarchar(256)'),
+            status = e.x.value('@status', 'nvarchar(256)'),
+            transaction_count = e.x.value('@trancount', 'bigint'),
+            client_app = e.x.value('@clientapp', 'nvarchar(1024)'),
+            host_name = e.x.value('@hostname', 'nvarchar(256)'),
+            login_name = e.x.value('@loginname', 'nvarchar(256)'),
+            isolation_level = e.x.value('@isolationlevel', 'nvarchar(256)'),
+            clientoption1 = e.x.value('@clientoption1', 'bigint'),
+            clientoption2 = e.x.value('@clientoption2', 'bigint'),
+            query_text_pre = e.x.value('(//process/inputbuf/text())[1]', 'nvarchar(max)'),
+            process_xml = e.x.query(N'.'),
+            deadlock_resources = d.xml_deadlock_report.query('//deadlock/resource-list')
+        FROM #deadlocks AS d
+        CROSS APPLY d.xml_deadlock_report.nodes('//deadlock/process-list/process') AS e(x)
+    ) AS x
+    WHERE (x.database_id = @dbid OR @dbid IS NULL)
+    OR    (x.current_database_name = @database_name OR @database_name IS NULL)
+    OPTION(RECOMPILE);
+
+    ALTER TABLE #deadlocks_parsed
+    ADD query_text AS
+       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+       REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+           query_text_pre COLLATE Latin1_General_BIN2,
+       NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+       NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+       NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
+    PERSISTED;
+
+    IF @debug = 1
+    BEGIN
+        SELECT TOP (100) table_name = '#deadlocks_parsed, top 100 rows', x.* FROM #deadlocks_parsed AS x;
+    END;
+
+    SELECT
+        finding = 'xml deadlock report',
+        dp.event_date,
+        is_victim =
+            CASE
+                WHEN dp.id = dp.victim_id
+                THEN 1
+                ELSE 0
+            END,
+        dp.database_name,
+        dp.current_database_name,
+        query_text =
+            CASE
+                WHEN dp.query_text
+                     LIKE CONVERT(nvarchar(1), 0x0a00, 0) + N'Proc |[Database Id = %' ESCAPE N'|'
+                THEN
+                    (
+                        SELECT
+                            [processing-instruction(query)] =                                   
+                                OBJECT_SCHEMA_NAME
+                                (
+                                        SUBSTRING
+                                        (
+                                            dp.query_text,
+                                            CHARINDEX(N'Object Id = ', dp.query_text) + 12,
+                                            LEN(dp.query_text) - (CHARINDEX(N'Object Id = ', dp.query_text) + 12)
+                                        )
+                                        ,
+                                        SUBSTRING
+                                        (
+                                            dp.query_text,
+                                            CHARINDEX(N'Database Id = ', dp.query_text) + 14,
+                                            CHARINDEX(N'Object Id', dp.query_text) - (CHARINDEX(N'Database Id = ', dp.query_text) + 14)
+                                        )
+                                ) +
+                                N'.' +
+                                OBJECT_NAME
+                                (
+                                     SUBSTRING
+                                     (
+                                         dp.query_text,
+                                         CHARINDEX(N'Object Id = ', dp.query_text) + 12,
+                                         LEN(dp.query_text) - (CHARINDEX(N'Object Id = ', dp.query_text) + 12)
+                                     )
+                                     ,
+                                     SUBSTRING
+                                     (
+                                         dp.query_text,
+                                         CHARINDEX(N'Database Id = ', dp.query_text) + 14,
+                                         CHARINDEX(N'Object Id', dp.query_text) - (CHARINDEX(N'Database Id = ', dp.query_text) + 14)
+                                     )
+                                )
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    )
+                ELSE
+                    (
+                        SELECT
+                            [processing-instruction(query)] =
+                                dp.query_text
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    )
+            END,
+        dp.deadlock_resources,
+        dp.isolation_level,
+        dp.lock_mode,
+        dp.status,
+        dp.wait_time,
+        dp.log_used,
+        dp.transaction_name,
+        dp.transaction_count,
+        dp.client_option_1,
+        dp.client_option_2,
+        dp.last_tran_started,
+        dp.last_batch_started,
+        dp.last_batch_completed,
+        dp.client_app,
+        dp.host_name,
+        dp.login_name,
+        dp.priority,
+        dp.deadlock_graph
+    FROM #deadlocks_parsed AS dp
+    ORDER BY
+        dp.event_date,
+        is_victim
+    OPTION(RECOMPILE);
+
+    INSERT
+        #available_plans WITH (TABLOCKX)
+    (
+        finding,
+        currentdbname,
+        query_text,
+        sql_handle,
+        stmtstart,
+        stmtend
+    )
+    SELECT
+        finding =
+            'available plans for deadlocks',
+        dp.database_name,
+        dp.query_text,
+        sql_handle =
+            CONVERT(varbinary(64), e.x.value('@sqlhandle', 'varchar(130)'), 1),
+        stmtstart =
+            0,
+        stmtend =
+            0
+    FROM #deadlocks_parsed AS dp
+    CROSS APPLY dp.process_xml.nodes('//executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS e(x)
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
         SELECT TOP (100) table_name = '#available_plans, top 100 rows', x.* FROM #available_plans AS x;
     END;
-   
+  
     SELECT
         deqs.sql_handle,
         deqs.plan_handle,
@@ -1517,7 +1905,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         min_used_grant_mb =
             deqs.min_used_grant_kb * 8. / 1024.,
         max_used_grant_mb =
-            deqs.max_used_grant_kb * 8. / 1024.,  
+            deqs.max_used_grant_kb * 8. / 1024., 
         deqs.min_reserved_threads,
         deqs.max_reserved_threads,
         deqs.min_used_threads,
@@ -1541,7 +1929,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         sql_handle,
         plan_handle
     );
-   
+  
     SELECT
         ap.finding,
         ap.currentdbname,
@@ -1571,6 +1959,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ap.sql_handle,
         ap.statement_start_offset,
         ap.statement_end_offset
+    INTO #all_avalable_plans
     FROM
     (
         SELECT
@@ -1618,5 +2007,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ap.query_plan IS NOT NULL
     ORDER BY
         ap.avg_worker_time_ms DESC
-    OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
+    OPTION(RECOMPILE);
+
+    SELECT
+        aap.*
+    FROM #all_avalable_plans AS aap
+    WHERE aap.finding = 'available plans for blocking'
+    ORDER BY
+        aap.avg_worker_time_ms DESC
+    OPTION(RECOMPILE);
+
+    SELECT
+        aap.*
+    FROM #all_avalable_plans AS aap
+    WHERE aap.finding = 'available plans for deadlocks'
+    ORDER BY
+        aap.avg_worker_time_ms DESC
+    OPTION(RECOMPILE);
 END; /*Final End*/

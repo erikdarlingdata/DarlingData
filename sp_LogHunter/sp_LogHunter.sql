@@ -60,8 +60,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 BEGIN
     SELECT
-        @version = '1b',
-        @version_date = '20230701';
+        @version = '1.0',
+        @version_date = '20230901';
 
     IF @help = 1
     BEGIN
@@ -528,6 +528,10 @@ BEGIN
     OR    el.text LIKE N'This instance of SQL Server has been using a process ID of%'
     OR    el.text LIKE N'Could not connect because the maximum number of ''1'' dedicated administrator connections already exists%'
     OR    el.text LIKE N'Login failed for user%'
+    OR    el.text LIKE N'Backup(%'
+    OR    el.text LIKE N'[[]INFO]%'
+    OR    el.text LIKE N'[[]DISK_SPACE_TO_RESERVE_PROPERTY]%'
+    OR    el.text LIKE N'[[]CFabricCommonUtils::GetFabricPropertyInternalWithRef]%'
     OR    el.text  IN
           (
               N'The Database Mirroring endpoint is in disabled or stopped state.',
