@@ -56,7 +56,8 @@ CREATE OR ALTER PROCEDURE
 WITH RECOMPILE
 AS
 SET STATISTICS XML OFF;
-SET NOCOUNT, XACT_ABORT ON;
+SET NOCOUNT ON;
+SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 BEGIN
     SELECT
@@ -215,12 +216,12 @@ BEGIN
 
     /*variables for the variable gods*/
     DECLARE
-        @c nvarchar(4000),
-        @l_log int = 0,
-        @h_log int = 0,
-        @t_searches int = 0,
-        @l_count int = 1,
-        @stopper bit = 0;
+        @c nvarchar(4000) /*holds the command to execute*/,
+        @l_log int = 0 /*low log file id*/,
+        @h_log int = 0 /*high log file id*/,
+        @t_searches int = 0 /*total number of searchs to run*/,
+        @l_count int = 1 /*loop count*/,
+        @stopper bit = 0 /*stop loop execution safety*/;
     
     /*temp tables for holding things*/
     CREATE TABLE
