@@ -1330,13 +1330,18 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             @end_date,
             DATEADD
             (
-                MINUTE,
+                DAY,
                 1,
-                DATEDIFF
+                DATEADD
                 (
-                    DAY,
+                    MINUTE,
                     0,
-                    SYSUTCDATETIME()
+                    DATEDIFF
+                    (
+                        DAY,
+                        0,
+                        SYSUTCDATETIME()
+                    )
                 )
             )
         ),
@@ -1436,13 +1441,18 @@ SELECT
             THEN
                 DATEADD
                 (
-                    MINUTE,
+                    DAY,
                     1,
-                    DATEDIFF
+                    DATEADD
                     (
-                        DAY,
+                        MINUTE,
                         0,
-                        SYSUTCDATETIME()
+                        DATEDIFF
+                        (
+                            DAY,
+                            0,
+                            SYSUTCDATETIME()
+                        )
                     )
                 )
             WHEN @end_date IS NOT NULL
