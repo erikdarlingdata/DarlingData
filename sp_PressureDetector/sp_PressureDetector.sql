@@ -277,9 +277,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @cpu_utilization xml = N'',
         @low_memory xml = N'',
         @disk_check nvarchar(MAX) = N'',
-        @live_plans bit = 
-            CASE 
-                WHEN OBJECT_ID('sys.dm_exec_query_statistics_xml') IS NOT NULL 
+        @live_plans bit =
+            CASE
+                WHEN OBJECT_ID('sys.dm_exec_query_statistics_xml') IS NOT NULL
                 THEN CONVERT(bit, 1)
                 ELSE 0
             END;
@@ -950,7 +950,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             HAVING
                SUM
                (
-                   ' + 
+                   ' +
                       CASE @pages_kb
                            WHEN 1
                            THEN
@@ -1174,35 +1174,40 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     CONVERT
                     (
                         varchar(20),
-                        DATEADD
-                        (
-                            MILLISECOND,
-                            CASE
-                                WHEN
-                                    DATEDIFF
-                                    (
-                                        DAY,
-                                        deqmg.request_time,
-                                        SYSDATETIME()
-                                    ) >= 24
-                                THEN
+                        CASE
+                            WHEN
+                                DATEDIFF
+                                (
+                                    DAY,
+                                    deqmg.request_time,
+                                    SYSDATETIME()
+                                ) >= 24
+                            THEN
+                                DATEADD
+                                (
+                                    SECOND,
                                     DATEDIFF
                                     (
                                         SECOND,
                                         deqmg.request_time,
                                         SYSDATETIME()
-                                    ) * 1000.
-                                ELSE
+                                    ),
+                                    ''19000101''                            
+                                )                       
+                            ELSE
+                                DATEADD
+                                (
+                                    MILLISECOND,
                                     DATEDIFF
                                     (
                                         MILLISECOND,
                                         deqmg.request_time,
                                         SYSDATETIME()
-                                    )
+                                    ),
+                                    ''19000101''
+                                )
                             END,
-                            ''19000101''
-                        ),
-                        14
+                            14
                     ),
                 query_text =
                     (
@@ -1246,11 +1251,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       CASE
                           WHEN @live_plans = 1
                           THEN N'
-                live_query_plan = 
+                live_query_plan =
                     deqs.query_plan,'
                           ELSE N''
                       END
-                  END + 
+                  END +
                           N'
                 deqmg.request_time,
                 deqmg.grant_time,
@@ -1274,7 +1279,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 waits.wait_type,
                 wait_duration_seconds =
                     (waits.wait_duration_ms / 1000.),
-                deqmg.dop,' + 
+                deqmg.dop,' +
                     CASE
                         WHEN @helpful_new_columns = 1
                         THEN N'
@@ -1616,35 +1621,40 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     CONVERT
                     (
                         varchar(20),
-                        DATEADD
-                        (
-                            MILLISECOND,
-                            CASE
-                                WHEN
-                                    DATEDIFF
-                                    (
-                                        DAY,
-                                        der.start_time,
-                                        SYSDATETIME()
-                                    ) >= 24
-                                THEN
+                        CASE
+                            WHEN
+                                DATEDIFF
+                                (
+                                    DAY,
+                                    der.start_time,
+                                    SYSDATETIME()
+                                ) >= 24
+                            THEN
+                                DATEADD
+                                (
+                                    SECOND,
                                     DATEDIFF
                                     (
                                         SECOND,
                                         der.start_time,
                                         SYSDATETIME()
-                                    ) * 1000.
-                                ELSE
+                                    ),
+                                    ''19000101''                            
+                                )                       
+                            ELSE
+                                DATEADD
+                                (
+                                    MILLISECOND,
                                     DATEDIFF
                                     (
                                         MILLISECOND,
                                         der.start_time,
                                         SYSDATETIME()
-                                    )
+                                    ),
+                                    ''19000101''
+                                )
                             END,
-                            ''19000101''
-                        ),
-                        14
+                            14
                     ),
                 query_text =
                     (
@@ -1675,19 +1685,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 FOR XML PATH(''''),
                                 TYPE
                     ),'
-                + 
+                +
                 CONVERT
                 (
-                    nvarchar(MAX),                
+                    nvarchar(MAX),               
                 CASE
                       WHEN @skip_plan_xml = 0
                       THEN N'
                 deqp.query_plan,' +
-                          CASE 
+                          CASE
                               WHEN @live_plans = 1
                               THEN
                            N'
-                live_query_plan = 
+                live_query_plan =
                     deqs.query_plan,'
                               ELSE N''
                           END
