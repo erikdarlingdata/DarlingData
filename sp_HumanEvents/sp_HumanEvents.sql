@@ -4655,7 +4655,7 @@ END;
    
 END TRY   
    
-/*Error handling, I guess*/   
+/*Very professional error handling*/   
 BEGIN CATCH   
     BEGIN     
         IF @@TRANCOUNT > 0    
