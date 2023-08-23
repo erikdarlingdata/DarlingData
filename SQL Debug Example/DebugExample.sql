@@ -146,6 +146,8 @@ We'll want to:
  * In real life, you'd want to format the query
    and just print out ~4000 character blocks, but
    here I'm want nice tidy rectangles for the example.
+
+HelperLongPrint: https://www.codeproject.com/articles/18881/sql-string-printing
 */
 IF @debug_logic = 1
 BEGIN
@@ -277,6 +279,9 @@ END;
 If we know there are more important/problem queries
 we can get query plans specifically for those instead
 of having to get query plans for absolutely everything
+
+If you only want to troubleshoot performance, read this:
+https://erikdarlingdata.com/how-to-use-sp_humanevents-to-troubleshoot-a-slow-stored-procedure/
 */
 IF @debug_performance = 1
 BEGIN
