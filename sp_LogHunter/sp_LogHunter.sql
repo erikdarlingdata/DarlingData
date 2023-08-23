@@ -407,14 +407,14 @@ BEGIN
     FROM #enum AS e
     OPTION(RECOMPILE);
 
-    IF @debug = 1 BEGIN RAISERROR('Declaring cursor', 0, 1) WITH NOWAIT; END;
-
     IF @debug = 1
     BEGIN
         RAISERROR('@l_log: %i', 0, 1, @l_log) WITH NOWAIT;
         RAISERROR('@h_log: %i', 0, 1, @h_log) WITH NOWAIT;
         RAISERROR('@t_searches: %i', 0, 1, @t_searches) WITH NOWAIT;
     END;
+
+    IF @debug = 1 BEGIN RAISERROR('Declaring cursor', 0, 1) WITH NOWAIT; END;
    
     /*start the loops*/
     WHILE @l_log <= @h_log
