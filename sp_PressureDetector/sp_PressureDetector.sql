@@ -52,6 +52,7 @@ ALTER PROCEDURE
     @skip_queries bit = 0,
     @skip_plan_xml bit = 0,
     @minimum_disk_latency_ms smallint = 100,
+    @cpu_utilization_threshold smallint = 50,
     @skip_waits bit = NULL,
     @help bit = 0,
     @debug bit = 0,
@@ -102,6 +103,7 @@ BEGIN
                 WHEN N'@skip_queries' THEN N'if you want to skip looking at running queries'
                 WHEN N'@skip_plan_xml' THEN N'if you want to skip getting plan XML'
                 WHEN N'@minimum_disk_latency_ms' THEN N'low bound for reporting disk latency'
+                WHEN N'@cpu_utilization_threshold' THEN N'low bound for reporting cpu utlization'
                 WHEN N'@skip_waits' THEN N'skips waits when you do not need them on every run'
                 WHEN N'@version' THEN N'OUTPUT; for support'
                 WHEN N'@version_date' THEN N'OUTPUT; for support'
@@ -114,7 +116,8 @@ BEGIN
                 WHEN N'@what_to_check' THEN N'"all", "cpu", and "memory"'
                 WHEN N'@skip_queries' THEN N'0 or 1'
                 WHEN N'@skip_plan_xml' THEN N'0 or 1'
-                WHEN N'@minimum_disk_latency_ms' THEN N'any valid smallint value (-32,768 -- 32,767)'
+                WHEN N'@minimum_disk_latency_ms' THEN N'a reasonable number of milliseconds for disk latency'
+                WHEN N'@cpu_utilization_threshold' THEN N'a reasonable cpu utlization percentage'
                 WHEN N'@skip_waits' THEN N'NULL, 0, 1'
                 WHEN N'@version' THEN N'none'
                 WHEN N'@version_date' THEN N'none'
@@ -128,6 +131,7 @@ BEGIN
                 WHEN N'@skip_queries' THEN N'0'
                 WHEN N'@skip_plan_xml' THEN N'0'
                 WHEN N'@minimum_disk_latency_ms' THEN N'100'
+                WHEN N'@cpu_utilization_threshold' THEN N'50'
                 WHEN N'@skip_waits' THEN N'NULL'
                 WHEN N'@version' THEN N'none; OUTPUT'
                 WHEN N'@version_date' THEN N'none; OUTPUT'
@@ -1429,7 +1433,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FROM sys.dm_os_ring_buffers AS dorb
                 WHERE dorb.ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
             ) AS t
-            WHERE t.record.exist('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization[. > 50])') = 1
+            WHERE t.record.exist('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization[.>= sql:variable("@cpu_utilization_threshold")])') = 1
             ORDER BY
                 sample_time DESC
             FOR XML
@@ -1454,7 +1458,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SELECT
             cpu_details_output =
                 @cpu_details_output,
-            cpu_utilization_over_50_percent =
+            cpu_utilization_over_threshold =
                 @cpu_utilization;       
        
         /*Thread usage*/
