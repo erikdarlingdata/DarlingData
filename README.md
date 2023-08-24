@@ -4,28 +4,26 @@
 
 # Navigatory 
  - Scripts:
-    - [sp_PressureDetector](#pressure-detector)
-    - [sp_HumanEvents](#human-events)
-    - [sp_HumanEventsBlockViewer](#human-events-block-viewer)    
-    - [sp_QuickieStore](#quickie-store)
-    - [sp_HealthParser](#health-parser)  
-    - [sp_LogHunter](#log-hunter)      
+    - [sp_PressureDetector](#pressure-detector): Quickly detect CPU and memory pressure
+    - [sp_HumanEvents](#human-events): Use Extended Events to track down various query performance issues
+    - [sp_HumanEventsBlockViewer](#human-events-block-viewer): Analyze the blocked process report
+    - [sp_QuickieStore](#quickie-store): The fastest and most configurable way to navigate Query Store data
+    - [sp_HealthParser](#health-parser): Pull all the performance-related data from the system health Extended Event
+    - [sp_LogHunter](#log-hunter): Get all of the worst stuff out of your error log
 
 ## Who are these scripts for?
-You need to troubleshoot problems with SQL Server, and you need to do it fast. 
+You need to troubleshoot performance problems with SQL Server, and you need to do it now. 
 
-You don't have time to track down a bunch of DMVs, figure out Extended Events, and you need to catch problems while they're happening. Finding out they happened later isn't cutting it anymore. 
+You don't have time to track down a bunch of DMVs, figure out Extended Events, wrestle with terrible SSMS interfaces, or learn XML.
 
-These scripts aren't a replacement for a mature monitoring tool, but they do a pretty good job of capturing important issues. 
+These scripts aren't a replacement for a mature monitoring tool, but they do a good job of capturing important issues and reporting on existing diagnostic data
 
 ## Support
-Right now, all support is handled on GitHub. Please be patient; it's just me over here answering questions, fixing bugs, and adding new features.
+Right now, all support and Q&A is handled on GitHub. Please be patient; it's just me over here answering questions, fixing bugs, and adding new features.
 
-As far as compatibility goes, they only work on SQL Server 2012 and up, unless otherwise noted. 
+As far as compatibility goes, they're only guaranted to work on Microsoft-supported SQL Server versions.
 
-Older versions are either missing too much information, or simply aren't compatible (Hello, Extended Events. Hello, Query Store).
-
-Questions about *how the scripts work* also be answered here. 
+Older versions are either missing too much information, or simply aren't compatible (Hello, Extended Events. Hello, Query Store) with the intent of the script.
 
 If you have questions about performance tuning, or SQL Server in general, you'll wanna hit a Q&A site:
  * [Top Answers](https://topanswers.xyz/databases)
@@ -34,6 +32,7 @@ If you have questions about performance tuning, or SQL Server in general, you'll
 [*Back to top*](#navigatory)
 
 ## Pressure Detector
+
 Is your client/server relationship on the rocks? Are queries timing out, dragging along, or causing CPU fans to spin out of control?
 
 All you need to do is hit F5 to get information about:
@@ -50,7 +49,6 @@ All you need to do is hit F5 to get information about:
  * Currently executing queries, along with other execution details
 
 For a video walkthrough of the script and the results, [head over here](https://www.erikdarlingdata.com/sp_pressuredetector/).
-
 
 Current valid parameter details:
 
@@ -74,13 +72,17 @@ Current valid parameter details:
 Extended Events are hard. You don't know which ones to use, when to use them, or how to get useful information out of them.
 
 This procedure is designed to make them easier for you, by creating event sessions to help you troubleshoot common scenarios:
- * Blocking
- * Query performance
- * Compiles
- * Recompiles
- * Wait Stats
+ * Blocking: blocked process report
+ * Query performance: query execution metrics an actual execution plans
+ * Compiles: catch query compilations
+ * Recompiles: catch query recompilations
+ * Wait Stats: server wait stats, broken down by query and database
 
 The default behavior is to run a session for a set period of time to capture information, but you can also set sessions up to data to permanent tables.
+
+For execution examples, see here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_HumanEvents/Examples.sql)
+
+If you set up sessions to capture long term data, you'll need an agent job set up to poll them. You can find an example of that here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_HumanEvents/sp_Human%20Events%20Agent%20Job%20Example.sql)
 
 Misuse of this procedure can harm performance. Be very careful about introducing observer overhead, especially when gathering query plans. Be even more careful when setting up permanent sessions!
 
@@ -166,6 +168,14 @@ WITH
 );
 ```
 
+Once it has data collected, you can analyze it using this command:
+
+```
+EXEC dbo.sp_HumanEventsBlockViewer
+    @session_name = N'blocked_process_report';
+```
+
+
 Current valid parameter details:
 
 | parameter_name | data_type |                   description                   |                              valid_inputs                              |              defaults              |
@@ -201,6 +211,12 @@ The big upside of using this stored procedure over the GUI is that you can searc
  You can also choose to filter out specific queries by those, too.
 
 And you can do all that without worrying about incorrect data from the GUI, which doesn't handle UTC conversion correctly when filtering data.
+
+By default, it will return the top 10 queries by average CPU. You can configure all sorts of things to look at queries by other metrics, or just specific queries.
+
+Use the `@expert_mode` parameter to return additional details.
+
+More examples can be found here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_QuickieStore/Examples.sql)
 
 More resources:
  * For a video walkthrough of the procedure, code, etc. there's a [YouTube playlist here](https://www.youtube.com/playlist?list=PLt4QZ-7lfQie1XZHEm0HN-Zt1S7LFEx1P).
@@ -254,6 +270,18 @@ The problem is, hardly anyone ever looks at it, and when they do, they realize h
 This stored procedure takes all that pain away.
 
 Note that it focuses on performance data, and does not output errors or security details, or any of the other non-performance related data.
+
+Typical result set will show you
+ * Queries with significant waits
+ * Waits by count
+ * Waits by duration
+ * Potential I/O issues
+ * CPU task details
+ * Memory conditions
+ * Overall system health
+ * A limited version of the blocked process report
+ * XML deadlock report
+ * Query plans for queries involved in blocking and deadlocks (when available)
 
 More resources:
  * [YouTube introduction](https://youtu.be/1kH-aJcCVxs)
