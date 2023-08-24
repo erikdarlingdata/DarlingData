@@ -104,6 +104,7 @@ BEGIN
                  WHEN N'@start_date' THEN 'filter by date'
                  WHEN N'@end_date' THEN 'filter by date'
                  WHEN N'@database_name' THEN 'filter by database name'
+                 WHEN N'@object_name' THEN 'filter by table name'
                  WHEN N'@help' THEN 'how you got here'
                  WHEN N'@debug' THEN 'dumps raw temp table contents'
                  WHEN N'@version' THEN 'OUTPUT; for support'
@@ -116,6 +117,7 @@ BEGIN
                  WHEN N'@start_date' THEN 'a reasonable date'
                  WHEN N'@end_date' THEN 'a reasonable date'
                  WHEN N'@database_name' THEN 'a database that exists on this server'
+                 WHEN N'@object_name' THEN 'a schema-prefixed table name'
                  WHEN N'@help' THEN '0 or 1'
                  WHEN N'@debug' THEN '0 or 1'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -128,6 +130,7 @@ BEGIN
                  WHEN N'@start_date' THEN 'NULL; will shortcut to last 7 days'
                  WHEN N'@end_date' THEN 'NULL'
                  WHEN N'@database_name' THEN 'NULL'
+                 WHEN N'@object_name' THEN 'NULL'
                  WHEN N'@help' THEN '0'
                  WHEN N'@debug' THEN '0'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -1433,6 +1436,12 @@ FROM
     SELECT
         bg.*,
         contentious_object =
+            OBJECT_SCHEMA_NAME
+            (
+                bg.object_id,
+                bg.database_id            
+            ) +
+            N'.' +
             OBJECT_NAME
             (
                 bg.object_id,
@@ -1447,6 +1456,12 @@ FROM
     SELECT
         bd.*,
         contentious_object =
+            OBJECT_SCHEMA_NAME
+            (
+                bd.object_id,
+                bd.database_id            
+            ) +
+            N'.' +
             OBJECT_NAME
             (
                 bd.object_id,
