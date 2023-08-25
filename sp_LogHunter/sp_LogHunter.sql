@@ -328,7 +328,7 @@ BEGIN
     (
         SELECT
             days_back =
-                N'"' + CONVERT(nvarchar(10), DATEADD(DAY, CASE WHEN @days_back < 90 THEN 90 ELSE @days_back END, SYSDATETIME()), 112) + N'"'
+                N'"' + CONVERT(nvarchar(10), DATEADD(DAY, CASE WHEN @days_back > -90 THEN -90 ELSE @days_back END, SYSDATETIME()), 112) + N'"'
     ) AS c
     WHERE @custom_message_only = 0
     OPTION(RECOMPILE);
