@@ -89,7 +89,7 @@ SELECT
 
 /*
 This will tell us how many rows we got out of sys.databases, using
-raiserror with a substition wildcard in the message. For regular integers,
+raiserror with a substitution wildcard in the message. For regular integers,
 you can use %i, %u, or %d, but bigger integers need to use %I64d.
 
 The alternative is ugly:
