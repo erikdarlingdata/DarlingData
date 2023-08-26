@@ -219,7 +219,7 @@ BEGIN
         @c nvarchar(4000) /*holds the command to execute*/,
         @l_log int = 0 /*low log file id*/,
         @h_log int = 0 /*high log file id*/,
-        @t_searches int = 0 /*total number of searchs to run*/,
+        @t_searches int = 0 /*total number of searches to run*/,
         @l_count int = 1 /*loop count*/,
         @stopper bit = 0 /*stop loop execution safety*/;
     

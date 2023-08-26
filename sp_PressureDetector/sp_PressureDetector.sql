@@ -1448,7 +1448,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 @cpu_utilization =
                 (
                     SELECT
-                        N'No signficant CPU usage data available.'
+                        N'No significant CPU usage data available.'
                     FOR XML
                         PATH(N'cpu_utilization'),
                         TYPE
