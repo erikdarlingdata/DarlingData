@@ -1537,7 +1537,7 @@ IF
         )
 )
 BEGIN
-    RAISERROR('Azure databases in compatiblity levels under 130 are not supported', 11, 1) WITH NOWAIT;
+    RAISERROR('Azure databases in compatibility levels under 130 are not supported', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -4439,7 +4439,7 @@ BEGIN
         @current_table nvarchar(100)',
         @sql,
         @current_table;
-END; /*End geting context settings*/
+END; /*End getting context settings*/
 
 /*
 Update things to get the context settings for each query
