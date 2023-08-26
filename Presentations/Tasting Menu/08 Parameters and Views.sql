@@ -9,7 +9,7 @@ GO
 /*                                                       
 
 Words of wisdom for windowing functions
- * Index parition by and then order by columns in the key
+ * Index partition by and then order by columns in the key
  * Cover other columns in the includes
 */
 
