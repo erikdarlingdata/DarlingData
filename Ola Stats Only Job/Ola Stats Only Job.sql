@@ -92,8 +92,8 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep
     @retry_attempts = 0,
     @retry_interval = 0,
     @os_run_priority = 0,
-    @subsystem = N'CmdExec',
-    @command = N'sqlcmd -E -S $(ESCAPE_SQUOTE(SRVR)) -d master -Q "EXECUTE dbo.IndexOptimize @Databases = ''USER_DATABASES'', @FragmentationLow = NULL, @FragmentationMedium = NULL, @FragmentationHigh = NULL, @UpdateStatistics = ''ALL'', @StatisticsModificationLevel = 5, @LogToTable = ''Y''" -b',
+    @subsystem = N'TSQL',
+    @command = N'EXECUTE dbo.IndexOptimize @Databases = ''USER_DATABASES'', @FragmentationLow = NULL, @FragmentationMedium = NULL, @FragmentationHigh = NULL, @UpdateStatistics = ''ALL'', @StatisticsModificationLevel = 5, @MinNumberOfPages = 50000, @LogToTable = ''Y'';',
     @flags = 0;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
