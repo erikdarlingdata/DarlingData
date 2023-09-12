@@ -2004,6 +2004,43 @@ INSERT
 )
 SELECT
     check_id =
+        6,
+    database_name =
+        b.database_name,
+    object_name =
+        N'-',
+    finding_group =
+        N'Background Query Blocking',
+    finding =
+        N'There have been ' +
+        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+        N' background tasks involved in blocking sessions in ' +
+        b.database_name +
+        N'.',
+   sort_order =    
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+FROM #blocks AS b
+WHERE b.status = N'background'
+AND   (b.database_name = @database_name
+       OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name
+       OR @object_name IS NULL)
+GROUP BY
+    b.database_name
+OPTION(RECOMPILE);
+
+INSERT
+    #block_findings
+(
+    check_id,
+    database_name,
+    object_name,
+    finding_group,
+    finding,
+    sort_order
+)
+SELECT
+    check_id =
         7,
     database_name =
         b.database_name,
@@ -2321,6 +2358,7 @@ SELECT
 FROM #block_findings AS bf
 ORDER BY
     bf.check_id,
+    bf.finding_group,
     bf.sort_order
 OPTION(RECOMPILE);
 END; --Final End
