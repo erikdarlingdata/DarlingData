@@ -84,7 +84,7 @@ BEGIN
     SELECT 'i''m a lightweight tool for monitoring cpu and memory pressure' UNION ALL
     SELECT 'i''ll tell you: ' UNION ALL
     SELECT ' * what''s currently consuming memory on your server' UNION ALL
-    SELECT ' * wait stats relevant to cpu, memory, and disk' UNION ALL
+    SELECT ' * wait stats relevant to cpu, memory, and disk pressure, along with query performance' UNION ALL
     SELECT ' * how many worker threads and how much memory you have available' UNION ALL
     SELECT ' * running queries that are using cpu and memory' UNION ALL
     SELECT 'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
@@ -460,6 +460,30 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     THEN N'Azure Transaction Log throttling'
                     WHEN dows.wait_type = N'POOL_LOG_RATE_GOVERNOR'
                     THEN N'Azure Transaction Log throttling'
+                    WHEN dows.wait_type = N'SLEEP_TASK'
+                    THEN N'Potential Hash spills'
+                    WHEN dows.wait_type = N'BPSORT'
+                    THEN N'Potential batch mode sort performance issues'
+                    WHEN dows.wait_type = N'EXECSYNC'
+                    THEN N'Potential eager index spool creation'
+                    WHEN dows.wait_type = N'IO_COMPLETION'
+                    THEN N'Potential sort spills'
+                    WHEN dows.wait_type = N'ASYNC_NETWORK_IO'
+                    THEN N'Potential client issues'
+                    WHEN dows.wait_type = N'SLEEP_BPOOL_STEAL'
+                    THEN N'Potential buffer pool pressure'
+                    WHEN dows.wait_type = N'PWAIT_QRY_BPMEMORY'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTREPARTITION'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTBUILD'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTMEMO'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTDELETE'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTREINIT'
+                    THEN N'Potential batch mode performance issues'
                 END,
             hours_wait_time =
                 CONVERT
@@ -514,34 +538,49 @@ OPTION(MAXDOP 1, RECOMPILE);',
             dows.wait_type IN
                  (
                      /*Disk*/
-                     N'PAGEIOLATCH_SH', --Selects reading pages from disk into memory
-                     N'PAGEIOLATCH_EX', --Modifications reading pages from disk into memory
+                     N'PAGEIOLATCH_SH', 
+                     N'PAGEIOLATCH_EX', 
                      /*Memory*/
-                     N'RESOURCE_SEMAPHORE', --Queries waiting to get memory to run
-                     N'RESOURCE_SEMAPHORE_QUERY_COMPILE', --Queries waiting to get memory to compile
-                     N'CMEMTHREAD', --Tasks waiting on memory objects
+                     N'RESOURCE_SEMAPHORE', 
+                     N'RESOURCE_SEMAPHORE_QUERY_COMPILE', 
+                     N'CMEMTHREAD', 
+                     N'SLEEP_BPOOL_STEAL', 
                      /*Parallelism*/
-                     N'CXPACKET', --Parallelism
-                     N'CXCONSUMER', --Parallelism
-                     N'CXSYNC_PORT', --Parallelism
-                     N'CXSYNC_CONSUMER', --Parallelism
+                     N'CXPACKET', 
+                     N'CXCONSUMER', 
+                     N'CXSYNC_PORT', 
+                     N'CXSYNC_CONSUMER', 
                      /*CPU*/
-                     N'SOS_SCHEDULER_YIELD', --Query scheduling
-                     N'THREADPOOL', --Worker thread exhaustion
+                     N'SOS_SCHEDULER_YIELD', 
+                     N'THREADPOOL', 
                      /*tempdb (potentially)*/
-                     N'PAGELATCH_EX', --Potential contention
-                     N'PAGELATCH_SH', --Potential contention
-                     N'PAGELATCH_UP', --Potential contention
+                     N'PAGELATCH_EX', 
+                     N'PAGELATCH_SH', 
+                     N'PAGELATCH_UP', 
                      /*Transaction log*/
                      N'WRITELOG',
                      N'LOGBUFFER',
                      N'LOG_RATE_GOVERNOR',
-                     N'POOL_LOG_RATE_GOVERNOR'
+                     N'POOL_LOG_RATE_GOVERNOR',
+                     /*Some query performance stuff, spills and spools mostly*/
+                     N'ASYNC_NETWORK_IO',
+                     N'EXECSYNC',
+                     N'IO_COMPLETION',                 
+                     N'SLEEP_TASK',
+                     /*Batch Mode*/
+                     N'HTBUILD', 
+                     N'HTDELETE', 
+                     N'HTMEMO', 
+                     N'HTREINIT', 
+                     N'HTREPARTITION', 
+                     N'PWAIT_QRY_BPMEMORY', 
+                     N'BPSORT'
                  )
             OR dows.wait_type LIKE N'LCK%' --Locking
         )
         ORDER BY
-            dows.wait_time_ms DESC
+            dows.wait_time_ms DESC,
+            dows.waiting_tasks_count DESC
         OPTION(MAXDOP 1, RECOMPILE);
     END;
 
