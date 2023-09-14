@@ -63,6 +63,7 @@ LEFT JOIN sys.indexes AS i WITH(NOLOCK)
 WHERE (dtl.request_session_id = @spid
          OR @spid IS NULL)
 AND    dtl.resource_type <> N'DATABASE'
+AND    i.object_id <> OBJECT_ID(N'dbo.WhatsUpLocks')    
 GROUP BY
     CASE dtl.resource_type
          WHEN N'OBJECT'
