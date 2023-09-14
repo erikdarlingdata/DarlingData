@@ -492,12 +492,39 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     dows.wait_time_ms /
                         (1000. * 60. * 60.)
                 ),
+            avg_ms_per_wait =
+                ISNULL
+                (
+                   CONVERT
+                   (
+                       decimal(38, 2),
+                       dows.wait_time_ms /
+                           NULLIF
+                           (
+                               1.*
+                               dows.waiting_tasks_count,
+                               0.
+                           )
+                    ),
+                    0.
+                ),
             hours_signal_wait_time =
                 CONVERT
                 (
                     decimal(38, 2),
                     dows.signal_wait_time_ms /
                         (1000. * 60. * 60.)
+                ),
+            percent_signal_waits = 
+                CONVERT
+                (
+                    decimal(38, 2), 
+                    ISNULL
+                    (
+                        100.0 * dows.signal_wait_time_ms 
+                           / NULLIF(dows.wait_time_ms, 0),
+                        0.
+                    )
                 ),
             waiting_tasks_count =
                 REPLACE
@@ -514,22 +541,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ),
                 N'.00',
                 N''
-                ),
-            avg_ms_per_wait =
-                ISNULL
-                (
-                   CONVERT
-                   (
-                       decimal(38, 2),
-                       dows.wait_time_ms /
-                           NULLIF
-                           (
-                               1.*
-                               dows.waiting_tasks_count,
-                               0.
-                           )
-                    ),
-                    0.
                 )
         FROM sys.dm_os_wait_stats AS dows
         WHERE 
