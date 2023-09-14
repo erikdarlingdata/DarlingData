@@ -56,14 +56,12 @@ SELECT
         COUNT_BIG(*)
 FROM sys.dm_tran_locks AS dtl WITH(NOLOCK)
 LEFT JOIN sys.partitions AS p WITH(NOLOCK)
-    ON p.hobt_id = dtl.resource_associated_entity_id
+  ON p.hobt_id = dtl.resource_associated_entity_id
 LEFT JOIN sys.indexes AS i WITH(NOLOCK)
-    ON  p.object_id = i.object_id
-    AND p.index_id  = i.index_id
-WHERE (dtl.request_session_id = @spid
-         OR @spid IS NULL)
+  ON  p.object_id = i.object_id
+  AND p.index_id  = i.index_id
+WHERE (dtl.request_session_id = @spid OR @spid IS NULL)
 AND    dtl.resource_type <> N'DATABASE'
-AND    i.object_id <> OBJECT_ID(N'dbo.WhatsUpLocks')    
 GROUP BY
     CASE dtl.resource_type
          WHEN N'OBJECT'
