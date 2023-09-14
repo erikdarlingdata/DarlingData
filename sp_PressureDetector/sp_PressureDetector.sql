@@ -532,13 +532,18 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     0.
                 )
         FROM sys.dm_os_wait_stats AS dows
-        WHERE dows.waiting_tasks_count > 0
-        AND   CASE
-                  WHEN dows.wait_type = N'SLEEP_TASK'
-                  AND  ISNULL(CONVERT(decimal(38, 2), dows.wait_time_ms / NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) < 1000.
-                  THEN 0
-                  ELSE 1
-              END = 1
+        WHERE 
+        (
+          (       
+                  dows.waiting_tasks_count > 0
+              AND dows.wait_type <> N'SLEEP_TASK'
+          )
+        OR    
+          (       
+                 dows.wait_type = N'SLEEP_TASK'
+             AND ISNULL(CONVERT(decimal(38, 2), dows.wait_time_ms / NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) > 1000.
+          )
+        )
         AND
         (
             dows.wait_type IN
