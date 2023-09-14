@@ -508,13 +508,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ),
                     0.
                 ),
-            hours_signal_wait_time =
-                CONVERT
-                (
-                    decimal(38, 2),
-                    dows.signal_wait_time_ms /
-                        (1000. * 60. * 60.)
-                ),
             percent_signal_waits = 
                 CONVERT
                 (
