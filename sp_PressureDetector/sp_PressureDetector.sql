@@ -1630,7 +1630,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF @@ROWCOUNT = 0
         BEGIN
             SELECT
-                result = N'No current THREADPOOL waits';
+                THREADPOOL = N'No current THREADPOOL waits';
         END;
         ELSE
         BEGIN
