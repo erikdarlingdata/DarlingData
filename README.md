@@ -166,6 +166,11 @@ WITH
     TRACK_CAUSALITY = OFF,
     STARTUP_STATE = ON
 );
+
+ALTER EVENT SESSION
+    blocked_process_report
+ON SERVER 
+    STATE = START;
 ```
 
 Once it has data collected, you can analyze it using this command:
