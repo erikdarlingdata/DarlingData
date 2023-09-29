@@ -3306,6 +3306,7 @@ WHERE NOT EXISTS
               AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
               AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
               AND   qsqt.query_sql_text NOT LIKE N''SELECT StatMan%''
+              AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
           )
 OPTION(RECOMPILE);' + @nc10;
 
