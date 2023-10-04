@@ -842,13 +842,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             (
                                 SELECT
                                     free_space_gb =
-                                        SUM(d.unallocated_extent_page_count * 8) / 1024 / 1024,
+                                        CONVERT(decimal(38, 2), SUM(d.unallocated_extent_page_count * 8.) / 1024. / 1024.),
                                     user_objects_gb =
-                                        SUM(d.user_object_reserved_page_count * 8) / 1024 / 1024,
+                                        CONVERT(decimal(38, 2), SUM(d.user_object_reserved_page_count * 8.) / 1024. / 1024.),
                                     version_store_gb =
-                                        SUM(d.version_store_reserved_page_count * 8) / 1024 / 1024,
+                                        CONVERT(decimal(38, 2), SUM(d.version_store_reserved_page_count * 8.) / 1024. / 1024.),
                                     internal_objects_gb =
-                                        SUM(d.internal_object_reserved_page_count * 8) / 1024 / 1024
+                                        CONVERT(decimal(38, 2), SUM(d.internal_object_reserved_page_count * 8.) / 1024. / 1024.)
                                 FROM tempdb.sys.dm_db_file_space_usage AS d
                                 WHERE d.database_id = 2
                                 FOR XML
@@ -860,9 +860,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 SELECT
                                     t.session_id,
                                     tempdb_allocations_gb =
-                                        SUM(t.tempdb_allocations * 8) / 1024 / 1024,
+                                        CONVERT(decimal(38, 2), SUM(t.tempdb_allocations * 8.) / 1024. / 1024.),
                                     tempdb_current_gb =
-                                        SUM(t.tempdb_current * 8) / 1024 / 1024
+                                        CONVERT(decimal(38, 2), SUM(t.tempdb_current * 8.) / 1024. / 1024.)
                                 FROM
                                 (
                                     SELECT
@@ -895,11 +895,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 GROUP BY
                                     t.session_id
                                 HAVING
-                                    (SUM(t.tempdb_allocations) * 8) / 1024 > 1
+                                    (SUM(t.tempdb_allocations) * 8.) / 1024. > 0.
                                 ORDER BY
                                     SUM(t.tempdb_allocations) DESC
                                 FOR XML
-                                    PATH('tempb_query_activity'),
+                                    PATH('tempdb_query_activity'),
                                     TYPE
 
                             )
