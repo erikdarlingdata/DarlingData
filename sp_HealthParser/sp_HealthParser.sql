@@ -33,14 +33,14 @@ https://github.com/erikdarlingdata/DarlingData
 CREATE OR ALTER PROCEDURE
     dbo.sp_HealthParser
 (
-    @what_to_check varchar(10) = 'all',
+    @what_to_check varchar(10) = 'all', /*Specify which portion of the data to check*/
     @start_date datetimeoffset(7) = NULL, /*Begin date for events*/
     @end_date datetimeoffset(7) = NULL, /*End date for events*/
     @warnings_only bit = NULL, /*Only show results from recorded warnings*/
     @database_name sysname = NULL, /*Filter to a specific database for blocking)*/
     @wait_duration_ms bigint = 0, /*Minimum duration to show query waits*/
     @wait_round_interval_minutes bigint = 60, /*Nearest interval to round wait stats to*/
-    @skip_locks bit = 0,
+    @skip_locks bit = 0, /*Skip the blocking and deadlocks*/
     @debug bit = 0, /*Select from temp tables to get event data in raw xml*/
     @help bit = 0, /*Get help*/
     @version varchar(30) = NULL OUTPUT, /*Script version*/
@@ -56,8 +56,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.0',
-        @version_date = '20230901';
+        @version = '1.11',
+        @version_date = '20231101';
 
     IF @help = 1
     BEGIN
