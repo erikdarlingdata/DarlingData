@@ -4527,14 +4527,14 @@ UPDATE qsrs
         )
 FROM #query_store_runtime_stats AS qsrs
 JOIN #query_store_plan AS qsp
-    ON  qsrs.plan_id = qsp.plan_id
-    AND qsrs.database_id = qsp.database_id
+  ON  qsrs.plan_id = qsp.plan_id
+  AND qsrs.database_id = qsp.database_id
 JOIN #query_store_query AS qsq
-    ON  qsp.query_id = qsq.query_id
-    AND qsp.database_id = qsq.database_id
+  ON  qsp.query_id = qsq.query_id
+  AND qsp.database_id = qsq.database_id
 JOIN #query_context_settings AS qcs
-    ON  qsq.context_settings_id = qcs.context_settings_id
-    AND qsq.database_id = qcs.database_id
+  ON  qsq.context_settings_id = qcs.context_settings_id
+  AND qsq.database_id = qcs.database_id
 OPTION(RECOMPILE);
 
 IF @sql_2022_views = 1
