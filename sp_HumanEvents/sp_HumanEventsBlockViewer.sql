@@ -886,7 +886,7 @@ BEGIN
             CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
         total_elapsed_time_ms =
             deqs.total_elapsed_time / 1000.,
-        avg_elapsed_time =
+        avg_elapsed_time_ms =
             CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
         executions_per_second =
             ISNULL
@@ -947,7 +947,7 @@ BEGIN
         ap.total_worker_time_ms,
         ap.avg_worker_time_ms,
         ap.total_elapsed_time_ms,
-        ap.avg_elapsed_time,
+        ap.avg_elapsed_time_ms,
         ap.total_logical_reads_mb,
         ap.total_physical_reads_mb,
         ap.total_logical_writes_mb,
@@ -975,7 +975,7 @@ BEGIN
             c.total_worker_time_ms,
             c.avg_worker_time_ms,
             c.total_elapsed_time_ms,
-            c.avg_elapsed_time,
+            c.avg_elapsed_time_ms,
             c.executions_per_second,
             c.total_physical_reads_mb,
             c.total_logical_writes_mb,
@@ -1673,7 +1673,7 @@ SELECT
     ap.total_worker_time_ms,
     ap.avg_worker_time_ms,
     ap.total_elapsed_time_ms,
-    ap.avg_elapsed_time,
+    ap.avg_elapsed_time_ms,
     ap.total_logical_reads_mb,
     ap.total_physical_reads_mb,
     ap.total_logical_writes_mb,
@@ -1702,7 +1702,7 @@ FROM
         c.total_worker_time_ms,
         c.avg_worker_time_ms,
         c.total_elapsed_time_ms,
-        c.avg_elapsed_time,
+        c.avg_elapsed_time_ms,
         c.executions_per_second,
         c.total_physical_reads_mb,
         c.total_logical_writes_mb,
