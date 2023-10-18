@@ -322,7 +322,8 @@ BEGIN
         VALUES
             (N'"Microsoft SQL Server"'),
             (N'"detected"'),
-            (N'"SQL Server has encountered"')
+            (N'"SQL Server has encountered"'),
+            (N'"Warning: Enterprise Server/CAL license used for this instance"')
     ) AS x (search_string)
     CROSS JOIN
     (
@@ -363,8 +364,7 @@ BEGIN
             ('Warning ******************'), ('SQL Server should be restarted'), ('Server name is'), ('Could not connect'), ('yielding'), ('worker thread'), ('A new connection was rejected'), 
             ('A significant part of sql server process memory has been paged out'), ('Dispatcher'), ('I/O requests taking longer than'), ('killed'), ('SQL Server could not start'), 
             ('SQL Server cannot start'), ('System Manufacturer:'), ('columnstore'), ('timed out'), ('inconsistent'), ('flushcache'), ('Recovery for availability database'), ('currently busy'), 
-            ('The service is experiencing a problem'), ('The service account is'), ('Total Log Writer threads'), ('thread pool'), ('debug'), ('resolving'),
-			      ('stack dump'), ('Stack Signature')
+            ('The service is experiencing a problem'), ('The service account is'), ('Total Log Writer threads'), ('thread pool'), ('debug'), ('resolving'), ('stack dump'), ('Stack Signature')
     ) AS v (search_string)
     CROSS JOIN
     (
