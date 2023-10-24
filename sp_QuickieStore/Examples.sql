@@ -134,7 +134,10 @@ EXEC dbo.sp_QuickieStore
 EXEC dbo.sp_QuickieStore
     @include_plan_hashes = '0x6B84B820B8B38564,0x6B84B999D7B38564';
 
-/*Search by SQL Handles*/
+/*Search by SQL Handles 
+Do you need to find if one Query Store is tracking the same query that is present in another database's Query Store? If so, use the statement_sql_handle to do that.
+This helps with scenarios where you have multiple production databases which have the same schema and you want to compare performance across Query Stores.
+*/
 EXEC dbo.sp_QuickieStore
     @include_sql_handles = 
         '0x0900F46AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000,0x0200000AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000';
