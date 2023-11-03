@@ -1095,9 +1095,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     t.record.value('(/Record/ResourceMonitor/IndicatorsProcess)[1]', 'int'),
                 indicators_system =
                     t.record.value('(/Record/ResourceMonitor/IndicatorsSystem)[1]', 'int'),
-                physical_memory_availble_gb =
+                physical_memory_available_gb =
                     t.record.value('(/Record/MemoryRecord/AvailablePhysicalMemory)[1]', 'bigint') / 1024 / 1024,
-                virtual_memory_availble_gb =
+                virtual_memory_available_gb =
                     t.record.value('(/Record/MemoryRecord/AvailableVirtualAddressSpace)[1]', 'bigint') / 1024 / 1024
             FROM sys.dm_os_sys_info AS inf
             CROSS JOIN
