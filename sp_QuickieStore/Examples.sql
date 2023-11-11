@@ -25,7 +25,7 @@ EXEC dbo.sp_QuickieStore
     @help = 1;
 
 
-/*Find top 10 sorted by memory*/
+/*Find top 10 sorted by query workspace memory*/
 EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
     @sort_order = 'memory',
