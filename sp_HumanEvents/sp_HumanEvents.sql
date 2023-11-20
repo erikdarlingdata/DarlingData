@@ -1,9 +1,10 @@
-SET ANSI_NULLS ON;   
+﻿SET ANSI_NULLS ON;   
 SET ANSI_PADDING ON;   
 SET ANSI_WARNINGS ON;   
 SET ARITHABORT ON;   
 SET CONCAT_NULL_YIELDS_NULL ON;   
 SET QUOTED_IDENTIFIER ON;   
+SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;   
 GO   
    
@@ -3263,7 +3264,7 @@ BEGIN
                         (
                             SECOND,
                             deqs.creation_time,
-                            deqs.last_execution_time
+                            NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
                         ),
                         0
                     ),
@@ -3292,10 +3293,10 @@ BEGIN
     FROM sys.dm_exec_query_stats AS deqs
     WHERE EXISTS
     (
-       SELECT
-           1/0
-       FROM #available_plans AS ap
-       WHERE ap.sql_handle = deqs.sql_handle
+        SELECT
+            1/0
+        FROM #available_plans AS ap
+        WHERE ap.sql_handle = deqs.sql_handle
     )
     AND deqs.query_hash IS NOT NULL;
    
@@ -4697,9 +4698,7 @@ BEGIN
     EXEC @executer @drop_holder;   
    
     RETURN;   
-END;    
-   
-   
+END;     
 END TRY   
    
 /*Very professional error handling*/   
@@ -4725,7 +4724,6 @@ BEGIN CATCH
            
             RETURN -138;   
     END;   
-END CATCH;   
-   
+END CATCH;    
 END;   
 GO
