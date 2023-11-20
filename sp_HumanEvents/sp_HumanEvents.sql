@@ -1,9 +1,10 @@
-SET ANSI_NULLS ON;   
+﻿SET ANSI_NULLS ON;   
 SET ANSI_PADDING ON;   
 SET ANSI_WARNINGS ON;   
 SET ARITHABORT ON;   
 SET CONCAT_NULL_YIELDS_NULL ON;   
 SET QUOTED_IDENTIFIER ON;   
+SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;   
 GO   
    
@@ -4697,9 +4698,7 @@ BEGIN
     EXEC @executer @drop_holder;   
    
     RETURN;   
-END;    
-   
-   
+END;     
 END TRY   
    
 /*Very professional error handling*/   
@@ -4725,7 +4724,6 @@ BEGIN CATCH
            
             RETURN -138;   
     END;   
-END CATCH;   
-   
+END CATCH;    
 END;   
 GO
