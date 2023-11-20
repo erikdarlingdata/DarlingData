@@ -4,6 +4,7 @@ SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
+SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;
 GO
 
@@ -86,7 +87,7 @@ BEGIN
                     WHEN N'@database_name' THEN N'database name to show blocking events for'
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
-                    WHEN N'@skip_locks' THEN N'skip the blocking and deadlocking section'                                        
+                    WHEN N'@skip_locks' THEN N'skip the blocking and deadlocking section'                                       
                     WHEN N'@version' THEN N'OUTPUT; for support'
                     WHEN N'@version_date' THEN N'OUTPUT; for support'
                     WHEN N'@help' THEN N'how you got here'
@@ -271,7 +272,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE @wait_round_interval_minutes
             END;
- 
+
     CREATE TABLE
         #ignore
     (
@@ -310,8 +311,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /*The more you ignore waits, the worser they get*/
     IF @what_to_check IN ('all', 'waits')
-    BEGIN       
-        INSERT 
+    BEGIN      
+        INSERT
             #ignore WITH(TABLOCKX)
         (
             wait_type
@@ -507,7 +508,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
            WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
            OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
-           
+          
            IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
            
            INSERT INTO
@@ -978,7 +979,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE w.x.exist('(data[@name="component"]/text[.="IO_SUBSYSTEM"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         OPTION(RECOMPILE);
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#io, top 100 rows', x.* FROM #io AS x ORDER BY x.event_time DESC;
@@ -1043,7 +1044,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE w.x.exist('(data[@name="component"]/text[.="QUERY_PROCESSING"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         OPTION(RECOMPILE);
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#scheduler_details, top 100 rows', x.* FROM #scheduler_details AS x ORDER BY x.event_time DESC;
@@ -1121,7 +1122,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
         WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only IS NULL)
         OPTION(RECOMPILE);
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#memory, top 100 rows', x.* FROM #memory AS x ORDER BY x.event_time DESC;
@@ -1210,7 +1211,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             SELECT TOP (100) table_name = '#health, top 100 rows', x.* FROM #health AS x ORDER BY x.event_time DESC;
         END;
-        
+       
         SELECT
             finding = 'overall system health',
             h.event_time,
@@ -1236,7 +1237,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
   
     /*Grab useless stuff*/
-    
+   
     /*
     I'm pulling this out for now, until I find a good use for it.
     SELECT
@@ -1333,7 +1334,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         OPTION(RECOMPILE);
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#blocking_xml, top 100 rows', x.* FROM #blocking_xml AS x ORDER BY x.event_time DESC;
@@ -1379,7 +1380,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
         PERSISTED;
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#blocked, top 100 rows', x.* FROM #blocked AS x ORDER BY x.event_time DESC;
@@ -1425,7 +1426,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
         PERSISTED;
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#blocking, top 100 rows', x.* FROM #blocking AS x ORDER BY x.event_time DESC;
@@ -1568,7 +1569,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                    OR @database_name IS NULL)
         ) AS kheb
         OPTION(RECOMPILE);
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#blocks, top 100 rows', x.* FROM #blocks AS x ORDER BY x.event_time DESC;
@@ -1650,7 +1651,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     OR @database_name IS NULL)
         ) AS b
         OPTION(RECOMPILE);
-        
+       
         SELECT
             x.xml_deadlock_report,
             event_date = x.xml_deadlock_report.value('(event/@timestamp)[1]', 'datetime2'),
@@ -1659,12 +1660,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INTO #deadlocks
         FROM #xml_deadlock_report AS x
         OPTION(RECOMPILE);
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#deadlocks, top 100 rows', x.* FROM #deadlocks AS x;
         END;
-        
+       
         SELECT
             x.event_date,
             x.id,
@@ -1783,7 +1784,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE (x.database_id = @dbid OR @dbid IS NULL)
         OR    (x.current_database_name = @database_name OR @database_name IS NULL)
         OPTION(RECOMPILE);
-        
+       
         ALTER TABLE #deadlocks_parsed
         ADD query_text AS
            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -1794,12 +1795,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
         PERSISTED;
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#deadlocks_parsed, top 100 rows', x.* FROM #deadlocks_parsed AS x;
         END;
-        
+       
         SELECT
             finding = 'xml deadlock report',
             dp.event_date,
@@ -1889,7 +1890,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             dp.event_date,
             is_victim
         OPTION(RECOMPILE);
-        
+       
         INSERT
             #available_plans WITH (TABLOCKX)
         (
@@ -1914,7 +1915,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #deadlocks_parsed AS dp
         CROSS APPLY dp.process_xml.nodes('//executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS e(x)
         OPTION(RECOMPILE);
-        
+       
         IF @debug = 1
         BEGIN
             SELECT TOP (100) table_name = '#available_plans, top 100 rows', x.* FROM #available_plans AS x;
@@ -1946,7 +1947,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             (
                                 SECOND,
                                 deqs.creation_time,
-                                deqs.last_execution_time
+                                NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
                             ),
                             0
                         ),
@@ -1975,13 +1976,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_exec_query_stats AS deqs
         WHERE EXISTS
         (
-           SELECT
-               1/0
-           FROM #available_plans AS ap
-           WHERE ap.sql_handle = deqs.sql_handle
+            SELECT
+                1/0
+            FROM #available_plans AS ap
+            WHERE ap.sql_handle = deqs.sql_handle
         )
         AND deqs.query_hash IS NOT NULL;
-        
+       
         CREATE CLUSTERED INDEX
             deqs_sh
         ON #dm_exec_query_stats_sh
@@ -2068,7 +2069,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             ap.avg_worker_time_ms DESC
         OPTION(RECOMPILE);
-        
+       
         SELECT
             aap.*
         FROM #all_avalable_plans AS aap
@@ -2076,7 +2077,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             aap.avg_worker_time_ms DESC
         OPTION(RECOMPILE);
-        
+       
         SELECT
             aap.*
         FROM #all_avalable_plans AS aap
@@ -2086,3 +2087,4 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 END; /*Final End*/
+GO
