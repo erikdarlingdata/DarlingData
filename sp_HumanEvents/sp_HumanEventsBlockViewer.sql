@@ -8,13 +8,13 @@ SET STATISTICS TIME, IO OFF;
 GO
 
 /*
-██╗  ██╗██╗   ██╗███╗   ███╗ █████╗ ███╗   ██╗     
-██║  ██║██║   ██║████╗ ████║██╔══██╗████╗  ██║     
-███████║██║   ██║██╔████╔██║███████║██╔██╗ ██║     
-██╔══██║██║   ██║██║╚██╔╝██║██╔══██║██║╚██╗██║     
-██║  ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║██║ ╚████║     
-╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝     
-                                                   
+██╗  ██╗██╗   ██╗███╗   ███╗ █████╗ ███╗   ██╗    
+██║  ██║██║   ██║████╗ ████║██╔══██╗████╗  ██║    
+███████║██║   ██║██╔████╔██║███████║██╔██╗ ██║    
+██╔══██║██║   ██║██║╚██╔╝██║██╔══██║██║╚██╗██║    
+██║  ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║██║ ╚████║    
+╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝    
+                                                  
 ███████╗██╗   ██╗███████╗███╗   ██╗████████╗███████╗
 ██╔════╝██║   ██║██╔════╝████╗  ██║╚══██╔══╝██╔════╝
 █████╗  ██║   ██║█████╗  ██╔██╗ ██║   ██║   ███████╗
@@ -28,7 +28,7 @@ GO
 ██╔══██╗██║     ██║   ██║██║     ██╔═██╗
 ██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗
 ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
-                                        
+                                       
 ██╗   ██╗██╗███████╗██╗    ██╗███████╗██████╗
 ██║   ██║██║██╔════╝██║    ██║██╔════╝██╔══██╗
 ██║   ██║██║█████╗  ██║ █╗ ██║█████╗  ██████╔╝
@@ -147,12 +147,12 @@ BEGIN
 
     SELECT
         mit_license_yo = 'i am MIT licensed, so like, do whatever'
-   
+  
     UNION ALL
-   
+  
     SELECT
         mit_license_yo = 'see printed messages for full license';
-   
+  
     RAISERROR('
 MIT License
 
@@ -344,7 +344,7 @@ BEGIN
         ORDER BY t.target_name
         OPTION(RECOMPILE);
     END;
-   
+  
     IF @azure = 1
     BEGIN
         SELECT TOP (1)
@@ -363,7 +363,7 @@ END;
 IF @target_type = N'ring_buffer' AND @is_system_health = 0
 BEGIN
     IF @azure = 0
-    BEGIN  
+    BEGIN 
         INSERT
             #x WITH(TABLOCKX)
         (
@@ -378,7 +378,7 @@ BEGIN
         AND   t.target_name = N'ring_buffer'
         OPTION(RECOMPILE);
     END;
-   
+  
     IF @azure = 1
     BEGIN
         INSERT
@@ -398,7 +398,7 @@ BEGIN
 END;
 
 IF @target_type = N'event_file' AND @is_system_health = 0
-BEGIN  
+BEGIN 
     IF @azure = 0
     BEGIN
         SELECT
@@ -436,7 +436,7 @@ BEGIN
         ) AS f
         OPTION(RECOMPILE);
     END;
-   
+  
     IF @azure = 1
     BEGIN
         SELECT
@@ -479,7 +479,7 @@ BEGIN
         #x WITH(TABLOCKX)
     (
         x
-    )   
+    )  
     SELECT
         x = TRY_CAST(f.event_data AS xml)
     FROM sys.fn_xe_file_target_read_file
@@ -550,17 +550,17 @@ BEGIN
     IF @debug = 1 BEGIN SELECT * FROM #sp_server_diagnostics_component_result AS ssdcr; END;
 
     SELECT
-        event_time =   
-            DATEADD  
-            (  
-                MINUTE,   
-                DATEDIFF  
-                (  
-                    MINUTE,   
-                    GETUTCDATE(),   
-                    SYSDATETIME()  
-                ),   
-                w.x.value('(//@timestamp)[1]', 'datetime2')  
+        event_time =  
+            DATEADD 
+            ( 
+                MINUTE,  
+                DATEDIFF 
+                ( 
+                    MINUTE,  
+                    GETUTCDATE(),  
+                    SYSDATETIME() 
+                ),  
+                w.x.value('(//@timestamp)[1]', 'datetime2') 
             ),
         human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
     INTO #blocking_xml_sh
@@ -572,9 +572,9 @@ BEGIN
 
     SELECT
         bx.event_time,
-        currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),   
+        currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),  
         spid = bd.value('(process/@spid)[1]', 'int'),
-        ecid = bd.value('(process/@ecid)[1]', 'int'),          
+        ecid = bd.value('(process/@ecid)[1]', 'int'),         
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
         lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
@@ -598,7 +598,7 @@ BEGIN
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     WHERE bd.exist('process/@spid') = 1
     OPTION(RECOMPILE);
-   
+  
     ALTER TABLE #blocked_sh
     ADD query_text AS
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -611,7 +611,7 @@ BEGIN
     PERSISTED;
 
     IF @debug = 1 BEGIN SELECT * FROM #blocking_xml_sh AS bxs; END;
-   
+  
     /*Blocking queries*/
     SELECT
         bx.event_time,
@@ -641,7 +641,7 @@ BEGIN
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     WHERE bg.exist('process/@spid') = 1
     OPTION(RECOMPILE);
-   
+  
     ALTER TABLE #blocking_sh
     ADD query_text AS
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -669,7 +669,7 @@ BEGIN
                 THEN
                     (
                         SELECT
-                            [processing-instruction(query)] =                                     
+                            [processing-instruction(query)] =                                    
                                 OBJECT_SCHEMA_NAME
                                 (
                                         SUBSTRING
@@ -726,7 +726,7 @@ BEGIN
         kheb.last_transaction_completed,
         client_option_1 =
             SUBSTRING
-            (  
+            ( 
                 CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +
                 CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +
                 CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +
@@ -776,18 +776,18 @@ BEGIN
         kheb.blocked_process_report
     INTO #blocks_sh
     FROM
-    (              
+    (             
         SELECT
             bg.*
         FROM #blocking_sh AS bg
         WHERE (bg.currentdbname = @database_name
                OR @database_name IS NULL)
-      
+     
         UNION ALL
-      
+     
         SELECT
             bd.*
-        FROM #blocked_sh AS bd    
+        FROM #blocked_sh AS bd   
         WHERE (bd.currentdbname = @database_name
                OR @database_name IS NULL)
     ) AS kheb
@@ -848,9 +848,9 @@ BEGIN
         CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.currentdbname = @database_name
                 OR @database_name IS NULL)
-      
+     
         UNION ALL
-      
+     
         SELECT
             available_plans =
                 'available_plans',
@@ -898,7 +898,7 @@ BEGIN
                         (
                             SECOND,
                             deqs.creation_time,
-                            deqs.last_execution_time
+                            NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
                         ),
                         0
                     ),
@@ -917,14 +917,22 @@ BEGIN
         min_used_grant_mb =
             deqs.min_used_grant_kb * 8. / 1024.,
         max_used_grant_mb =
-            deqs.max_used_grant_kb * 8. / 1024., 
+            deqs.max_used_grant_kb * 8. / 1024.,
         deqs.min_reserved_threads,
         deqs.max_reserved_threads,
         deqs.min_used_threads,
         deqs.max_used_threads,
         deqs.total_rows
     INTO #dm_exec_query_stats_sh
-    FROM sys.dm_exec_query_stats AS deqs;
+    FROM sys.dm_exec_query_stats AS deqs
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #available_plans_sh AS ap
+        WHERE ap.sql_handle = deqs.sql_handle
+    )
+    AND deqs.query_hash IS NOT NULL;
 
     CREATE CLUSTERED INDEX
         deqs_sh
@@ -933,7 +941,7 @@ BEGIN
         sql_handle,
         plan_handle
     );
-   
+  
     SELECT
         ap.available_plans,
         ap.currentdbname,
@@ -1033,7 +1041,7 @@ SELECT
                 SYSDATETIME()
             ),
             c.value('@timestamp', 'datetime2')
-        ),       
+        ),      
     database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
@@ -1086,32 +1094,32 @@ ADD query_text AS
 PERSISTED;
 
 ALTER TABLE #blocked
-ADD blocking_desc AS 
+ADD blocking_desc AS
         ISNULL
         (
-            '(' + 
-            CAST(blocking_spid AS varchar(10)) + 
-            ':' + 
-            CAST(blocking_ecid AS varchar(10)) + 
-            ')', 
+            '(' +
+            CAST(blocking_spid AS varchar(10)) +
+            ':' +
+            CAST(blocking_ecid AS varchar(10)) +
+            ')',
             'unresolved process'
         ) PERSISTED,
     blocked_desc AS
-        '(' + 
-        CAST(blocked_spid AS varchar(10)) + 
-        ':' + 
-        CAST(blocked_ecid AS varchar(10)) + 
+        '(' +
+        CAST(blocked_spid AS varchar(10)) +
+        ':' +
+        CAST(blocked_ecid AS varchar(10)) +
         ')' PERSISTED;
 
-CREATE CLUSTERED INDEX 
-    blocking 
+CREATE CLUSTERED INDEX
+    blocking
 ON #blocked
     (monitor_loop, blocking_desc);
 
-CREATE INDEX 
-    blocked 
+CREATE INDEX
+    blocked
 ON #blocked
-    (monitor_loop, blocked_desc);    
+    (monitor_loop, blocked_desc);   
 
 IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
 
@@ -1127,7 +1135,7 @@ SELECT
                 SYSDATETIME()
             ),
             c.value('@timestamp', 'datetime2')
-        ),       
+        ),      
     database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
@@ -1180,54 +1188,54 @@ ADD query_text AS
 PERSISTED;
 
 ALTER TABLE #blocking
-ADD blocking_desc AS 
+ADD blocking_desc AS
         ISNULL
         (
-            '(' + 
-            CAST(blocking_spid AS varchar(10)) + 
-            ':' + 
-            CAST(blocking_ecid AS varchar(10)) + 
-            ')', 
+            '(' +
+            CAST(blocking_spid AS varchar(10)) +
+            ':' +
+            CAST(blocking_ecid AS varchar(10)) +
+            ')',
             'unresolved process'
         ) PERSISTED,
     blocked_desc AS
-        '(' + 
-        CAST(blocked_spid AS varchar(10)) + 
-        ':' + 
-        CAST(blocked_ecid AS varchar(10)) + 
+        '(' +
+        CAST(blocked_spid AS varchar(10)) +
+        ':' +
+        CAST(blocked_ecid AS varchar(10)) +
         ')' PERSISTED;
 
-CREATE CLUSTERED INDEX 
-    blocking 
+CREATE CLUSTERED INDEX
+    blocking
 ON #blocking
     (monitor_loop, blocking_desc);
 
-CREATE INDEX 
-    blocked 
+CREATE INDEX
+    blocked
 ON #blocking
-    (monitor_loop, blocked_desc);    
+    (monitor_loop, blocked_desc);   
 
 IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
 
-WITH 
-    hierarchy AS 
+WITH
+    hierarchy AS
 (
-    SELECT 
-        b.monitor_loop, 
+    SELECT
+        b.monitor_loop,
         blocking_desc,
         blocked_desc,
         level = 0,
-        sort_order = 
+        sort_order =
             CAST
             (
-                blocking_desc + 
-                ' <-- ' + 
+                blocking_desc +
+                ' <-- ' +
                 blocked_desc AS varchar(400)
             )
     FROM #blocking b
-    WHERE NOT EXISTS 
+    WHERE NOT EXISTS
     (
-        SELECT 
+        SELECT
             1/0
         FROM #blocking b2
         WHERE b2.monitor_loop = b.monitor_loop
@@ -1236,18 +1244,18 @@ WITH
 
     UNION ALL
 
-    SELECT 
+    SELECT
         bg.monitor_loop,
         bg.blocking_desc,
         bg.blocked_desc,
         h.level + 1,
-        sort_order = 
+        sort_order =
             CAST
             (
-                h.sort_order + 
-                ' ' + 
-                bg.blocking_desc + 
-                ' <-- ' + 
+                h.sort_order +
+                ' ' +
+                bg.blocking_desc +
+                ' <-- ' +
                 bg.blocked_desc AS varchar(400)
             )
     FROM hierarchy h
@@ -1256,7 +1264,7 @@ WITH
       AND bg.blocking_desc = h.blocked_desc
 )
 UPDATE #blocked
-SET 
+SET
     blocking_level = h.level,
     sort_order = h.sort_order
 FROM #blocked b
@@ -1267,7 +1275,7 @@ JOIN hierarchy h
 OPTION(RECOMPILE);
 
 UPDATE #blocking
-SET 
+SET
     blocking_level = bd.blocking_level,
     sort_order = bd.sort_order
 FROM #blocking bg
@@ -1291,25 +1299,25 @@ SELECT
             RTRIM(kheb.object_id)
         ),
     kheb.activity,
-    blocking_tree = 
-        REPLICATE(' > ', kheb.blocking_level) + 
+    blocking_tree =
+        REPLICATE(' > ', kheb.blocking_level) +
         CASE kheb.activity
-             WHEN 'blocking' 
+             WHEN 'blocking'
              THEN '(' + kheb.blocking_desc + ') is blocking (' + kheb.blocked_desc + ')'
              ELSE ' > (' + kheb.blocked_desc + ') is blocked by (' + kheb.blocking_desc + ')'
         END,
-    spid = 
+    spid =
         CASE kheb.activity
-             WHEN 'blocking' 
+             WHEN 'blocking'
              THEN kheb.blocking_spid
              ELSE kheb.blocked_spid
         END,
     ecid =
         CASE kheb.activity
-             WHEN 'blocking' 
+             WHEN 'blocking'
              THEN kheb.blocking_ecid
              ELSE kheb.blocked_ecid
-        END,    
+        END,   
     query_text =
         CASE
             WHEN kheb.query_text
@@ -1317,7 +1325,7 @@ SELECT
             THEN
                 (
                     SELECT
-                        [processing-instruction(query)] =                                      
+                        [processing-instruction(query)] =                                     
                             OBJECT_SCHEMA_NAME
                             (
                                     SUBSTRING
@@ -1377,7 +1385,7 @@ SELECT
     kheb.last_transaction_completed,
     client_option_1 =
         SUBSTRING
-        (   
+        (  
             CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +
             CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +
             CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +
@@ -1432,14 +1440,14 @@ SELECT
     kheb.sort_order
 INTO #blocks
 FROM
-(               
+(              
     SELECT
         bg.*,
         contentious_object =
             OBJECT_SCHEMA_NAME
             (
                 bg.object_id,
-                bg.database_id            
+                bg.database_id           
             ) +
             N'.' +
             OBJECT_NAME
@@ -1450,16 +1458,16 @@ FROM
     FROM #blocking AS bg
     WHERE (bg.database_name = @database_name
            OR @database_name IS NULL)
-   
+  
     UNION ALL
-   
+  
     SELECT
         bd.*,
         contentious_object =
             OBJECT_SCHEMA_NAME
             (
                 bd.object_id,
-                bd.database_id            
+                bd.database_id           
             ) +
             N'.' +
             OBJECT_NAME
@@ -1467,7 +1475,7 @@ FROM
                 bd.object_id,
                 bd.database_id
             )
-    FROM #blocked AS bd     
+    FROM #blocked AS bd    
     WHERE (bd.database_name = @database_name
            OR @database_name IS NULL)
 ) AS kheb
@@ -1534,7 +1542,7 @@ OPTION(RECOMPILE);
 
 SELECT DISTINCT
     b.*
-INTO #available_plans   
+INTO #available_plans  
 FROM
 (
     SELECT
@@ -1559,9 +1567,9 @@ FROM
             OR @database_name IS NULL)
     AND  (b.contentious_object = @object_name
             OR @object_name IS NULL)
-   
+  
     UNION ALL
-   
+  
     SELECT
         available_plans =
             'available_plans',
@@ -1615,7 +1623,7 @@ SELECT
                     (
                         SECOND,
                         deqs.creation_time,
-                        deqs.last_execution_time
+                        NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
                     ),
                     0
                 ),
@@ -1634,7 +1642,7 @@ SELECT
     min_used_grant_mb =
         deqs.min_used_grant_kb * 8. / 1024.,
     max_used_grant_mb =
-        deqs.max_used_grant_kb * 8. / 1024.,   
+        deqs.max_used_grant_kb * 8. / 1024.,  
     deqs.min_reserved_threads,
     deqs.max_reserved_threads,
     deqs.min_used_threads,
@@ -1651,11 +1659,11 @@ WHERE EXISTS
 )
 AND deqs.query_hash IS NOT NULL;
 
-CREATE CLUSTERED INDEX 
-    deqs 
+CREATE CLUSTERED INDEX
+    deqs
 ON #dm_exec_query_stats
 (
-    sql_handle, 
+    sql_handle,
     plan_handle
 );
 
@@ -1783,7 +1791,7 @@ SELECT
         N' has been involved in ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' blocking sessions.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE (b.database_name = @database_name
@@ -1825,7 +1833,7 @@ SELECT
         N' has been involved in ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' blocking sessions.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE (b.database_name = @database_name
@@ -1873,7 +1881,7 @@ SELECT
         N' select queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.lock_mode IN
@@ -1916,7 +1924,7 @@ SELECT
         N' repeatable read queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'repeatable%'
@@ -1954,7 +1962,7 @@ SELECT
         N' serializable queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'serializable%'
@@ -1991,7 +1999,7 @@ SELECT
         N' sleeping queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.status = N'sleeping'
@@ -2028,7 +2036,7 @@ SELECT
         N' background tasks involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.status = N'background'
@@ -2065,7 +2073,7 @@ SELECT
         N' implicit transaction queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.transaction_name = N'implicit_transaction'
@@ -2102,7 +2110,7 @@ SELECT
         N' user transaction queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.transaction_name = N'user_transaction'
@@ -2155,7 +2163,7 @@ SELECT
             N'UNKNOWN'
         ) +
         N'.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE (b.database_name = @database_name
@@ -2243,7 +2251,7 @@ SELECT
               14
           ) +
         N' [dd hh:mm:ss:ms] of lock wait time.',
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
 FROM b AS b
 WHERE (b.database_name = @database_name
@@ -2328,7 +2336,7 @@ SELECT
           ) +
         N' [dd hh:mm:ss:ms] of lock wait time in database ' +
         b.database_name,
-   sort_order =    
+   sort_order =   
        ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
 FROM b AS b
 WHERE (b.database_name = @database_name

@@ -3263,7 +3263,7 @@ BEGIN
                         (
                             SECOND,
                             deqs.creation_time,
-                            deqs.last_execution_time
+                            NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
                         ),
                         0
                     ),
@@ -3292,10 +3292,10 @@ BEGIN
     FROM sys.dm_exec_query_stats AS deqs
     WHERE EXISTS
     (
-       SELECT
-           1/0
-       FROM #available_plans AS ap
-       WHERE ap.sql_handle = deqs.sql_handle
+        SELECT
+            1/0
+        FROM #available_plans AS ap
+        WHERE ap.sql_handle = deqs.sql_handle
     )
     AND deqs.query_hash IS NOT NULL;
    
