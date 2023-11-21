@@ -22,6 +22,6 @@ jobs:
           ./Merge-All.ps1
       - name: Commit Updated File
         run: |
-          git add DarlingData.sql
+          git add ./Install-All/DarlingData.sql
           git commit -am "Automation: Building SQL File"
           git push
