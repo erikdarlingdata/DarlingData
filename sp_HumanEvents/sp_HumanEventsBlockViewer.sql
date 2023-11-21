@@ -80,8 +80,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '3.11',
-    @version_date = '20231101';
+    @version = '3.12',
+    @version_date = '20231201';
 
 IF @help = 1
 BEGIN
