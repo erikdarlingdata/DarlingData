@@ -57,8 +57,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.11',
-        @version_date = '20231101';
+        @version = '1.12',
+        @version_date = '20231201';
 
     IF @help = 1
     BEGIN
@@ -2175,8 +2175,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;   
    
 SELECT    
-    @version = '5.11',    
-    @version_date = '20231101';   
+    @version = '5.12',    
+    @version_date = '20231201';   
    
 IF @help = 1   
 BEGIN   
@@ -6899,8 +6899,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '3.11',
-    @version_date = '20231101';
+    @version = '3.12',
+    @version_date = '20231201';
 
 IF @help = 1
 BEGIN
@@ -9266,8 +9266,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 BEGIN
     SELECT
-        @version = '1.11',
-        @version_date = '20231101';
+        @version = '1.12',
+        @version_date = '20231201';
 
     IF @help = 1
     BEGIN
@@ -9844,8 +9844,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.11',
-    @version_date = '20231101';
+    @version = '4.12',
+    @version_date = '20231201';
 
 
 IF @help = 1
@@ -11769,8 +11769,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.11',
-    @version_date = '20231101';
+    @version = '4.12',
+    @version_date = '20231201';
 
 /*
 Helpful section! For help.
