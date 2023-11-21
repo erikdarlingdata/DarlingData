@@ -19,7 +19,7 @@ jobs:
         shell: pwsh
         run: | 
           cd Install-All
-          ./Merge All.ps1
+          ./Merge-All.ps1
       - name: Commit Updated File
         run: |
           git add DarlingData.sql
