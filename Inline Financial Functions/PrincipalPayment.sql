@@ -2,11 +2,11 @@ CREATE OR ALTER FUNCTION
     dbo.PrincipalPayment_Inline
 (
     @Rate float,
-    @Period int,
-    @Periods int,
+    @Period integer,
+    @Periods integer,
     @Present float,
     @Future float,
-    @Type int
+    @Type integer
 )
 RETURNS table
 AS

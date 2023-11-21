@@ -7,7 +7,7 @@ CREATE OR ALTER FUNCTION
     @FutureValue float,
     @Payment float,
     @PaymentsPerYear float,
-    @Type int
+    @Type integer
 )
 RETURNS TABLE
 AS
