@@ -2,10 +2,10 @@ CREATE OR ALTER FUNCTION
     dbo.FutureValue_Inline
 (
     @Rate float,
-    @Periods int,
+    @Periods integer,
     @Payment float,
     @Value float,
-    @Type int
+    @Type integer
 )
 RETURNS TABLE
 AS
