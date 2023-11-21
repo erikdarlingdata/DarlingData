@@ -1,0 +1,28 @@
+name: Regenerate SQL Main File
+on: 
+  push:
+    branches:
+      - main
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Checkout Code
+        run: |
+          git config --global user.name 'Darling Data'
+          git config --global user.email 'erik@erikdarling.com'
+          git checkout
+      - name: Compile SQL File
+        shell: pwsh
+        run: | 
+          cd DarlingData
+          cd Install-All
+          ./Merge All.ps1
+      - name: Commit Updated File
+        run: |
+          git add DarlingData.sql
+          git commit -am "Automation: Building SQL File"
+          git push
