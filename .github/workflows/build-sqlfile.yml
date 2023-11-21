@@ -18,7 +18,6 @@ jobs:
       - name: Compile SQL File
         shell: pwsh
         run: | 
-          cd DarlingData
           cd Install-All
           ./Merge All.ps1
       - name: Commit Updated File
