@@ -2,10 +2,10 @@ CREATE OR ALTER FUNCTION
     dbo.Payment_Inline
 (
     @Rate float,
-    @Periods int,
+    @Periods integer,
     @Present float,
     @Future float,
-    @Type int
+    @Type integer
 )
 RETURNS TABLE
 AS
@@ -17,12 +17,12 @@ https://github.com/erikdarlingdata/DarlingData
     WITH pre AS
     (
        SELECT
-           Type
-               = ISNULL(@Type, 0),
-           Future
-               = ISNULL(@Future, 0),
-           Term
-               = POWER(1 + @Rate, @Periods)
+           Type = 
+               ISNULL(@Type, 0),
+           Future = 
+               ISNULL(@Future, 0),
+           Term = 
+               POWER(1 + @Rate, @Periods)
     ),
          post AS
     (
