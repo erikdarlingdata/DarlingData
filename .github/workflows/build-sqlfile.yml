@@ -18,11 +18,10 @@ jobs:
       - name: Compile SQL File
         shell: pwsh
         run: | 
-          cd DarlingData
           cd Install-All
-          ./Merge All.ps1
+          ./Merge-All.ps1
       - name: Commit Updated File
         run: |
-          git add DarlingData.sql
+          git add ./Install-All/DarlingData.sql
           git commit -am "Automation: Building SQL File"
           git push
