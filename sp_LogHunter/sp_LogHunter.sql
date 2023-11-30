@@ -435,7 +435,6 @@ BEGIN
             ('A significant part of sql server process memory has been paged out'), ('Dispatcher'), ('I/O requests taking longer than'), ('killed'), 
             ('SQL Server could not start'), ('SQL Server cannot start'), ('System Manufacturer:'), ('columnstore'), ('timed out'), ('inconsistent'), 
             ('flushcache'), ('Recovery for availability database')
-            
     ) AS v (search_string)
     CROSS JOIN
     (

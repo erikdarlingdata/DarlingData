@@ -1,4 +1,5 @@
-﻿SET ANSI_NULLS ON;
+-- Compile Date: 11/22/2023 01:11:09 UTC
+SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
@@ -57,8 +58,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.11',
-        @version_date = '20231101';
+        @version = '1.12',
+        @version_date = '20231201';
 
     IF @help = 1
     BEGIN
@@ -2175,8 +2176,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;   
    
 SELECT    
-    @version = '5.11',    
-    @version_date = '20231101';   
+    @version = '5.12',    
+    @version_date = '20231201';   
    
 IF @help = 1   
 BEGIN   
@@ -6899,8 +6900,8 @@ SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '3.11',
-    @version_date = '20231101';
+    @version = '3.12',
+    @version_date = '20231201';
 
 IF @help = 1
 BEGIN
@@ -9266,8 +9267,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 BEGIN
     SELECT
-        @version = '1.11',
-        @version_date = '20231101';
+        @version = '1.12',
+        @version_date = '20231201';
 
     IF @help = 1
     BEGIN
@@ -9569,7 +9570,8 @@ BEGIN
             ('Warning ******************'), ('SQL Server should be restarted'), ('Server name is'), ('Could not connect'), ('yielding'), ('worker thread'), ('A new connection was rejected'), 
             ('A significant part of sql server process memory has been paged out'), ('Dispatcher'), ('I/O requests taking longer than'), ('killed'), ('SQL Server could not start'), 
             ('SQL Server cannot start'), ('System Manufacturer:'), ('columnstore'), ('timed out'), ('inconsistent'), ('flushcache'), ('Recovery for availability database'), ('currently busy'), 
-            ('The service is experiencing a problem'), ('The service account is'), ('Total Log Writer threads'), ('thread pool'), ('debug'), ('resolving'), ('stack dump'), ('Stack Signature')
+            ('The service is experiencing a problem'), ('The service account is'), ('Total Log Writer threads'), ('thread pool'), ('debug'), ('resolving'), ('stack dump'), ('Stack Signature'),
+            ('Recovery is complete')
     ) AS v (search_string)
     CROSS JOIN
     (
@@ -9843,8 +9845,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.11',
-    @version_date = '20231101';
+    @version = '4.12',
+    @version_date = '20231201';
 
 
 IF @help = 1
@@ -11768,8 +11770,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.11',
-    @version_date = '20231101';
+    @version = '4.12',
+    @version_date = '20231201';
 
 /*
 Helpful section! For help.
@@ -11983,8 +11985,8 @@ BEGIN
         mit_license_yo =
            'i am MIT licensed, so like, do whatever'
     UNION ALL
-     
-    SELECT  
+    
+    SELECT 
         mit_license_yo =
             'see printed messages for full license';
 
@@ -13778,12 +13780,12 @@ IF
   )
 BEGIN
     IF @include_plan_ids IS NOT NULL
-    BEGIN     
-        SELECT  
-            @include_plan_ids =  
+    BEGIN    
+        SELECT 
+            @include_plan_ids = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_plan_ids)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@include_plan_ids)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -13811,11 +13813,11 @@ BEGIN
 
     IF @ignore_plan_ids IS NOT NULL
     BEGIN
-        SELECT  
-            @ignore_plan_ids =  
+        SELECT 
+            @ignore_plan_ids = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_plan_ids)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@ignore_plan_ids)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -13843,11 +13845,11 @@ BEGIN
 
     IF @include_query_ids IS NOT NULL
     BEGIN
-        SELECT  
-            @include_query_ids =  
+        SELECT 
+            @include_query_ids = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_query_ids)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@include_query_ids)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #include_query_ids',
@@ -13942,11 +13944,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_query_ids IS NOT NULL
     BEGIN
-        SELECT  
-            @ignore_query_ids =  
+        SELECT 
+            @ignore_query_ids = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_query_ids)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@ignore_query_ids)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #ignore_query_ids',
@@ -14055,11 +14057,11 @@ IF
 BEGIN
     IF @include_query_hashes IS NOT NULL
     BEGIN
-        SELECT  
-            @include_query_hashes =  
+        SELECT 
+            @include_query_hashes = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_query_hashes)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@include_query_hashes)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -14162,11 +14164,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_query_hashes IS NOT NULL
     BEGIN
-        SELECT  
-            @ignore_query_hashes =  
+        SELECT 
+            @ignore_query_hashes = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_query_hashes)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@ignore_query_hashes)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -14269,11 +14271,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_plan_hashes IS NOT NULL
     BEGIN
-        SELECT  
-            @include_plan_hashes =  
+        SELECT 
+            @include_plan_hashes = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_plan_hashes)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@include_plan_hashes)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -14369,11 +14371,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_plan_hashes IS NOT NULL
     BEGIN
-        SELECT  
-            @ignore_plan_hashes =  
+        SELECT 
+            @ignore_plan_hashes = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_plan_hashes)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@ignore_plan_hashes)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -14469,11 +14471,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_sql_handles IS NOT NULL
     BEGIN
-        SELECT  
-            @include_sql_handles =  
+        SELECT 
+            @include_sql_handles = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_sql_handles)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@include_sql_handles)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -14584,11 +14586,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_sql_handles IS NOT NULL
     BEGIN
-        SELECT  
-            @ignore_sql_handles =  
+        SELECT 
+            @ignore_sql_handles = 
                 REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_sql_handles)),  
-                CHAR(10), N''), CHAR(13), N''),  
+                (LTRIM(RTRIM(@ignore_sql_handles)), 
+                CHAR(10), N''), CHAR(13), N''), 
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -16570,10 +16572,10 @@ BEGIN
         @current_table = 'selecting final results';
 
     SELECT
-        @sql +=  
+        @sql += 
         CONVERT
         (
-            nvarchar(MAX),  
+            nvarchar(MAX), 
         N'
 SELECT
     x.*
@@ -16594,7 +16596,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),            
+            nvarchar(MAX),           
             N'
     SELECT
         source =
@@ -16642,15 +16644,22 @@ FROM
                  END +
         N''
         +
+        CONVERT
+        (
+            nvarchar(MAX),
             CASE @new
                  WHEN 1
                  THEN
         N'
         qsp.plan_forcing_type_desc,
+        qsp.force_failure_count,
+        qsp.last_force_failure_reason_desc,
         w.top_waits,'
                  ELSE
         N''
-            END + N'
+            END 
+        )
+        + N'
         first_execution_time =
             CASE
                 WHEN @timezone IS NULL
@@ -16787,10 +16796,10 @@ FROM
       )
     BEGIN
         SELECT
-            @sql +=  
+            @sql += 
         CONVERT
         (
-            nvarchar(MAX),             
+            nvarchar(MAX),            
             N'
     SELECT
         source =
@@ -16838,15 +16847,21 @@ FROM
                  END +
         N''
         +
+        CONVERT
+        (
+            nvarchar(MAX),
             CASE @new
                  WHEN 1
                  THEN
         N'
         qsp.plan_forcing_type_desc,
+        qsp.force_failure_count,
+        qsp.last_force_failure_reason_desc,
         w.top_waits,'
                  ELSE
         N''
-            END +
+            END 
+        ) +
         CONVERT
         (
             nvarchar(MAX),
@@ -16991,7 +17006,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),             
+            nvarchar(MAX),            
             N'
     SELECT
         source =
@@ -17039,15 +17054,22 @@ FROM
                  END +
         N''
         +
+        CONVERT
+        (
+            nvarchar(MAX),
             CASE @new
                  WHEN 1
                  THEN
         N'
         qsp.plan_forcing_type_desc,
+        qsp.force_failure_count,
+        qsp.last_force_failure_reason_desc,
         w.top_waits,'
                  ELSE
         N''
-            END + N'
+            END 
+        )
+        + N'
         first_execution_time =
             CASE
                 WHEN @timezone IS NULL
@@ -17151,10 +17173,10 @@ FROM
       )
     BEGIN
         SELECT
-            @sql +=  
+            @sql += 
         CONVERT
         (
-            nvarchar(MAX),             
+            nvarchar(MAX),            
             N'
     SELECT
         source =
@@ -17203,15 +17225,21 @@ FROM
                  END +
         N''
         +
+        CONVERT
+        (
+            nvarchar(MAX),
             CASE @new
                  WHEN 1
                  THEN
         N'
         qsp.plan_forcing_type_desc,
+        qsp.force_failure_count,
+        qsp.last_force_failure_reason_desc,
         w.top_waits,'
                  ELSE
         N''
             END
+        )
         + N'
         first_execution_time =
             CASE
@@ -17288,7 +17316,7 @@ FROM
                 PARTITION BY
                     qsrs.plan_id
                 ORDER BY
-                    '  
+                    ' 
         +
         CASE @sort_order
              WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
@@ -17310,7 +17338,7 @@ FROM
     Add on the from and stuff
     */
     SELECT
-        @sql +=  
+        @sql += 
     CONVERT
     (
         nvarchar(MAX),
@@ -17372,7 +17400,7 @@ FROM
       )
     BEGIN
         SELECT
-            @sql +=  
+            @sql += 
         CONVERT
         (
             nvarchar(MAX),
@@ -17425,7 +17453,7 @@ FROM
       )
     BEGIN
         SELECT
-            @sql +=  
+            @sql += 
         CONVERT
         (
             nvarchar(MAX),
@@ -17471,7 +17499,7 @@ FROM
     END; /*End format output = 1 wait stats query*/
 
     SELECT
-        @sql +=  
+        @sql += 
     CONVERT
     (
         nvarchar(MAX),
@@ -17516,7 +17544,7 @@ ORDER BY ' +
              END
     END
              + N' DESC
-OPTION(RECOMPILE);'  
+OPTION(RECOMPILE);' 
     + @nc10
     );
 
@@ -17738,7 +17766,7 @@ BEGIN
                         THEN qsq.last_execution_time AT TIME ZONE @timezone
                     END,
                 last_execution_time_utc =
-                    qsq.last_execution_time,                  
+                    qsq.last_execution_time,                 
                 qsq.count_compiles,
                 qsq.avg_compile_duration_ms,
                 qsq.total_compile_duration_ms,
@@ -17971,7 +17999,7 @@ BEGIN
                 result =
                     '#query_store_wait_stats is empty' +
                     CASE
-                        WHEN  
+                        WHEN 
                         (
                                 @product_version = 13
                             AND @azure = 0
@@ -18038,7 +18066,7 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql +=  
+        @sql += 
     CONVERT
     (
         nvarchar(MAX),
@@ -18058,7 +18086,7 @@ BEGIN
         dqso.stale_query_threshold_days,
         dqso.max_plans_per_query,
         dqso.query_capture_mode_desc,'
-        +  
+        + 
         CASE
             WHEN
             (
@@ -18086,7 +18114,7 @@ BEGIN
     );
 
     SELECT
-        @sql +=  
+        @sql += 
     CONVERT
     (
         nvarchar(MAX),
@@ -18266,7 +18294,7 @@ BEGIN
                         WHEN @timezone IS NOT NULL
                         THEN qsq.initial_compile_start_time AT TIME ZONE @timezone
                     END,
-                initial_compile_start_time_utc = 
+                initial_compile_start_time_utc =
                     qsq.initial_compile_start_time,
                 last_compile_start_time =
                     CASE
@@ -18280,7 +18308,7 @@ BEGIN
                             )
                         WHEN @timezone IS NOT NULL
                         THEN qsq.last_compile_start_time AT TIME ZONE @timezone
-                    END, 
+                    END,
                 last_compile_start_time_utc =
                     qsq.last_compile_start_time,
                 last_execution_time =
@@ -18295,7 +18323,7 @@ BEGIN
                             )
                         WHEN @timezone IS NOT NULL
                         THEN qsq.last_execution_time AT TIME ZONE @timezone
-                    END, 
+                    END,
                 last_execution_time_utc =
                     qsq.last_execution_time,
                 count_compiles =
@@ -18605,7 +18633,7 @@ BEGIN
         BEGIN
             SELECT
                 @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-           
+          
             SELECT
                 database_name =
                     DB_NAME(qsr.database_id),
@@ -18623,7 +18651,7 @@ BEGIN
             ORDER BY
                 qsr.replica_group_id
             OPTION(RECOMPILE);
-           
+          
         END;
         ELSE
         BEGIN
@@ -18637,7 +18665,7 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql +=  
+        @sql += 
     CONVERT
     (
         nvarchar(MAX),
@@ -18675,7 +18703,7 @@ BEGIN
         END
         +
         CASE
-            WHEN  
+            WHEN 
             (
                 @azure = 1
                 OR @product_version > 14
@@ -18721,31 +18749,31 @@ FROM
         sort =
             1,
         period =
-            N'query store data for period ' +  
+            N'query store data for period ' + 
             CONVERT
             (
-                nvarchar(10),  
+                nvarchar(10), 
                 ISNULL
                 (
-                    @start_date_original,  
+                    @start_date_original, 
                     DATEADD
                     (
-                        DAY,  
-                        -7,  
+                        DAY, 
+                        -7, 
                         DATEDIFF
                         (
-                            DAY,  
-                            0,  
+                            DAY, 
+                            0, 
                             SYSDATETIME()
                         )
                     )
-                ),  
+                ), 
                 23
-            ) +  
-            N' through ' +  
+            ) + 
+            N' through ' + 
             CONVERT
             (
-                nvarchar(10),  
+                nvarchar(10), 
                 ISNULL
                 (
                     @end_date_original,
@@ -18763,7 +18791,7 @@ FROM
             'to debug issues, use @debug = 1;',
         performance =
             'if this runs slowly, use to get query plans',
-        version_and_date =  
+        version_and_date = 
             N'version: ' + CONVERT(nvarchar(10), @version),
         thanks =
             'thanks for using sp_QuickieStore!'
@@ -18774,31 +18802,31 @@ FROM
         sort =
             2,
         period =
-            N'query store data for period ' +  
+            N'query store data for period ' + 
             CONVERT
             (
-                nvarchar(10),  
+                nvarchar(10), 
                 ISNULL
                 (
-                    @start_date_original,  
+                    @start_date_original, 
                     DATEADD
                     (
-                        DAY,  
-                        -7,  
+                        DAY, 
+                        -7, 
                         DATEDIFF
                         (
-                            DAY,  
-                            0,  
+                            DAY, 
+                            0, 
                             SYSDATETIME()
                         )
                     )
-                ),  
+                ), 
                 23
-            ) +  
-            N' through ' +  
+            ) + 
+            N' through ' + 
             CONVERT
             (
-                nvarchar(10),  
+                nvarchar(10), 
                 ISNULL
                 (
                     @end_date_original,
@@ -18816,12 +18844,12 @@ FROM
             'EXEC sp_QuickieStore @debug = 1;',
         performance =
             'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
-        version_and_date =  
+        version_and_date = 
             N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
         thanks =
             'i hope you find it useful, or whatever'
 ) AS x
-ORDER BY  
+ORDER BY 
     x.sort;
 
 END TRY
@@ -18986,9 +19014,9 @@ BEGIN
             @troubleshoot_info,
         rc =
             @rc,
-       em =  
+       em = 
            @em,
-       fo =  
+       fo = 
            @fo,
        utc_minutes_difference =
            @utc_minutes_difference,
@@ -19737,3 +19765,4 @@ END; /*End debug*/
 RETURN; /*Yeah sure why not?*/
 END;/*Final End*/
 GO
+
