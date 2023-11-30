@@ -1,4 +1,4 @@
--- Compile Date: 11/30/2023 14:44:55 UTC
+-- Compile Date: 11/30/2023 21:24:37 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -9686,6 +9686,7 @@ BEGIN
         SELECT table_name = '#search', s.* FROM #search AS s;
     END;
    
+    /*Set the min and max logs we're getting for the loop*/
     SELECT
         @l_log = MIN(e.archive),
         @h_log = MAX(e.archive),
@@ -9718,6 +9719,7 @@ BEGIN
         FROM #search;
        
         IF @debug = 1 BEGIN RAISERROR('Opening cursor', 0, 1) WITH NOWAIT; END;
+        
         OPEN c;
        
         FETCH FIRST
@@ -9728,6 +9730,7 @@ BEGIN
         WHILE @@FETCH_STATUS = 0 AND @stopper = 0          
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Entering cursor', 0, 1) WITH NOWAIT; END;
+            /*Replace the canary value with the log number we're working in*/
             SELECT
                 @c =
                     REPLACE
@@ -9747,6 +9750,7 @@ BEGIN
             IF @debug = 1 BEGIN RAISERROR('Inserting to error log', 0, 1) WITH NOWAIT; END;
             BEGIN
                 BEGIN TRY
+                    /*Insert any log entries we find that match the search*/
                     INSERT
                         #error_log
                     (
@@ -9758,6 +9762,7 @@ BEGIN
                         @c;
                 END TRY
                 BEGIN CATCH
+                    /*Insert any searches that throw an error here*/
                     INSERT
                         #errors
                     (
@@ -9771,16 +9776,19 @@ BEGIN
             END;
           
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;
+            /*Get the next search command*/
             FETCH NEXT
             FROM c
             INTO @c;
 
+            /*Increment our loop counter*/
             SELECT
                 @l_count += 1;
 
         END;
           
         IF @debug = 1 BEGIN RAISERROR('Getting next log', 0, 1) WITH NOWAIT; END;
+        /*Increment the log numbers*/
         SELECT
             @l_log = MIN(e.archive),
             @l_count = 1
@@ -9793,6 +9801,7 @@ BEGIN
             RAISERROR('log %i of %i', 0, 1, @l_log, @h_log) WITH NOWAIT;    
         END;
 
+        /*Stop the loop if this is NULL*/
         IF @l_log IS NULL
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Breaking', 0, 1) WITH NOWAIT; END;         
@@ -9801,6 +9810,7 @@ BEGIN
         END;              
         IF @debug = 1 BEGIN RAISERROR('Ended WHILE loop', 0, 1) WITH NOWAIT; END;
   
+        /*Close out the cursor*/
         CLOSE c;
         DEALLOCATE c;
     END;
@@ -9814,7 +9824,7 @@ BEGIN
     OR    el.text LIKE N'DBCC TRACEOFF 3604%'
     OR    el.text LIKE N'This instance of SQL Server has been using a process ID of%'
     OR    el.text LIKE N'Could not connect because the maximum number of ''1'' dedicated administrator connections already exists%'
-    OR    el.text LIKE N'Login failed for user%'
+    OR    el.text LIKE N'Login failed%'
     OR    el.text LIKE N'Backup(%'
     OR    el.text LIKE N'[[]INFO]%'
     OR    el.text LIKE N'[[]DISK_SPACE_TO_RESERVE_PROPERTY]%'
@@ -9828,6 +9838,9 @@ BEGIN
     OR    el.text LIKE N'Starting up database%'
     OR    el.text LIKE N'Buffer pool extension is already disabled%'
     OR    el.text LIKE N'Buffer Pool: Allocating % bytes for % hashPages.'
+    OR    el.text LIKE N'18456%'
+    OR    el.text LIKE N'SSPI%'
+    OR    el.text LIKE N'Error: 18452%'
     OR    el.text IN
           (
               N'The Database Mirroring endpoint is in disabled or stopped state.',
@@ -9835,6 +9848,7 @@ BEGIN
           )
     OPTION(RECOMPILE);
 
+    /*Return the search results*/
     SELECT
         table_name =
             '#error_log',
@@ -9844,6 +9858,7 @@ BEGIN
         el.log_date DESC
     OPTION(RECOMPILE);
 
+    /*If we hit any errors, show which searches failed here*/
     IF EXISTS
     (
         SELECT
