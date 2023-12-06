@@ -165,6 +165,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RETURN;
     END;
 
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Declaring variables', 0, 1) WITH NOWAIT;
+    END;
+
     DECLARE
         @sql nvarchar(MAX) =
             N'',
@@ -182,6 +187,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        @azure_msg nchar(1),
         @mi bit  =
             CASE
                 WHEN
@@ -193,13 +199,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        @mi_msg nchar(1),
         @dbid integer =
             DB_ID(@database_name);
 
     IF @azure = 1
     BEGIN
-        RAISERROR(N'This won''t work in Azure because it''s horrible', 11, 1) WITH NOWAIT;
+        RAISERROR('This won''t work in Azure because it''s horrible', 11, 1) WITH NOWAIT;
         RETURN;
+    END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Fixing variables', 0, 1) WITH NOWAIT;
     END;
   
     SELECT
@@ -271,7 +283,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN @wait_round_interval_minutes < 1
                 THEN 1
                 ELSE @wait_round_interval_minutes
-            END;
+            END,
+        @azure_msg =
+            CONVERT(nchar(1), @azure),
+        @mi_msg =
+            CONVERT(nchar(1), @mi);
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Creating temp tables', 0, 1) WITH NOWAIT;
+    END;
 
     CREATE TABLE
         #ignore
@@ -311,7 +332,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /*The more you ignore waits, the worser they get*/
     IF @what_to_check IN ('all', 'waits')
-    BEGIN      
+    BEGIN    
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting ignorable waits to #ignore', 0, 1) WITH NOWAIT;
+        END;
+        
         INSERT
             #ignore WITH(TABLOCKX)
         (
@@ -336,10 +362,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'SQLTRACE_WAIT_ENTRIES', N'UCS_SESSION_REGISTRATION', N'VDI_CLIENT_OTHER', N'WAIT_FOR_RESULTS', N'WAITFOR', N'WAITFOR_TASKSHUTDOWN', N'WAIT_XTP_RECOVERY',
             N'WAIT_XTP_HOST_WAIT', N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', N'WAIT_XTP_CKPT_CLOSE', N'XE_DISPATCHER_JOIN', N'XE_DISPATCHER_WAIT', N'XE_TIMER_EVENT',
             N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF', N'DBMIRROR_DBM_MUTEX', N'DBMIRROR_SEND'
-        );
+        )
+        OPTION(RECOMPILE);
     END;
 
-    IF @debug = 1 BEGIN SELECT table_name = '#ignore', i.* FROM #ignore AS i ORDER BY i.wait_type; END;
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#ignore',
+            i.*
+        FROM #ignore AS i ORDER BY i.wait_type
+        OPTION(RECOMPILE);
+    END;
   
     /*
     The column timestamp_utc is 2017+ only, but terribly broken:
@@ -359,6 +393,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /*Grab data from the wait info component*/
         IF @what_to_check IN ('all', 'waits')
         BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking waits for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
+            END;
+
             SELECT
                 @sql = N'
             SELECT
@@ -378,9 +417,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
             ) AS xml
             CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
+            OPTION(RECOMPILE);';
             
-            IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+                RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
+                SET STATISTICS XML ON;
+            END;
             
             INSERT INTO
                 #wait_info WITH (TABLOCKX)
@@ -393,7 +437,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 @start_date,
                 @end_date;
             
-            IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
+            IF @debug = 1
+            BEGIN
+                SET STATISTICS XML OFF;
+            END;
         END;
      
         /*Grab data from the sp_server_diagnostics_component_result component*/
@@ -416,9 +463,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
         ) AS xml
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
-        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
+        OPTION(RECOMPILE);';
       
-        IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
+        IF @debug = 1
+        BEGIN 
+            PRINT @sql;
+            RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
+            SET STATISTICS XML ON;
+        END;
        
         INSERT INTO
             #sp_server_diagnostics_component_result WITH(TABLOCKX)
@@ -431,11 +483,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @start_date,
             @end_date;
 
-        IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
+        IF @debug = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+        END;
 
         /*Grab data from the xml_deadlock_report component*/
         IF @what_to_check IN ('all', 'locking')
         BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking locking for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
+            END;
+
             SELECT
                 @sql = N'
             SELECT
@@ -455,9 +515,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
             ) AS xml
             CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
+            OPTION(RECOMPILE);';
             
-            IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+                RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
+                SET STATISTICS XML ON;
+            END;
             
             INSERT INTO
                 #xml_deadlock_report WITH(TABLOCKX)
@@ -470,7 +535,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 @start_date,
                 @end_date;
             
-            IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
+            IF @debug = 1
+            BEGIN
+                SET STATISTICS XML OFF;
+            END;
         END;
     END;
   
@@ -484,6 +552,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     AND @mi = 0
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking waits for not Managed Instance, up to 2016', 0, 1) WITH NOWAIT;
+        END;
+
         /*Grab data from the wait info component*/
         IF @what_to_check IN ('all', 'waits')
         BEGIN
@@ -507,9 +580,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
            WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
-           OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
+           OPTION(RECOMPILE);';
           
-           IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+                RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
+                SET STATISTICS XML ON;
+            END;
            
            INSERT INTO
                #wait_info WITH (TABLOCKX)
@@ -526,6 +604,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        END;
 
         /*Grab data from the sp_server_diagnostics_component_result component*/
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking sp_server_diagnostics_component_result for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
+        END;       
+       
         SELECT
             @sql = N'
         SELECT
@@ -546,9 +629,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
         CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
         WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
-        OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
+        OPTION(RECOMPILE);';
   
-        IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
+            PRINT @sql;
+            SET STATISTICS XML ON;
+        END;
        
         INSERT INTO
             #sp_server_diagnostics_component_result WITH(TABLOCKX)
@@ -561,11 +649,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @start_date,
             @end_date;
        
-        IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
+        IF @debug = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+        END;
 
         /*Grab data from the xml_deadlock_report component*/
         IF @what_to_check IN ('all', 'locking')
         BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking locking for not Managed Instance', 0, 1) WITH NOWAIT;
+            END;
+           
             SELECT
                 @sql = N'
             SELECT
@@ -588,7 +684,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
             OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
             
-            IF @debug = 1 BEGIN SET STATISTICS XML ON; PRINT @sql; END;
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+                RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
+                SET STATISTICS XML ON;
+            END;
             
             INSERT INTO
                 #xml_deadlock_report WITH(TABLOCKX)
@@ -601,12 +702,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 @start_date,
                 @end_date;
             
-            IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
+            IF @debug = 1
+            BEGIN
+                SET STATISTICS XML OFF;
+            END;
         END;
     END;
 
     IF @mi = 1
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Starting Managed Instance analysis', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting #x', 0, 1) WITH NOWAIT;
+        END;
+
         INSERT
             #x WITH(TABLOCKX)
         (
@@ -626,7 +736,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   t.target_name = N'ring_buffer'
         OPTION(RECOMPILE);
 
-        IF @debug = 1 BEGIN SELECT TOP (100) table_name = '#x, top 100 rows', x.* FROM #x AS x; END;
+        IF @debug = 1
+        BEGIN
+            SELECT TOP (100)
+                table_name = '#x, top 100 rows',
+                x.*
+            FROM #x AS x;
+        END;
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting #ring_buffer', 0, 1) WITH NOWAIT;
+        END;
        
         INSERT
             #ring_buffer WITH(TABLOCKX)
@@ -651,10 +772,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   e.x.exist('@name[.= "scheduler_monitor_system_health_ring_buffer_recorded"]') = 0
         OPTION(RECOMPILE);
 
-        IF @debug = 1 BEGIN SELECT TOP (100) table_name = '#ring_buffer, top 100 rows', x.* FROM #ring_buffer AS x; END;
+        IF @debug = 1
+        BEGIN
+            SELECT TOP (100)
+                table_name = '#ring_buffer, top 100 rows',
+                x.*
+            FROM #ring_buffer AS x;
+        END;
 
         IF @what_to_check IN ('all', 'waits')
         BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance waits', 0, 1) WITH NOWAIT;
+                RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
+            END;
+
             INSERT
                 #wait_info WITH(TABLOCKX)
             (
@@ -666,6 +799,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
             WHERE e.x.exist('@name[.= "wait_info"]') = 1
             OPTION(RECOMPILE);
+        END;
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking Managed Instance sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
         END;
 
         INSERT
@@ -682,6 +821,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @what_to_check IN ('all', 'locking')
         BEGIN
+        IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance deadlocks', 0, 1) WITH NOWAIT;
+                RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
+            END;
+
             INSERT
                 #xml_deadlock_report WITH(TABLOCKX)
             (
@@ -698,14 +843,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   
     IF @debug = 1
     BEGIN
-        SELECT TOP (100) table_name = '#wait_info, top 100 rows', x.* FROM #wait_info AS x;
-        SELECT TOP (100) table_name = '#sp_server_diagnostics_component_result, top 100 rows', x.* FROM #sp_server_diagnostics_component_result AS x;
-        SELECT TOP (100) table_name = '#xml_deadlock_report, top 100 rows', x.* FROM #xml_deadlock_report AS x;
+        SELECT TOP (100)
+            table_name = '#wait_info, top 100 rows',
+            x.*
+        FROM #wait_info AS x;
+        
+        SELECT TOP (100) 
+            table_name = '#sp_server_diagnostics_component_result, top 100 rows', 
+            x.* 
+        FROM #sp_server_diagnostics_component_result AS x;
+       
+        SELECT TOP (100)
+            table_name = '#xml_deadlock_report, top 100 rows',
+            x.*
+        FROM #xml_deadlock_report AS x;
     END;
 
     /*Parse out the wait_info data*/
     IF @what_to_check IN ('all', 'waits')
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing queries with significant waits', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             event_time = 
                 DATEADD
@@ -740,6 +901,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   WHERE w.x.exist('(data[@name="wait_type"]/text/text())[1][.= sql:column("i.wait_type")]') = 1
               )
         OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Adding query_text to #waits_queries', 0, 1) WITH NOWAIT;
+        END;
            
         ALTER TABLE #waits_queries
         ADD query_text AS
@@ -754,7 +920,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#waits_queries, top 100 rows', x.* FROM #waits_queries AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100)
+                table_name = '#waits_queries, top 100 rows',
+                x.*
+            FROM #waits_queries AS x
+            ORDER BY
+                x.event_time DESC;
         END;
            
         SELECT
@@ -780,6 +951,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
           
         /*Waits by count*/
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing #waits_by_count', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             event_time = 
                 DATEADD
@@ -815,7 +991,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#topwaits_count, top 100 rows', x.* FROM #topwaits_count AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100)
+                table_name = '#topwaits_count, top 100 rows',
+                x.*
+            FROM #topwaits_count AS x
+            ORDER BY
+                x.event_time DESC;
         END;
            
         SELECT
@@ -862,6 +1043,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
            
         /*Grab waits by duration*/
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing waits by duration', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             event_time = 
                 DATEADD
@@ -900,7 +1086,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#topwaits_duration, top 100 rows', x.* FROM #topwaits_duration AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100)
+                table_name = '#topwaits_duration, top 100 rows',
+                x.*
+            FROM #topwaits_duration AS x
+            ORDER BY
+                x.event_time DESC;
         END;
            
         SELECT
@@ -950,6 +1141,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /*Grab IO stuff*/
     IF @what_to_check IN ('all', 'disk')
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing disk stuff', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             event_time = 
                 DATEADD
@@ -982,7 +1178,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#io, top 100 rows', x.* FROM #io AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100)
+                table_name = '#io, top 100 rows',
+                x.*
+            FROM #io AS x
+            ORDER BY
+                x.event_time DESC;
         END;
         
         SELECT
@@ -1012,6 +1213,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /*Grab CPU details*/
     IF @what_to_check IN ('all', 'cpu')
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing CPU stuff', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             event_time = 
                 DATEADD
@@ -1047,7 +1253,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#scheduler_details, top 100 rows', x.* FROM #scheduler_details AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100)
+                table_name = '#scheduler_details, top 100 rows',
+                x.*
+            FROM #scheduler_details AS x
+            ORDER BY
+                x.event_time DESC;
         END;
         
         SELECT
@@ -1072,6 +1283,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /*Grab memory details*/
     IF @what_to_check IN ('all', 'memory')
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing memory stuff', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             event_time = 
                 DATEADD
@@ -1125,7 +1341,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#memory, top 100 rows', x.* FROM #memory AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100)
+                table_name = '#memory, top 100 rows',
+                x.*
+            FROM #memory AS x
+            ORDER BY
+                x.event_time DESC;
         END;
         
         SELECT
@@ -1171,6 +1392,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /*Grab health stuff*/
     IF @what_to_check IN ('all', 'system')
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing system stuff', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             event_time = 
                 DATEADD
@@ -1209,7 +1435,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#health, top 100 rows', x.* FROM #health AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100)
+                table_name = '#health, top 100 rows',
+                x.*
+            FROM #health AS x
+            ORDER BY
+                x.event_time DESC;
         END;
        
         SELECT
@@ -1311,8 +1542,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
   
     /*Grab blocking stuff*/
-    IF @what_to_check IN ('all', 'locking') AND @skip_locks = 0
+    IF  @what_to_check IN ('all', 'locking')
+    AND @skip_locks = 0
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing locking stuff', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             event_time = 
                 DATEADD
@@ -1337,10 +1574,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#blocking_xml, top 100 rows', x.* FROM #blocking_xml AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100)
+                table_name = '#blocking_xml, top 100 rows',
+                x.*
+            FROM #blocking_xml AS x
+            ORDER BY
+                x.event_time DESC;
         END;
         
         /*Blocked queries*/
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing blocked queries', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             bx.event_time,
             currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'), 
@@ -1369,6 +1616,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
         WHERE bd.exist('process/@spid') = 1
         OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Adding query_text to #blocked', 0, 1) WITH NOWAIT;
+        END;
         
         ALTER TABLE #blocked
         ADD query_text AS
@@ -1383,10 +1635,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#blocked, top 100 rows', x.* FROM #blocked AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100)
+                table_name = '#blocked, top 100 rows',
+                x.*
+            FROM #blocked AS x
+            ORDER BY
+                x.event_time DESC;
         END;
         
         /*Blocking queries*/
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing blocking queries', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             bx.event_time,
             currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
@@ -1415,6 +1677,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
         WHERE bg.exist('process/@spid') = 1
         OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Adding query_text to #blocking', 0, 1) WITH NOWAIT;
+        END;
         
         ALTER TABLE #blocking
         ADD query_text AS
@@ -1429,10 +1696,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#blocking, top 100 rows', x.* FROM #blocking AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100) 
+                table_name = '#blocking, top 100 rows', 
+                x.* 
+            FROM #blocking AS x 
+            ORDER BY 
+                x.event_time DESC;
         END;
         
         /*Put it together*/
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting to #blocks', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             kheb.event_time,
             kheb.currentdbname,
@@ -1572,7 +1849,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#blocks, top 100 rows', x.* FROM #blocks AS x ORDER BY x.event_time DESC;
+            SELECT TOP (100) 
+                table_name = '#blocks, top 100 rows', 
+                x.* 
+            FROM #blocks AS x 
+            ORDER BY 
+                x.event_time DESC;
         END;
         
         SELECT
@@ -1609,6 +1891,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
         
         /*Grab available plans from the cache*/
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting to #available_plans (blocking)', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT DISTINCT
             b.*
         INTO #available_plans
@@ -1651,6 +1938,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     OR @database_name IS NULL)
         ) AS b
         OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting to #deadlocks', 0, 1) WITH NOWAIT;
+        END;
        
         SELECT
             x.xml_deadlock_report,
@@ -1663,7 +1955,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#deadlocks, top 100 rows', x.* FROM #deadlocks AS x;
+            SELECT TOP (100) 
+                table_name = '#deadlocks, top 100 rows', 
+                x.* 
+            FROM #deadlocks AS x;
+        END;
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting to #deadlocks_parsed', 0, 1) WITH NOWAIT;
         END;
        
         SELECT
@@ -1781,9 +2081,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #deadlocks AS d
             CROSS APPLY d.xml_deadlock_report.nodes('//deadlock/process-list/process') AS e(x)
         ) AS x
-        WHERE (x.database_id = @dbid OR @dbid IS NULL)
-        OR    (x.current_database_name = @database_name OR @database_name IS NULL)
+        WHERE (x.database_id = @dbid 
+               OR @dbid IS NULL)
+        OR    (x.current_database_name = @database_name 
+               OR @database_name IS NULL)
         OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Adding query_text to #deadlocks_parsed', 0, 1) WITH NOWAIT;
+        END;
        
         ALTER TABLE #deadlocks_parsed
         ADD query_text AS
@@ -1798,7 +2105,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#deadlocks_parsed, top 100 rows', x.* FROM #deadlocks_parsed AS x;
+            SELECT TOP (100) 
+                table_name = '#deadlocks_parsed, top 100 rows', 
+                x.* 
+            FROM #deadlocks_parsed AS x;
+        END;
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Returning deadlocks', 0, 1) WITH NOWAIT;
         END;
        
         SELECT
@@ -1890,6 +2205,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             dp.event_date,
             is_victim
         OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting #available_plans (deadlocks)', 0, 1) WITH NOWAIT;
+        END;
        
         INSERT
             #available_plans WITH (TABLOCKX)
@@ -1918,7 +2238,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) table_name = '#available_plans, top 100 rows', x.* FROM #available_plans AS x;
+            SELECT TOP (100) 
+                table_name = '#available_plans, top 100 rows', 
+                x.* 
+            FROM #available_plans AS x;
+        END;
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting #dm_exec_query_stats_sh', 0, 1) WITH NOWAIT;
         END;
         
         SELECT
@@ -1982,6 +2310,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE ap.sql_handle = deqs.sql_handle
         )
         AND deqs.query_hash IS NOT NULL;
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Indexing #dm_exec_query_stats_sh', 0, 1) WITH NOWAIT;
+        END;
        
         CREATE CLUSTERED INDEX
             deqs_sh
@@ -1990,6 +2323,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             sql_handle,
             plan_handle
         );
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Inserting #all_available_plans (deadlocks)', 0, 1) WITH NOWAIT;
+        END;
         
         SELECT
             ap.finding,

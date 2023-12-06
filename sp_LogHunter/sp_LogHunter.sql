@@ -633,7 +633,7 @@ BEGIN
     OR    el.text LIKE N'Starting up database%'
     OR    el.text LIKE N'Buffer pool extension is already disabled%'
     OR    el.text LIKE N'Buffer Pool: Allocating % bytes for % hashPages.'
-    OR    el.text LIKE N'18456%'
+    OR    el.text LIKE N'Error: 18456%'
     OR    el.text LIKE N'SSPI%'
     OR    el.text LIKE N'Error: 18452%'
     OR    el.text IN

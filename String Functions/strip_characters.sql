@@ -53,15 +53,15 @@ SELECT
                    x.x,
                    1
                 )
-         FROM x AS x
-         WHERE SUBSTRING
-               (
-                   @string COLLATE Latin1_General_100_BIN2,
-                   x.x,
-                   1
-               ) NOT LIKE N'[' + @match_expression + ']'
-         ORDER BY x.x
-         FOR XML PATH(N''), TYPE
+            FROM x AS x
+            WHERE SUBSTRING
+                  (
+                      @string COLLATE Latin1_General_100_BIN2,
+                      x.x,
+                      1
+                  ) NOT LIKE N'[' + @match_expression + ']'
+            ORDER BY x.x
+            FOR XML PATH(N''), TYPE
        ).value('./text()[1]', 'nvarchar(max)')
     ) AS strip_characters;
 GO
