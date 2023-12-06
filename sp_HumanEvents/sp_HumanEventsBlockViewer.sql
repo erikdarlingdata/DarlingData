@@ -9,13 +9,13 @@ SET STATISTICS TIME, IO OFF;
 GO
 
 /*
-██╗  ██╗██╗   ██╗███╗   ███╗ █████╗ ███╗   ██╗    
-██║  ██║██║   ██║████╗ ████║██╔══██╗████╗  ██║    
-███████║██║   ██║██╔████╔██║███████║██╔██╗ ██║    
-██╔══██║██║   ██║██║╚██╔╝██║██╔══██║██║╚██╗██║    
-██║  ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║██║ ╚████║    
-╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝    
-                                                  
+██╗  ██╗██╗   ██╗███╗   ███╗ █████╗ ███╗   ██╗   
+██║  ██║██║   ██║████╗ ████║██╔══██╗████╗  ██║   
+███████║██║   ██║██╔████╔██║███████║██╔██╗ ██║   
+██╔══██║██║   ██║██║╚██╔╝██║██╔══██║██║╚██╗██║   
+██║  ██║╚██████╔╝██║ ╚═╝ ██║██║  ██║██║ ╚████║   
+╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝   
+                                                 
 ███████╗██╗   ██╗███████╗███╗   ██╗████████╗███████╗
 ██╔════╝██║   ██║██╔════╝████╗  ██║╚══██╔══╝██╔════╝
 █████╗  ██║   ██║█████╗  ██╔██╗ ██║   ██║   ███████╗
@@ -29,7 +29,7 @@ GO
 ██╔══██╗██║     ██║   ██║██║     ██╔═██╗
 ██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗
 ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
-                                       
+                                      
 ██╗   ██╗██╗███████╗██╗    ██╗███████╗██████╗
 ██║   ██║██║██╔════╝██║    ██║██╔════╝██╔══██╗
 ██║   ██║██║█████╗  ██║ █╗ ██║█████╗  ██████╔╝
@@ -148,12 +148,12 @@ BEGIN
 
     SELECT
         mit_license_yo = 'i am MIT licensed, so like, do whatever'
-  
+ 
     UNION ALL
-  
+ 
     SELECT
         mit_license_yo = 'see printed messages for full license';
-  
+ 
     RAISERROR('
 MIT License
 
@@ -178,6 +178,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 END;
 
 /*Set some variables for better decision-making later*/
+IF @debug = 1
+BEGIN
+    RAISERROR('Declaring variables', 0, 1) WITH NOWAIT;
+END;
 DECLARE
     @azure bit =
         CASE
@@ -189,16 +193,22 @@ DECLARE
             THEN 1
             ELSE 0
         END,
-    @session_id int,
-    @target_session_id int,
+    @azure_msg nchar(1),
+    @session_id integer,
+    @target_session_id integer,
     @file_name nvarchar(4000),
     @is_system_health bit = 0,
+    @is_system_health_msg nchar(1),
     @inputbuf_bom nvarchar(1) =
         CONVERT(nvarchar(1), 0x0a00, 0),
     @start_date_original datetime2 = @start_date,
     @end_date_original datetime2 = @end_date;
 
 /*Use some sane defaults for input parameters*/
+IF @debug = 1
+BEGIN
+    RAISERROR('Setting variables', 0, 1) WITH NOWAIT;
+END;
 SELECT
     @start_date =
         CASE
@@ -268,7 +278,17 @@ SELECT
             ELSE 0
         END;
 
+SELECT
+    @azure_msg =
+        CONVERT(nchar(1), @azure),
+    @is_system_health_msg =
+        CONVERT(nchar(1), @is_system_health);
+
 /*Temp tables for staging results*/
+IF @debug = 1
+BEGIN
+    RAISERROR('Creating temp tables', 0, 1) WITH NOWAIT;
+END;
 CREATE TABLE
     #x
 (
@@ -294,6 +314,10 @@ CREATE TABLE
 );
 
 /*Look to see if the session exists and is running*/
+IF @debug = 1
+BEGIN
+    RAISERROR('Checking if the session exists', 0, 1) WITH NOWAIT;
+END;
 IF @azure = 0
 BEGIN
     IF NOT EXISTS
@@ -331,6 +355,10 @@ BEGIN
 END;
 
 /*Figure out if we have a file or ring buffer target*/
+IF @debug = 1
+BEGIN
+    RAISERROR('What kind of target does %s have?', 0, 1, @session_name) WITH NOWAIT;
+END;
 IF @target_type IS NULL AND @is_system_health = 0
 BEGIN
     IF @azure = 0
@@ -345,7 +373,7 @@ BEGIN
         ORDER BY t.target_name
         OPTION(RECOMPILE);
     END;
-  
+ 
     IF @azure = 1
     BEGIN
         SELECT TOP (1)
@@ -364,7 +392,13 @@ END;
 IF @target_type = N'ring_buffer' AND @is_system_health = 0
 BEGIN
     IF @azure = 0
-    BEGIN 
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Azure: %s', 0, 1, @azure_msg) WITH NOWAIT;
+            RAISERROR('Inserting to #x for target type: %s and system health: %s', 0, 1, @target_type, @is_system_health_msg) WITH NOWAIT;
+        END;
+
         INSERT
             #x WITH(TABLOCKX)
         (
@@ -379,9 +413,15 @@ BEGIN
         AND   t.target_name = N'ring_buffer'
         OPTION(RECOMPILE);
     END;
-  
+ 
     IF @azure = 1
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Azure: %s', 0, 1, @azure_msg) WITH NOWAIT;
+            RAISERROR('Inserting to #x for target type: %s and system health: %s', 0, 1, @target_type, @is_system_health_msg) WITH NOWAIT;
+        END;
+
         INSERT
             #x WITH(TABLOCKX)
         (
@@ -399,9 +439,15 @@ BEGIN
 END;
 
 IF @target_type = N'event_file' AND @is_system_health = 0
-BEGIN 
+BEGIN
     IF @azure = 0
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Azure: %s', 0, 1, @azure_msg) WITH NOWAIT;
+            RAISERROR('Inserting to #x for target type: %s and system health: %s', 0, 1, @target_type, @is_system_health_msg) WITH NOWAIT;
+        END;
+
         SELECT
             @session_id =
                 t.event_session_id,
@@ -437,9 +483,15 @@ BEGIN
         ) AS f
         OPTION(RECOMPILE);
     END;
-  
+ 
     IF @azure = 1
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Azure: %s', 0, 1, @azure_msg) WITH NOWAIT;
+            RAISERROR('Inserting to #x for target type: %s and system health: %s', 0, 1, @target_type, @is_system_health_msg) WITH NOWAIT;
+        END;
+
         SELECT
             @session_id =
                 t.event_session_address,
@@ -476,11 +528,18 @@ BEGIN
         OPTION(RECOMPILE);
     END;
 
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Azure: %s', 0, 1, @azure_msg) WITH NOWAIT;
+        RAISERROR('Inserting to #x for target type: %s and system health: %s', 0, 1, @target_type, @is_system_health_msg) WITH NOWAIT;
+        RAISERROR('File name: %s', 0, 1, @file_name) WITH NOWAIT;
+    END;
+
     INSERT
         #x WITH(TABLOCKX)
     (
         x
-    )  
+    ) 
     SELECT
         x = TRY_CAST(f.event_data AS xml)
     FROM sys.fn_xe_file_target_read_file
@@ -496,6 +555,11 @@ END;
 
 IF @target_type = N'ring_buffer' AND @is_system_health = 0
 BEGIN
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting to #blocking_xml for target type: %s and system health: %s', 0, 1, @target_type, @is_system_health_msg) WITH NOWAIT;
+    END;
+
     INSERT
         #blocking_xml WITH(TABLOCKX)
     (
@@ -512,6 +576,11 @@ END;
 
 IF @target_type = N'event_file' AND @is_system_health = 0
 BEGIN
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting to #blocking_xml for target type: %s and system health: %s', 0, 1, @target_type, @is_system_health_msg) WITH NOWAIT;
+    END;
+
     INSERT
         #blocking_xml WITH(TABLOCKX)
     (
@@ -532,6 +601,11 @@ process report stored in the system health extended event session
 */
 IF @is_system_health = 1
 BEGIN
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting to #sp_server_diagnostics_component_result for system health: %s', 0, 1, @is_system_health_msg) WITH NOWAIT;
+    END;
+
     SELECT
         xml.sp_server_diagnostics_component_result
     INTO #sp_server_diagnostics_component_result
@@ -548,20 +622,29 @@ BEGIN
     AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
 
-    IF @debug = 1 BEGIN SELECT * FROM #sp_server_diagnostics_component_result AS ssdcr; END;
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#sp_server_diagnostics_component_result',
+            ssdcr.*
+        FROM #sp_server_diagnostics_component_result AS ssdcr
+        OPTION(RECOMPILE);
+       
+        RAISERROR('Inserting to #blocking_xml_sh', 0, 1) WITH NOWAIT;
+    END;
 
     SELECT
-        event_time =  
-            DATEADD 
-            ( 
-                MINUTE,  
-                DATEDIFF 
-                ( 
-                    MINUTE,  
-                    GETUTCDATE(),  
-                    SYSDATETIME() 
-                ),  
-                w.x.value('(//@timestamp)[1]', 'datetime2') 
+        event_time = 
+            DATEADD
+            (
+                MINUTE, 
+                DATEDIFF
+                (
+                    MINUTE, 
+                    GETUTCDATE(), 
+                    SYSDATETIME()
+                ), 
+                w.x.value('(//@timestamp)[1]', 'datetime2')
             ),
         human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
     INTO #blocking_xml_sh
@@ -569,13 +652,22 @@ BEGIN
     CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
     OPTION(RECOMPILE);
 
-    IF @debug = 1 BEGIN SELECT * FROM #blocking_xml_sh AS bxs; END;
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#blocking_xml',
+            bxs.*
+        FROM #blocking_xml_sh AS bxs
+        OPTION(RECOMPILE);
+
+        RAISERROR('Inserting to #blocked_sh', 0, 1) WITH NOWAIT;
+    END;
 
     SELECT
         bx.event_time,
-        currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),  
+        currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'), 
         spid = bd.value('(process/@spid)[1]', 'int'),
-        ecid = bd.value('(process/@ecid)[1]', 'int'),         
+        ecid = bd.value('(process/@ecid)[1]', 'int'),        
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
         lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
@@ -599,7 +691,12 @@ BEGIN
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     WHERE bd.exist('process/@spid') = 1
     OPTION(RECOMPILE);
-  
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Adding query_text to #blocked_sh', 0, 1) WITH NOWAIT;
+    END;
+ 
     ALTER TABLE #blocked_sh
     ADD query_text AS
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -611,8 +708,17 @@ BEGIN
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
 
-    IF @debug = 1 BEGIN SELECT * FROM #blocking_xml_sh AS bxs; END;
-  
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#blocking_sh',
+            bxs.*
+        FROM #blocking_xml_sh AS bxs
+        OPTION(RECOMPILE);
+
+        RAISERROR('Inserting to #blocking_sh', 0, 1) WITH NOWAIT;
+    END;
+ 
     /*Blocking queries*/
     SELECT
         bx.event_time,
@@ -642,7 +748,12 @@ BEGIN
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     WHERE bg.exist('process/@spid') = 1
     OPTION(RECOMPILE);
-  
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Adding query_text to #blocking_sh', 0, 1) WITH NOWAIT;
+    END;
+ 
     ALTER TABLE #blocking_sh
     ADD query_text AS
        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -654,7 +765,16 @@ BEGIN
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
 
-    IF @debug = 1 BEGIN SELECT * FROM #blocking_sh AS bs; END;
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#blocking_sh',
+            bs.*
+        FROM #blocking_sh AS bs
+        OPTION(RECOMPILE);
+
+        RAISERROR('Inserting to #blocks_sh', 0, 1) WITH NOWAIT;
+    END;
 
     /*Put it together*/
     SELECT
@@ -670,7 +790,7 @@ BEGIN
                 THEN
                     (
                         SELECT
-                            [processing-instruction(query)] =                                    
+                            [processing-instruction(query)] =                                   
                                 OBJECT_SCHEMA_NAME
                                 (
                                         SUBSTRING
@@ -727,7 +847,7 @@ BEGIN
         kheb.last_transaction_completed,
         client_option_1 =
             SUBSTRING
-            ( 
+            (
                 CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +
                 CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +
                 CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +
@@ -777,24 +897,31 @@ BEGIN
         kheb.blocked_process_report
     INTO #blocks_sh
     FROM
-    (             
+    (            
         SELECT
             bg.*
         FROM #blocking_sh AS bg
         WHERE (bg.currentdbname = @database_name
                OR @database_name IS NULL)
-     
+    
         UNION ALL
-     
+    
         SELECT
             bd.*
-        FROM #blocked_sh AS bd   
+        FROM #blocked_sh AS bd  
         WHERE (bd.currentdbname = @database_name
                OR @database_name IS NULL)
     ) AS kheb
     OPTION(RECOMPILE);
 
-    IF @debug = 1 BEGIN SELECT * FROM #blocks_sh AS bs; END;
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#blocks_sh',
+            bs.*
+        FROM #blocks_sh AS bs
+        OPTION(RECOMPILE);
+    END;
 
     SELECT
         b.event_time,
@@ -828,6 +955,10 @@ BEGIN
         END
     OPTION(RECOMPILE);
 
+    BEGIN
+        RAISERROR('Inserting to #available_plans_sh', 0, 1) WITH NOWAIT;
+    END;
+
     SELECT DISTINCT
         b.*
     INTO #available_plans_sh
@@ -849,9 +980,9 @@ BEGIN
         CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.currentdbname = @database_name
                 OR @database_name IS NULL)
-     
+    
         UNION ALL
-     
+    
         SELECT
             available_plans =
                 'available_plans',
@@ -871,7 +1002,16 @@ BEGIN
     ) AS b
     OPTION(RECOMPILE);
 
-    IF @debug = 1 BEGIN SELECT * FROM #available_plans_sh AS aps; END;
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#available_plans_sh',
+            aps.*
+        FROM #available_plans_sh AS aps
+        OPTION(RECOMPILE);
+
+        RAISERROR('Inserting to #dm_exec_query_stats_sh', 0, 1) WITH NOWAIT;
+    END;
 
     SELECT
         deqs.sql_handle,
@@ -935,6 +1075,11 @@ BEGIN
     )
     AND deqs.query_hash IS NOT NULL;
 
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Creating clustered index on #dm_exec_query_stats_sh', 0, 1) WITH NOWAIT;
+    END;
+
     CREATE CLUSTERED INDEX
         deqs_sh
     ON #dm_exec_query_stats_sh
@@ -942,7 +1087,7 @@ BEGIN
         sql_handle,
         plan_handle
     );
-  
+ 
     SELECT
         ap.available_plans,
         ap.currentdbname,
@@ -1027,7 +1172,13 @@ END;
 
 IF @debug = 1
 BEGIN
-    SELECT table_name = N'#blocking_xml', bx.* FROM #blocking_xml AS bx;
+    SELECT
+        table_name = N'#blocking_xml',
+        bx.*
+    FROM #blocking_xml AS bx
+    OPTION(RECOMPILE);
+
+    RAISERROR('Inserting to #blocked', 0, 1) WITH NOWAIT;
 END;
 
 SELECT
@@ -1042,7 +1193,7 @@ SELECT
                 SYSDATETIME()
             ),
             c.value('@timestamp', 'datetime2')
-        ),      
+        ),     
     database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
@@ -1083,7 +1234,13 @@ OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
 
-ALTER TABLE #blocked
+IF @debug = 1
+BEGIN
+    RAISERROR('Adding query_text to #blocked', 0, 1) WITH NOWAIT;
+END;
+
+ALTER TABLE
+    #blocked
 ADD query_text AS
    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -1094,7 +1251,13 @@ ADD query_text AS
    NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
 PERSISTED;
 
-ALTER TABLE #blocked
+IF @debug = 1
+BEGIN
+    RAISERROR('Adding blocking_desc to #blocked', 0, 1) WITH NOWAIT;
+END;
+
+ALTER TABLE
+    #blocked
 ADD blocking_desc AS
         ISNULL
         (
@@ -1112,6 +1275,11 @@ ADD blocking_desc AS
         CAST(blocked_ecid AS varchar(10)) +
         ')' PERSISTED;
 
+IF @debug = 1
+BEGIN
+    RAISERROR('Adding indexes to to #blocked', 0, 1) WITH NOWAIT;
+END;
+
 CREATE CLUSTERED INDEX
     blocking
 ON #blocked
@@ -1120,9 +1288,18 @@ ON #blocked
 CREATE INDEX
     blocked
 ON #blocked
-    (monitor_loop, blocked_desc);   
+    (monitor_loop, blocked_desc);  
 
-IF @debug = 1 BEGIN SELECT '#blocked' AS table_name, * FROM #blocked AS wa OPTION(RECOMPILE); END;
+IF @debug = 1
+BEGIN
+    SELECT
+        '#blocked' AS table_name,
+        wa.*
+    FROM #blocked AS wa
+    OPTION(RECOMPILE);
+   
+    RAISERROR('Inserting to #blocking', 0, 1) WITH NOWAIT;
+END;
 
 SELECT
     event_time =
@@ -1136,7 +1313,7 @@ SELECT
                 SYSDATETIME()
             ),
             c.value('@timestamp', 'datetime2')
-        ),      
+        ),     
     database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
     database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
@@ -1177,7 +1354,13 @@ OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
 
-ALTER TABLE #blocking
+IF @debug = 1
+BEGIN 
+    RAISERROR('Adding query_text to to #blocking', 0, 1) WITH NOWAIT;
+END;
+
+ALTER TABLE
+    #blocking
 ADD query_text AS
    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -1188,7 +1371,13 @@ ADD query_text AS
    NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
 PERSISTED;
 
-ALTER TABLE #blocking
+IF @debug = 1
+BEGIN 
+    RAISERROR('Adding blocking_desc to to #blocking', 0, 1) WITH NOWAIT;
+END;
+
+ALTER TABLE
+    #blocking
 ADD blocking_desc AS
         ISNULL
         (
@@ -1206,6 +1395,11 @@ ADD blocking_desc AS
         CAST(blocked_ecid AS varchar(10)) +
         ')' PERSISTED;
 
+IF @debug = 1
+BEGIN 
+    RAISERROR('Creating indexes on #blocking', 0, 1) WITH NOWAIT;
+END;
+
 CREATE CLUSTERED INDEX
     blocking
 ON #blocking
@@ -1214,9 +1408,18 @@ ON #blocking
 CREATE INDEX
     blocked
 ON #blocking
-    (monitor_loop, blocked_desc);   
+    (monitor_loop, blocked_desc);  
 
-IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa OPTION(RECOMPILE); END;
+IF @debug = 1
+BEGIN
+    SELECT
+        '#blocking' AS table_name,
+        wa.*
+    FROM #blocking AS wa
+    OPTION(RECOMPILE);
+
+    RAISERROR('Updating #blocked', 0, 1) WITH NOWAIT;
+END;
 
 WITH
     hierarchy AS
@@ -1275,6 +1478,11 @@ JOIN hierarchy h
   AND h.blocked_desc = b.blocked_desc
 OPTION(RECOMPILE);
 
+IF @debug = 1
+BEGIN
+    RAISERROR('Updating #blocking', 0, 1) WITH NOWAIT;
+END;
+
 UPDATE #blocking
 SET
     blocking_level = bd.blocking_level,
@@ -1285,6 +1493,11 @@ JOIN #blocked bd
   AND bd.blocking_desc = bg.blocking_desc
   AND bd.blocked_desc = bg.blocked_desc
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #blocks', 0, 1) WITH NOWAIT;
+END;
 
 SELECT
     kheb.event_time,
@@ -1318,7 +1531,7 @@ SELECT
              WHEN 'blocking'
              THEN kheb.blocking_ecid
              ELSE kheb.blocked_ecid
-        END,   
+        END,  
     query_text =
         CASE
             WHEN kheb.query_text
@@ -1326,7 +1539,7 @@ SELECT
             THEN
                 (
                     SELECT
-                        [processing-instruction(query)] =                                     
+                        [processing-instruction(query)] =                                    
                             OBJECT_SCHEMA_NAME
                             (
                                     SUBSTRING
@@ -1386,7 +1599,7 @@ SELECT
     kheb.last_transaction_completed,
     client_option_1 =
         SUBSTRING
-        (  
+        ( 
             CASE WHEN kheb.clientoption1 & 1 = 1 THEN ', DISABLE_DEF_CNST_CHECK' ELSE '' END +
             CASE WHEN kheb.clientoption1 & 2 = 2 THEN ', IMPLICIT_TRANSACTIONS' ELSE '' END +
             CASE WHEN kheb.clientoption1 & 4 = 4 THEN ', CURSOR_CLOSE_ON_COMMIT' ELSE '' END +
@@ -1441,14 +1654,14 @@ SELECT
     kheb.sort_order
 INTO #blocks
 FROM
-(              
+(             
     SELECT
         bg.*,
         contentious_object =
             OBJECT_SCHEMA_NAME
             (
                 bg.object_id,
-                bg.database_id           
+                bg.database_id          
             ) +
             N'.' +
             OBJECT_NAME
@@ -1459,16 +1672,16 @@ FROM
     FROM #blocking AS bg
     WHERE (bg.database_name = @database_name
            OR @database_name IS NULL)
-  
+ 
     UNION ALL
-  
+ 
     SELECT
         bd.*,
         contentious_object =
             OBJECT_SCHEMA_NAME
             (
                 bd.object_id,
-                bd.database_id           
+                bd.database_id          
             ) +
             N'.' +
             OBJECT_NAME
@@ -1476,7 +1689,7 @@ FROM
                 bd.object_id,
                 bd.database_id
             )
-    FROM #blocked AS bd    
+    FROM #blocked AS bd   
     WHERE (bd.database_name = @database_name
            OR @database_name IS NULL)
 ) AS kheb
@@ -1541,9 +1754,14 @@ ORDER BY
     END
 OPTION(RECOMPILE);
 
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #available_plans', 0, 1) WITH NOWAIT;
+END;
+
 SELECT DISTINCT
     b.*
-INTO #available_plans  
+INTO #available_plans 
 FROM
 (
     SELECT
@@ -1568,9 +1786,9 @@ FROM
             OR @database_name IS NULL)
     AND  (b.contentious_object = @object_name
             OR @object_name IS NULL)
-  
+ 
     UNION ALL
-  
+ 
     SELECT
         available_plans =
             'available_plans',
@@ -1596,7 +1814,16 @@ FROM
 ) AS b
 OPTION(RECOMPILE);
 
-IF @debug = 1 BEGIN SELECT '#available_plans' AS table_name, * FROM #available_plans AS wa OPTION(RECOMPILE); END;
+IF @debug = 1
+BEGIN
+    SELECT
+        '#available_plans' AS table_name,
+        ap.*
+    FROM #available_plans AS ap
+    OPTION(RECOMPILE);
+
+    RAISERROR('Inserting #dm_exec_query_stats', 0, 1) WITH NOWAIT;
+END;
 
 SELECT
     deqs.sql_handle,
@@ -1643,7 +1870,7 @@ SELECT
     min_used_grant_mb =
         deqs.min_used_grant_kb * 8. / 1024.,
     max_used_grant_mb =
-        deqs.max_used_grant_kb * 8. / 1024.,  
+        deqs.max_used_grant_kb * 8. / 1024., 
     deqs.min_reserved_threads,
     deqs.max_reserved_threads,
     deqs.min_used_threads,
@@ -1659,6 +1886,11 @@ WHERE EXISTS
    WHERE ap.sql_handle = deqs.sql_handle
 )
 AND deqs.query_hash IS NOT NULL;
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Creating index on #dm_exec_query_stats', 0, 1) WITH NOWAIT;
+END;
 
 CREATE CLUSTERED INDEX
     deqs
@@ -1749,6 +1981,11 @@ ORDER BY
     ap.avg_worker_time_ms DESC
 OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id -1', 0, 1) WITH NOWAIT;
+END;
+
 INSERT
     #block_findings
 (
@@ -1766,6 +2003,11 @@ SELECT
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
     finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
     1;
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 1', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -1792,16 +2034,21 @@ SELECT
         N' has been involved in ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' blocking sessions.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE (b.database_name = @database_name
        OR @database_name IS NULL)
 AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
-GROUP BY b.database_name
+GROUP BY
+    b.database_name
 OPTION(RECOMPILE);
 
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 2', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -1834,7 +2081,7 @@ SELECT
         N' has been involved in ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
         N' blocking sessions.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE (b.database_name = @database_name
@@ -1845,6 +2092,11 @@ GROUP BY
     b.database_name,
     b.contentious_object
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 3', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -1868,7 +2120,7 @@ SELECT
                      SELECT
                          1/0
                      FROM sys.databases AS d
-                     WHERE d.name = b.database_name
+                     WHERE d.name COLLATE DATABASE_DEFAULT = b.database_name COLLATE DATABASE_DEFAULT
                      AND   d.is_read_committed_snapshot_on = 1
                  )
             THEN N'You already enabled RCSI, but...'
@@ -1882,7 +2134,7 @@ SELECT
         N' select queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.lock_mode IN
@@ -1899,6 +2151,11 @@ GROUP BY
 HAVING
     COUNT_BIG(DISTINCT b.transaction_id) > 1
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 4', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -1925,7 +2182,7 @@ SELECT
         N' repeatable read queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'repeatable%'
@@ -1937,6 +2194,10 @@ GROUP BY
     b.database_name
 OPTION(RECOMPILE);
 
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 5', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -1963,7 +2224,7 @@ SELECT
         N' serializable queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.isolation_level LIKE N'serializable%'
@@ -1974,6 +2235,11 @@ AND   (b.contentious_object = @object_name
 GROUP BY
     b.database_name
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 6.1', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -2000,7 +2266,7 @@ SELECT
         N' sleeping queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.status = N'sleeping'
@@ -2011,6 +2277,11 @@ AND   (b.contentious_object = @object_name
 GROUP BY
     b.database_name
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 6.2', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -2037,7 +2308,7 @@ SELECT
         N' background tasks involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.status = N'background'
@@ -2048,6 +2319,53 @@ AND   (b.contentious_object = @object_name
 GROUP BY
     b.database_name
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 6.3', 0, 1) WITH NOWAIT;
+END;
+
+INSERT
+    #block_findings
+(
+    check_id,
+    database_name,
+    object_name,
+    finding_group,
+    finding,
+    sort_order
+)
+SELECT
+    check_id =
+        6,
+    database_name =
+        b.database_name,
+    object_name =
+        N'-',
+    finding_group =
+        N'Done Query Blocking',
+    finding =
+        N'There have been ' +
+        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+        N' background tasks involved in blocking sessions in ' +
+        b.database_name +
+        N'.',
+   sort_order =  
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+FROM #blocks AS b
+WHERE b.status = N'done'
+AND   (b.database_name = @database_name
+       OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name
+       OR @object_name IS NULL)
+GROUP BY
+    b.database_name
+OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 7.1', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -2074,7 +2392,7 @@ SELECT
         N' implicit transaction queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.transaction_name = N'implicit_transaction'
@@ -2085,6 +2403,11 @@ AND   (b.contentious_object = @object_name
 GROUP BY
     b.database_name
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 7.2', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -2111,7 +2434,7 @@ SELECT
         N' user transaction queries involved in blocking sessions in ' +
         b.database_name +
         N'.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE b.transaction_name = N'user_transaction'
@@ -2122,6 +2445,11 @@ AND   (b.contentious_object = @object_name
 GROUP BY
     b.database_name
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 8', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings
@@ -2164,7 +2492,7 @@ SELECT
             N'UNKNOWN'
         ) +
         N'.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
 FROM #blocks AS b
 WHERE (b.database_name = @database_name
@@ -2178,6 +2506,10 @@ GROUP BY
     b.host_name
 OPTION(RECOMPILE);
 
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 1000', 0, 1) WITH NOWAIT;
+END;
 
 WITH
     b AS
@@ -2252,7 +2584,7 @@ SELECT
               14
           ) +
         N' [dd hh:mm:ss:ms] of lock wait time.',
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
 FROM b AS b
 WHERE (b.database_name = @database_name
@@ -2260,6 +2592,11 @@ WHERE (b.database_name = @database_name
 GROUP BY
     b.database_name
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 1001', 0, 1) WITH NOWAIT;
+END;
 
 WITH
     b AS
@@ -2337,7 +2674,7 @@ SELECT
           ) +
         N' [dd hh:mm:ss:ms] of lock wait time in database ' +
         b.database_name,
-   sort_order =   
+   sort_order =  
        ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
 FROM b AS b
 WHERE (b.database_name = @database_name
@@ -2348,6 +2685,11 @@ GROUP BY
     b.database_name,
     b.contentious_object
 OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 2147483647', 0, 1) WITH NOWAIT;
+END;
 
 INSERT
     #block_findings

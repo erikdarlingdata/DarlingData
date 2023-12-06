@@ -48,16 +48,16 @@ GO
 ALTER PROCEDURE
     dbo.sp_PressureDetector
 (
-    @what_to_check nvarchar(6) = N'all',
-    @skip_queries bit = 0,
-    @skip_plan_xml bit = 0,
-    @minimum_disk_latency_ms smallint = 100,
-    @cpu_utilization_threshold smallint = 50,
-    @skip_waits bit = NULL,
-    @help bit = 0,
-    @debug bit = 0,
-    @version varchar(5) = NULL OUTPUT,
-    @version_date datetime = NULL OUTPUT
+    @what_to_check nvarchar(6) = N'all', /*areas to check for pressure*/
+    @skip_queries bit = 0, /*if you want to skip looking at running queries*/
+    @skip_plan_xml bit = 0, /*if you want to skip getting plan XML*/
+    @minimum_disk_latency_ms smallint = 100, /*low bound for reporting disk latency*/
+    @cpu_utilization_threshold smallint = 50, /*low bound for reporting high cpu utlization*/
+    @skip_waits bit = NULL, /*skips waits when you do not need them on every run*/
+    @help bit = 0, /*how you got here*/
+    @debug bit = 0, /*prints dynamic sql, displays parameter and variable values, and table contents*/
+    @version varchar(5) = NULL OUTPUT, /*OUTPUT; for support*/
+    @version_date datetime = NULL OUTPUT /*OUTPUT; for support*/
 )
 WITH RECOMPILE
 AS
@@ -103,12 +103,12 @@ BEGIN
                 WHEN N'@skip_queries' THEN N'if you want to skip looking at running queries'
                 WHEN N'@skip_plan_xml' THEN N'if you want to skip getting plan XML'
                 WHEN N'@minimum_disk_latency_ms' THEN N'low bound for reporting disk latency'
-                WHEN N'@cpu_utilization_threshold' THEN N'low bound for reporting cpu utlization'
+                WHEN N'@cpu_utilization_threshold' THEN N'low bound for reporting high cpu utlization'
                 WHEN N'@skip_waits' THEN N'skips waits when you do not need them on every run'
+                WHEN N'@help' THEN N'how you got here'
+                WHEN N'@debug' THEN N'prints dynamic sql, displays parameter and variable values, and table contents'
                 WHEN N'@version' THEN N'OUTPUT; for support'
                 WHEN N'@version_date' THEN N'OUTPUT; for support'
-                WHEN N'@help' THEN N'how you got here'
-                WHEN N'@debug' THEN N'prints dynamic sql'
             END,
         valid_inputs =
             CASE
@@ -119,10 +119,10 @@ BEGIN
                 WHEN N'@minimum_disk_latency_ms' THEN N'a reasonable number of milliseconds for disk latency'
                 WHEN N'@cpu_utilization_threshold' THEN N'a reasonable cpu utlization percentage'
                 WHEN N'@skip_waits' THEN N'NULL, 0, 1'
-                WHEN N'@version' THEN N'none'
-                WHEN N'@version_date' THEN N'none'
                 WHEN N'@help' THEN N'0 or 1'
                 WHEN N'@debug' THEN N'0 or 1'
+                WHEN N'@version' THEN N'none'
+                WHEN N'@version_date' THEN N'none'
             END,
         defaults =
             CASE
@@ -133,10 +133,10 @@ BEGIN
                 WHEN N'@minimum_disk_latency_ms' THEN N'100'
                 WHEN N'@cpu_utilization_threshold' THEN N'50'
                 WHEN N'@skip_waits' THEN N'NULL'
-                WHEN N'@version' THEN N'none; OUTPUT'
-                WHEN N'@version_date' THEN N'none; OUTPUT'
                 WHEN N'@help' THEN N'0'
                 WHEN N'@debug' THEN N'0'
+                WHEN N'@version' THEN N'none; OUTPUT'
+                WHEN N'@version_date' THEN N'none; OUTPUT'
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o
@@ -178,11 +178,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ', 0, 1) WITH NOWAIT;
 
     RETURN;
-END;
+END; /*End help section*/
 
     /*
     Declarations of Variablependence
     */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Declaring variables and temporary tables', 0, 1) WITH NOWAIT;
+    END;
+
     DECLARE
         @azure bit =
             CASE
@@ -245,7 +250,7 @@ END;
                 THEN 1
                 ELSE 0
             END,
-        @reserved_worker_count_out nvarchar(10) = N'0',
+        @reserved_worker_count_out varchar(10) = '0',
         @reserved_worker_count nvarchar(MAX) = N'
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
@@ -276,7 +281,7 @@ SELECT
         )
 OPTION(MAXDOP 1, RECOMPILE);',
         @database_size_out nvarchar(MAX) = N'',
-        @database_size_out_gb nvarchar(10) = N'0',
+        @database_size_out_gb varchar(10) = '0',
         @total_physical_memory_gb bigint,
         @cpu_utilization xml = N'',
         @low_memory xml = N'',
@@ -306,14 +311,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
     DECLARE
         @threadpool_waits table
-        (
-            session_id smallint,
-            wait_duration_ms bigint,
-            threadpool_waits sysname
-        );
+    (
+        session_id smallint,
+        wait_duration_ms bigint,
+        threadpool_waits sysname
+    );
 
-    IF @what_to_check = N'all'
-       AND @skip_waits IS NULL
+    IF  @what_to_check = N'all'
+    AND @skip_waits IS NULL
     BEGIN
         SELECT
             @skip_waits = 0;
@@ -324,7 +329,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
     If it's not, give people some helpful information.
     */
     IF @what_to_check = N'all'
+    BEGIN
+        IF @debug = 1
         BEGIN
+            RAISERROR('Checking DAC status, etc.', 0, 1) WITH NOWAIT;
+        END;
+
         IF
         (
             SELECT
@@ -380,22 +390,27 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 OPTION(MAXDOP 1, RECOMPILE);
             END;
         END;
-    END;
+    END; /*End DAC section*/
 
     /*
-    Look at wait stats related to CPU memory, disk, and query performance
+    Look at wait stats related to performance only
     */
     IF
     (
-        @what_to_check = N'all'
-        AND (@skip_waits <> 1)
+            @what_to_check = N'all'
+        AND @skip_waits <> 1
     )
     OR
     (
-        @what_to_check IN (N'cpu', N'memory')
+            @what_to_check IN (N'cpu', N'memory')
         AND @skip_waits = 0
     )
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking waits stats', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             hours_uptime =
                 (
@@ -409,16 +424,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     FROM sys.dm_os_sys_info AS osi
                 ),
             hours_cpu_time =
-            (
-                SELECT            
-                    CONVERT
-                    (
-                        decimal(38, 2),
-                        SUM(wg.total_cpu_usage_ms) /
-                            (1000. * 60. * 60.)
-                    )
-                FROM sys.dm_resource_governor_workload_groups AS wg
-            ),
+                (
+                    SELECT            
+                        CONVERT
+                        (
+                            decimal(38, 2),
+                            SUM(wg.total_cpu_usage_ms) / (1000. * 60. * 60.)
+                        )
+                    FROM sys.dm_resource_governor_workload_groups AS wg
+                ),
             dows.wait_type,
             description =
                 CASE
@@ -489,8 +503,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 CONVERT
                 (
                     decimal(38, 2),
-                    dows.wait_time_ms /
-                        (1000. * 60. * 60.)
+                    dows.wait_time_ms / (1000. * 60. * 60.)
                 ),
             avg_ms_per_wait =
                 ISNULL
@@ -508,13 +521,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ),
                     0.
                 ),
-            percent_signal_waits = 
+            percent_signal_waits =
                 CONVERT
                 (
-                    decimal(38, 2), 
+                    decimal(38, 2),
                     ISNULL
                     (
-                        100.0 * dows.signal_wait_time_ms 
+                        100.0 * dows.signal_wait_time_ms
                            / NULLIF(dows.wait_time_ms, 0),
                         0.
                     )
@@ -536,16 +549,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 N''
                 )
         FROM sys.dm_os_wait_stats AS dows
-        WHERE 
+        WHERE
         (
-          (       
+          (      
                   dows.waiting_tasks_count > 0
               AND dows.wait_type <> N'SLEEP_TASK'
           )
         OR    
           (       
                  dows.wait_type = N'SLEEP_TASK'
-             AND ISNULL(CONVERT(decimal(38, 2), dows.wait_time_ms / NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) > 1000.
+             AND ISNULL(CONVERT(decimal(38, 2), dows.wait_time_ms /
+                 NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) > 1000.
           )
         )
         AND
@@ -599,8 +613,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
         OPTION(MAXDOP 1, RECOMPILE);
     END;
 
-    IF @what_to_check = 'all'
+    /*
+    This section looks at disk metrics
+    */
+    IF @what_to_check = N'all'
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking file stats', 0, 1) WITH NOWAIT;
+        END;
+
         SET @disk_check = N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
          
@@ -672,7 +694,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 CONVERT
                 (
                     decimal(38, 2),
-                    (vfs.size_on_disk_bytes / 1073741824.)
+                    vfs.size_on_disk_bytes / 1073741824.
                 ),
             total_gb_read =
                 CASE
@@ -690,8 +712,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 CONVERT
                 (
                     decimal(38, 2),
-                    vfs.io_stall_read_ms /
-                      (1.0 * vfs.num_of_reads)
+                    vfs.io_stall_read_ms / (1.0 * vfs.num_of_reads)
                 ),
             total_gb_written =
                 CASE
@@ -709,8 +730,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 CONVERT
                 (
                     decimal(38, 2),
-                    vfs.io_stall_write_ms /
-                        (1.0 * vfs.num_of_writes)
+                    vfs.io_stall_write_ms / (1.0 * vfs.num_of_writes)
                 )     
         FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs
         JOIN ' +
@@ -803,11 +823,22 @@ OPTION(MAXDOP 1, RECOMPILE);',
         ORDER BY
             fm.avg_read_stall_ms +
             fm.avg_write_stall_ms DESC;
-    END;
+    END; /*End file stats*/
 
-    IF (@azure = 0
-          AND @what_to_check = 'all')
+    /*
+    This section looks at tempdb config and usage
+    */
+    IF
+    (
+        @azure = 0
+    AND @what_to_check = N'all'
+    )
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking tempdb config and usage', 0, 1) WITH NOWAIT;
+        END;
+
         SELECT
             tempdb_info =
                 (
@@ -842,13 +873,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             (
                                 SELECT
                                     free_space_gb =
-                                        CONVERT(decimal(38, 2), SUM(d.unallocated_extent_page_count * 8.) / 1024. / 1024.),
+                                        CONVERT
+                                        (
+                                            decimal(38, 2),
+                                            SUM(d.unallocated_extent_page_count * 8.) / 1024. / 1024.
+                                        ),
                                     user_objects_gb =
-                                        CONVERT(decimal(38, 2), SUM(d.user_object_reserved_page_count * 8.) / 1024. / 1024.),
+                                        CONVERT
+                                        (
+                                            decimal(38, 2),
+                                            SUM(d.user_object_reserved_page_count * 8.) / 1024. / 1024.
+                                        ),
                                     version_store_gb =
-                                        CONVERT(decimal(38, 2), SUM(d.version_store_reserved_page_count * 8.) / 1024. / 1024.),
+                                        CONVERT
+                                        (
+                                            decimal(38, 2),
+                                            SUM(d.version_store_reserved_page_count * 8.) / 1024. / 1024.
+                                        ),
                                     internal_objects_gb =
-                                        CONVERT(decimal(38, 2), SUM(d.internal_object_reserved_page_count * 8.) / 1024. / 1024.)
+                                        CONVERT
+                                        (
+                                            decimal(38, 2),
+                                            SUM(d.internal_object_reserved_page_count * 8.) / 1024. / 1024.
+                                        )
                                 FROM tempdb.sys.dm_db_file_space_usage AS d
                                 WHERE d.database_id = 2
                                 FOR XML
@@ -860,9 +907,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 SELECT
                                     t.session_id,
                                     tempdb_allocations_gb =
-                                        CONVERT(decimal(38, 2), SUM(t.tempdb_allocations * 8.) / 1024. / 1024.),
+                                        CONVERT
+                                        (
+                                            decimal(38, 2),
+                                            SUM(t.tempdb_allocations * 8.) / 1024. / 1024.
+                                        ),
                                     tempdb_current_gb =
-                                        CONVERT(decimal(38, 2), SUM(t.tempdb_current * 8.) / 1024. / 1024.)
+                                        CONVERT
+                                        (
+                                            decimal(38, 2),
+                                            SUM(t.tempdb_current * 8.) / 1024. / 1024.
+                                        )
                                 FROM
                                 (
                                     SELECT
@@ -907,12 +962,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             PATH('tempdb'),
                             TYPE
                 )
-                OPTION(RECOMPILE, MAXDOP 1);
-    END;
+        OPTION(RECOMPILE, MAXDOP 1);
+    END; /*End tempdb check*/
 
-    /*Memory Grant info*/
+    /*Memory info, utilization and usage*/
     IF @what_to_check IN (N'all', N'memory')
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking memory pressure', 0, 1) WITH NOWAIT;
+        END;
+
         /*
         See buffer pool size, along with stolen memory
         and top non-buffer pool consumers
@@ -962,7 +1022,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
             memory_source =
                 N''Non-Buffer Pool Memory: Total'',
             memory_consumer =
-                dopc.counter_name,
+                REPLACE
+                (
+                    dopc.counter_name,
+                    N'' (KB)'',
+                    N''''
+                ),
             memory_consumed_gb =
                 CONVERT
                 (
@@ -1024,19 +1089,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
         OPTION(MAXDOP 1, RECOMPILE);
         ';
 
-        IF @debug = 1 BEGIN PRINT @pool_sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT @pool_sql;
+        END;
 
         EXEC sys.sp_executesql
             @pool_sql;
 
-        /*Resource semaphore info*/
+        /*Checking total database size*/
         IF @azure = 1
         BEGIN
             SELECT
                 @database_size_out = N'
                 SELECT
                     @database_size_out_gb =
-                        SUM(CONVERT(bigint, df.size)) * 8 / 1024 / 1024
+                        SUM
+                        (
+                            CONVERT
+                            (
+                                bigint,
+                                df.size
+                            )
+                        ) * 8 / 1024 / 1024
                 FROM sys.database_files AS df
                 OPTION(MAXDOP 1, RECOMPILE);';
         END;
@@ -1046,7 +1121,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 @database_size_out = N'
                 SELECT
                     @database_size_out_gb =
-                        SUM(CONVERT(bigint, mf.size)) * 8 / 1024 / 1024
+                        SUM
+                        (
+                            CONVERT
+                            (
+                                bigint,
+                                mf.size
+                            )
+                        ) * 8 / 1024 / 1024
                 FROM sys.master_files AS mf
                 WHERE mf.database_id > 4
                 OPTION(MAXDOP 1, RECOMPILE);';
@@ -1057,6 +1139,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
           N'@database_size_out_gb varchar(10) OUTPUT',
             @database_size_out_gb OUTPUT;
 
+        /*Check physical memory in the server*/
         IF @azure = 0
         BEGIN
             SELECT
@@ -1072,6 +1155,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             FROM sys.dm_os_sys_info dosi;
         END;
 
+        /*Checking for low memory indicators*/
         SELECT
             @low_memory =
                 x.low_memory
@@ -1164,17 +1248,40 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     FROM sys.dm_os_sys_info AS inf
                 ),
             target_memory_gb =
-                CONVERT(decimal(38, 2), (deqrs.target_memory_kb / 1024. / 1024.)),
+                CONVERT
+                (
+                    decimal(38, 2),
+                    (deqrs.target_memory_kb / 1024. / 1024.)
+                ),
             max_target_memory_gb =
-                CONVERT(decimal(38, 2), (deqrs.max_target_memory_kb / 1024. / 1024.)),
+                CONVERT(
+                    decimal(38, 2),
+                    (deqrs.max_target_memory_kb / 1024. / 1024.)
+                ),
             total_memory_gb =
-                CONVERT(decimal(38, 2), (deqrs.total_memory_kb / 1024. / 1024.)),
+                CONVERT
+                (
+                    decimal(38, 2),
+                    (deqrs.total_memory_kb / 1024. / 1024.)
+                ),
             available_memory_gb =
-                CONVERT(decimal(38, 2), (deqrs.available_memory_kb / 1024. / 1024.)),
+                CONVERT
+                (
+                    decimal(38, 2),
+                    (deqrs.available_memory_kb / 1024. / 1024.)
+                ),
             granted_memory_gb =
-                CONVERT(decimal(38, 2), (deqrs.granted_memory_kb / 1024. / 1024.)),
+                CONVERT
+                (
+                    decimal(38, 2),
+                    (deqrs.granted_memory_kb / 1024. / 1024.)
+                ),
             used_memory_gb =
-                CONVERT(decimal(38, 2), (deqrs.used_memory_kb / 1024. / 1024.)),
+                CONVERT
+                (
+                    decimal(38, 2),
+                    (deqrs.used_memory_kb / 1024. / 1024.)
+                ),
             deqrs.grantee_count,
             deqrs.waiter_count,
             deqrs.timeout_error_count,
@@ -1196,263 +1303,287 @@ OPTION(MAXDOP 1, RECOMPILE);',
         ORDER BY
             deqrs.pool_id
         OPTION(MAXDOP 1, RECOMPILE);
-    END;
+    END; /*End memory checks*/
 
-        /*
-        Track down queries currently asking for memory grants
-        */
-
-        IF @skip_queries = 0
-           AND @what_to_check IN ('all', 'memory')
+    /*
+    Track down queries currently asking for memory grants
+    */
+    IF
+    (
+        @skip_queries = 0
+    AND @what_to_check IN (N'all', N'memory')
+    )
+    BEGIN
+        IF @debug = 1
         BEGIN
-            SET @mem_sql += N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-          
-            SELECT
-                deqmg.session_id,
-                database_name =
-                    DB_NAME(deqp.dbid),
-                [dd hh:mm:ss.mss] =
-                    RIGHT
+            RAISERROR('Checking queries with memory grants', 0, 1) WITH NOWAIT;
+        END;
+
+        SET @mem_sql += N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+      
+        SELECT
+            deqmg.session_id,
+            database_name =
+                DB_NAME(deqp.dbid),
+            [dd hh:mm:ss.mss] =
+                RIGHT
+                (
+                    ''00'' +
+                    CONVERT
                     (
-                        ''00'' +
-                        CONVERT
+                        varchar(10),
+                        DATEDIFF
                         (
-                            varchar(10),
+                            DAY,
+                            deqmg.request_time,
+                            SYSDATETIME()
+                        )
+                    ),
+                    2
+                ) +
+                '' '' +
+                CONVERT
+                (
+                    varchar(20),
+                    CASE
+                        WHEN
                             DATEDIFF
                             (
                                 DAY,
                                 deqmg.request_time,
                                 SYSDATETIME()
-                            )
-                        ),
-                        2
-                    ) +
-                    '' '' +
-                    CONVERT
-                    (
-                        varchar(20),
-                        CASE
-                            WHEN
+                            ) >= 24
+                        THEN
+                            DATEADD
+                            (
+                                SECOND,
                                 DATEDIFF
                                 (
-                                    DAY,
+                                    SECOND,
                                     deqmg.request_time,
                                     SYSDATETIME()
-                                ) >= 24
-                            THEN
-                                DATEADD
-                                (
-                                    SECOND,
-                                    DATEDIFF
-                                    (
-                                        SECOND,
-                                        deqmg.request_time,
-                                        SYSDATETIME()
-                                    ),
-                                    ''19000101''                           
-                                )                      
-                            ELSE
-                                DATEADD
+                                ),
+                                ''19000101''                           
+                            )                      
+                        ELSE
+                            DATEADD
+                            (
+                                MILLISECOND,
+                                DATEDIFF
                                 (
                                     MILLISECOND,
-                                    DATEDIFF
-                                    (
-                                        MILLISECOND,
-                                        deqmg.request_time,
-                                        SYSDATETIME()
-                                    ),
-                                    ''19000101''
-                                )
-                            END,
-                            14
-                    ),
-                query_text =
-                    (
-                        SELECT
-                            [processing-instruction(query)] =
-                                SUBSTRING
+                                    deqmg.request_time,
+                                    SYSDATETIME()
+                                ),
+                                ''19000101''
+                            )
+                        END,
+                        14
+                ),
+            query_text =
+                (
+                    SELECT
+                        [processing-instruction(query)] =
+                            SUBSTRING
+                            (
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                    dest.text COLLATE Latin1_General_BIN2,
+                                NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
+                                NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
+                                NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N''''),
+                                (der.statement_start_offset / 2) + 1,
                                 (
-                                    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                                    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                                    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                                        dest.text COLLATE Latin1_General_BIN2,
-                                    NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
-                                    NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
-                                    NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N''''),
-                                    (der.statement_start_offset / 2) + 1,
                                     (
-                                        (
-                                            CASE
-                                                der.statement_end_offset
-                                                WHEN -1
-                                                THEN DATALENGTH(dest.text)
-                                                ELSE der.statement_end_offset
-                                            END
-                                            - der.statement_start_offset
-                                        ) / 2
-                                    ) + 1
-                                )
-                           FROM sys.dm_exec_requests AS der
-                           WHERE der.session_id = deqmg.session_id
-                                FOR XML
-                                    PATH(''''),
-                                    TYPE
-                    ),'
-                + CONVERT
-                  (
-                      nvarchar(MAX),
+                                        CASE
+                                            der.statement_end_offset
+                                            WHEN -1
+                                            THEN DATALENGTH(dest.text)
+                                            ELSE der.statement_end_offset
+                                        END
+                                        - der.statement_start_offset
+                                    ) / 2
+                                ) + 1
+                            )
+                       FROM sys.dm_exec_requests AS der
+                       WHERE der.session_id = deqmg.session_id
+                            FOR XML
+                                PATH(''''),
+                                TYPE
+                ),'
+            + CONVERT
+              (
+                  nvarchar(MAX),
+              CASE
+                  WHEN @skip_plan_xml = 0
+                  THEN N'
+            deqp.query_plan,' +
                   CASE
-                      WHEN @skip_plan_xml = 0
+                      WHEN @live_plans = 1
                       THEN N'
-                deqp.query_plan,' +
-                      CASE
-                          WHEN @live_plans = 1
-                          THEN N'
-                live_query_plan =
-                    deqs.query_plan,'
-                          ELSE N''
-                      END
-                  END +
-                          N'
-                deqmg.request_time,
-                deqmg.grant_time,
-                wait_time_seconds =
-                    (deqmg.wait_time_ms / 1000.),
-                requested_memory_gb =
-                    CONVERT(decimal(38, 2), (deqmg.requested_memory_kb / 1024. / 1024.)),
-                granted_memory_gb =
-                    CONVERT(decimal(38, 2), (deqmg.granted_memory_kb / 1024. / 1024.)),
-                used_memory_gb =
-                    CONVERT(decimal(38, 2), (deqmg.used_memory_kb / 1024. / 1024.)),
-                max_used_memory_gb =
-                    CONVERT(decimal(38, 2), (deqmg.max_used_memory_kb / 1024. / 1024.)),
-                ideal_memory_gb =
-                    CONVERT(decimal(38, 2), (deqmg.ideal_memory_kb / 1024. / 1024.)),
-                required_memory_gb =
-                    CONVERT(decimal(38, 2), (deqmg.required_memory_kb / 1024. / 1024.)),
-                deqmg.queue_id,
-                deqmg.wait_order,
-                deqmg.is_next_candidate,
-                waits.wait_type,
-                wait_duration_seconds =
-                    (waits.wait_duration_ms / 1000.),
-                deqmg.dop,' +
-                    CASE
-                        WHEN @helpful_new_columns = 1
-                        THEN N'
-                deqmg.reserved_worker_count,
-                deqmg.used_worker_count,'
-                        ELSE N''
-                    END + N'
-                deqmg.plan_handle
-            FROM sys.dm_exec_query_memory_grants AS deqmg
-            OUTER APPLY
-            (
-                SELECT TOP (1)
-                    dowt.*
-                FROM sys.dm_os_waiting_tasks AS dowt
-                WHERE dowt.session_id = deqmg.session_id
-                ORDER BY dowt.wait_duration_ms DESC
-            ) AS waits
-            OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
-            OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest' +
+            live_query_plan =
+                deqs.query_plan,'
+                      ELSE N''
+                  END
+              END +
+                      N'
+            deqmg.request_time,
+            deqmg.grant_time,
+            wait_time_seconds =
+                (deqmg.wait_time_ms / 1000.),
+            requested_memory_gb =
+                CONVERT(decimal(38, 2), (deqmg.requested_memory_kb / 1024. / 1024.)),
+            granted_memory_gb =
+                CONVERT(decimal(38, 2), (deqmg.granted_memory_kb / 1024. / 1024.)),
+            used_memory_gb =
+                CONVERT(decimal(38, 2), (deqmg.used_memory_kb / 1024. / 1024.)),
+            max_used_memory_gb =
+                CONVERT(decimal(38, 2), (deqmg.max_used_memory_kb / 1024. / 1024.)),
+            ideal_memory_gb =
+                CONVERT(decimal(38, 2), (deqmg.ideal_memory_kb / 1024. / 1024.)),
+            required_memory_gb =
+                CONVERT(decimal(38, 2), (deqmg.required_memory_kb / 1024. / 1024.)),
+            deqmg.queue_id,
+            deqmg.wait_order,
+            deqmg.is_next_candidate,
+            waits.wait_type,
+            wait_duration_seconds =
+                (waits.wait_duration_ms / 1000.),
+            deqmg.dop,' +
                 CASE
-                    WHEN @live_plans = 1
+                    WHEN @helpful_new_columns = 1
                     THEN N'
-            OUTER APPLY sys.dm_exec_query_statistics_xml(deqmg.plan_handle) AS deqs'
+            deqmg.reserved_worker_count,
+            deqmg.used_worker_count,'
                     ELSE N''
-                END +
-           N'
-            WHERE deqmg.session_id <> @@SPID
-            ORDER BY
-                requested_memory_gb DESC,
-                deqmg.request_time
-            OPTION(MAXDOP 1, RECOMPILE);
-            '
-                      );
-          
-            IF @debug = 1
-            BEGIN
-                PRINT SUBSTRING(@mem_sql, 1, 4000);
-                PRINT SUBSTRING(@mem_sql, 4000, 8000);
-            END;
-          
-            EXEC sys.sp_executesql
-                @mem_sql;
+                END + N'
+            deqmg.plan_handle
+        FROM sys.dm_exec_query_memory_grants AS deqmg
+        OUTER APPLY
+        (
+            SELECT TOP (1)
+                dowt.*
+            FROM sys.dm_os_waiting_tasks AS dowt
+            WHERE dowt.session_id = deqmg.session_id
+            ORDER BY dowt.wait_duration_ms DESC
+        ) AS waits
+        OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
+        OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest' +
+            CASE
+                WHEN @live_plans = 1
+                THEN N'
+        OUTER APPLY sys.dm_exec_query_statistics_xml(deqmg.plan_handle) AS deqs'
+                ELSE N''
+            END +
+       N'
+        WHERE deqmg.session_id <> @@SPID
+        ORDER BY
+            requested_memory_gb DESC,
+            deqmg.request_time
+        OPTION(MAXDOP 1, RECOMPILE);
+        '
+                  );
+      
+        IF @debug = 1
+        BEGIN
+            PRINT SUBSTRING(@mem_sql, 1, 4000);
+            PRINT SUBSTRING(@mem_sql, 4000, 8000);
         END;
+      
+        EXEC sys.sp_executesql
+            @mem_sql;
+    END;
 
+    /*
+    Looking at CPU config and indicators
+    */
     IF @what_to_check IN (N'all', N'cpu')
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking CPU config', 0, 1) WITH NOWAIT;
+        END;
+
         IF @helpful_new_columns = 1
         BEGIN
-            IF @debug = 1 BEGIN PRINT @reserved_worker_count; END;
+            IF @debug = 1
+            BEGIN
+                PRINT @reserved_worker_count;
+            END;
 
             EXEC sys.sp_executesql
                 @reserved_worker_count,
-              N'@reserved_worker_count_out nvarchar(10) OUTPUT',
+              N'@reserved_worker_count_out varchar(10) OUTPUT',
                 @reserved_worker_count_out OUTPUT;
         END;
 
+        SELECT
+            @cpu_details_columns += N'' +
+                CASE
+                    WHEN ac.name = N'socket_count'
+                    THEN N'                osi.socket_count, ' + NCHAR(10)
+                    WHEN ac.name = N'numa_node_count'
+                    THEN N'                osi.numa_node_count, ' + NCHAR(10)
+                    WHEN ac.name = N'cpu_count'
+                    THEN N'                osi.cpu_count, ' + NCHAR(10)
+                    WHEN ac.name = N'cores_per_socket'
+                    THEN N'                osi.cores_per_socket, ' + NCHAR(10)
+                    WHEN ac.name = N'hyperthread_ratio'
+                    THEN N'                osi.hyperthread_ratio, ' + NCHAR(10)
+                    WHEN ac.name = N'softnuma_configuration_desc'
+                    THEN N'                osi.softnuma_configuration_desc, ' + NCHAR(10)
+                    WHEN ac.name = N'scheduler_total_count'
+                    THEN N'                osi.scheduler_total_count, ' + NCHAR(10)
+                    WHEN ac.name = N'scheduler_count'
+                    THEN N'                osi.scheduler_count, ' + NCHAR(10)
+                    ELSE N''
+                END
+        FROM
+        (
             SELECT
-                @cpu_details_columns += N'' +
-                    CASE
-                        WHEN ac.name = N'socket_count'
-                        THEN N'                osi.socket_count, ' + NCHAR(10)
-                        WHEN ac.name = N'numa_node_count'
-                        THEN N'                osi.numa_node_count, ' + NCHAR(10)
-                        WHEN ac.name = N'cpu_count'
-                        THEN N'                osi.cpu_count, ' + NCHAR(10)
-                        WHEN ac.name = N'cores_per_socket'
-                        THEN N'                osi.cores_per_socket, ' + NCHAR(10)
-                        WHEN ac.name = N'hyperthread_ratio'
-                        THEN N'                osi.hyperthread_ratio, ' + NCHAR(10)
-                        WHEN ac.name = N'softnuma_configuration_desc'
-                        THEN N'                osi.softnuma_configuration_desc, ' + NCHAR(10)
-                        WHEN ac.name = N'scheduler_total_count'
-                        THEN N'                osi.scheduler_total_count, ' + NCHAR(10)
-                        WHEN ac.name = N'scheduler_count'
-                        THEN N'                osi.scheduler_count, ' + NCHAR(10)
-                        ELSE N''
-                    END
-            FROM
-            (
-                SELECT
-                    ac.name
-                FROM sys.all_columns AS ac
-                WHERE ac.object_id = OBJECT_ID('sys.dm_os_sys_info')
-                AND   ac.name IN
-                      (
-                          N'socket_count',
-                          N'numa_node_count',
-                          N'cpu_count',
-                          N'cores_per_socket',
-                          N'hyperthread_ratio',
-                          N'softnuma_configuration_desc',
-                          N'scheduler_total_count',
-                          N'scheduler_count'
-                      )
-            ) AS ac
-            OPTION(MAXDOP 1, RECOMPILE);
+                ac.name
+            FROM sys.all_columns AS ac
+            WHERE ac.object_id = OBJECT_ID(N'sys.dm_os_sys_info')
+            AND   ac.name IN
+                  (
+                      N'socket_count',
+                      N'numa_node_count',
+                      N'cpu_count',
+                      N'cores_per_socket',
+                      N'hyperthread_ratio',
+                      N'softnuma_configuration_desc',
+                      N'scheduler_total_count',
+                      N'scheduler_count'
+                  )
+        ) AS ac
+        OPTION(MAXDOP 1, RECOMPILE);
 
-            SELECT
-                @cpu_details =
-                    @cpu_details_select +
-                    SUBSTRING
-                    (
-                        @cpu_details_columns,
-                        1,
-                        LEN(@cpu_details_columns) -3
-                    ) +
-                    @cpu_details_from;
+        SELECT
+            @cpu_details =
+                @cpu_details_select +
+                SUBSTRING
+                (
+                    @cpu_details_columns,
+                    1,
+                    LEN(@cpu_details_columns) -3
+                ) +
+                @cpu_details_from;
 
-            IF @debug = 1 BEGIN PRINT @cpu_details; END;
+        IF @debug = 1
+        BEGIN
+            PRINT @cpu_details;
+        END;
 
-            EXEC sys.sp_executesql
-                @cpu_details,
-              N'@cpu_details_output xml OUTPUT',
-                @cpu_details_output OUTPUT;
+        EXEC sys.sp_executesql
+            @cpu_details,
+          N'@cpu_details_output xml OUTPUT',
+            @cpu_details_output OUTPUT;
 
+        /*
+        Checking for high CPU utilization periods
+        */
         SELECT
             @cpu_utilization =
                 x.cpu_utilization
@@ -1579,8 +1710,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         (
                             decimal(38,2),
                             (
-                                x.runnable /
-                                    (1. * NULLIF(x.total, 0))
+                                x.runnable / (1. * NULLIF(x.total, 0))
                             )
                         ) * 100.
                 FROM
@@ -1608,7 +1738,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
         OPTION(MAXDOP 1, RECOMPILE);
 
 
-        /*Any current threadpool waits?*/      
+        /*
+        Any current threadpool waits?
+        */      
         INSERT
             @threadpool_waits
         (
@@ -1634,24 +1766,33 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
         ELSE
         BEGIN
-        SELECT
-            dowt.session_id,
-            dowt.wait_duration_ms,
-            threadpool_waits =
-                dowt.wait_type
-        FROM sys.dm_os_waiting_tasks AS dowt
-        WHERE dowt.wait_type = N'THREADPOOL'
-        ORDER BY
-            dowt.wait_duration_ms DESC
-        OPTION(MAXDOP 1, RECOMPILE);
+            SELECT
+                dowt.session_id,
+                dowt.wait_duration_ms,
+                threadpool_waits =
+                    dowt.wait_type
+            FROM sys.dm_os_waiting_tasks AS dowt
+            WHERE dowt.wait_type = N'THREADPOOL'
+            ORDER BY
+                dowt.wait_duration_ms DESC
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
 
 
-        /*Figure out who's using a lot of CPU*/
-
-        IF @skip_queries = 0
-           AND @what_to_check IN ('all', 'cpu')
+        /*
+        Figure out who's using a lot of CPU
+        */
+        IF
+        (
+            @skip_queries = 0
+        AND @what_to_check IN (N'all', N'cpu')
+        )
         BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking CPU queries', 0, 1) WITH NOWAIT;
+            END;
+
             SET @cpu_sql += N'
             SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
           
@@ -1810,13 +1951,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         THEN ''Read Committed Snapshot Isolation''
                         WHEN der.transaction_isolation_level = 2
                         AND  NOT EXISTS
-                                 (
-                                     SELECT
-                                         1/0
-                                     FROM sys.dm_tran_active_snapshot_database_transactions AS trn
-                                     WHERE der.session_id = trn.session_id
-                                     AND   trn.is_snapshot = 0
-                                 )
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM sys.dm_tran_active_snapshot_database_transactions AS trn
+                                 WHERE der.session_id = trn.session_id
+                                 AND   trn.is_snapshot = 0
+                             )
                         THEN ''Read Committed''
                         WHEN der.transaction_isolation_level = 3
                         THEN ''Repeatable Read''
@@ -1868,11 +2009,105 @@ OPTION(MAXDOP 1, RECOMPILE);',
               END
                   );
           
-            IF @debug = 1 BEGIN PRINT SUBSTRING(@cpu_sql, 0, 4000); PRINT SUBSTRING(@cpu_sql, 4000, 8000); END;
+            IF @debug = 1
+            BEGIN
+                PRINT SUBSTRING(@cpu_sql, 0, 4000);
+                PRINT SUBSTRING(@cpu_sql, 4000, 8000);
+            END;
           
             EXEC sys.sp_executesql
                 @cpu_sql;
-        END;
-    END;
-END;
+        END; /*End not skipping queries*/
+    END; /*End CPU checks*/
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '@file_metrics',
+            x.*
+        FROM @file_metrics AS x
+        ORDER BY
+            x.database_name
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name = '@threadpool_waits',
+            x.*
+        FROM @threadpool_waits AS x
+        ORDER BY
+            x.wait_duration_ms DESC
+        OPTION(RECOMPILE);
+       
+        SELECT
+            pattern =
+                'parameters',
+            what_to_check =
+                @what_to_check,
+            skip_queries =
+                @skip_queries,
+            skip_plan_xml =
+                @skip_plan_xml,
+            minimum_disk_latency_ms =
+                @minimum_disk_latency_ms,
+            cpu_utilization_threshold =
+                @cpu_utilization_threshold,
+            skip_waits =
+                @skip_waits,
+            help =
+                @help,
+            debug =
+                @debug,
+            version =
+                @version,
+            version_date =
+                @version_date;
+               
+        SELECT
+            pattern =
+                'variables',
+            azure =
+                @azure,
+            pool_sql =
+                @pool_sql,
+            pages_kb =
+                @pages_kb,
+            mem_sql =
+                @mem_sql,
+            helpful_new_columns =
+                @helpful_new_columns,
+            cpu_sql =
+                @cpu_sql,
+            cool_new_columns =
+                @cool_new_columns,
+            reserved_worker_count_out =
+                @reserved_worker_count_out,
+            reserved_worker_count =
+                @reserved_worker_count,
+            cpu_details =
+                @cpu_details,
+            cpu_details_output =
+                @cpu_details_output,
+            cpu_details_columns =
+                @cpu_details_columns,
+            cpu_details_select =
+                @cpu_details_select,
+            cpu_details_from =
+                @cpu_details_from,
+            database_size_out =
+                @database_size_out,
+            database_size_out_gb =
+                @database_size_out_gb,
+            total_physical_memory_gb =
+                @total_physical_memory_gb,
+            cpu_utilization =
+                @cpu_utilization,
+            low_memory =
+                @low_memory,
+            disk_check =
+                @disk_check,
+            live_plans =
+                @live_plans;
+       
+    END; /*End Debug*/
+END; /*Final End*/
 GO
