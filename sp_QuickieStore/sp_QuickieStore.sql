@@ -47,49 +47,48 @@ https://github.com/erikdarlingdata/DarlingData
 CREATE OR ALTER PROCEDURE
     dbo.sp_QuickieStore
 (
-    @database_name sysname = NULL,
-    @sort_order varchar(20) = 'cpu',
-    @top bigint = 10,
-    @start_date datetimeoffset(7) = NULL,
-    @end_date datetimeoffset(7) = NULL,
-    @timezone sysname = NULL,
-    @execution_count bigint = NULL,
-    @duration_ms bigint = NULL,
-    @execution_type_desc nvarchar(60) = NULL,
-    @procedure_schema sysname = NULL,
-    @procedure_name sysname = NULL,
-    @include_plan_ids nvarchar(4000) = NULL,
-    @include_query_ids nvarchar(4000) = NULL,
-    @ignore_plan_ids nvarchar(4000) = NULL,
-    @ignore_query_ids nvarchar(4000) = NULL,
-    @include_query_hashes nvarchar(4000) = NULL,
-    @include_plan_hashes nvarchar(4000) = NULL,
-    @include_sql_handles nvarchar(4000) = NULL,
-    @ignore_query_hashes nvarchar(4000) = NULL,
-    @ignore_plan_hashes nvarchar(4000) = NULL,
-    @ignore_sql_handles nvarchar(4000) = NULL,
-    @query_text_search nvarchar(4000) = NULL,
-    @wait_filter varchar(20) = NULL,
-    @query_type varchar(11) = NULL,
-    @expert_mode bit = 0,
-    @format_output bit = 1,
-    @get_all_databases bit = 0,
-    @version varchar(30) = NULL OUTPUT,
-    @version_date datetime = NULL OUTPUT,
-    @help bit = 0,
-    @debug bit = 0,
-    @troubleshoot_performance bit = 0
+    @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
+    @sort_order varchar(20) = 'cpu', /*the runtime metric you want to prioritize results by*/
+    @top bigint = 10, /*the number of queries you want to pull back*/
+    @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
+    @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
+    @timezone sysname = NULL, /*user specified time zone to override dates displayed in results*/
+    @execution_count bigint = NULL, /*the minimum number of executions a query must have*/
+    @duration_ms bigint = NULL, /*the minimum duration a query must have to show up in results*/
+    @execution_type_desc nvarchar(60) = NULL, /*the type of execution you want to filter by (success, failure)*/
+    @procedure_schema sysname = NULL, /*the schema of the procedure you're searching for*/
+    @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
+    @include_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
+    @include_query_ids nvarchar(4000) = NULL, /*a list of query ids to search for*/
+    @include_query_hashes nvarchar(4000) = NULL, /*a list of query hashes to search for*/
+    @include_plan_hashes nvarchar(4000) = NULL, /*a list of query plan hashes to search for*/
+    @include_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to search for*/
+    @ignore_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to ignore*/
+    @ignore_query_ids nvarchar(4000) = NULL, /*a list of query ids to ignore*/
+    @ignore_query_hashes nvarchar(4000) = NULL, /*a list of query hashes to ignore*/
+    @ignore_plan_hashes nvarchar(4000) = NULL, /*a list of query plan hashes to ignore*/
+    @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
+    @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
+    @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
+    @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
+    @expert_mode bit = 0, /*returns additional columns and results*/
+    @format_output bit = 1, /*returns numbers formatted with commas*/
+    @get_all_databases bit = 0, /*looks for query store enabled databases and returns combined results from all of them*/
+    @help bit = 0, /*return available parameter details, etc.*/
+    @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
+    @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
+    @version varchar(30) = NULL OUTPUT, /*OUTPUT; for support*/
+    @version_date datetime = NULL OUTPUT /*OUTPUT; for support*/
 )
 WITH RECOMPILE
 AS
 BEGIN
-
+SET NOCOUNT ON;
+SET XACT_ABORT OFF;
 SET STATISTICS XML OFF;
-SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN TRY
-
 /*
 If this column doesn't exist, you're not on a good version of SQL Server
 */
@@ -152,8 +151,8 @@ BEGIN
                 WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
                 WHEN N'@timezone' THEN 'user specified time zone to override dates displayed in results'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
-                WHEN N'@duration_ms' THEN 'the minimum duration a query must have'
-                WHEN N'@execution_type_desc' THEN 'the type of execution you want to filter'
+                WHEN N'@duration_ms' THEN 'the minimum duration a query must have to show up in results'
+                WHEN N'@execution_type_desc' THEN 'the type of execution you want to filter by (success, failure)'
                 WHEN N'@procedure_schema' THEN 'the schema of the procedure you''re searching for'
                 WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
                 WHEN N'@include_plan_ids' THEN 'a list of plan ids to search for'
@@ -172,11 +171,11 @@ BEGIN
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
-                WHEN N'@version' THEN 'OUTPUT; for support'
-                WHEN N'@version_date' THEN 'OUTPUT; for support'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
+                WHEN N'@version' THEN 'OUTPUT; for support'
+                WHEN N'@version_date' THEN 'OUTPUT; for support'
             END,
         valid_inputs =
             CASE
@@ -208,11 +207,11 @@ BEGIN
                 WHEN N'@expert_mode' THEN '0 or 1'
                 WHEN N'@format_output' THEN '0 or 1'
                 WHEN N'@get_all_databases' THEN '0 or 1'
-                WHEN N'@version' THEN 'none; OUTPUT'
-                WHEN N'@version_date' THEN 'none; OUTPUT'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
                 WHEN N'@troubleshoot_performance' THEN '0 or 1'
+                WHEN N'@version' THEN 'none; OUTPUT'
+                WHEN N'@version_date' THEN 'none; OUTPUT'
             END,
         defaults =
             CASE
@@ -244,11 +243,11 @@ BEGIN
                 WHEN N'@expert_mode' THEN '0'
                 WHEN N'@format_output' THEN '1'
                 WHEN N'@get_all_databases' THEN '0'
+                WHEN N'@debug' THEN '0'
+                WHEN N'@help' THEN '0'
+                WHEN N'@troubleshoot_performance' THEN '0'
                 WHEN N'@version' THEN 'none; OUTPUT'
                 WHEN N'@version_date' THEN 'none; OUTPUT'
-                WHEN N'@help' THEN '0'
-                WHEN N'@debug' THEN '0'
-                WHEN N'@troubleshoot_performance' THEN '0'
             END
     FROM sys.all_parameters AS ap
     INNER JOIN sys.all_objects AS o
@@ -1044,6 +1043,15 @@ DECLARE
     @utc_minutes_original bigint;
 
 
+/*
+This section is in a cursor whether we
+hit one database, or multiple
+
+I do all the variable assignment in the
+cursor block because some of them
+are are assigned for the specific database
+that is currently being looked at
+*/
 INSERT
     #databases WITH(TABLOCK)
 (
@@ -1068,7 +1076,9 @@ OPTION(RECOMPILE);
 DECLARE
     database_cursor CURSOR
     LOCAL
-    STATIC
+    SCROLL
+    DYNAMIC
+    READ_ONLY
 FOR
 SELECT
     d.database_name
@@ -1076,7 +1086,7 @@ FROM #databases AS d;
 
 OPEN database_cursor;
 
-FETCH NEXT
+FETCH FIRST
 FROM database_cursor
 INTO @database_name;
 
@@ -1085,6 +1095,11 @@ BEGIN
 /*
 Some variable assignment, because why not?
 */
+IF @debug = 1
+BEGIN
+    RAISERROR('Starting analysis for database %s', 0, 1, @database_name) WITH NOWAIT;
+END;
+
 SELECT
     @azure =
         CASE
@@ -1179,93 +1194,93 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @ags_present = 0,
     @current_table = N'',
     @string_split_ints = N'
-    SELECT DISTINCT
-        ids =
-            LTRIM
-            (
-                RTRIM
-                (
-                    ids.ids
-                )
-            )
-    FROM
-    (
-        SELECT
+        SELECT DISTINCT
             ids =
-                x.x.value
+                LTRIM
+                (
+                    RTRIM
                     (
-                        ''(./text())[1]'',
-                        ''bigint''
+                        ids.ids
                     )
+                )
         FROM
         (
             SELECT
                 ids =
-                    CONVERT
-                    (
-                        xml,
-                        ''<x>'' +
-                        REPLACE
+                    x.x.value
                         (
+                            ''(./text())[1]'',
+                            ''bigint''
+                        )
+            FROM
+            (
+                SELECT
+                    ids =
+                        CONVERT
+                        (
+                            xml,
+                            ''<x>'' +
                             REPLACE
                             (
-                                @ids,
-                                '','',
-                                ''</x><x>''
-                            ),
-                            '' '',
-                            ''''
-                        ) +
-                        ''</x>''
-                    ).query(''.'')
+                                REPLACE
+                                (
+                                    @ids,
+                                    '','',
+                                    ''</x><x>''
+                                ),
+                                '' '',
+                                ''''
+                            ) +
+                            ''</x>''
+                        ).query(''.'')
+            ) AS ids
+                CROSS APPLY ids.nodes(''x'') AS x (x)
         ) AS ids
-            CROSS APPLY ids.nodes(''x'') AS x (x)
-    ) AS ids
-    OPTION(RECOMPILE);',
+        OPTION(RECOMPILE);',
     @string_split_strings = N'
-    SELECT DISTINCT
-        ids =
-            LTRIM
-            (
-                RTRIM
-                (
-                    ids.ids
-                )
-            )
-    FROM
-    (
-        SELECT
+        SELECT DISTINCT
             ids =
-                x.x.value
+                LTRIM
+                (
+                    RTRIM
                     (
-                        ''(./text())[1]'',
-                        ''varchar(131)''
+                        ids.ids
                     )
+                )
         FROM
         (
             SELECT
                 ids =
-                    CONVERT
-                    (
-                        xml,
-                        ''<x>'' +
-                        REPLACE
+                    x.x.value
                         (
+                            ''(./text())[1]'',
+                            ''varchar(131)''
+                        )
+            FROM
+            (
+                SELECT
+                    ids =
+                        CONVERT
+                        (
+                            xml,
+                            ''<x>'' +
                             REPLACE
                             (
-                                @ids,
-                                '','',
-                                ''</x><x>''
-                            ),
-                            '' '',
-                            ''''
-                        ) +
-                        ''</x>''
-                    ).query(''.'')
+                                REPLACE
+                                (
+                                    @ids,
+                                    '','',
+                                    ''</x><x>''
+                                ),
+                                '' '',
+                                ''''
+                            ) +
+                            ''</x>''
+                        ).query(''.'')
+            ) AS ids
+                CROSS APPLY ids.nodes(''x'') AS x (x)
         ) AS ids
-            CROSS APPLY ids.nodes(''x'') AS x (x)
-    ) AS ids
-    OPTION(RECOMPILE);',
+        OPTION(RECOMPILE);',
     @troubleshoot_insert = N'
         INSERT
             #troubleshoot_performance WITH(TABLOCK)
@@ -1475,7 +1490,7 @@ BEGIN
             DATEADD
             (
                 DAY,
-                1,
+                7,
                 @start_date
             ),
         @end_date_original =
@@ -1494,10 +1509,10 @@ Let's make sure things will work
 Database are you there?
 */
 IF
-  (
-      @database_id IS NULL
-        OR @collation IS NULL
-  )
+(
+   @database_id IS NULL
+OR @collation IS NULL
+)
 BEGIN
     RAISERROR('Database %s does not exist', 10, 1, @database_name) WITH NOWAIT;
 
@@ -1513,7 +1528,7 @@ Database what are you?
 IF
 (
     @azure = 1
-    AND @engine NOT IN (5, 8)
+AND @engine NOT IN (5, 8)
 )
 BEGIN
     RAISERROR('Not all Azure offerings are supported, please try avoiding memes', 11, 1) WITH NOWAIT;
@@ -1582,7 +1597,11 @@ SELECT
         END
 OPTION(RECOMPILE);' + @nc10;
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
 
 EXEC sys.sp_executesql
     @sql,
@@ -1652,7 +1671,11 @@ SELECT
         END
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     EXEC sys.sp_executesql
         @sql,
@@ -1678,8 +1701,11 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table;
     END;
 
-    IF (@procedure_exists = 0
-          AND @get_all_databases = 0)
+    IF
+    (
+        @procedure_exists = 0
+    AND @get_all_databases = 0
+    )
         BEGIN
             RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s
 Check that you spelled everything correctly and you''re in the right database',
@@ -1699,10 +1725,10 @@ leads me to believe that certain things won't be back-ported,
 like the wait stats DMV, and tempdb spills columns
 */
 IF
-  (
-      @product_version > 13
-      OR @azure = 1
-  )
+(
+   @product_version > 13
+OR @azure = 1
+)
 BEGIN
    SELECT
        @new = 1;
@@ -1724,6 +1750,7 @@ IF @sort_order NOT IN
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
+  
    SELECT
        @sort_order = 'cpu';
 END;
@@ -1732,12 +1759,13 @@ END;
 These columns are only available in 2017+
 */
 IF
-  (
-      @sort_order = 'tempdb'
-      AND @new = 0
-  )
+(
+    @sort_order = 'tempdb'
+AND @new = 0
+)
 BEGIN
    RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
+  
    SELECT
        @sort_order = N'cpu';
 END;
@@ -1746,10 +1774,10 @@ END;
 Wait stats aren't in Query Store until 2017, so we can't do that on television
 */
 IF
-  (
-      @wait_filter IS NOT NULL
-      AND @new = 0
-  )
+(
+    @wait_filter IS NOT NULL
+AND @new = 0
+)
 BEGIN
     RAISERROR('Query Store wait stats are not available prior to SQL Server 2017', 10, 1) WITH NOWAIT;
 
@@ -1763,27 +1791,27 @@ END;
 Make sure the wait filter is valid
 */
 IF
-  (
-      @new = 1
-      AND @wait_filter NOT IN
-          (
-              'cpu',
-              'lock',
-              'locks',
-              'latch',
-              'latches',
-              'buffer latch',
-              'buffer latches',
-              'buffer io',
-              'log',
-              'log io',
-              'network',
-              'network io',
-              'parallel',
-              'parallelism',
-              'memory'
-          )
-  )
+(
+    @new = 1
+AND @wait_filter NOT IN
+    (
+        'cpu',
+        'lock',
+        'locks',
+        'latch',
+        'latches',
+        'buffer latch',
+        'buffer latches',
+        'buffer io',
+        'log',
+        'log io',
+        'network',
+        'network io',
+        'parallel',
+        'parallelism',
+        'memory'
+    )
+)
 BEGIN
     RAISERROR('The wait category (%s) you chose is invalid', 10, 1, @wait_filter) WITH NOWAIT;
 
@@ -1797,10 +1825,10 @@ END;
 One last check: wait stat capture can be enabled or disabled in settings
 */
 IF
-  (
-      @wait_filter IS NOT NULL
-      OR @new = 1
-  )
+(
+   @wait_filter IS NOT NULL
+OR @new = 1
+)
 BEGIN
     SELECT
         @current_table = 'checking query store waits are enabled',
@@ -1834,7 +1862,11 @@ SELECT
         END
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     EXEC sys.sp_executesql
         @sql,
@@ -1861,6 +1893,7 @@ OPTION(RECOMPILE);' + @nc10;
     IF @query_store_waits_enabled = 0
     BEGIN
         RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
+       
         IF @get_all_databases = 0
         BEGIN
             RETURN;
@@ -1967,10 +2000,10 @@ In this section we set up the filter if someone's searching for
 a single stored procedure in Query Store.
 */
 IF
-  (
-      @procedure_name IS NOT NULL
-      AND @procedure_exists = 1
-  )
+(
+    @procedure_name IS NOT NULL
+AND @procedure_exists = 1
+)
 BEGIN
     SELECT
         @current_table = 'inserting #procedure_plans',
@@ -1996,7 +2029,11 @@ JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     INSERT
         #procedure_plans WITH(TABLOCK)
@@ -2040,10 +2077,7 @@ END; /*End procedure filter table population*/
 In this section we set up the filter if someone's searching for
 either ad hoc queries or queries from modules.
 */
-IF
-  (
-      LEN(@query_type) > 0
-  )
+IF LEN(@query_type) > 0
 BEGIN
     SELECT
         @current_table = 'inserting #query_types',
@@ -2065,7 +2099,7 @@ SELECT DISTINCT
     qsp.plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-   ON qsq.query_id = qsp.query_id
+  ON qsq.query_id = qsp.query_id
 WHERE qsq.object_id ' +
 CASE
     WHEN LOWER(@query_type) LIKE 'a%'
@@ -2075,7 +2109,11 @@ END
 + N'
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     INSERT
         #query_types WITH(TABLOCK)
@@ -2117,12 +2155,12 @@ END; /*End query type filter table population*/
 This section filters query or plan ids, both inclusive and exclusive
 */
 IF
-  (
-         @include_plan_ids  IS NOT NULL
-      OR @include_query_ids IS NOT NULL
-      OR @ignore_plan_ids   IS NOT NULL
-      OR @ignore_query_ids  IS NOT NULL
-  )
+(
+   @include_plan_ids  IS NOT NULL
+OR @include_query_ids IS NOT NULL
+OR @ignore_plan_ids   IS NOT NULL
+OR @ignore_query_ids  IS NOT NULL
+)
 BEGIN
     IF @include_plan_ids IS NOT NULL
     BEGIN    
@@ -2237,7 +2275,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #include_plan_ids
@@ -2336,7 +2378,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #ignore_plan_ids
@@ -2391,14 +2437,14 @@ END; /*End query and plan id filtering*/
 This section filters query or plan hashes
 */
 IF
-  (
-         @include_query_hashes IS NOT NULL
-      OR @include_plan_hashes  IS NOT NULL
-      OR @include_sql_handles  IS NOT NULL
-      OR @ignore_query_hashes  IS NOT NULL
-      OR @ignore_plan_hashes   IS NOT NULL
-      OR @ignore_sql_handles   IS NOT NULL
-  )
+(
+   @include_query_hashes IS NOT NULL
+OR @include_plan_hashes  IS NOT NULL
+OR @include_sql_handles  IS NOT NULL
+OR @ignore_query_hashes  IS NOT NULL
+OR @ignore_plan_hashes   IS NOT NULL
+OR @ignore_sql_handles   IS NOT NULL
+)
 BEGIN
     IF @include_query_hashes IS NOT NULL
     BEGIN
@@ -2457,7 +2503,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #include_plan_ids
@@ -2564,7 +2614,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #ignore_plan_ids
@@ -2664,7 +2718,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #include_plan_ids
@@ -2764,7 +2822,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #ignore_plan_ids
@@ -2879,7 +2941,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #include_plan_ids
@@ -2993,7 +3059,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #ignore_plan_ids
@@ -3047,13 +3117,13 @@ END; /*End hash and handle filtering*/
 IF @query_text_search IS NOT NULL
 BEGIN
     IF
-      (
-          LEFT
-          (
-              @query_text_search,
-              1
-          ) <> N'%'
-      )
+    (
+        LEFT
+        (
+            @query_text_search,
+            1
+        ) <> N'%'
+    )
     BEGIN
         SELECT
             @query_text_search =
@@ -3061,16 +3131,16 @@ BEGIN
     END;
 
     IF
-      (
-          LEFT
-          (
-              REVERSE
-              (
-                  @query_text_search
-              ),
-              1
-          ) <> N'%'
-      )
+    (
+        LEFT
+        (
+            REVERSE
+            (
+                @query_text_search
+            ),
+            1
+        ) <> N'%'
+    )
     BEGIN
         SELECT
             @query_text_search =
@@ -3114,10 +3184,10 @@ WHERE EXISTS
 
 /*If we're searching by a procedure name, limit the text search to it */
 IF
-  (
-      @procedure_name IS NOT NULL
-      AND @procedure_exists = 1
-  )
+(
+    @procedure_name IS NOT NULL
+AND @procedure_exists = 1
+)
 BEGIN
     SELECT
         @sql += N'
@@ -3134,7 +3204,11 @@ SELECT
     @sql += N'
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     INSERT
         #query_text_search WITH(TABLOCK)
@@ -3161,7 +3235,6 @@ OPTION(RECOMPILE);' + @nc10;
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-
     END;
 
     SELECT
@@ -3228,7 +3301,11 @@ ORDER BY
 OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     END;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     INSERT
         #wait_filter WITH(TABLOCK)
@@ -3309,7 +3386,11 @@ WHERE NOT EXISTS
           )
 OPTION(RECOMPILE);' + @nc10;
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
 
 INSERT
     #maintenance_plans WITH(TABLOCK)
@@ -3400,7 +3481,11 @@ END +
 N') DESC
 OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
 
 INSERT
     #distinct_plans WITH(TABLOCK)
@@ -3564,7 +3649,11 @@ END + N' DESC
 ) AS qsrs
 OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
 
 INSERT
     #query_store_runtime_stats WITH(TABLOCK)
@@ -3702,7 +3791,11 @@ CROSS APPLY
 WHERE qsrs.database_id = @database_id
 OPTION(RECOMPILE, OPTIMIZE FOR (@plans_top = 9223372036854775807));' + @nc10;
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
 
 INSERT
     #query_store_plan WITH(TABLOCK)
@@ -3818,7 +3911,11 @@ CROSS APPLY
 WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
 
 INSERT
     #query_store_query WITH(TABLOCK)
@@ -3928,7 +4025,11 @@ CROSS APPLY
 WHERE qsq.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
 
 INSERT
     #query_store_query_text WITH(TABLOCK)
@@ -4205,7 +4306,11 @@ SELECT
 FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
 OPTION(RECOMPILE);' + @nc10;
 
-IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
 
 INSERT
     #database_query_store_options WITH(TABLOCK)
@@ -4254,16 +4359,16 @@ END; /*End getting query store settings*/
 If wait stats are available, we'll grab them here
 */
 IF
-  (
-      @new = 1
-      AND EXISTS
-          (
-              SELECT
-                  1/0
-              FROM #database_query_store_options AS dqso
-              WHERE dqso.wait_stats_capture_mode_desc = N'ON'
-          )
-  )
+(
+    @new = 1
+    AND EXISTS
+        (
+            SELECT
+                1/0
+            FROM #database_query_store_options AS dqso
+            WHERE dqso.wait_stats_capture_mode_desc = N'ON'
+        )
+)
 BEGIN
     SELECT
         @current_table = 'inserting #query_store_wait_stats',
@@ -4316,7 +4421,11 @@ HAVING
     SUM(qsws.min_query_wait_time_ms) > 0.
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     INSERT
         #query_store_wait_stats WITH(TABLOCK)
@@ -4574,7 +4683,11 @@ WHERE EXISTS
 )
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     INSERT
         #query_store_plan_feedback WITH(TABLOCK)
@@ -4643,7 +4756,11 @@ WHERE EXISTS
 )
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     INSERT
         #query_store_query_variant WITH(TABLOCK)
@@ -4710,8 +4827,12 @@ WHERE EXISTS
 )
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
-
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+   
     INSERT
         #query_store_query_hints WITH(TABLOCK)
     (
@@ -4781,7 +4902,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #query_store_plan_forcing_locations WITH(TABLOCK)
@@ -4846,7 +4971,11 @@ WHERE EXISTS
       )
 OPTION(RECOMPILE);' + @nc10;
 
-        IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         INSERT
             #query_store_replicas WITH(TABLOCK)
@@ -4880,6 +5009,11 @@ OPTION(RECOMPILE);' + @nc10;
     END; /*End AG queries*/
 END; /*End SQL 2022 views*/
 
+/*
+These tables need to get cleared out
+to avoid result pollution and
+primary key violations
+*/
 IF @get_all_databases = 1
 BEGIN
     TRUNCATE TABLE
@@ -4932,10 +5066,10 @@ FROM
     Expert mode returns more columns from runtime stats
     */
     IF
-      (
-          @expert_mode = 1
-          AND @format_output = 0
-      )
+    (
+        @expert_mode = 1
+    AND @format_output = 0
+    )
     BEGIN
         SELECT
             @sql +=
@@ -5002,7 +5136,7 @@ FROM
         w.top_waits,'
                  ELSE
         N''
-            END 
+            END
         )
         + N'
         first_execution_time =
@@ -5135,10 +5269,10 @@ FROM
     Do we want to format things?
     */
     IF
-      (
-          @expert_mode = 1
-          AND @format_output = 1
-      )
+    (
+        @expert_mode = 1
+    AND @format_output = 1
+    )
     BEGIN
         SELECT
             @sql += 
@@ -5205,7 +5339,7 @@ FROM
         w.top_waits,'
                  ELSE
         N''
-            END 
+            END
         ) +
         CONVERT
         (
@@ -5342,10 +5476,10 @@ FROM
     For non-experts only!
     */
     IF
-      (
-          @expert_mode = 0
-          AND @format_output = 0
-      )
+    (
+        @expert_mode = 0
+    AND @format_output = 0
+    )
     BEGIN
         SELECT
             @sql +=
@@ -5412,7 +5546,7 @@ FROM
         w.top_waits,'
                  ELSE
         N''
-            END 
+            END
         )
         + N'
         first_execution_time =
@@ -5512,10 +5646,10 @@ FROM
     Formatted but not still not expert output
     */
     IF
-      (
-          @expert_mode = 0
-          AND @format_output = 1
-      )
+    (
+        @expert_mode = 0
+    AND @format_output = 1
+    )
     BEGIN
         SELECT
             @sql += 
@@ -5739,10 +5873,10 @@ FROM
     Get wait stats if we can
     */
     IF
-      (
-          @new = 1
-          AND @format_output = 0
-      )
+    (
+        @new = 1
+    AND @format_output = 0
+    )
     BEGIN
         SELECT
             @sql += 
@@ -5792,10 +5926,10 @@ FROM
     END; /*End format output = 0 wait stats query*/
 
     IF
-      (
-          @new = 1
-          AND @format_output = 1
-      )
+    (
+        @new = 1
+    AND @format_output = 1
+    )
     BEGIN
         SELECT
             @sql += 
@@ -5901,7 +6035,6 @@ OPTION(RECOMPILE);'
         PRINT SUBSTRING(@sql, 8000, 16000);
     END;
 
-
     EXEC sys.sp_executesql
         @sql,
       N'@utc_minutes_original bigint,
@@ -5920,10 +6053,10 @@ ELSE
 Return special things, unformatted
 */
 IF
-  (
-      @expert_mode = 1
-        AND @format_output = 0
-  )
+(
+    @expert_mode = 1
+AND @format_output = 0
+)
 BEGIN
     IF @sql_2022_views = 1
     BEGIN
@@ -6364,10 +6497,10 @@ BEGIN
     END; /*End wait stats queries*/
 
     IF
-      (
-         @sql_2022_views = 1
-         AND @ags_present = 1
-      )
+    (
+        @sql_2022_views = 1
+    AND @ags_present = 1
+    )
     BEGIN
         IF EXISTS
            (
@@ -6379,30 +6512,29 @@ BEGIN
                  AND qsr.database_id = qspfl.database_id
            )
         BEGIN
-        SELECT
-            @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
-
-        SELECT
-            database_name =
-                DB_NAME(qsr.database_id),
-            qsr.replica_group_id,
-            qsr.role_type,
-            qsr.replica_name,
-            qspfl.plan_forcing_location_id,
-            qspfl.query_id,
-            qspfl.plan_id,
-            qspfl.replica_group_id
-        FROM #query_store_replicas AS qsr
-        JOIN #query_store_plan_forcing_locations AS qspfl
-          ON qsr.replica_group_id = qspfl.replica_group_id
-        ORDER BY
-            qsr.replica_group_id;
-
+            SELECT
+                @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
+           
+            SELECT
+                database_name =
+                    DB_NAME(qsr.database_id),
+                qsr.replica_group_id,
+                qsr.role_type,
+                qsr.replica_name,
+                qspfl.plan_forcing_location_id,
+                qspfl.query_id,
+                qspfl.plan_id,
+                qspfl.replica_group_id
+            FROM #query_store_replicas AS qsr
+            JOIN #query_store_plan_forcing_locations AS qspfl
+              ON qsr.replica_group_id = qspfl.replica_group_id
+            ORDER BY
+                qsr.replica_group_id;
         END;
         ELSE
-        BEGIN
-            SELECT
-                result = 'Availability Group information is empty';
+            BEGIN
+                SELECT
+                    result = 'Availability Group information is empty';
         END;
     END;
 
@@ -6469,7 +6601,11 @@ BEGIN
     OPTION(RECOMPILE);'
     );
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     EXEC sys.sp_executesql
         @sql;
@@ -6479,10 +6615,10 @@ END; /*End expert mode format output = 0*/
 Return special things, formatted
 */
 IF
-  (
-      @expert_mode = 1
-        AND @format_output = 1
-  )
+(
+    @expert_mode = 1
+AND @format_output = 1
+)
 BEGIN
     IF @sql_2022_views = 1
     BEGIN
@@ -6798,8 +6934,8 @@ BEGIN
           AND qsq.database_id = qsqt.database_id
         WHERE
         (
-            qsqt.total_grant_mb IS NOT NULL
-            OR qsqt.total_reserved_threads IS NOT NULL
+           qsqt.total_grant_mb IS NOT NULL
+        OR qsqt.total_reserved_threads IS NOT NULL
         )
         ORDER BY
             qsq.query_id
@@ -6944,8 +7080,8 @@ BEGIN
                 '#query_store_wait_stats is empty' +
                 CASE
                     WHEN (
-                            @product_version = 13
-                            AND @azure = 0
+                             @product_version = 13
+                         AND @azure = 0
                          )
                     THEN ' because it''s not available < 2017'
                     WHEN EXISTS
@@ -6961,10 +7097,10 @@ BEGIN
     END;
 
     IF
-      (
-          @sql_2022_views = 1
-          AND @ags_present = 1
-      )
+    (
+        @sql_2022_views = 1
+    AND @ags_present = 1
+    )
     BEGIN
         IF EXISTS
            (
@@ -6995,8 +7131,7 @@ BEGIN
               AND qsr.database_id = qspfl.database_id
             ORDER BY
                 qsr.replica_group_id
-            OPTION(RECOMPILE);
-          
+            OPTION(RECOMPILE);         
         END;
         ELSE
         BEGIN
@@ -7072,7 +7207,11 @@ BEGIN
     FROM #database_query_store_options AS dqso
     OPTION(RECOMPILE);';
 
-    IF @debug = 1 BEGIN PRINT LEN(@sql); PRINT @sql; END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
     EXEC sys.sp_executesql
         @sql;
@@ -7222,7 +7361,6 @@ BEGIN CATCH
     This reliably throws the actual error from dynamic SQL
     */
     THROW;
-
 END CATCH;
 
 /*
