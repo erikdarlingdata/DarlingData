@@ -52,15 +52,15 @@ SELECT
                    x.x,
                    1
                 )
-         FROM x AS x
-         WHERE SUBSTRING
-               (
-                   @string COLLATE Latin1_General_100_BIN2,
-                   x.x,
-                   1
-               ) LIKE N'[0-9]'
-         ORDER BY x.x
-         FOR XML PATH(N''), TYPE
+            FROM x AS x
+            WHERE SUBSTRING
+                  (
+                      @string COLLATE Latin1_General_100_BIN2,
+                      x.x,
+                      1
+                  ) LIKE N'[0-9]'
+            ORDER BY x.x
+            FOR XML PATH(N''), TYPE
        ).value('./text()[1]', 'nvarchar(max)')
     ) AS numbers_only;
 GO
