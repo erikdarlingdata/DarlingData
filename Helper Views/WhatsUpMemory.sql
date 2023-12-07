@@ -1,3 +1,14 @@
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
+SET IMPLICIT_TRANSACTIONS OFF;
+SET STATISTICS TIME, IO OFF;
+GO
+
 /*
 This is a helper view I use in some of my presentations to look at what's in memory.
 I probably wouldn't run this in production, especially on servers with a lot of memory in them.

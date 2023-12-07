@@ -4,6 +4,7 @@ SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
 SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;
 GO
@@ -44,7 +45,13 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-CREATE OR ALTER PROCEDURE
+IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL   
+   BEGIN   
+       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');   
+   END;   
+GO 
+
+ALTER PROCEDURE
     dbo.sp_QuickieStore
 (
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
