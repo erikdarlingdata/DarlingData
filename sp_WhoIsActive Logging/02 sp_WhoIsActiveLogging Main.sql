@@ -1,3 +1,14 @@
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
+SET IMPLICIT_TRANSACTIONS OFF;
+SET STATISTICS TIME, IO OFF;
+GO
+
 /*
 
 Copyright 2023 Darling Data, LLC
@@ -18,8 +29,13 @@ sign that you need to update sp_WhoIsActive
 
 */
 
+IF OBJECT_ID('dbo.sp_WhoIsActiveLogging_Main') IS NULL   
+   BEGIN   
+       EXEC ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_Main AS RETURN 138;');   
+   END;   
+GO 
 
-CREATE OR ALTER PROCEDURE
+ALTER PROCEDURE
     dbo.sp_WhoIsActiveLogging_Main
 (
     @RetentionPeriod int = 10
@@ -40,6 +56,8 @@ BEGIN
         CONCAT_NULL_YIELDS_NULL,
         QUOTED_IDENTIFIER
     ON;
+
+    SET NUMERIC_ROUNDABORT OFF;
 
     /*
     Variables we know and love.

@@ -1,3 +1,14 @@
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
+SET IMPLICIT_TRANSACTIONS OFF;
+SET STATISTICS TIME, IO OFF;
+GO
+
 /*
 
 Copyright 2023 Darling Data, LLC
@@ -17,55 +28,64 @@ https://github.com/amachanic/sp_whoisactive
 SQL Agent has some weird settings.
 This sets them to the correct ones.
 */
-CREATE OR ALTER PROCEDURE
+
+IF OBJECT_ID('dbo.sp_WhoIsActiveLogging_CreateViews') IS NULL   
+   BEGIN   
+       EXEC ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_CreateViews AS RETURN 138;');   
+   END;   
+GO 
+
+ALTER PROCEDURE
     dbo.sp_WhoIsActiveLogging_CreateViews
 AS
 BEGIN
-    SET NOCOUNT, XACT_ABORT ON;
-    BEGIN
-        DECLARE
-            @vsql nvarchar(MAX) = N'
-        CREATE OR ALTER VIEW
-            dbo.WhoIsActive
-        AS
-        ';
+    SET STATISTICS XML OFF;
+    SET NOCOUNT ON;
+    SET XACT_ABORT OFF;
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-        SELECT
-            @vsql +=
-        (
-            SELECT TOP (9223372036854775807)
-                [text()] =
-                    N'SELECT * FROM ' +
-                    QUOTENAME(SCHEMA_NAME(t.schema_id)) +
-                    N'.' +
-                    QUOTENAME(t.name) +
-                    NCHAR(10) +
-                    N'UNION ALL ' +
-                    NCHAR(10)
-            FROM sys.tables AS t
-            WHERE t.name LIKE N'WhoIsActive[_][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]%'
-            ORDER BY t.create_date DESC
-            FOR XML
-                PATH(N''),
-                TYPE
-        ).value
-             (
-                 './text()[1]',
-                 'nvarchar(max)'
-             );
+    DECLARE
+        @vsql nvarchar(MAX) = N'
+    CREATE OR ALTER VIEW
+        dbo.WhoIsActive
+    AS
+    ';
 
-        SELECT
-            @vsql =
-                SUBSTRING
-                (
-                    @vsql,
-                    0,
-                    LEN(@vsql) - 11
-                ) + N';';
+    SELECT
+        @vsql +=
+    (
+        SELECT TOP (9223372036854775807)
+            [text()] =
+                N'SELECT * FROM ' +
+                QUOTENAME(SCHEMA_NAME(t.schema_id)) +
+                N'.' +
+                QUOTENAME(t.name) +
+                NCHAR(10) +
+                N'UNION ALL ' +
+                NCHAR(10)
+        FROM sys.tables AS t
+        WHERE t.name LIKE N'WhoIsActive[_][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]%'
+        ORDER BY t.create_date DESC
+        FOR XML
+            PATH(N''),
+            TYPE
+    ).value
+         (
+             './text()[1]',
+             'nvarchar(max)'
+         );
 
-        EXEC sys.sp_executesql
-            @vsql;
-    END;
+    SELECT
+        @vsql =
+            SUBSTRING
+            (
+                @vsql,
+                0,
+                LEN(@vsql) - 11
+            ) + N';';
+
+    EXEC sys.sp_executesql
+        @vsql;
 
     IF NOT EXISTS
     (
@@ -226,3 +246,4 @@ BEGIN
             @sql;
     END;
 END;
+GO 
