@@ -4,6 +4,7 @@ SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
 SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;
 GO
@@ -41,7 +42,13 @@ EXEC sp_LogHunter;
 
 */
 
-CREATE OR ALTER PROCEDURE
+IF OBJECT_ID('dbo.sp_LogHunter') IS NULL   
+   BEGIN   
+       EXEC ('CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');   
+   END;   
+GO 
+
+ALTER PROCEDURE
     dbo.sp_LogHunter
 (
     @days_back int = -7, /*How many days back you want to look in the error logs*/

@@ -4,6 +4,7 @@ SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
 SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;
 GO
@@ -31,7 +32,13 @@ For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
 */
 
-CREATE OR ALTER PROCEDURE
+IF OBJECT_ID('dbo.sp_HealthParser') IS NULL   
+   BEGIN   
+       EXEC ('CREATE PROCEDURE dbo.sp_HealthParser AS RETURN 138;');   
+   END;   
+GO 
+
+ALTER PROCEDURE
     dbo.sp_HealthParser
 (
     @what_to_check varchar(10) = 'all', /*Specify which portion of the data to check*/
