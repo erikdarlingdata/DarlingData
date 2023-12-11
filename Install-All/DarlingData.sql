@@ -1,4 +1,4 @@
--- Compile Date: 12/11/2023 16:16:01 UTC
+-- Compile Date: 12/11/2023 18:56:15 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -690,7 +690,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
             CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
             WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
-            OPTION(RECOMPILE, USE HINT(''ENABLE_PARALLEL_PLAN_PREFERENCE''));';
+            OPTION(RECOMPILE);';
             
             IF @debug = 1
             BEGIN
@@ -10537,9 +10537,8 @@ BEGIN
     OR    el.text LIKE N'Starting up database%'
     OR    el.text LIKE N'Buffer pool extension is already disabled%'
     OR    el.text LIKE N'Buffer Pool: Allocating % bytes for % hashPages.'
-    OR    el.text LIKE N'Error: 18456%'
+    OR    el.text LIKE N'%Severity: 1[0-8]%'
     OR    el.text LIKE N'SSPI%'
-    OR    el.text LIKE N'Error: 18452%'
     OR    el.text IN
           (
               N'The Database Mirroring endpoint is in disabled or stopped state.',
