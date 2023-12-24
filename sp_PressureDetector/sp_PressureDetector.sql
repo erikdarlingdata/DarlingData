@@ -860,8 +860,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     scheduler_total_count =
                                         (
                                             SELECT
-                                                i.cpu_count
-                                            FROM sys.dm_os_sys_info AS i
+                                                osi.cpu_count
+                                            FROM sys.dm_os_sys_info AS osi
                                         )
                                 FROM sys.master_files AS mf
                                 WHERE mf.database_id = 2
@@ -1152,8 +1152,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             SELECT
                 @total_physical_memory_gb =
-                    SUM(dosi.committed_target_kb / 1024. / 1024.)
-            FROM sys.dm_os_sys_info dosi;
+                    SUM(osi.committed_target_kb / 1024. / 1024.)
+            FROM sys.dm_os_sys_info osi;
         END;
 
         /*Checking for low memory indicators*/
@@ -1170,7 +1170,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         DATEADD
                         (
                             SECOND,
-                            (t.timestamp - inf.ms_ticks) / 1000,
+                            (t.timestamp - osi.ms_ticks) / 1000,
                             SYSDATETIME()
                         )
                     ),
@@ -1184,7 +1184,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     t.record.value('(/Record/MemoryRecord/AvailablePhysicalMemory)[1]', 'bigint') / 1024 / 1024,
                 virtual_memory_available_gb =
                     t.record.value('(/Record/MemoryRecord/AvailableVirtualAddressSpace)[1]', 'bigint') / 1024 / 1024
-            FROM sys.dm_os_sys_info AS inf
+            FROM sys.dm_os_sys_info AS osi
             CROSS JOIN
             (
                 SELECT
@@ -1194,7 +1194,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FROM sys.dm_os_ring_buffers AS dorb
                 WHERE dorb.ring_buffer_type = N'RING_BUFFER_RESOURCE_MONITOR'
             ) AS t
-            WHERE t.record.exist('(Record/ResourceMonitor/Notification[. = "RESOURCE_MEMPHYSICAL_LOW"])') = 1
+            WHERE 
+              (
+                  t.record.exist('(Record/ResourceMonitor/Notification[. = "RESOURCE_MEMPHYSICAL_LOW"])') = 1
+               OR t.record.exist('(Record/ResourceMonitor/Notification[. = "RESOURCE_MEMVIRTUAL_LOW"])') = 1
+              )
             AND
               (
                   t.record.exist('(Record/ResourceMonitor/IndicatorsProcess[. > 0])') = 1
@@ -1245,8 +1249,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             memory_model =
                 (
                     SELECT
-                        inf.sql_memory_model_desc
-                    FROM sys.dm_os_sys_info AS inf
+                        osi.sql_memory_model_desc
+                    FROM sys.dm_os_sys_info AS osi
                 ),
             target_memory_gb =
                 CONVERT
@@ -1598,7 +1602,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         DATEADD
                         (
                             SECOND,
-                            (t.timestamp - inf.ms_ticks) / 1000,
+                            (t.timestamp - osi.ms_ticks) / 1000,
                             SYSDATETIME()
                         )
                     ),
@@ -1609,7 +1613,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','int')),
                 total_cpu_utilization =
                     (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int'))
-            FROM sys.dm_os_sys_info AS inf
+            FROM sys.dm_os_sys_info AS osi
             CROSS JOIN
             (
                 SELECT
