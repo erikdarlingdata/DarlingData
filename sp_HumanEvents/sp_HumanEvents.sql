@@ -24,7 +24,7 @@ GO
 ███████╗ ╚████╔╝ ███████╗██║ ╚████║   ██║   ███████║   
 ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝   
    
-Copyright 2023 Darling Data, LLC   
+Copyright 2024 Darling Data, LLC   
 https://www.erikdarlingdata.com/   
    
 For usage and licensing details, run:   
@@ -87,8 +87,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;   
    
 SELECT    
-    @version = '5.12',    
-    @version_date = '20231201';   
+    @version = '5.13',    
+    @version_date = '20240101';   
    
 IF @help = 1   
 BEGIN   

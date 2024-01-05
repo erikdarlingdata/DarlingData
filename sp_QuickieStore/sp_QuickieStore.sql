@@ -25,7 +25,7 @@ GO
 ███████║   ██║   ╚██████╔╝██║  ██║███████╗██╗
 ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -124,8 +124,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.12',
-    @version_date = '20231201';
+    @version = '4.13',
+    @version_date = '20240101';
 
 /*
 Helpful section! For help.

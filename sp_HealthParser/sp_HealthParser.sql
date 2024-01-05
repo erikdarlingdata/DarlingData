@@ -25,7 +25,7 @@ GO
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
                                               
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For support, head over to GitHub:
@@ -64,8 +64,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.12',
-        @version_date = '20231201';
+        @version = '1.15',
+        @version_date = '20240101';
 
     IF @help = 1
     BEGIN
