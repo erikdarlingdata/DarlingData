@@ -25,7 +25,7 @@ GO
 ██████╔╝███████╗   ██║   ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
 ╚═════╝ ╚══════╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -69,8 +69,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.12',
-    @version_date = '20231201';
+    @version = '4.13',
+    @version_date = '20240101';
 
 
 IF @help = 1
@@ -1727,13 +1727,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             SUM
                             (
                                 CASE
-                                    WHEN r.status = N'runnable'
+                                    WHEN der.status = N'runnable'
                                     THEN 1
                                     ELSE 0
                                 END
                             )
-                    FROM sys.dm_exec_requests AS r
-                    WHERE r.session_id > 50
+                    FROM sys.dm_exec_requests AS der
+                    WHERE der.session_id > 50
                 ) AS x
             ) AS y
             WHERE y.runnable_pct >= 10
