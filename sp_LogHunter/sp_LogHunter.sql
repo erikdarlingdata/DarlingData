@@ -24,7 +24,7 @@ GO
 ██║  ██║╚██████╔╝██║ ╚████║   ██║   ███████╗██║  ██║
 ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
    
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -72,8 +72,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
     SELECT
-        @version = '1.12',
-        @version_date = '20231201';
+        @version = '1.13',
+        @version_date = '20240101';
 
     IF @help = 1
     BEGIN
@@ -641,8 +641,9 @@ BEGIN
     OR    el.text LIKE N'Starting up database%'
     OR    el.text LIKE N'Buffer pool extension is already disabled%'
     OR    el.text LIKE N'Buffer Pool: Allocating % bytes for % hashPages.'
-    OR    el.text LIKE N'%Severity: 1[0-8]%'
+    OR    el.text LIKE N'The client was unable to reuse a session with%'
     OR    el.text LIKE N'SSPI%'
+    OR    el.text LIKE N'%Severity: 1[0-8]%'
     OR    el.text IN
           (
               N'The Database Mirroring endpoint is in disabled or stopped state.',
