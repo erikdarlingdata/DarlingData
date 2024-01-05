@@ -1,4 +1,4 @@
--- Compile Date: 12/11/2023 18:56:15 UTC
+-- Compile Date: 01/05/2024 03:29:01 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -26,7 +26,7 @@ GO
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
                                               
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For support, head over to GitHub:
@@ -65,8 +65,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.12',
-        @version_date = '20231201';
+        @version = '1.15',
+        @version_date = '20240101';
 
     IF @help = 1
     BEGIN
@@ -2460,7 +2460,7 @@ GO
 ███████╗ ╚████╔╝ ███████╗██║ ╚████║   ██║   ███████║   
 ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝   
    
-Copyright 2023 Darling Data, LLC   
+Copyright 2024 Darling Data, LLC   
 https://www.erikdarlingdata.com/   
    
 For usage and licensing details, run:   
@@ -2523,8 +2523,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;   
    
 SELECT    
-    @version = '5.12',    
-    @version_date = '20231201';   
+    @version = '5.13',    
+    @version_date = '20240101';   
    
 IF @help = 1   
 BEGIN   
@@ -7205,7 +7205,7 @@ GO
  ╚████╔╝ ██║███████╗╚███╔███╔╝███████╗██║  ██║
   ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚═╝  ╚═╝
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -7249,8 +7249,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '3.12',
-    @version_date = '20231201';
+    @version = '3.13',
+    @version_date = '20240101';
 
 IF @help = 1
 BEGIN
@@ -9920,7 +9920,7 @@ GO
 ██║  ██║╚██████╔╝██║ ╚████║   ██║   ███████╗██║  ██║
 ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
    
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -9968,8 +9968,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
     SELECT
-        @version = '1.12',
-        @version_date = '20231201';
+        @version = '1.13',
+        @version_date = '20240101';
 
     IF @help = 1
     BEGIN
@@ -10537,8 +10537,9 @@ BEGIN
     OR    el.text LIKE N'Starting up database%'
     OR    el.text LIKE N'Buffer pool extension is already disabled%'
     OR    el.text LIKE N'Buffer Pool: Allocating % bytes for % hashPages.'
-    OR    el.text LIKE N'%Severity: 1[0-8]%'
+    OR    el.text LIKE N'The client was unable to reuse a session with%'
     OR    el.text LIKE N'SSPI%'
+    OR    el.text LIKE N'%Severity: 1[0-8]%'
     OR    el.text IN
           (
               N'The Database Mirroring endpoint is in disabled or stopped state.',
@@ -10602,7 +10603,7 @@ GO
 ██████╔╝███████╗   ██║   ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
 ╚═════╝ ╚══════╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -10646,8 +10647,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.12',
-    @version_date = '20231201';
+    @version = '4.13',
+    @version_date = '20240101';
 
 
 IF @help = 1
@@ -11437,8 +11438,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     scheduler_total_count =
                                         (
                                             SELECT
-                                                i.cpu_count
-                                            FROM sys.dm_os_sys_info AS i
+                                                osi.cpu_count
+                                            FROM sys.dm_os_sys_info AS osi
                                         )
                                 FROM sys.master_files AS mf
                                 WHERE mf.database_id = 2
@@ -11729,8 +11730,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             SELECT
                 @total_physical_memory_gb =
-                    SUM(dosi.committed_target_kb / 1024. / 1024.)
-            FROM sys.dm_os_sys_info dosi;
+                    SUM(osi.committed_target_kb / 1024. / 1024.)
+            FROM sys.dm_os_sys_info osi;
         END;
 
         /*Checking for low memory indicators*/
@@ -11747,7 +11748,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         DATEADD
                         (
                             SECOND,
-                            (t.timestamp - inf.ms_ticks) / 1000,
+                            (t.timestamp - osi.ms_ticks) / 1000,
                             SYSDATETIME()
                         )
                     ),
@@ -11761,7 +11762,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     t.record.value('(/Record/MemoryRecord/AvailablePhysicalMemory)[1]', 'bigint') / 1024 / 1024,
                 virtual_memory_available_gb =
                     t.record.value('(/Record/MemoryRecord/AvailableVirtualAddressSpace)[1]', 'bigint') / 1024 / 1024
-            FROM sys.dm_os_sys_info AS inf
+            FROM sys.dm_os_sys_info AS osi
             CROSS JOIN
             (
                 SELECT
@@ -11771,7 +11772,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FROM sys.dm_os_ring_buffers AS dorb
                 WHERE dorb.ring_buffer_type = N'RING_BUFFER_RESOURCE_MONITOR'
             ) AS t
-            WHERE t.record.exist('(Record/ResourceMonitor/Notification[. = "RESOURCE_MEMPHYSICAL_LOW"])') = 1
+            WHERE 
+              (
+                  t.record.exist('(Record/ResourceMonitor/Notification[. = "RESOURCE_MEMPHYSICAL_LOW"])') = 1
+               OR t.record.exist('(Record/ResourceMonitor/Notification[. = "RESOURCE_MEMVIRTUAL_LOW"])') = 1
+              )
             AND
               (
                   t.record.exist('(Record/ResourceMonitor/IndicatorsProcess[. > 0])') = 1
@@ -11822,8 +11827,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             memory_model =
                 (
                     SELECT
-                        inf.sql_memory_model_desc
-                    FROM sys.dm_os_sys_info AS inf
+                        osi.sql_memory_model_desc
+                    FROM sys.dm_os_sys_info AS osi
                 ),
             target_memory_gb =
                 CONVERT
@@ -12175,7 +12180,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         DATEADD
                         (
                             SECOND,
-                            (t.timestamp - inf.ms_ticks) / 1000,
+                            (t.timestamp - osi.ms_ticks) / 1000,
                             SYSDATETIME()
                         )
                     ),
@@ -12186,7 +12191,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','int')),
                 total_cpu_utilization =
                     (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int'))
-            FROM sys.dm_os_sys_info AS inf
+            FROM sys.dm_os_sys_info AS osi
             CROSS JOIN
             (
                 SELECT
@@ -12300,13 +12305,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             SUM
                             (
                                 CASE
-                                    WHEN r.status = N'runnable'
+                                    WHEN der.status = N'runnable'
                                     THEN 1
                                     ELSE 0
                                 END
                             )
-                    FROM sys.dm_exec_requests AS r
-                    WHERE r.session_id > 50
+                    FROM sys.dm_exec_requests AS der
+                    WHERE der.session_id > 50
                 ) AS x
             ) AS y
             WHERE y.runnable_pct >= 10
@@ -12716,7 +12721,7 @@ GO
 ███████║   ██║   ╚██████╔╝██║  ██║███████╗██╗
 ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
 For usage and licensing details, run:
@@ -12772,6 +12777,9 @@ ALTER PROCEDURE
     @expert_mode bit = 0, /*returns additional columns and results*/
     @format_output bit = 1, /*returns numbers formatted with commas*/
     @get_all_databases bit = 0, /*looks for query store enabled databases and returns combined results from all of them*/
+    @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
+    @work_start varchar(4) = '9am', /*Use this to set a specific start of your work days*/
+    @work_end varchar(4) = '5pm', /*Use this to set a specific end of your work days*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
@@ -12812,8 +12820,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.12',
-    @version_date = '20231201';
+    @version = '4.13',
+    @version_date = '20240101';
 
 /*
 Helpful section! For help.
@@ -12869,6 +12877,9 @@ BEGIN
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
+                WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
+                WHEN N'@work_start' THEN 'use this to set a specific start of your work days'
+                WHEN N'@work_end' THEN 'use this to set a specific end of your work days'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
@@ -12905,6 +12916,9 @@ BEGIN
                 WHEN N'@expert_mode' THEN '0 or 1'
                 WHEN N'@format_output' THEN '0 or 1'
                 WHEN N'@get_all_databases' THEN '0 or 1'
+                WHEN N'@workdays' THEN '0 or 1'
+                WHEN N'@work_start' THEN 'a "time" like 8am, 9am or something'
+                WHEN N'@work_end' THEN 'a "time" like 5pm, 6pm or something'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
                 WHEN N'@troubleshoot_performance' THEN '0 or 1'
@@ -12941,6 +12955,9 @@ BEGIN
                 WHEN N'@expert_mode' THEN '0'
                 WHEN N'@format_output' THEN '1'
                 WHEN N'@get_all_databases' THEN '0'
+                WHEN N'@workdays' THEN '0'
+                WHEN N'@work_start' THEN '9am'
+                WHEN N'@work_end' THEN '5pm'
                 WHEN N'@debug' THEN '0'
                 WHEN N'@help' THEN '0'
                 WHEN N'@troubleshoot_performance' THEN '0'
@@ -13674,6 +13691,17 @@ CREATE TABLE
     database_name sysname PRIMARY KEY
 );
 
+/*
+AM/PM mapping table for workday stuff
+*/
+CREATE TABLE
+    #am_pm
+(
+    am_pm varchar(4),
+    t12 integer,
+    t24 integer
+);
+
 
 /*
 Try to be helpful by subbing in a database name if null
@@ -13738,7 +13766,10 @@ DECLARE
     @start_date_original datetimeoffset(7),
     @end_date_original datetimeoffset(7),
     @utc_minutes_difference bigint,
-    @utc_minutes_original bigint;
+    @utc_minutes_original bigint,
+    @df integer,
+    @work_start_int integer,
+    @work_end_int integer;
 
 
 /*
@@ -13870,7 +13901,9 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @duration_ms bigint,
           @execution_type_desc nvarchar(60),
           @database_id int,
-          @queries_top bigint',
+          @queries_top bigint,
+          @work_start_int integer,
+          @work_end_int integer',
     @plans_top =
         CASE
             WHEN @include_plan_ids IS NULL
@@ -14070,7 +14103,10 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             MINUTE,
             SYSUTCDATETIME(),
             SYSDATETIME()
-        );
+        ),
+    @df = @@DATEFIRST,
+    @work_start_int = 0,
+    @work_end_int = 0;
 
 /*
 Some parameters can't be NULL,
@@ -14119,6 +14155,8 @@ SELECT
         ISNULL(@troubleshoot_performance, 0),
     @get_all_databases =
         ISNULL(@get_all_databases, 0),
+    @workdays =
+        ISNULL(@workdays, 0),
     /*
         doing start and end date last because they're more complicated
         if start or end date is null,
@@ -14199,6 +14237,7 @@ BEGIN
                 @start_date_original
             );
 END;
+
 /*
 Let's make sure things will work
 */
@@ -14692,6 +14731,139 @@ BEGIN
         @where_clause += N'AND   qsrs.execution_type_desc = @execution_type_desc' + @nc10;
 END;
 
+IF @workdays = 1
+BEGIN
+    SELECT
+        @work_start = LOWER(REPLACE(@work_start, ' ', '')),
+        @work_end   = LOWER(REPLACE(@work_end, ' ', ''));
+    
+    INSERT
+        #am_pm
+    (
+        am_pm,
+        t12,
+        t24
+    )
+    SELECT
+        am_pm = 
+            CASE
+                WHEN y.t24 BETWEEN 1 AND 11
+                THEN RTRIM(y.t12) + 'am'
+                WHEN y.t24 = 0
+                THEN RTRIM(y.t12) + 'am'
+                ELSE RTRIM(y.t12) + 'pm'
+            END,
+        y.t12,
+        y.t24
+    FROM
+    (
+        SELECT
+            t12 = 
+                CASE x.t12
+                     WHEN 0
+                     THEN 12
+                     ELSE x.t12
+                END,
+            t24 = 
+                CASE 
+                    WHEN x.t24 < 24
+                    THEN x.t24
+                    ELSE 0
+                END
+        FROM
+        (
+            SELECT TOP (24)
+                t12 = 
+                    ROW_NUMBER() OVER
+                    (
+                        ORDER BY
+                            1/0
+                    ) % 12,
+                t24 = 
+                    ROW_NUMBER() OVER
+                    (
+                        ORDER BY
+                            1/0
+                    )
+            FROM sys.messages AS m
+        ) AS x
+    ) AS y
+    ORDER BY
+        y.t24;
+    
+    SELECT
+        @work_start_int =
+        (
+            SELECT
+                ap.t24
+            FROM #am_pm AS ap
+            WHERE ap.am_pm = @work_start
+        ),
+        @work_end_int =
+        (
+            SELECT
+                ap.t24
+            FROM #am_pm AS ap
+            WHERE ap.am_pm = @work_end
+        );
+    
+    IF  @work_start_int IS NULL
+    AND @work_end_int   IS NULL
+    BEGIN
+         SELECT
+             @work_start_int = 9,
+             @work_end_int = 17;
+    END;
+    
+    IF  @work_start_int IS NOT NULL
+    AND @work_end_int   IS NULL
+    BEGIN
+        SELECT
+            @work_end_int = @work_start_int + 8;
+    END;
+    
+    IF  @work_start_int IS NULL
+    AND @work_end_int   IS NOT NULL
+    BEGIN
+        SELECT
+            @work_start_int = @work_end_int - 8;
+    END;
+
+    SELECT
+        @work_start_int += 
+            DATEDIFF
+            (
+                MINUTE,
+                SYSDATETIME(),
+                SYSUTCDATETIME()
+            ) / 60,
+        @work_end_int += 
+            DATEDIFF
+            (
+                MINUTE,
+                SYSDATETIME(),
+                SYSUTCDATETIME()
+            ) / 60;
+ 
+    IF @df = 1
+    BEGIN
+           SELECT
+               @where_clause += N'AND  DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 6' + @nc10;
+    END;/*df 1*/
+    
+    IF @df = 7
+    BEGIN
+           SELECT
+               @where_clause += N'AND  DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 2 AND 6' + @nc10;
+    END;/*df 7*/
+
+    IF  @work_start_int IS NOT NULL
+    AND @work_end_int IS NOT NULL
+    BEGIN
+        SELECT
+            @where_clause += N'AND  DATEPART(HOUR, qsrs.last_execution_time) BETWEEN @work_start_int AND @work_end_int' + @nc10;
+    END; /*Work hours*/
+END; /*Final end*/
 
 /*
 In this section we set up the filter if someone's searching for
@@ -16067,21 +16239,21 @@ SELECT DISTINCT
    qsp.plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
 WHERE NOT EXISTS
-          (
-              SELECT
-                 1/0
-              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-              JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                ON qsqt.query_text_id = qsq.query_text_id
-              WHERE qsq.query_id = qsp.query_id
-              AND   qsqt.query_sql_text NOT LIKE N''ALTER INDEX%''
-              AND   qsqt.query_sql_text NOT LIKE N''ALTER TABLE%''
-              AND   qsqt.query_sql_text NOT LIKE N''CREATE%INDEX%''
-              AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
-              AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
-              AND   qsqt.query_sql_text NOT LIKE N''SELECT StatMan%''
-              AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
-          )
+      (
+          SELECT
+             1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+            ON qsqt.query_text_id = qsq.query_text_id
+          WHERE qsq.query_id = qsp.query_id
+          AND   qsqt.query_sql_text NOT LIKE N''ALTER INDEX%''
+          AND   qsqt.query_sql_text NOT LIKE N''ALTER TABLE%''
+          AND   qsqt.query_sql_text NOT LIKE N''CREATE%INDEX%''
+          AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
+          AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
+          AND   qsqt.query_sql_text NOT LIKE N''SELECT StatMan%''
+          AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
+      )
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -16200,7 +16372,9 @@ EXEC sys.sp_executesql
     @duration_ms,
     @execution_type_desc,
     @database_id,
-    @queries_top;
+    @queries_top,
+    @work_start_int,
+    @work_end_int;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -16382,7 +16556,9 @@ EXEC sys.sp_executesql
     @duration_ms,
     @execution_type_desc,
     @database_id,
-    @queries_top;
+    @queries_top,
+    @work_start_int,
+    @work_end_int;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -17195,18 +17371,18 @@ SELECT
     is_contained
 FROM ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
 WHERE EXISTS
-(
-    SELECT
-        1/0
-    FROM #query_store_runtime_stats AS qsrs
-    JOIN #query_store_plan AS qsp
-      ON  qsrs.plan_id = qsp.plan_id
-      AND qsrs.database_id = qsp.database_id
-    JOIN #query_store_query AS qsq
-      ON  qsp.query_id = qsq.query_id
-      AND qsp.database_id = qsq.database_id
-    WHERE qsq.context_settings_id = qcs.context_settings_id
-)
+      (
+          SELECT
+              1/0
+          FROM #query_store_runtime_stats AS qsrs
+          JOIN #query_store_plan AS qsp
+            ON  qsrs.plan_id = qsp.plan_id
+            AND qsrs.database_id = qsp.database_id
+          JOIN #query_store_query AS qsq
+            ON  qsp.query_id = qsq.query_id
+            AND qsp.database_id = qsq.database_id
+          WHERE qsq.context_settings_id = qcs.context_settings_id
+      )
 OPTION(RECOMPILE);';
 
 INSERT
@@ -17373,12 +17549,12 @@ SELECT
     qspf.last_updated_time
 FROM ' + @database_name_quoted + N'.sys.query_store_plan_feedback AS qspf
 WHERE EXISTS
-(
-    SELECT
-        1/0
-    FROM #query_store_plan AS qsp
-    WHERE qspf.plan_id = qsp.plan_id
-)
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE qspf.plan_id = qsp.plan_id
+      )
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -17445,13 +17621,13 @@ SELECT
     qsqv.dispatcher_plan_id
 FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
 WHERE EXISTS
-(
-    SELECT
-        1/0
-    FROM #query_store_plan AS qsp
-    WHERE qsqv.query_variant_query_id = qsp.query_id
-    AND   qsqv.dispatcher_plan_id = qsp.plan_id
-)
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE qsqv.query_variant_query_id = qsp.query_id
+          AND   qsqv.dispatcher_plan_id = qsp.plan_id
+      )
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -17517,12 +17693,12 @@ SELECT
     qsqh.source_desc
 FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
 WHERE EXISTS
-(
-    SELECT
-        1/0
-    FROM #query_store_plan AS qsp
-    WHERE qsqh.query_id = qsp.query_id
-)
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE qsqh.query_id = qsp.query_id
+      )
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -20079,6 +20255,8 @@ BEGIN
             @start_date,
         end_date =
             @end_date,
+        timezone =
+            @timezone,
         execution_count =
             @execution_count,
         duration_ms =
@@ -20113,22 +20291,30 @@ BEGIN
             @query_text_search,
         wait_filter =
             @wait_filter,
+        query_type =
+            @query_type,
         expert_mode =
             @expert_mode,
-        query_types =
-            @query_type,
         format_output =
             @format_output,
-        version =
-            @version,
-        version_date =
-            @version_date,
+        get_all_databases =
+            @get_all_databases,
+        workdays =
+            @workdays,
+        work_start =
+            @work_start,
+        work_end =
+            @work_end,
         help =
             @help,
         debug =
             @debug,
         troubleshoot_performance =
-            @troubleshoot_performance;
+            @troubleshoot_performance,
+        version =
+            @version,
+        version_date =
+            @version_date;
 
     SELECT
         parameter_type =
@@ -20139,12 +20325,6 @@ BEGIN
             @engine,
         product_version =
             @product_version,
-        start_date_original =
-            @start_date_original,
-        end_date_original =
-            @end_date_original,
-        timezone =
-            @timezone,
         database_id =
             @database_id,
         database_name_quoted =
@@ -20198,11 +20378,23 @@ BEGIN
        em = 
            @em,
        fo = 
-           @fo,
+          @fo,
+       start_date_original =
+           @start_date_original,
+       end_date_original =
+           @end_date_original,
+       timezone =
+           @timezone,
        utc_minutes_difference =
            @utc_minutes_difference,
        utc_minutes_original =
-           @utc_minutes_original;
+           @utc_minutes_original,
+        df =
+            @df,
+        work_start_int =
+            @work_start_int,
+        work_end_int =
+            @work_end_int;
 
     IF EXISTS
        (
@@ -20923,7 +21115,7 @@ BEGIN
        (
           SELECT
               1/0
-          FROM #troubleshoot_performance AS qcs
+          FROM #troubleshoot_performance AS tp
        )
     BEGIN
         SELECT
@@ -20933,6 +21125,29 @@ BEGIN
         FROM #troubleshoot_performance AS tp
         ORDER BY
             tp.id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#troubleshoot_performance is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #am_pm AS ap
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#am_pm',
+            ap.*
+        FROM #am_pm AS ap
+        ORDER BY
+            ap.t24
         OPTION(RECOMPILE);
     END;
     ELSE
