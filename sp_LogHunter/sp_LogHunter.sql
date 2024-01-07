@@ -10,20 +10,20 @@ SET STATISTICS TIME, IO OFF;
 GO
 
 /*
-██╗      ██████╗  ██████╗                         
-██║     ██╔═══██╗██╔════╝                         
-██║     ██║   ██║██║  ███╗                        
-██║     ██║   ██║██║   ██║                        
-███████╗╚██████╔╝╚██████╔╝                        
-╚══════╝ ╚═════╝  ╚═════╝                         
-                                                  
+██╗      ██████╗  ██████╗                        
+██║     ██╔═══██╗██╔════╝                        
+██║     ██║   ██║██║  ███╗                       
+██║     ██║   ██║██║   ██║                       
+███████╗╚██████╔╝╚██████╔╝                       
+╚══════╝ ╚═════╝  ╚═════╝                        
+                                                 
 ██╗  ██╗██╗   ██╗███╗   ██╗████████╗███████╗██████╗
 ██║  ██║██║   ██║████╗  ██║╚══██╔══╝██╔════╝██╔══██╗
 ███████║██║   ██║██╔██╗ ██║   ██║   █████╗  ██████╔╝
 ██╔══██║██║   ██║██║╚██╗██║   ██║   ██╔══╝  ██╔══██╗
 ██║  ██║╚██████╔╝██║ ╚████║   ██║   ███████╗██║  ██║
 ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
-   
+  
 Copyright 2024 Darling Data, LLC
 https://www.erikdarlingdata.com/
 
@@ -42,11 +42,11 @@ EXEC sp_LogHunter;
 
 */
 
-IF OBJECT_ID('dbo.sp_LogHunter') IS NULL   
-   BEGIN   
-       EXEC ('CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');   
-   END;   
-GO 
+IF OBJECT_ID('dbo.sp_LogHunter') IS NULL  
+   BEGIN  
+       EXEC ('CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');  
+   END;  
+GO
 
 ALTER PROCEDURE
     dbo.sp_LogHunter
@@ -65,9 +65,9 @@ ALTER PROCEDURE
 )
 WITH RECOMPILE
 AS
-SET STATISTICS XML OFF;   
+SET STATISTICS XML OFF;  
 SET NOCOUNT ON;
-SET XACT_ABORT ON;   
+SET XACT_ABORT ON;  
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
@@ -83,7 +83,7 @@ BEGIN
         SELECT  'you can use me to look through your error logs for bad stuff' UNION ALL
         SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_LogHunter' UNION ALL
         SELECT  'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
-   
+  
         SELECT
             parameter_name =
                 ap.name,
@@ -138,38 +138,49 @@ BEGIN
           AND ap.user_type_id = t.user_type_id
         WHERE o.name = N'sp_LogHunter'
         OPTION(RECOMPILE);
-   
+  
         SELECT
             mit_license_yo = 'i am MIT licensed, so like, do whatever'
-     
+    
         UNION ALL
-     
+    
         SELECT
             mit_license_yo = 'see printed messages for full license';
-     
+    
         RAISERROR('
     MIT License
-   
+  
     Copyright 2023 Darling Data, LLC
-   
+  
     https://www.erikdarlingdata.com/
-   
+  
     Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
     to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
     sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
     following conditions:
-   
+  
     The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-   
+  
     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
     MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
     FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
     WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ', 0, 1) WITH NOWAIT;
-   
+  
         RETURN;
     END;
- 
+   
+    /*Check if we have sa permissisions*/
+    IF
+    (
+        SELECT
+            sa = ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0)
+    ) = 0
+    BEGIN
+       RAISERROR(N'Current user is not a member of sysadmin, so we can''t read the error log', 11, 1) WITH NOWAIT;
+       RETURN;
+    END;
+
     /*Check if we're using RDS*/
     IF OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log') IS NOT NULL
     BEGIN
@@ -204,7 +215,7 @@ BEGIN
        RAISERROR(N'%i is not not a valid language_id in sys.messages.', 11, 1, @language_id) WITH NOWAIT;
        RETURN;
     END;
-   
+  
     /*Fix days back a little bit*/
     IF @days_back = 0
     BEGIN
@@ -217,7 +228,7 @@ BEGIN
         SELECT
             @days_back *= -1;
     END;
-   
+  
     IF  @start_date IS NOT NULL
     AND @end_date   IS NOT NULL
     AND @days_back  IS NOT NULL
@@ -266,7 +277,7 @@ BEGIN
         @t_searches int = 0 /*total number of searches to run*/,
         @l_count int = 1 /*loop count*/,
         @stopper bit = 0 /*stop loop execution safety*/;
-   
+  
     /*temp tables for holding temporary things*/
     CREATE TABLE
         #error_log
@@ -275,11 +286,11 @@ BEGIN
         process_info nvarchar(100),
         text nvarchar(4000)
     );
-  
+ 
     CREATE TABLE
         #enum
     (
-        archive int 
+        archive int
             PRIMARY KEY,
         log_date date,
         log_size bigint
@@ -346,7 +357,7 @@ BEGIN
         AND   e.archive > 0
         OPTION(RECOMPILE);
     END;
-   
+  
     /*filter out log files we won't use, if @start_date and @end_date are set*/
     IF  @start_date IS NOT NULL
     AND @end_date IS NOT NULL
@@ -426,22 +437,22 @@ BEGIN
     FROM
     (
         VALUES
-            ('error'), ('corrupt'), ('insufficient'), ('DBCC CHECKDB'), ('Attempt to fetch logical page'), ('Total Log Writer threads'), 
+            ('error'), ('corrupt'), ('insufficient'), ('DBCC CHECKDB'), ('Attempt to fetch logical page'), ('Total Log Writer threads'),
             ('Wait for redo catchup for the database'), ('Restart the server to resolve this problem'), ('running low'), ('unexpected'),
-            ('fail'), ('contact'), ('incorrect'), ('allocate'), ('allocation'), ('Timeout occurred'), ('memory manager'), ('operating system'), 
+            ('fail'), ('contact'), ('incorrect'), ('allocate'), ('allocation'), ('Timeout occurred'), ('memory manager'), ('operating system'),
             ('cannot obtain a LOCK resource'), ('Server halted'), ('spawn'), ('BobMgr'), ('Sort is retrying the read'), ('service'),
-            ('resumed'), ('repair the database'), ('buffer'), ('I/O Completion Port'), ('assert'), ('integrity'), ('latch'), ('SQL Server is exiting'), 
+            ('resumed'), ('repair the database'), ('buffer'), ('I/O Completion Port'), ('assert'), ('integrity'), ('latch'), ('SQL Server is exiting'),
             ('SQL Server is unable to run'), ('suspect'), ('restore the database'), ('checkpoint'), ('version store is full'), ('Setting database option'),
             ('Perform a restore if necessary'), ('Autogrow of file'), ('Bringing down database'), ('hot add'), ('Server shut down'),
-            ('stack'), ('inconsistency.'), ('invalid'), ('time out occurred'), ('The transaction log for database'), ('The virtual log file sequence'), 
+            ('stack'), ('inconsistency.'), ('invalid'), ('time out occurred'), ('The transaction log for database'), ('The virtual log file sequence'),
             ('Cannot accept virtual log file sequence'), ('The transaction in database'), ('Shutting down'), ('thread pool'), ('debug'), ('resolving'),
             ('Cannot load the Query Store metadata'), ('Cannot acquire'), ('SQL Server evaluation period has expired'), ('terminat'), ('currently busy'),
             ('SQL Server has been configured for lightweight pooling'), ('IOCP'), ('Not enough memory for the configured number of locks'),
-            ('The tempdb database data files are not configured with the same initial size and autogrowth settings'), ('The SQL Server image'), ('affinity'), 
-            ('SQL Server is starting'), ('Ignoring trace flag '), ('20 physical cores'), ('No free space'), ('Warning ******************'), 
+            ('The tempdb database data files are not configured with the same initial size and autogrowth settings'), ('The SQL Server image'), ('affinity'),
+            ('SQL Server is starting'), ('Ignoring trace flag '), ('20 physical cores'), ('No free space'), ('Warning ******************'),
             ('SQL Server should be restarted'), ('Server name is'), ('Could not connect'), ('yielding'), ('worker thread'), ('A new connection was rejected'),
-            ('A significant part of sql server process memory has been paged out'), ('Dispatcher'), ('I/O requests taking longer than'), ('killed'), 
-            ('SQL Server could not start'), ('SQL Server cannot start'), ('System Manufacturer:'), ('columnstore'), ('timed out'), ('inconsistent'), 
+            ('A significant part of sql server process memory has been paged out'), ('Dispatcher'), ('I/O requests taking longer than'), ('killed'),
+            ('SQL Server could not start'), ('SQL Server cannot start'), ('System Manufacturer:'), ('columnstore'), ('timed out'), ('inconsistent'),
             ('flushcache'), ('Recovery for availability database')
     ) AS v (search_string)
     CROSS JOIN
@@ -455,7 +466,7 @@ BEGIN
                 N'"' + CONVERT(nvarchar(30), @end_date) + N'"'
     ) AS c
     WHERE @custom_message_only = 0
-    OPTION(RECOMPILE);  
+    OPTION(RECOMPILE); 
 
     /*deal with a custom search string here*/
     INSERT
@@ -488,7 +499,7 @@ BEGIN
     BEGIN
         SELECT table_name = '#search', s.* FROM #search AS s;
     END;
-   
+  
     /*Set the min and max logs we're getting for the loop*/
     SELECT
         @l_log = MIN(e.archive),
@@ -505,7 +516,7 @@ BEGIN
     END;
 
     IF @debug = 1 BEGIN RAISERROR('Declaring cursor', 0, 1) WITH NOWAIT; END;
-  
+ 
     /*start the loops*/
     WHILE @l_log <= @h_log
     BEGIN
@@ -520,17 +531,17 @@ BEGIN
         SELECT
             command
         FROM #search;
-       
+      
         IF @debug = 1 BEGIN RAISERROR('Opening cursor', 0, 1) WITH NOWAIT; END;
-        
-        OPEN c;
        
+        OPEN c;
+      
         FETCH FIRST
         FROM c
         INTO @c;
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
-        WHILE @@FETCH_STATUS = 0 AND @stopper = 0          
+        WHILE @@FETCH_STATUS = 0 AND @stopper = 0         
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Entering cursor', 0, 1) WITH NOWAIT; END;
             /*Replace the canary value with the log number we're working in*/
@@ -547,9 +558,9 @@ BEGIN
             BEGIN
                 RAISERROR('log %i of %i', 0, 1, @l_log, @h_log) WITH NOWAIT;
                 RAISERROR('search %i of %i', 0, 1, @l_count, @t_searches) WITH NOWAIT;
-                RAISERROR('@c: %s', 0, 1, @c) WITH NOWAIT;        
+                RAISERROR('@c: %s', 0, 1, @c) WITH NOWAIT;       
             END;
-          
+         
             IF @debug = 1 BEGIN RAISERROR('Inserting to error log', 0, 1) WITH NOWAIT; END;
             BEGIN
                 BEGIN TRY
@@ -574,10 +585,10 @@ BEGIN
                     VALUES
                     (
                         @c
-                    );          
+                    );         
                 END CATCH;
             END;
-          
+         
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;
             /*Get the next search command*/
             FETCH NEXT
@@ -589,7 +600,7 @@ BEGIN
                 @l_count += 1;
 
         END;
-          
+         
         IF @debug = 1 BEGIN RAISERROR('Getting next log', 0, 1) WITH NOWAIT; END;
         /*Increment the log numbers*/
         SELECT
@@ -601,18 +612,18 @@ BEGIN
 
         IF @debug = 1
         BEGIN
-            RAISERROR('log %i of %i', 0, 1, @l_log, @h_log) WITH NOWAIT;    
+            RAISERROR('log %i of %i', 0, 1, @l_log, @h_log) WITH NOWAIT;   
         END;
 
         /*Stop the loop if this is NULL*/
         IF @l_log IS NULL
         BEGIN
-            IF @debug = 1 BEGIN RAISERROR('Breaking', 0, 1) WITH NOWAIT; END;         
+            IF @debug = 1 BEGIN RAISERROR('Breaking', 0, 1) WITH NOWAIT; END;        
             SET @stopper = 1;
             BREAK;
-        END;              
+        END;             
         IF @debug = 1 BEGIN RAISERROR('Ended WHILE loop', 0, 1) WITH NOWAIT; END;
-  
+ 
         /*Close out the cursor*/
         CLOSE c;
         DEALLOCATE c;
@@ -668,7 +679,7 @@ BEGIN
             1/0
         FROM #errors AS e
     )
-    BEGIN      
+    BEGIN     
         SELECT
             table_name =
                 '#errors',
