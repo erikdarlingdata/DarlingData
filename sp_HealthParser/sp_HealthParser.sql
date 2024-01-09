@@ -44,7 +44,7 @@ ALTER PROCEDURE
     @what_to_check varchar(10) = 'all', /*Specify which portion of the data to check*/
     @start_date datetimeoffset(7) = NULL, /*Begin date for events*/
     @end_date datetimeoffset(7) = NULL, /*End date for events*/
-    @warnings_only bit = NULL, /*Only show results from recorded warnings*/
+    @warnings_only bit = 0, /*Only show results from recorded warnings*/
     @database_name sysname = NULL, /*Filter to a specific database for blocking)*/
     @wait_duration_ms bigint = 0, /*Minimum duration to show query waits*/
     @wait_round_interval_minutes bigint = 60, /*Nearest interval to round wait stats to*/
@@ -283,8 +283,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         @end_date
                     )
             END,
-        @wait_duration_ms = /*convert to microseconds*/
-            @wait_duration_ms * 1000,
         @wait_round_interval_minutes = /*do this i guess?*/
             CASE
                 WHEN @wait_round_interval_minutes < 1
@@ -771,7 +769,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ) AS x
         CROSS APPLY x.x.nodes('//event') AS e(x)
         WHERE 1 = 1
-        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        AND   e.x.exist('@timestamp[.>= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
         AND   e.x.exist('@name[.= "security_error_ring_buffer_recorded"]') = 0
         AND   e.x.exist('@name[.= "error_reported"]') = 0
         AND   e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 0
@@ -888,18 +886,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     w.x.value('@timestamp', 'datetime2')
                 ),
             wait_type = w.x.value('(data[@name="wait_type"]/text/text())[1]', 'nvarchar(60)'),
-            duration_ms = CONVERT(decimal(38, 2), w.x.value('(data[@name="duration"]/value/text())[1]', 'bigint') / 1000.),
-            signal_duration_ms = CONVERT(decimal(38, 2), w.x.value('(data[@name="signal_duration"]/value/text())[1]', 'bigint') / 1000.),
+            duration_ms = CONVERT(bigint, w.x.value('(data[@name="duration"]/value/text())[1]', 'bigint')),
+            signal_duration_ms = CONVERT(bigint, w.x.value('(data[@name="signal_duration"]/value/text())[1]', 'bigint')),
             wait_resource = w.x.value('(data[@name="wait_resource"]/value/text())[1]', 'nvarchar(256)'),
             sql_text_pre = w.x.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(max)'),
-            session_id = w.x.value('(action[@name="session_id"]/value/text())[1]', 'bigint'),
+            session_id = w.x.value('(action[@name="session_id"]/value/text())[1]', 'integer'),
             xml = w.x.query('.')
         INTO #waits_queries
         FROM #wait_info AS wi
         CROSS APPLY wi.wait_info.nodes('//event') AS w(x)
-        WHERE w.x.exist('(action[@name="session_id"]/value/text())[.=0]') = 0
+        WHERE w.x.exist('(action[@name="session_id"]/value/text())[.= 0]') = 0
         AND   w.x.exist('(action[@name="sql_text"]/value/text())') = 1
-        AND   w.x.exist('(data[@name="duration"]/value/text())[. >= sql:variable("@wait_duration_ms")]') = 1
+        AND   w.x.exist('(data[@name="duration"]/value/text())[.>= sql:variable("@wait_duration_ms")]') = 1
         AND   NOT EXISTS
               (
                   SELECT
@@ -939,8 +937,38 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             finding = 'queries with significant waits',
             wq.event_time,
             wq.wait_type,
-            wq.duration_ms,
-            wq.signal_duration_ms,
+            duration_ms =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            wq.duration_ms
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            signal_duration_ms =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            wq.signal_duration_ms
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
             wq.wait_resource,
             query_text =
                 (
@@ -978,15 +1006,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
             waits = w2.x2.value('@waits', 'bigint'),
-            average_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@averageWaitTime', 'bigint') / 1000.),
-            max_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@maxWaitTime', 'bigint') / 1000.),
+            average_wait_time_ms = CONVERT(bigint, w2.x2.value('@averageWaitTime', 'bigint')),
+            max_wait_time_ms = CONVERT(bigint, w2.x2.value('@maxWaitTime', 'bigint')),
             xml = w.x.query('.')
         INTO #topwaits_count
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.="QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         AND   NOT EXISTS
               (
                   SELECT
@@ -1027,8 +1055,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SUM(CONVERT(bigint, tc.waits)) *
                 AVG(tc.average_wait_time_ms) +
                 MAX(tc.max_wait_time_ms),
-            average_wait_time_ms = CONVERT(decimal(38, 2), AVG(tc.average_wait_time_ms)),
-            max_wait_time_ms = CONVERT(decimal(38, 2), MAX(tc.max_wait_time_ms))
+            average_wait_time_ms = CONVERT(bigint, AVG(tc.average_wait_time_ms)),
+            max_wait_time_ms = CONVERT(bigint, MAX(tc.max_wait_time_ms))
+        INTO #tc
         FROM #topwaits_count AS tc
         GROUP BY
             tc.wait_type,
@@ -1047,6 +1076,80 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             event_time_rounded DESC,
             waits DESC
+        OPTION(RECOMPILE);
+
+        SELECT
+            t.finding,
+            t.event_time_rounded,
+            t.wait_type,
+            waits =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            t.waits
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            total_wait_time_ms =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            t.total_wait_time_ms
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            average_wait_time_ms =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            t.average_wait_time_ms
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            max_wait_time_ms =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            t.max_wait_time_ms
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                )
+        FROM #tc AS t
+        ORDER BY
+            t.event_time_rounded DESC,
+            t.waits DESC
         OPTION(RECOMPILE);
            
         /*Grab waits by duration*/
@@ -1073,15 +1176,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
             waits = w2.x2.value('@waits', 'bigint'),
-            average_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@averageWaitTime', 'bigint') / 1000.),
-            max_wait_time_ms = CONVERT(decimal(38, 2), w2.x2.value('@maxWaitTime', 'bigint') / 1000.),
+            average_wait_time_ms = CONVERT(bigint, w2.x2.value('@averageWaitTime', 'bigint')),
+            max_wait_time_ms = CONVERT(bigint, w2.x2.value('@maxWaitTime', 'bigint')),
             xml = w.x.query('.')
         INTO #topwaits_duration
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.="QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         AND   NOT EXISTS
               (
                   SELECT
@@ -1122,8 +1225,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SUM(CONVERT(bigint, td.waits)) *
                 AVG(td.average_wait_time_ms) +
                 MAX(td.max_wait_time_ms),
-            average_wait_time_ms = CONVERT(decimal(38, 2), AVG(td.average_wait_time_ms)),
-            max_wait_time_ms = CONVERT(decimal(38, 2), MAX(td.max_wait_time_ms))
+            average_wait_time_ms = CONVERT(bigint, AVG(td.average_wait_time_ms)),
+            max_wait_time_ms = CONVERT(bigint, MAX(td.max_wait_time_ms))
+        INTO #td
         FROM #topwaits_duration AS td
         GROUP BY
             td.wait_type,
@@ -1142,6 +1246,80 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             event_time_rounded DESC,
             total_wait_time_ms DESC
+        OPTION(RECOMPILE);
+
+        SELECT
+            t.finding,
+            t.event_time_rounded,
+            t.wait_type,
+            waits =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            t.waits
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            total_wait_time_ms =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            t.total_wait_time_ms
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            average_wait_time_ms =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            t.average_wait_time_ms
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            max_wait_time_ms =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            t.max_wait_time_ms
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                )
+        FROM #td AS t
+        ORDER BY
+            t.event_time_rounded DESC,
+            t.total_wait_time_ms DESC
         OPTION(RECOMPILE);
     END;
   
@@ -1170,17 +1348,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ioLatchTimeouts = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@ioLatchTimeouts)[1]', 'bigint'),
             intervalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@intervalLongIos)[1]', 'bigint'),
             totalLongIos = w.x.value('(/event/data[@name="data"]/value/ioSubsystem/@totalLongIos)[1]', 'bigint'),
-            longestPendingRequests_duration_ms =
-                CONVERT(decimal(38, 2), w2.x2.value('@duration', 'bigint') / 1000.),
-            longestPendingRequests_filePath =
-                w2.x2.value('@filePath', 'nvarchar(500)'),
+            longestPendingRequests_duration_ms = CONVERT(bigint, w2.x2.value('@duration', 'bigint')),
+            longestPendingRequests_filePath = w2.x2.value('@filePath', 'nvarchar(500)'),
             xml = w.x.query('.')
         INTO #io
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
         OUTER APPLY w.x.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
-        WHERE w.x.exist('(data[@name="component"]/text[.="IO_SUBSYSTEM"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        WHERE w.x.exist('(data[@name="component"]/text[.= "IO_SUBSYSTEM"])') = 1
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         OPTION(RECOMPILE);
        
         IF @debug = 1
@@ -1200,10 +1376,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             i.ioLatchTimeouts,
             i.intervalLongIos,
             i.totalLongIos,
-            longestPendingRequests_duration_s =
+            longestPendingRequests_duration_ms =
                 ISNULL(SUM(i.longestPendingRequests_duration_ms), 0),
             longestPendingRequests_filePath =
                 ISNULL(i.longestPendingRequests_filePath, 'N/A')
+        INTO #i
         FROM #io AS i
         GROUP BY
             i.event_time,
@@ -1212,6 +1389,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             i.intervalLongIos,
             i.totalLongIos,
             ISNULL(i.longestPendingRequests_filePath, 'N/A')
+        ORDER BY
+            i.event_time DESC
+        OPTION(RECOMPILE);
+
+        SELECT
+            i.finding,
+            i.event_time,
+            i.state,
+            i.ioLatchTimeouts,
+            i.intervalLongIos,
+            i.totalLongIos,
+            longestPendingRequests_duration_ms =
+                REPLACE
+                (
+                    CONVERT
+                    (
+                        nvarchar(30),
+                        CONVERT
+                        (
+                            money,
+                            i.longestPendingRequests_duration_ms
+                        ),
+                        1
+                    ),
+                N'.00',
+                N''
+                ),
+            i.longestPendingRequests_filePath
+        FROM #i AS i
         ORDER BY
             i.event_time DESC
         OPTION(RECOMPILE);
@@ -1254,8 +1460,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INTO #scheduler_details
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.="QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         OPTION(RECOMPILE);
        
         IF @debug = 1
@@ -1313,24 +1519,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             isAnyPoolOutOfMemory = r.c.value('@isAnyPoolOutOfMemory', 'bit'),
             processOutOfMemoryPeriod = r.c.value('@processOutOfMemoryPeriod', 'bigint'),
             name = r.c.value('(//memoryReport/@name)[1]', 'varchar(128)'),
-            available_physical_memory_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Available Physical Memory"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
-            available_virtual_memory_gb =  CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Available Virtual Memory"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
-            available_paging_file_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Available Paging File"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
-            working_set_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Working Set"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
+            available_physical_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Physical Memory"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
+            available_virtual_memory_gb =  CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Virtual Memory"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
+            available_paging_file_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Paging File"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
+            working_set_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Working Set"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
             percent_of_committed_memory_in_ws = r.c.value('(//memoryReport/entry[@description[.="Percent of Committed Memory in WS"]]/@value)[1]', 'bigint'),
             page_faults = r.c.value('(//memoryReport/entry[@description[.="Page Faults"]]/@value)[1]', 'bigint'),
             system_physical_memory_high = r.c.value('(//memoryReport/entry[@description[.="System physical memory high"]]/@value)[1]', 'bigint'),
             system_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="System physical memory low"]]/@value)[1]', 'bigint'),
             process_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process physical memory low"]]/@value)[1]', 'bigint'),
             process_virtual_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process virtual memory low"]]/@value)[1]', 'bigint'),
-            vm_reserved_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="VM Reserved"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-            vm_committed_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="VM Committed"]]/@value)[1]', 'bigint') / 1024. / 1024.),
+            vm_reserved_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Reserved"]]/@value)[1]', 'bigint') / 1024. / 1024.),
+            vm_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Committed"]]/@value)[1]', 'bigint') / 1024. / 1024.),
             locked_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Locked Pages Allocated"]]/@value)[1]', 'bigint'),
             large_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Large Pages Allocated"]]/@value)[1]', 'bigint'),
-            emergency_memory_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Emergency Memory"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-            emergency_memory_in_use_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Emergency Memory In Use"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-            target_committed_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Target Committed"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-            current_committed_gb = CONVERT(decimal(38, 2), r.c.value('(//memoryReport/entry[@description[.="Current Committed"]]/@value)[1]', 'bigint') / 1024. / 1024.),
+            emergency_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory"]]/@value)[1]', 'bigint') / 1024. / 1024.),
+            emergency_memory_in_use_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory In Use"]]/@value)[1]', 'bigint') / 1024. / 1024.),
+            target_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Target Committed"]]/@value)[1]', 'bigint') / 1024. / 1024.),
+            current_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Current Committed"]]/@value)[1]', 'bigint') / 1024. / 1024.),
             pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Pages Allocated"]]/@value)[1]', 'bigint'),
             pages_reserved = r.c.value('(//memoryReport/entry[@description[.="Pages Reserved"]]/@value)[1]', 'bigint'),
             pages_free = r.c.value('(//memoryReport/entry[@description[.="Pages Free"]]/@value)[1]', 'bigint'),
@@ -1436,8 +1642,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INTO #health
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.="SYSTEM"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        WHERE w.x.exist('(data[@name="component"]/text[.= "SYSTEM"])') = 1
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         OPTION(RECOMPILE);
         
         IF @debug = 1
@@ -1523,9 +1729,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #sp_server_diagnostics_component_result AS wi
     CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
     CROSS APPLY w.x.nodes('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') AS w2(x2)
-    WHERE w.x.exist('(data[@name="component"]/text[.="QUERY_PROCESSING"])') = 1
+    WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
     AND   w.x.exist('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') = 1
-    AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+    AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -1574,9 +1780,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INTO #blocking_xml
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        WHERE w.x.exist('(data[@name="component"]/text[.="QUERY_PROCESSING"])') = 1
+        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
         AND   w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.="WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         OPTION(RECOMPILE);
        
         IF @debug = 1
