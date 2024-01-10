@@ -1,4 +1,4 @@
--- Compile Date: 01/09/2024 18:50:14 UTC
+-- Compile Date: 01/10/2024 20:28:13 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -1053,9 +1053,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             tc.wait_type,
             waits = SUM(CONVERT(bigint, tc.waits)),
             total_wait_time_ms =
-                SUM(CONVERT(bigint, tc.waits)) *
-                AVG(tc.average_wait_time_ms) +
-                MAX(tc.max_wait_time_ms),
+                (
+                    SUM(CONVERT(bigint, tc.waits)) *
+                    AVG(tc.average_wait_time_ms)
+                ) + MAX(tc.max_wait_time_ms),
             average_wait_time_ms = CONVERT(bigint, AVG(tc.average_wait_time_ms)),
             max_wait_time_ms = CONVERT(bigint, MAX(tc.max_wait_time_ms))
         INTO #tc
@@ -1223,9 +1224,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             td.wait_type,
             waits = SUM(CONVERT(bigint, td.waits)),
             total_wait_time_ms =
-                SUM(CONVERT(bigint, td.waits)) *
-                AVG(td.average_wait_time_ms) +
-                MAX(td.max_wait_time_ms),
+                (
+                    SUM(CONVERT(bigint, td.waits)) *
+                    AVG(td.average_wait_time_ms)
+                ) + MAX(td.max_wait_time_ms),
             average_wait_time_ms = CONVERT(bigint, AVG(td.average_wait_time_ms)),
             max_wait_time_ms = CONVERT(bigint, MAX(td.max_wait_time_ms))
         INTO #td
@@ -1520,24 +1522,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             isAnyPoolOutOfMemory = r.c.value('@isAnyPoolOutOfMemory', 'bit'),
             processOutOfMemoryPeriod = r.c.value('@processOutOfMemoryPeriod', 'bigint'),
             name = r.c.value('(//memoryReport/@name)[1]', 'varchar(128)'),
-            available_physical_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Physical Memory"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
-            available_virtual_memory_gb =  CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Virtual Memory"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
-            available_paging_file_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Paging File"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
-            working_set_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Working Set"]]/@value)[1]', 'bigint') / 1024. / 1024. / 1024.),
+            available_physical_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Physical Memory"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
+            available_virtual_memory_gb =  CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Virtual Memory"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
+            available_paging_file_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Available Paging File"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
+            working_set_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Working Set"]]/@value)[1]', 'bigint') / 1024 / 1024 / 1024),
             percent_of_committed_memory_in_ws = r.c.value('(//memoryReport/entry[@description[.="Percent of Committed Memory in WS"]]/@value)[1]', 'bigint'),
             page_faults = r.c.value('(//memoryReport/entry[@description[.="Page Faults"]]/@value)[1]', 'bigint'),
             system_physical_memory_high = r.c.value('(//memoryReport/entry[@description[.="System physical memory high"]]/@value)[1]', 'bigint'),
             system_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="System physical memory low"]]/@value)[1]', 'bigint'),
             process_physical_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process physical memory low"]]/@value)[1]', 'bigint'),
             process_virtual_memory_low = r.c.value('(//memoryReport/entry[@description[.="Process virtual memory low"]]/@value)[1]', 'bigint'),
-            vm_reserved_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Reserved"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-            vm_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Committed"]]/@value)[1]', 'bigint') / 1024. / 1024.),
+            vm_reserved_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Reserved"]]/@value)[1]', 'bigint') / 1024 / 1024),
+            vm_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="VM Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
             locked_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Locked Pages Allocated"]]/@value)[1]', 'bigint'),
             large_pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Large Pages Allocated"]]/@value)[1]', 'bigint'),
-            emergency_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-            emergency_memory_in_use_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory In Use"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-            target_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Target Committed"]]/@value)[1]', 'bigint') / 1024. / 1024.),
-            current_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Current Committed"]]/@value)[1]', 'bigint') / 1024. / 1024.),
+            emergency_memory_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory"]]/@value)[1]', 'bigint') / 1024 / 1024),
+            emergency_memory_in_use_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Emergency Memory In Use"]]/@value)[1]', 'bigint') / 1024 / 1024),
+            target_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Target Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
+            current_committed_gb = CONVERT(bigint, r.c.value('(//memoryReport/entry[@description[.="Current Committed"]]/@value)[1]', 'bigint') / 1024 / 1024),
             pages_allocated = r.c.value('(//memoryReport/entry[@description[.="Pages Allocated"]]/@value)[1]', 'bigint'),
             pages_reserved = r.c.value('(//memoryReport/entry[@description[.="Pages Reserved"]]/@value)[1]', 'bigint'),
             pages_free = r.c.value('(//memoryReport/entry[@description[.="Pages Free"]]/@value)[1]', 'bigint'),
