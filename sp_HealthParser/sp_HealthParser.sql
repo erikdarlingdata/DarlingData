@@ -897,6 +897,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY wi.wait_info.nodes('//event') AS w(x)
         WHERE w.x.exist('(action[@name="session_id"]/value/text())[.= 0]') = 0
         AND   w.x.exist('(action[@name="sql_text"]/value/text())') = 1
+        AND   w.x.exist('(action[@name="sql_text"]/value/text()[contains(., "BACKUP")] )') = 0
         AND   w.x.exist('(data[@name="duration"]/value/text())[.>= sql:variable("@wait_duration_ms")]') = 1
         AND   NOT EXISTS
               (
@@ -1052,9 +1053,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             tc.wait_type,
             waits = SUM(CONVERT(bigint, tc.waits)),
             total_wait_time_ms =
+                SUM
                 (
-                    SUM(CONVERT(bigint, tc.waits)) *
-                    AVG(tc.average_wait_time_ms)
+                    CONVERT
+                    (
+                        bigint, 
+                        tc.waits * 
+                        tc.average_wait_time_ms
+                    )
                 ) + MAX(tc.max_wait_time_ms),
             average_wait_time_ms = CONVERT(bigint, AVG(tc.average_wait_time_ms)),
             max_wait_time_ms = CONVERT(bigint, MAX(tc.max_wait_time_ms))
@@ -1223,9 +1229,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             td.wait_type,
             waits = SUM(CONVERT(bigint, td.waits)),
             total_wait_time_ms =
+                SUM
                 (
-                    SUM(CONVERT(bigint, td.waits)) *
-                    AVG(td.average_wait_time_ms)
+                    CONVERT
+                    (
+                        bigint, 
+                        td.waits * 
+                        td.average_wait_time_ms
+                    )
                 ) + MAX(td.max_wait_time_ms),
             average_wait_time_ms = CONVERT(bigint, AVG(td.average_wait_time_ms)),
             max_wait_time_ms = CONVERT(bigint, MAX(td.max_wait_time_ms))
