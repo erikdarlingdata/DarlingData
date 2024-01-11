@@ -5204,6 +5204,8 @@ BEGIN
         #dm_exec_query_stats;
     TRUNCATE TABLE
         #query_types;
+    TRUNCATE TABLE
+        #am_pm;
 END;
 
 FETCH NEXT
