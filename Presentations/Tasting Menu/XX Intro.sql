@@ -8,8 +8,8 @@
                                             
 I'm Erik!
 
-W: erikdarlingdata.com
-E: erik@erikdarlingdata
+W: erikdarling.com
+E: erik@erikdarling.com
 T: @erikdarlingdata
 
 */

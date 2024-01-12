@@ -13,8 +13,8 @@
 ╚██████╗██║  ██║███████╗███████╗███████║                   
  ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝
 
-Copyright 2023 Darling Data, LLC
-https://www.erikdarlingdata.com/
+Copyright 2024 Darling Data, LLC
+https://www.erikdarling.com/
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData

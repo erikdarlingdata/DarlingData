@@ -25,7 +25,7 @@ GO
 ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
   
 Copyright 2024 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For usage and licensing details, run:
 EXEC sp_LogHunter
@@ -82,7 +82,7 @@ BEGIN
                 'hi, i''m sp_LogHunter!' UNION ALL
         SELECT  'you can use me to look through your error logs for bad stuff' UNION ALL
         SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_LogHunter' UNION ALL
-        SELECT  'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
+        SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
   
         SELECT
             parameter_name =
@@ -150,9 +150,9 @@ BEGIN
         RAISERROR('
     MIT License
   
-    Copyright 2023 Darling Data, LLC
+    Copyright 2024 Darling Data, LLC
   
-    https://www.erikdarlingdata.com/
+    https://www.erikdarling.com/
   
     Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
     to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,

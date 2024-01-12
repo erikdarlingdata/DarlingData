@@ -26,7 +26,7 @@ GO
 ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝
 
 Copyright 2024 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For usage and licensing details, run:
 EXEC sp_QuickieStore
@@ -142,7 +142,7 @@ BEGIN
     SELECT 'i can be used to quickly grab misbehaving queries from query store' UNION ALL
     SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
     SELECT 'so what can you do, and how do you do it? read below!' UNION ALL
-    SELECT  'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
+    SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
     /*
     Parameters
@@ -194,7 +194,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
-                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions'
+                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent'
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
@@ -356,9 +356,9 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -1787,7 +1787,8 @@ IF @sort_order NOT IN
        'duration',
        'memory',
        'tempdb',
-       'executions'
+       'executions',
+       'recent'
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
@@ -3650,6 +3651,7 @@ CASE @sort_order
      WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
      WHEN 'executions' THEN N'qsrs.count_executions'
+     WHEN 'recent' THEN N'qsrs.last_execution_time'
      ELSE N'qsrs.avg_cpu_time'
 END +
 N') DESC
@@ -3810,7 +3812,7 @@ CROSS APPLY
     AND   1 = 1
     ' + @where_clause
   + N'
-ORDER BY ' +
+    ORDER BY ' +
 CASE @sort_order
      WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
      WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
@@ -3820,6 +3822,7 @@ CASE @sort_order
      WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
      WHEN 'executions' THEN N'qsrs.count_executions'
+     WHEN 'recent' THEN N'qsrs.last_execution_time'
      ELSE N'qsrs.avg_cpu_time'
 END + N' DESC
 ) AS qsrs
@@ -5438,6 +5441,7 @@ FROM
             WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
+            WHEN 'recent' THEN N'qsrs.last_execution_time'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -5645,6 +5649,7 @@ FROM
             WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
+            WHEN 'recent' THEN N'qsrs.last_execution_time'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -5815,6 +5820,7 @@ FROM
             WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
+            WHEN 'recent' THEN N'qsrs.last_execution_time'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -5986,6 +5992,7 @@ FROM
              WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
              WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
              WHEN 'executions' THEN N'qsrs.count_executions'
+             WHEN 'recent' THEN N'qsrs.last_execution_time'
              ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -6176,12 +6183,9 @@ ORDER BY ' +
                   WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
                   WHEN 'duration' THEN N'x.avg_duration_ms'
                   WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
-                  WHEN 'tempdb' THEN
-                                CASE WHEN @new = 1
-                                     THEN N'x.avg_tempdb_space_used_mb'
-                                     ELSE N'x.avg_cpu_time'
-                                END
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
                   WHEN 'executions' THEN N'x.count_executions'
+                  WHEN 'recent' THEN N'x.last_execution_time'
                   ELSE N'x.avg_cpu_time_ms'
              END
          WHEN 1
@@ -6193,12 +6197,9 @@ ORDER BY ' +
                   WHEN 'writes' THEN N'CONVERT(money, x.avg_logical_io_writes_mb)'
                   WHEN 'duration' THEN N'CONVERT(money, x.avg_duration_ms)'
                   WHEN 'memory' THEN N'CONVERT(money, x.avg_query_max_used_memory_mb)'
-                  WHEN 'tempdb' THEN
-                                CASE WHEN @new = 1
-                                     THEN N'CONVERT(money, x.avg_tempdb_space_used_mb)'
-                                     ELSE N'CONVERT(money, x.avg_cpu_time)'
-                                END
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'CONVERT(money, x.avg_tempdb_space_used_mb)' ELSE N'CONVERT(money, x.avg_cpu_time)' END
                   WHEN 'executions' THEN N'CONVERT(money, x.count_executions)'
+                  WHEN 'recent' THEN N'x.last_execution_time'
                   ELSE N'CONVERT(money, x.avg_cpu_time_ms)'
              END
     END
@@ -7446,7 +7447,7 @@ FROM
                 23
             ),
         all_done =
-            'brought to you by erik darling data!',
+            'brought to you by darling data!',
         support =
             'for support, head over to github',
         help =
@@ -7499,7 +7500,7 @@ FROM
                 23
             ),
         all_done =
-            'https://www.erikdarlingdata.com/',
+            'https://www.erikdarling.com/',
         support =
             'https://github.com/erikdarlingdata/DarlingData',
         help =

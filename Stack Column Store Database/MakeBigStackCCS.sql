@@ -1,9 +1,9 @@
 /*
 MIT License
 
-Copyright (c) 2023 Erik Darling Data
+Copyright (c) 2024 Darling Data, LLC
 
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
@@ -96,13 +96,12 @@ END;
 
 WHILE @i <= @loops
     BEGIN
-
         SET @loopstart = SYSDATETIME();
 
         IF
         (
             @i > 1
-              OR @truncate_tables = 0
+         OR @truncate_tables = 0
         )--If we're not truncating first, we should check base tables
         BEGIN
             RAISERROR('Getting new max Ids...', 0, 1) WITH NOWAIT;
@@ -255,7 +254,7 @@ WHILE @i <= @loops
             1/0
         FROM StackOverflowCS.dbo.Posts AS p
         JOIN StackOverflowCS.dbo.Votes AS v
-            ON  p.Id = v.PostId
+          ON  p.Id = v.PostId
         WHERE v.VoteTypeId = 1
         AND   p.PostTypeId = 1
     )
@@ -267,19 +266,19 @@ WHILE @i <= @loops
         INTO #t
         FROM StackOverflowCS.dbo.Posts AS p
         JOIN StackOverflowCS.dbo.Votes AS v
-            ON  p.Id = v.PostId
+          ON  p.Id = v.PostId
         WHERE v.VoteTypeId = 1
         AND   p.PostTypeId = 1;
 
         DELETE v
         FROM StackOverflowCS.dbo.Votes AS v
         WHERE EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #t AS t
-                  WHERE t.Id = v.Id
-              );
+        (
+            SELECT
+                1/0
+            FROM #t AS t
+            WHERE t.Id = v.Id
+        );
 
         DROP TABLE #t;
     END;

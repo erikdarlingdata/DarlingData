@@ -127,19 +127,22 @@ FROM
         tsbu2.AnswerScore 
     FROM dbo.TotalScoreByUser AS tsbu2
 ) AS x (Id, Score)
-GROUP BY x.Id;
+GROUP BY 
+    x.Id;
 
 UPDATE tsbu 
     SET tsbu.MaxScore = u.MaxScore
 FROM dbo.TotalScoreByUser AS tsbu
 JOIN #update AS u 
-    ON u.Id = tsbu.Id
+  ON u.Id = tsbu.Id
 WHERE 1 = 1;
 
 
 
-UPDATE t WITH(TABLOCKX)
-    SET t.MaxScore = NULL
+UPDATE 
+    t WITH(TABLOCKX)
+SET 
+    t.MaxScore = NULL
 FROM dbo.TotalScoreByUser AS t
 WHERE t.MaxScore IS NOT NULL;
 
