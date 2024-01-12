@@ -1,4 +1,4 @@
--- Compile Date: 01/11/2024 17:10:27 UTC
+-- Compile Date: 01/12/2024 12:27:48 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -27,7 +27,7 @@ GO
                                               
 
 Copyright 2024 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
@@ -75,7 +75,7 @@ BEGIN
                 'hi, i''m sp_HealthParser!' UNION ALL
         SELECT  'you can use me to examine the contents of the system_health extended event session' UNION ALL
         SELECT  'i apologize if i take a long time, i have to do a lot of XML processing' UNION ALL
-        SELECT  'from your loving sql server consultant, erik darling: erikdarlingdata.com';
+        SELECT  'from your loving sql server consultant, erik darling: erikdarling.com';
 
         /*
         Parameters
@@ -153,9 +153,9 @@ BEGIN
         RAISERROR('
 MIT License
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -2680,7 +2680,7 @@ GO
 ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝   
    
 Copyright 2024 Darling Data, LLC   
-https://www.erikdarlingdata.com/   
+https://www.erikdarling.com/   
    
 For usage and licensing details, run:   
 EXEC sp_HumanEvents   
@@ -2754,7 +2754,7 @@ BEGIN
     SELECT N'be very careful about introducing observer overhead, especially when gathering query plans' UNION ALL   
     SELECT N'be even more careful when setting up permanent sessions!' UNION ALL   
     SELECT N'for additional support: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
-    SELECT N'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
+    SELECT N'from your loving sql server consultant, erik darling: https://erikdarling.com';
     
     
     /*Introduction*/   
@@ -2975,9 +2975,9 @@ BEGIN
     RAISERROR(N'   
 MIT License   
    
-Copyright 2023 Darling Data, LLC    
+Copyright 2024 Darling Data, LLC    
    
-https://www.erikdarlingdata.com/   
+https://www.erikdarling.com/   
    
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),    
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,   
@@ -7425,7 +7425,7 @@ GO
   ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚═╝  ╚═╝
 
 Copyright 2024 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For usage and licensing details, run:
 EXEC sp_HumanEventsBlockViewer
@@ -7480,7 +7480,7 @@ BEGIN
     SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
     SELECT  'it will also work with another extended event session to capture blocking' UNION ALL
     SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
-    SELECT  'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
+    SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
     SELECT
         parameter_name =
@@ -7545,9 +7545,9 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -9386,7 +9386,7 @@ INSERT
 )
 SELECT
     check_id = -1,
-    database_name = N'erikdarlingdata.com',
+    database_name = N'erikdarling.com',
     object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
     finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
@@ -10091,7 +10091,7 @@ INSERT
 )
 SELECT
     check_id = 2147483647,
-    database_name = N'erikdarlingdata.com',
+    database_name = N'erikdarling.com',
     object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
     finding = N'thanks for using me!',
@@ -10140,7 +10140,7 @@ GO
 ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
   
 Copyright 2024 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For usage and licensing details, run:
 EXEC sp_LogHunter
@@ -10197,7 +10197,7 @@ BEGIN
                 'hi, i''m sp_LogHunter!' UNION ALL
         SELECT  'you can use me to look through your error logs for bad stuff' UNION ALL
         SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_LogHunter' UNION ALL
-        SELECT  'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
+        SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
   
         SELECT
             parameter_name =
@@ -10265,9 +10265,9 @@ BEGIN
         RAISERROR('
     MIT License
   
-    Copyright 2023 Darling Data, LLC
+    Copyright 2024 Darling Data, LLC
   
-    https://www.erikdarlingdata.com/
+    https://www.erikdarling.com/
   
     Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
     to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -10834,7 +10834,7 @@ GO
 ╚═════╝ ╚══════╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
 Copyright 2024 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For usage and licensing details, run:
 EXEC sp_PressureDetector
@@ -10896,7 +10896,7 @@ BEGIN
     SELECT ' * wait stats relevant to cpu, memory, and disk pressure, along with query performance' UNION ALL
     SELECT ' * how many worker threads and how much memory you have available' UNION ALL
     SELECT ' * running queries that are using cpu and memory' UNION ALL
-    SELECT 'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
+    SELECT 'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
     /*
     Parameters
@@ -10969,9 +10969,9 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -12952,7 +12952,7 @@ GO
 ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝
 
 Copyright 2024 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For usage and licensing details, run:
 EXEC sp_QuickieStore
@@ -13068,7 +13068,7 @@ BEGIN
     SELECT 'i can be used to quickly grab misbehaving queries from query store' UNION ALL
     SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
     SELECT 'so what can you do, and how do you do it? read below!' UNION ALL
-    SELECT  'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
+    SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
     /*
     Parameters
@@ -13120,7 +13120,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
-                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions'
+                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent'
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
@@ -13282,9 +13282,9 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -14713,7 +14713,8 @@ IF @sort_order NOT IN
        'duration',
        'memory',
        'tempdb',
-       'executions'
+       'executions',
+       'recent'
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
@@ -16576,6 +16577,7 @@ CASE @sort_order
      WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
      WHEN 'executions' THEN N'qsrs.count_executions'
+     WHEN 'recent' THEN N'qsrs.last_execution_time'
      ELSE N'qsrs.avg_cpu_time'
 END +
 N') DESC
@@ -16736,7 +16738,7 @@ CROSS APPLY
     AND   1 = 1
     ' + @where_clause
   + N'
-ORDER BY ' +
+    ORDER BY ' +
 CASE @sort_order
      WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
      WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
@@ -16746,6 +16748,7 @@ CASE @sort_order
      WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
      WHEN 'executions' THEN N'qsrs.count_executions'
+     WHEN 'recent' THEN N'qsrs.last_execution_time'
      ELSE N'qsrs.avg_cpu_time'
 END + N' DESC
 ) AS qsrs
@@ -18364,6 +18367,7 @@ FROM
             WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
+            WHEN 'recent' THEN N'qsrs.last_execution_time'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -18571,6 +18575,7 @@ FROM
             WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
+            WHEN 'recent' THEN N'qsrs.last_execution_time'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -18741,6 +18746,7 @@ FROM
             WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
+            WHEN 'recent' THEN N'qsrs.last_execution_time'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -18912,6 +18918,7 @@ FROM
              WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
              WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
              WHEN 'executions' THEN N'qsrs.count_executions'
+             WHEN 'recent' THEN N'qsrs.last_execution_time'
              ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -19102,12 +19109,9 @@ ORDER BY ' +
                   WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
                   WHEN 'duration' THEN N'x.avg_duration_ms'
                   WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
-                  WHEN 'tempdb' THEN
-                                CASE WHEN @new = 1
-                                     THEN N'x.avg_tempdb_space_used_mb'
-                                     ELSE N'x.avg_cpu_time'
-                                END
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
                   WHEN 'executions' THEN N'x.count_executions'
+                  WHEN 'recent' THEN N'x.last_execution_time'
                   ELSE N'x.avg_cpu_time_ms'
              END
          WHEN 1
@@ -19119,12 +19123,9 @@ ORDER BY ' +
                   WHEN 'writes' THEN N'CONVERT(money, x.avg_logical_io_writes_mb)'
                   WHEN 'duration' THEN N'CONVERT(money, x.avg_duration_ms)'
                   WHEN 'memory' THEN N'CONVERT(money, x.avg_query_max_used_memory_mb)'
-                  WHEN 'tempdb' THEN
-                                CASE WHEN @new = 1
-                                     THEN N'CONVERT(money, x.avg_tempdb_space_used_mb)'
-                                     ELSE N'CONVERT(money, x.avg_cpu_time)'
-                                END
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'CONVERT(money, x.avg_tempdb_space_used_mb)' ELSE N'CONVERT(money, x.avg_cpu_time)' END
                   WHEN 'executions' THEN N'CONVERT(money, x.count_executions)'
+                  WHEN 'recent' THEN N'x.last_execution_time'
                   ELSE N'CONVERT(money, x.avg_cpu_time_ms)'
              END
     END
@@ -20372,7 +20373,7 @@ FROM
                 23
             ),
         all_done =
-            'brought to you by erik darling data!',
+            'brought to you by darling data!',
         support =
             'for support, head over to github',
         help =
@@ -20425,7 +20426,7 @@ FROM
                 23
             ),
         all_done =
-            'https://www.erikdarlingdata.com/',
+            'https://www.erikdarling.com/',
         support =
             'https://github.com/erikdarlingdata/DarlingData',
         help =
