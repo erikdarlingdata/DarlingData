@@ -11,8 +11,8 @@ GO
 
 /*
 
-Copyright 2023 Darling Data, LLC
-https://www.erikdarlingdata.com/
+Copyright 2024 Darling Data, LLC
+https://www.erikdarling.com/
 
 This will set up two views:
  * dbo.WhoIsActive: a UNION ALL of all tables that match the WhoIsActive_YYYYMMDD formaty
@@ -20,7 +20,7 @@ This will set up two views:
 
 If you need to get or update sp_WhoIsActive:
 https://github.com/amachanic/sp_whoisactive
-(C) 2007-2022, Adam Machanic
+(C) 2007-2024, Adam Machanic
 
 */
 
@@ -65,7 +65,8 @@ BEGIN
                 NCHAR(10)
         FROM sys.tables AS t
         WHERE t.name LIKE N'WhoIsActive[_][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]%'
-        ORDER BY t.create_date DESC
+        ORDER BY 
+            t.create_date DESC
         FOR XML
             PATH(N''),
             TYPE
@@ -193,7 +194,7 @@ BEGIN
                 wia.query_plan,
                 wia.additional_info
             FROM dbo.WhoIsActive AS wia
-            INNER JOIN b AS b
+            JOIN b AS b
               ON  wia.blocking_session_id = b.session_id
               AND b.collection_time = wia.collection_time
             WHERE wia.blocking_session_id IS NOT NULL

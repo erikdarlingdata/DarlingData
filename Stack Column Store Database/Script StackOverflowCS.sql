@@ -1,9 +1,9 @@
 /*
 MIT License
 
-Copyright (c) 2023 Erik Darling Data
+Copyright (c) 2024 Darling Data, LLC
 
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
@@ -139,7 +139,7 @@ SET FILESTREAM
         NON_TRANSACTED_ACCESS = OFF
     );
 GO
-ALTER DATABASE StackOverflowCS SET TARGET_RECOVERY_TIME = 0 SECONDS;
+ALTER DATABASE StackOverflowCS SET TARGET_RECOVERY_TIME = 60 SECONDS;
 GO
 ALTER DATABASE StackOverflowCS SET DELAYED_DURABILITY = DISABLED;
 GO
@@ -184,7 +184,12 @@ BEGIN
         N'2019-01-01T00:00:00.000',
         N'2020-01-01T00:00:00.000',
         N'2021-01-01T00:00:00.000',
-        N'2022-01-01T00:00:00.000'
+        N'2022-01-01T00:00:00.000',
+        N'2023-01-01T00:00:00.000',
+        N'2024-01-01T00:00:00.000',
+        N'2025-01-01T00:00:00.000',
+        N'2026-01-01T00:00:00.000',
+        N'2027-01-01T00:00:00.000'
     );
 END;
 
@@ -211,7 +216,8 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE dbo.Badges
+    CREATE TABLE 
+        dbo.Badges
     (
         Id bigint NULL,
         Name nvarchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
@@ -234,12 +240,13 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE dbo.Comments
+    CREATE TABLE 
+        dbo.Comments
     (
         Id bigint NULL,
         CreationDate datetime NOT NULL,
         PostId bigint NULL,
-        Score int NULL,
+        Score integer NULL,
         UserId bigint NULL
     ) ON pscheme (CreationDate);
 END;
@@ -262,22 +269,22 @@ BEGIN
     (
         Id bigint NULL,
         AcceptedAnswerId bigint NULL,
-        AnswerCount int NULL,
+        AnswerCount integer NULL,
         ClosedDate datetime NULL,
-        CommentCount int NULL,
+        CommentCount integer NULL,
         CommunityOwnedDate datetime NULL,
         CreationDate datetime NOT NULL,
-        FavoriteCount int NULL,
+        FavoriteCount integer NULL,
         LastActivityDate datetime NOT NULL,
         LastEditDate datetime NULL,
         LastEditorDisplayName nvarchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
         LastEditorUserId bigint NULL,
         OwnerUserId bigint NULL,
         ParentId bigint NULL,
-        PostTypeId int NOT NULL,
-        Score int NOT NULL,
+        PostTypeId integer NOT NULL,
+        Score integer NOT NULL,
         Tags nvarchar(150) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
-        ViewCount int NOT NULL
+        ViewCount integer NOT NULL
     ) ON pscheme (CreationDate);
 END;
 GO
@@ -295,14 +302,15 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE dbo.PostTypes
+    CREATE TABLE 
+        dbo.PostTypes
     (
-        Id int IDENTITY(1, 1) NOT NULL,
+        Id integer IDENTITY(1, 1) NOT NULL,
         Type nvarchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
         CONSTRAINT PK_PostTypes__Id
             PRIMARY KEY CLUSTERED (Id ASC)
-            WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON,
-                  ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+            WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) 
+            ON [PRIMARY]
     ) ON [PRIMARY];
 END;
 GO
@@ -320,19 +328,20 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE dbo.Users
+    CREATE TABLE 
+        dbo.Users
     (
         Id bigint NULL,
-        Age int NULL,
+        Age integer NULL,
         CreationDate datetime NOT NULL,
         DisplayName nvarchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
-        DownVotes int NOT NULL,
+        DownVotes integer NOT NULL,
         EmailHash nvarchar(40) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
         LastAccessDate datetime NOT NULL,
         Location nvarchar(100) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
-        Reputation int NOT NULL,
-        UpVotes int NOT NULL,
-        Views int NOT NULL,
+        Reputation integer NOT NULL,
+        UpVotes integer NOT NULL,
+        Views integer NOT NULL,
         WebsiteUrl nvarchar(200) COLLATE SQL_Latin1_General_CP1_CI_AS NULL,
         AccountId bigint NULL
     ) ON pscheme (CreationDate);
@@ -352,13 +361,14 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE dbo.Votes
+    CREATE TABLE 
+        dbo.Votes
     (
         Id bigint NULL,
         PostId bigint NULL,
         UserId bigint NULL,
-        BountyAmount int NULL,
-        VoteTypeId int NOT NULL,
+        BountyAmount integer NULL,
+        VoteTypeId integer NOT NULL,
         CreationDate datetime NOT NULL
     ) ON pscheme (CreationDate);
 END;
@@ -377,14 +387,15 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE dbo.VoteTypes
+    CREATE TABLE 
+        dbo.VoteTypes
     (
         Id int IDENTITY(1, 1) NOT NULL,
         Name varchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
         CONSTRAINT PK_VoteType__Id
             PRIMARY KEY CLUSTERED (Id ASC)
-            WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON,
-                  ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+            WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) 
+            ON [PRIMARY]
     ) ON [PRIMARY];
 END;
 GO

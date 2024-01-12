@@ -12,12 +12,12 @@ GO
 /*
 
 For background on why you might need this:
- * https://www.erikdarlingdata.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/
+ * https://www.erikdarling.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/
 
 In short, if your security caches are growing out of control, it can cause all sorts of weird issues with SQL Server.
 
-Copyright 2023 Darling Data, LLC
-https://www.erikdarlingdata.com/
+Copyright 2024 Darling Data, LLC
+https://www.erikdarling.com/
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
@@ -71,10 +71,10 @@ EXEC @ReturnCode = msdb.dbo.sp_add_job
     @notify_level_page = 0,
     @delete_level = 0,
     @description = N'For background on why you need this:
-https://www.erikdarlingdata.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/
+https://www.erikdarling.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/
 
 Copyright 2022 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData',

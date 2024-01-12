@@ -11,14 +11,14 @@ GO
 
 /*
 
-Copyright 2023 Darling Data, LLC
-https://www.erikdarlingdata.com/
+Copyright 2024 Darling Data, LLC
+https://www.erikdarling.com/
 
 This will set delete tables older than a defined retention period, with  default of 10 days.
 
 If you need to get or update sp_WhoIsActive:
 https://github.com/amachanic/sp_whoisactive
-(C) 2007-2022, Adam Machanic
+(C) 2007-2024, Adam Machanic
 
 */
 
@@ -70,7 +70,8 @@ BEGIN
             FROM sys.tables AS t
             WHERE t.name LIKE N'WhoIsActive[_][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]%'
             AND   t.create_date < DATEADD(DAY, (@RetentionPeriod * -1), SYSDATETIME())
-            ORDER BY t.create_date DESC
+            ORDER BY 
+                t.create_date DESC
             FOR XML
                 PATH(N''),
                 TYPE

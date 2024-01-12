@@ -39,7 +39,7 @@ GO
   ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚═╝  ╚═╝
 
 Copyright 2024 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For usage and licensing details, run:
 EXEC sp_HumanEventsBlockViewer
@@ -94,7 +94,7 @@ BEGIN
     SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
     SELECT  'it will also work with another extended event session to capture blocking' UNION ALL
     SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
-    SELECT  'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
+    SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
     SELECT
         parameter_name =
@@ -159,9 +159,9 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
@@ -2000,7 +2000,7 @@ INSERT
 )
 SELECT
     check_id = -1,
-    database_name = N'erikdarlingdata.com',
+    database_name = N'erikdarling.com',
     object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
     finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
@@ -2705,7 +2705,7 @@ INSERT
 )
 SELECT
     check_id = 2147483647,
-    database_name = N'erikdarlingdata.com',
+    database_name = N'erikdarling.com',
     object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
     finding_group = N'https://github.com/erikdarlingdata/DarlingData',
     finding = N'thanks for using me!',

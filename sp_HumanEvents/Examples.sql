@@ -1,15 +1,11 @@
 /*
-Copyright 2023 Darling Data, LLC
-https://www.erikdarlingdata.com/
+Copyright 2024 Darling Data, LLC
+https://www.erikdarling.com/
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
 
 MIT License    
-    
-Copyright 2023 Darling Data, LLC     
-    
-https://www.erikdarlingdata.com/    
     
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),     
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,    

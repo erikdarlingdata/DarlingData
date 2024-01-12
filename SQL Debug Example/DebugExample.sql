@@ -1,3 +1,10 @@
+/*
+
+Copyright 2024 Darling Data, LLC
+https://www.erikdarling.com/
+
+*/
+
 CREATE OR ALTER PROCEDURE
     dbo.DebugExample
 (
@@ -281,7 +288,7 @@ we can get query plans specifically for those instead
 of having to get query plans for absolutely everything
 
 If you only want to troubleshoot performance, read this:
-https://erikdarlingdata.com/how-to-use-sp_humanevents-to-troubleshoot-a-slow-stored-procedure/
+https://erikdarling.com/how-to-use-sp_humanevents-to-troubleshoot-a-slow-stored-procedure/
 */
 IF @debug_performance = 1
 BEGIN

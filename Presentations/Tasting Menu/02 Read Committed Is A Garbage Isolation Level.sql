@@ -56,14 +56,16 @@ BEGIN
 
     DECLARE 
         @i int;
+    
     SELECT   
         @i = v.PostId
     FROM dbo.Votes AS v 
     WHERE v.CreationDate >= @StartDate
     AND   v.VoteTypeId > 5
-    GROUP BY v.PostId
-    ORDER BY v.PostId;
-
+    GROUP BY 
+        v.PostId
+    ORDER BY 
+        v.PostId;
 END;
 GO
 
