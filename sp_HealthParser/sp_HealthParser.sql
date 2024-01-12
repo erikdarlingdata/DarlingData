@@ -26,7 +26,7 @@ GO
                                               
 
 Copyright 2024 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
@@ -74,7 +74,7 @@ BEGIN
                 'hi, i''m sp_HealthParser!' UNION ALL
         SELECT  'you can use me to examine the contents of the system_health extended event session' UNION ALL
         SELECT  'i apologize if i take a long time, i have to do a lot of XML processing' UNION ALL
-        SELECT  'from your loving sql server consultant, erik darling: erikdarlingdata.com';
+        SELECT  'from your loving sql server consultant, erik darling: erikdarling.com';
 
         /*
         Parameters
@@ -152,9 +152,9 @@ BEGIN
         RAISERROR('
 MIT License
 
-Copyright 2023 Darling Data, LLC
+Copyright 2024 Darling Data, LLC
 
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,

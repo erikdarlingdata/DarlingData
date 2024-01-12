@@ -56,7 +56,7 @@ FROM
     WHERE u.Id = 22656
 ) AS x
 JOIN x AS x2
-    ON x.Id = x2.Id;
+  ON x.Id = x2.Id;
 
 
 /*Forehsadowing...*/
@@ -76,7 +76,7 @@ JOIN
     FROM dbo.Users AS u 
     WHERE u.Id = 22656
 ) AS x2
-    ON x.Id = x2.Id;
+  ON x.Id = x2.Id;
 
 
 
@@ -130,8 +130,8 @@ FROM
     cte AS c1
 JOIN cte AS c2
 JOIN cte AS c3
-    ON c3.Id = c2.Id
-    ON c2.Id = c1.Id;
+  ON c3.Id = c2.Id
+  ON c2.Id = c1.Id;
 
 /*
   This gets worse as your query gets more complicated
@@ -145,13 +145,13 @@ WITH
     FROM
         dbo.Users AS u
     JOIN dbo.Badges AS b
-        ON b.UserId = u.Id
+      ON b.UserId = u.Id
     JOIN dbo.Comments AS c
-        ON c.UserId = b.UserId
+      ON c.UserId = b.UserId
     JOIN dbo.Posts AS p
-        ON p.OwnerUserId = c.UserId
+      ON p.OwnerUserId = c.UserId
     JOIN dbo.Votes AS v
-        ON v.UserId = p.OwnerUserId
+      ON v.UserId = p.OwnerUserId
 )
 SELECT
     *

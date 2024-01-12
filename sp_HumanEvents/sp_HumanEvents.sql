@@ -25,7 +25,7 @@ GO
 ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝   
    
 Copyright 2024 Darling Data, LLC   
-https://www.erikdarlingdata.com/   
+https://www.erikdarling.com/   
    
 For usage and licensing details, run:   
 EXEC sp_HumanEvents   
@@ -99,7 +99,7 @@ BEGIN
     SELECT N'be very careful about introducing observer overhead, especially when gathering query plans' UNION ALL   
     SELECT N'be even more careful when setting up permanent sessions!' UNION ALL   
     SELECT N'for additional support: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
-    SELECT N'from your loving sql server consultant, erik darling: https://erikdarlingdata.com';
+    SELECT N'from your loving sql server consultant, erik darling: https://erikdarling.com';
     
     
     /*Introduction*/   
@@ -320,9 +320,9 @@ BEGIN
     RAISERROR(N'   
 MIT License   
    
-Copyright 2023 Darling Data, LLC    
+Copyright 2024 Darling Data, LLC    
    
-https://www.erikdarlingdata.com/   
+https://www.erikdarling.com/   
    
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),    
 to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,   

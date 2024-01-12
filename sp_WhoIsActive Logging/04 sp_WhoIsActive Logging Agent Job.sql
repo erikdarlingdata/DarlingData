@@ -11,8 +11,8 @@ GO
 
 /*
 
-Copyright 2023 Darling Data, LLC
-https://www.erikdarlingdata.com/
+Copyright 2024 Darling Data, LLC
+https://www.erikdarling.com/
 
 This will log sp_WhoIsActive to a table.
 It will create a new table every day,
@@ -21,7 +21,7 @@ forever and ever or until your drive fills up.
 
 If you need to get or update sp_WhoIsActive:
 https://github.com/amachanic/sp_whoisactive
-(C) 2007-2022, Adam Machanic
+(C) 2007-2024, Adam Machanic
 
 If you get an error message that @get_memory_info
 isn't a valid parameter, that's a pretty good
@@ -93,7 +93,7 @@ forever and ever or until your drive fills up.
 
 If you need to get or update sp_WhoIsActive:
 https://github.com/amachanic/sp_whoisactive
-(C) 2007-2022, Adam Machanic
+(C) 2007-2024, Adam Machanic
 
 If you get an error message that @get_memory_info
 isn''t a valid parameter, that''s a pretty good

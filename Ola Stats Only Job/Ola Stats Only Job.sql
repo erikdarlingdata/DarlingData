@@ -29,7 +29,8 @@ If you're using a version older than that, I feel sorry for your mother.
 Ola's scripts and licensing information is available here:
  * https://github.com/olahallengren/sql-server-maintenance-solution
 
-Copyright (c) 2023 Darling Data, LLC
+Copyright (c) 2024 Darling Data, LLC
+https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction,
 including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
@@ -82,7 +83,7 @@ EXEC @ReturnCode = msdb.dbo.sp_add_job
     @notify_level_netsend = 0,
     @notify_level_page = 0,
     @delete_level = 0,
-    @description = N'Will use Ola Hallengren''s IndexOptimize procedure to update statistics without rebuilding or reorganizing indexes, care of Darling Data, LLC.',
+    @description = N'Will use Ola Hallengren''s IndexOptimize procedure to update statistics without rebuilding or reorganizing indexes, care of Darling Data, LLC. https://www.erikdarling.com/',
     @category_name = N'[Uncategorized (Local)]',
     @owner_login_name = N'sa',
     @job_id = @jobId OUTPUT;
