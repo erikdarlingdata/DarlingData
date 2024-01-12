@@ -53,13 +53,16 @@ JOIN
                 COUNT_BIG(*)
         FROM dbo.Votes AS v
         JOIN dbo.Posts AS p2
-            ON p2.Id = v.PostId
+          ON p2.Id = v.PostId
         WHERE DATEDIFF(DAY, v.CreationDate, '20140101') <= 30
-        GROUP BY p2.OwnerUserId
-        HAVING COUNT_BIG(p2.Id) >= 50
+        GROUP BY 
+            p2.OwnerUserId
+        HAVING 
+            COUNT_BIG(p2.Id) >= 50
     ) AS v 
-        ON v.OwnerUserId = u.Id
-ORDER BY u.Id;
+      ON v.OwnerUserId = u.Id
+ORDER BY 
+    u.Id;
 
 
 SELECT 
@@ -75,13 +78,16 @@ JOIN
                 COUNT_BIG(*)
         FROM dbo.Votes AS v
         JOIN dbo.Posts AS p2
-            ON p2.Id = v.PostId
+          ON p2.Id = v.PostId
         WHERE v.CreationDate >= DATEADD(DAY, -30, '20140101')
-        GROUP BY p2.OwnerUserId
-        HAVING COUNT(p2.Id) >= 50
+        GROUP BY 
+            p2.OwnerUserId
+        HAVING 
+            COUNT(p2.Id) >= 50
     ) AS v 
-        ON v.OwnerUserId = u.Id
-ORDER BY u.Id;
+      ON v.OwnerUserId = u.Id
+ORDER BY 
+    u.Id;
 
 
 

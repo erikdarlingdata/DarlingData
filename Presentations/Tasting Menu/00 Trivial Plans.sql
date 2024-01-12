@@ -55,7 +55,8 @@ SELECT TOP (10000)
                 u.Id 
         ) 
 FROM dbo.Users AS u
-ORDER BY u.Id;
+ORDER BY 
+    u.Id;
 
 
 
@@ -97,7 +98,8 @@ There are obvious things that get full optimization, too
 SELECT TOP (100) 
     u.Id
 FROM dbo.Users AS u
-ORDER BY u.AccountId;
+ORDER BY 
+    u.AccountId;
 
 
 /*If you have a parallel plan, you don't have a trivial plan*/
@@ -113,8 +115,7 @@ SELECT TOP (100)
 FROM dbo.Users AS u;
 
 SELECT TOP (100) 
-    Id = 
-        (SELECT u.Id) --Only difference
+    Id = (SELECT u.Id) --Only difference
 FROM dbo.Users AS u;
 
 

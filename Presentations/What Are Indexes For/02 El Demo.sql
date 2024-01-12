@@ -220,10 +220,12 @@ GO
             b.Name
         FROM dbo.Badges AS b
         WHERE b.UserId = u.Id
-        ORDER BY b.Date DESC
+        ORDER BY 
+            b.Date DESC
     ) AS b
     WHERE u.Reputation >= 10000
-    ORDER BY u.Reputation DESC;
+    ORDER BY 
+        u.Reputation DESC;
 
 
     --38 vs 39?
@@ -237,10 +239,12 @@ GO
             b.Name
         FROM dbo.Badges AS b
         WHERE b.UserId = u.Id
-        ORDER BY b.Date DESC
+        ORDER BY 
+            b.Date DESC
     ) AS b
     WHERE u.Reputation >= 10000
-    ORDER BY u.Reputation DESC;
+    ORDER BY 
+        u.Reputation DESC;
 
 
 
@@ -283,10 +287,12 @@ But this isn't too smart, because we still have to sort.
             b.Name
         FROM dbo.Badges AS b
         WHERE b.UserId = u.Id
-        ORDER BY b.Date DESC
+        ORDER BY 
+            b.Date DESC
     ) AS b
     WHERE u.Reputation >= 10000
-    ORDER BY u.Reputation DESC;
+    ORDER BY 
+        u.Reputation DESC;
 
 
 
@@ -393,8 +399,10 @@ But this isn't too smart, because we still have to sort.
         AND p.PostTypeId IN (1, 2)
     ) AS ca
     WHERE ca.ScoreOrder <= 50
-    GROUP BY wp.UserId
-    ORDER BY wp.UserId;
+    GROUP BY 
+        wp.UserId
+    ORDER BY 
+        wp.UserId;
 
 
     SELECT
@@ -478,8 +486,10 @@ How can we fix it?
         AND p.PostTypeId IN (1, 2)
     ) AS ca
     WHERE ca.ScoreOrder <= 50
-    GROUP BY wp.UserId
-    ORDER BY wp.UserId;
+    GROUP BY 
+        wp.UserId
+    ORDER BY 
+        wp.UserId;
 
 /*
 No spool!
@@ -753,7 +763,7 @@ Let's get it on!
           ON u.Id = c.UserId
         JOIN dbo.Badges AS b
           ON b.Id = c.Id
-         WHERE u.Reputation = 73;
+        WHERE u.Reputation = 73;
     END;
 GO
 

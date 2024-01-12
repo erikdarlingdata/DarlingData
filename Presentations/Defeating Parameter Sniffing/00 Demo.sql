@@ -53,8 +53,8 @@ GO
 
 /* 
 
-    * W: www.erikdarlingdata.com
-    * E: erik@erikdarlingdata.com
+    * W: www.erikdarling.com
+    * E: erik@erikdarling.com
     * T: @erikdarlingdata
     
     Demo database:
@@ -67,7 +67,7 @@ GO
 
 /* 
 
-Copyright 2022-2023 Darling Data, LLC.
+Copyright 2024 Darling Data, LLC.
 
 License: Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
 More info: https://creativecommons.org/licenses/by-sa/3.0/
@@ -433,7 +433,8 @@ SELECT
 FROM dbo.Posts AS p
 WHERE (p.OwnerUserId   = @OwnerUserId  OR @OwnerUserId IS NULL)
 AND   (p.CreationDate >= @CreationDate OR @CreationDate IS NULL)
-ORDER BY p.Score DESC;
+ORDER BY 
+    p.Score DESC;
 
 --Using ISNULL
 SELECT 
@@ -441,7 +442,8 @@ SELECT
 FROM dbo.Posts AS p
 WHERE (p.OwnerUserId   = ISNULL(@OwnerUserId,  p.OwnerUserId))
 AND   (p.CreationDate >= ISNULL(@CreationDate, p.CreationDate))
-ORDER BY p.Score DESC;
+ORDER BY 
+    p.Score DESC;
 
 -- Using COALESCE
 SELECT 
@@ -449,7 +451,8 @@ SELECT
 FROM dbo.Posts AS p
 WHERE (p.OwnerUserId   = COALESCE(@OwnerUserId,  p.OwnerUserId))
 AND   (p.CreationDate >= COALESCE(@CreationDate, p.CreationDate))
-ORDER BY p.Score DESC;
+ORDER BY 
+    p.Score DESC;
 ';
 
 EXEC sys.sp_executesql 
@@ -489,7 +492,8 @@ SELECT
 FROM dbo.Posts AS p
 WHERE (p.OwnerUserId   = @OwnerUserId  OR @OwnerUserId IS NULL)
 AND   (p.CreationDate >= @CreationDate OR @CreationDate IS NULL)
-ORDER BY p.Score DESC
+ORDER BY 
+    p.Score DESC
 OPTION(RECOMPILE);
 
 --Using ISNULL
@@ -498,7 +502,8 @@ SELECT
 FROM dbo.Posts AS p
 WHERE (p.OwnerUserId   = ISNULL(@OwnerUserId,  p.OwnerUserId))
 AND   (p.CreationDate >= ISNULL(@CreationDate, p.CreationDate))
-ORDER BY p.Score DESC
+ORDER BY 
+    p.Score DESC
 OPTION(RECOMPILE);
 
 -- Using COALESCE
@@ -507,7 +512,8 @@ SELECT
 FROM dbo.Posts AS p
 WHERE (p.OwnerUserId   = COALESCE(@OwnerUserId,  p.OwnerUserId))
 AND   (p.CreationDate >= COALESCE(@CreationDate, p.CreationDate))
-ORDER BY p.Score DESC
+ORDER BY 
+    p.Score DESC
 OPTION(RECOMPILE);
 ';
 
@@ -1014,7 +1020,7 @@ To recap what we know:
 
 How to tell if it's parameter sniffing:
  * First, rule out resource contention
-  * sp_PressureDetector: https://www.erikdarlingdata.com/sp_pressuredetector/
+  * sp_PressureDetector: https://www.erikdarling.com/sp_pressuredetector/
  * Next, rule out blocking:
   * sp_WhoIsActive: http://whoisactive.com/
 
@@ -1102,7 +1108,8 @@ SET
         JOIN dbo.Users AS u
             ON p.OwnerUserId = u.Id
         WHERE p.ParentId = @iParentId
-        ORDER BY u.Reputation DESC;';
+        ORDER BY 
+            u.Reputation DESC;';
 
     EXEC sys.sp_executesql 
         @sql, 
@@ -1209,7 +1216,8 @@ SELECT
         FORMAT(COUNT_BIG(*), 'N0')
 FROM dbo.Votes AS v
 GROUP BY v.VoteTypeId
-ORDER BY COUNT_BIG(*) DESC;
+ORDER BY 
+    COUNT_BIG(*) DESC;
 GO 
 
 
@@ -1245,13 +1253,15 @@ SET
         TotalPosts = 
             COUNT_BIG(*)
     FROM dbo.Votes AS v
-    INNER JOIN dbo.Posts AS p
-        ON v.PostId = p.Id
-    INNER JOIN dbo.Users AS u
-        ON p.OwnerUserId = u.Id
+    JOIN dbo.Posts AS p
+      ON v.PostId = p.Id
+    JOIN dbo.Users AS u
+      ON p.OwnerUserId = u.Id
     WHERE v.VoteTypeId = @VoteTypeId 
-    GROUP BY u.DisplayName
-    ORDER BY TotalPosts DESC;
+    GROUP BY 
+        u.DisplayName
+    ORDER BY 
+        TotalPosts DESC;
 
 END;
 GO 
@@ -1343,10 +1353,10 @@ SET @sql += N'
         TotalPosts = 
             COUNT_BIG(*)
     FROM dbo.Votes AS v
-    INNER JOIN dbo.Posts AS p
-        ON v.PostId = p.Id
-    INNER JOIN dbo.Users AS u
-        ON p.OwnerUserId = u.Id
+    JOIN dbo.Posts AS p
+      ON v.PostId = p.Id
+    JOIN dbo.Users AS u
+      ON p.OwnerUserId = u.Id
     WHERE v.VoteTypeId = @VoteTypeId ';
 
 /* For the "big" sets of data, 1 = (SELECT 1) */
@@ -1364,8 +1374,10 @@ BEGIN
 END;
  
 SET @sql += N'    
-    GROUP BY u.DisplayName
-    ORDER BY TotalPosts DESC;';
+    GROUP BY 
+        u.DisplayName
+    ORDER BY 
+        TotalPosts DESC;';
 
 RAISERROR('%s', 0, 1, @sql) WITH NOWAIT;
 EXEC sys.sp_executesql 
@@ -1430,13 +1442,15 @@ SET @sql += N'
         TotalPosts = 
             COUNT_BIG(*)
     FROM dbo.Votes AS v
-    INNER JOIN dbo.Posts AS p
-        ON v.PostId = p.Id
-    INNER JOIN dbo.Users AS u
-        ON p.OwnerUserId = u.Id
+    JOIN dbo.Posts AS p
+      ON v.PostId = p.Id
+    JOIN dbo.Users AS u
+      ON p.OwnerUserId = u.Id
     WHERE v.VoteTypeId = @VoteTypeId   
-    GROUP BY u.DisplayName
-    ORDER BY TotalPosts DESC 
+    GROUP BY 
+        u.DisplayName
+    ORDER BY 
+        TotalPosts DESC 
     OPTION(OPTIMIZE FOR(@VoteTypeId = [@@@]));';
 
 IF @VoteTypeId IN (2, 1, 3, 5, 10, 6, 16)
@@ -1504,15 +1518,17 @@ BEGIN
         TotalPosts = 
             COUNT_BIG(*)
     FROM dbo.Votes AS v
-    INNER JOIN dbo.Posts AS p
-        ON v.PostId = p.Id
-    INNER JOIN dbo.Users AS u
-        ON p.OwnerUserId = u.Id
+    JOIN dbo.Posts AS p
+      ON v.PostId = p.Id
+    JOIN dbo.Users AS u
+      ON p.OwnerUserId = u.Id
     WHERE v.CreationDate BETWEEN @StartDate AND @EndDate
     AND   v.VoteTypeId IN (1, 3, 5, 10)
-    GROUP BY u.DisplayName,
-             v.VoteTypeId
-    ORDER BY TotalPosts DESC';
+    GROUP BY 
+        u.DisplayName,
+        v.VoteTypeId
+    ORDER BY 
+        TotalPosts DESC;';
 
     IF 
     (
@@ -1794,16 +1810,17 @@ SET
         TotalScore = SUM(p.Score),
         TotalPosts = COUNT_BIG(*)
     FROM dbo.Votes AS v
-    INNER JOIN dbo.Posts AS p
-        ON v.PostId = p.Id
-    INNER JOIN dbo.Users AS u
-        ON p.OwnerUserId = u.Id
+    JOIN dbo.Posts AS p
+      ON v.PostId = p.Id
+    JOIN dbo.Users AS u
+      ON p.OwnerUserId = u.Id
     WHERE v.CreationDate BETWEEN @StartDate AND @EndDate
     AND   v.VoteTypeId IN (1, 3, 5, 10)
     GROUP BY 
         u.DisplayName,
         v.VoteTypeId
-    ORDER BY TotalPosts DESC;
+    ORDER BY 
+        TotalPosts DESC;
     
     SET STATISTICS XML OFF;
 
@@ -1913,15 +1930,17 @@ SET NOCOUNT, XACT_ABORT ON;
         TotalPosts = COUNT_BIG(*)
     /* dbo.VotesAndScoresByDate */
     FROM dbo.Votes AS v
-    INNER JOIN dbo.Posts AS p
-        ON v.PostId = p.Id
-    INNER JOIN dbo.Users AS u
-        ON p.OwnerUserId = u.Id
+    JOIN dbo.Posts AS p
+      ON v.PostId = p.Id
+    JOIN dbo.Users AS u
+      ON p.OwnerUserId = u.Id
     WHERE v.CreationDate BETWEEN @StartDate AND @EndDate
     AND   v.VoteTypeId IN (1, 3, 5, 10)
-    GROUP BY u.DisplayName,
-             v.VoteTypeId
-    ORDER BY TotalPosts DESC';
+    GROUP BY 
+        u.DisplayName,
+        v.VoteTypeId
+    ORDER BY 
+        TotalPosts DESC';
 
     /* Sort of a general approach: If the current search is > 3 months, and
        the compiled search is < 2 months or vice versa, we want to recompile 

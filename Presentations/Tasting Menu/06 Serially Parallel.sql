@@ -44,14 +44,16 @@ SELECT
     pbs.flat_date, 
     pbs.answers_or_something
 FROM dbo.parallel_but_serial AS pbs
-ORDER BY pbs.flat_date
+ORDER BY 
+    pbs.flat_date
 OPTION(MAXDOP 8);
 
 SELECT
     pbs.flat_date, 
     pbs.answers_or_something
 FROM dbo.parallel_but_serial AS pbs
-ORDER BY pbs.flat_date
+ORDER BY 
+    pbs.flat_date
 OPTION(MAXDOP 1);
 
 
@@ -80,7 +82,7 @@ SELECT
         COUNT_BIG(*)
 FROM dbo.Posts AS q
 JOIN dbo.Posts AS a
-    ON q.AcceptedAnswerId = a.Id
+  ON q.AcceptedAnswerId = a.Id
 CROSS JOIN
 (
     SELECT tsNow = 

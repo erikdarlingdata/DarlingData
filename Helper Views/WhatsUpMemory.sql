@@ -17,7 +17,8 @@ The dm_os_buffer_descriptors DMV especially can be really slow at times
 
 https://github.com/erikdarlingdata/DarlingData
 
-Copyright (c) 2023 Darling Data, LLC
+Copyright (c) 2024 Darling Data, LLC
+https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction,
 including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
@@ -89,13 +90,13 @@ FROM
         au.allocation_unit_id
     FROM sys.allocation_units AS au
     JOIN sys.partitions AS p
-        ON au.container_id = p.hobt_id
-        AND au.type =1
+      ON au.container_id = p.hobt_id
+      AND au.type =1
     JOIN sys.objects AS o
-        ON p.object_id = o.object_id
+      ON p.object_id = o.object_id
     JOIN sys.indexes AS i
-        ON  o.object_id = i.object_id
-        AND p.index_id = i.index_id
+      ON  o.object_id = i.object_id
+      AND p.index_id = i.index_id
     WHERE au.type > 0
     AND   o.is_ms_shipped = 0
 
@@ -111,13 +112,13 @@ FROM
         au.allocation_unit_id
     FROM sys.allocation_units AS au
     JOIN sys.partitions AS p
-        ON au.container_id = p.hobt_id
-        AND au.type = 3
+      ON au.container_id = p.hobt_id
+      AND au.type = 3
     JOIN sys.objects AS o
-        ON p.object_id = o.object_id
+      ON p.object_id = o.object_id
     JOIN sys.indexes AS i
-        ON  o.object_id = i.object_id
-        AND p.index_id = i.index_id
+      ON  o.object_id = i.object_id
+      AND p.index_id = i.index_id
     WHERE au.type > 0
     AND   o.is_ms_shipped = 0
 
@@ -133,13 +134,13 @@ FROM
         au.allocation_unit_id
     FROM sys.allocation_units AS au
     JOIN sys.partitions AS p
-        ON au.container_id = p.partition_id
-        AND au.type = 2
+      ON au.container_id = p.partition_id
+      AND au.type = 2
     JOIN sys.objects AS o
-        ON p.object_id = o.object_id
+      ON p.object_id = o.object_id
     JOIN sys.indexes AS i
-        ON  o.object_id = i.object_id
-        AND p.index_id = i.index_id
+      ON  o.object_id = i.object_id
+      AND p.index_id = i.index_id
     WHERE au.type > 0
     AND   o.is_ms_shipped = 0
 ) AS x
@@ -149,5 +150,5 @@ GROUP BY
     SCHEMA_NAME(x.schema_id),
     x.object_name,
     x.index_name
-ORDER BY COUNT_BIG(*) DESC;
-GO
+ORDER BY 
+    COUNT_BIG(*) DESC;

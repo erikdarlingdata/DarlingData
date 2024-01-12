@@ -12,12 +12,12 @@ GO
 /*
 
 For background on why you might need this:
- * https://www.erikdarlingdata.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/
+ * https://www.erikdarling.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/
 
 In short, if your security caches are growing out of control, it can cause all sorts of weird issues with SQL Server.
 
-Copyright 2023 Darling Data, LLC
-https://www.erikdarlingdata.com/
+Copyright 2024 Darling Data, LLC
+https://www.erikdarling.com/
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
@@ -42,7 +42,6 @@ CREATE OR ALTER PROCEDURE
 WITH RECOMPILE
 AS
 BEGIN
-
 SET NOCOUNT, XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
@@ -51,7 +50,6 @@ DECLARE
 
 IF OBJECT_ID(N'dbo.ClearTokenPermLogging') IS NULL
 BEGIN
-
     CREATE TABLE
         dbo.ClearTokenPermLogging
     (
@@ -60,7 +58,6 @@ BEGIN
         log_date datetime NOT NULL,
         clear_triggered bit NOT NULL
     );
-
 END;
 
 IF
@@ -138,4 +135,5 @@ SELECT
 FROM dbo.ClearTokenPermLogging AS ctpl;
 
 /*Truncate a log*/
-TRUNCATE TABLE dbo.ClearTokenPermLogging;
+TRUNCATE TABLE 
+    dbo.ClearTokenPermLogging;

@@ -51,8 +51,9 @@ SELECT TOP (100)
     cc.records
 FROM dbo.Users AS u
 JOIN comment_count AS cc
-    ON cc.UserId = u.Id
-ORDER BY u.Reputation DESC;
+  ON cc.UserId = u.Id
+ORDER BY 
+    u.Reputation DESC;
 
 /*
 When they reduce a good number of rows.
@@ -81,15 +82,17 @@ WITH
         b.UserId, 
         records = COUNT_BIG(*)
     FROM dbo.Badges AS b
-    GROUP BY b.UserId
+    GROUP BY 
+        b.UserId
 )
 SELECT TOP (100)
     u.DisplayName,
     bc.records
 FROM dbo.Users AS u
 JOIN badge_count AS bc
-    ON bc.UserId = u.Id
-ORDER BY u.Reputation DESC;
+  ON bc.UserId = u.Id
+ORDER BY 
+    u.Reputation DESC;
 
 /*
 Well, here.

@@ -51,7 +51,8 @@ FROM
     SELECT TOP (1000) 
         u.Id 
     FROM dbo.Users AS u
-    ORDER BY u.Reputation
+    ORDER BY 
+        u.Reputation
 ) AS u
 OPTION(MAXDOP 1);
 
@@ -87,16 +88,18 @@ FROM
     SELECT TOP (1000) 
         u.Id
     FROM dbo.Users AS u
-    ORDER BY u.Reputation
+    ORDER BY 
+        u.Reputation
 ) AS u
 JOIN 
 (
     SELECT TOP (1000) 
         u.Id
     FROM dbo.Users AS u
-    ORDER BY u.Reputation
+    ORDER BY 
+        u.Reputation
 ) AS u2
-ON u.Id = u2.Id
+  ON u.Id = u2.Id
 OPTION(MAXDOP 1);
 
 
@@ -124,16 +127,18 @@ FROM
     SELECT TOP (1000) 
         u.Id
     FROM dbo.Users AS u
-    ORDER BY u.Reputation
+    ORDER BY 
+        u.Reputation
 ) AS u
 INNER LOOP JOIN --Force the loop join
 (   
     SELECT TOP (1000) 
         u.Id
     FROM dbo.Users AS u
-    ORDER BY u.Reputation
+    ORDER BY 
+        u.Reputation
 ) AS u2
-ON u.Id = u2.Id
+  ON u.Id = u2.Id
 OPTION(MAXDOP 1);
 
 
@@ -167,7 +172,8 @@ FROM
       , u.Location    -- 1.2GB (NVARCHAR 100)
       , u.AboutMe     -- 9GB   (NVARCHAR MAX)
     FROM dbo.Users AS u
-    ORDER BY u.Reputation
+    ORDER BY 
+        u.Reputation
 ) AS u
 OPTION(MAXDOP 1);
 
@@ -196,18 +202,21 @@ FROM
     SELECT TOP (1000) 
         u.Id
     FROM dbo.Users AS u
-    ORDER BY u.Reputation
+    ORDER BY 
+        u.Reputation
 ) AS u
 INNER HASH JOIN 
 (
     SELECT TOP (1000) 
         u.Id
     FROM dbo.Users AS u
-    ORDER BY u.Reputation
+    ORDER BY 
+        u.Reputation
 ) AS u2
 ON u.Id = u2.Id
-ORDER BY u.Id, 
-         u2.Id -- Add an ORDER BY
+ORDER BY 
+    u.Id, 
+    u2.Id -- Add an ORDER BY
 OPTION(MAXDOP 8);
 
 
