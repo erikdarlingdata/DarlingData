@@ -2,9 +2,9 @@
 
 Welcome aboard! Thanks for taking the time to read this. I'll try to keep it short.
 
-* [I'd like to report a bug](#reporting-bugs)
-* [I'd like someone else to build something](#requesting-features)
-* [I'd like to build a new feature myself](#building-features)
+* [Reporting Bugs](#reporting-bugs)
+* [Requesting Features](#requesting-features)
+* [Working On Code](#working-on-code)
 * [Code Standards](#code-standards)
 
 If you're new to GitHub, here's an excellent guide on contributing by Rob Sewell: [How to fork a GitHub repository and contribute to an open source project](https://blog.robsewell.com/blog/how-to-fork-a-github-repository-and-contribute-to-an-open-source-project/)
