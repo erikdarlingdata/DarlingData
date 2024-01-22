@@ -2,9 +2,10 @@
 
 Welcome aboard! Thanks for taking the time to read this. I'll try to keep it short.
 
-* [I'd like to report a bug](#how-to-report-bugs)
-* [I'd like someone else to build something](#how-to-request-features)
-* [I'd like to build a new feature myself](#how-to-build-features-yourself)
+* [I'd like to report a bug](#reporting-bugs)
+* [I'd like someone else to build something](#requesting-features)
+* [I'd like to build a new feature myself](#building-features)
+* [Code Standards](#code-standards)
 
 If you're new to GitHub, here's an excellent guide on contributing by Rob Sewell: [How to fork a GitHub repository and contribute to an open source project](https://blog.robsewell.com/blog/how-to-fork-a-github-repository-and-contribute-to-an-open-source-project/)
 
@@ -38,7 +39,7 @@ I am guilty of not doing that at times, but it's my repo, and I abuse the issues
 
 Please make sure all pull requests point to the dev branch, and not the main branch.
 
-## Code Requirements and Standards
+## Code Standards
 
 Your code needs to compile & run on all currently supported versions of SQL Server. 
 
