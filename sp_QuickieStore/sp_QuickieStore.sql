@@ -2038,22 +2038,26 @@ BEGIN
     AND @work_end_utc   IS NULL
     BEGIN
         SELECT
-            @work_end_utc = DATEADD(
-                HOUR,
-                8,
-                @work_start_utc
-            );
+            @work_end_utc = 
+                DATEADD
+                (
+                    HOUR,
+                    8,
+                    @work_start_utc
+                );
     END;
 
     IF  @work_start_utc IS NULL
     AND @work_end_utc   IS NOT NULL
     BEGIN
         SELECT
-            @work_start_utc = DATEADD(
-                HOUR,
-                -8,
-                @work_end_utc
-            );
+            @work_start_utc = 
+                DATEADD
+                (
+                    HOUR,
+                    -8,
+                    @work_end_utc
+                );
     END;
 
     SELECT
