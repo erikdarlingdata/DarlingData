@@ -7,7 +7,8 @@ Welcome aboard! Thanks for taking the time to read this. I'll try to keep it sho
 * [Working On Code](#working-on-code)
 * [Code Standards](#code-standards)
 
-If you're new to GitHub, here's an excellent guide on contributing by Rob Sewell: [How to fork a GitHub repository and contribute to an open source project](https://blog.robsewell.com/blog/how-to-fork-a-github-repository-and-contribute-to-an-open-source-project/)
+If you're new to GitHub, here's an excellent guide on contributing by Rob Sewell: 
+ * [How to fork a GitHub repository and contribute to an open source project](https://blog.robsewell.com/blog/how-to-fork-a-github-repository-and-contribute-to-an-open-source-project/)
 
 ## Reporting Bugs
 
