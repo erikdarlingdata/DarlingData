@@ -1,4 +1,4 @@
--- Compile Date: 01/22/2024 17:11:07 UTC
+-- Compile Date: 01/22/2024 17:16:18 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -13008,8 +13008,8 @@ ALTER PROCEDURE
     @format_output bit = 1, /*returns numbers formatted with commas*/
     @get_all_databases bit = 0, /*looks for query store enabled databases and returns combined results from all of them*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
-    @work_start time(0) = '9am', /*Use this to set a specific start of your work days*/
-    @work_end time(0) = '5pm', /*Use this to set a specific end of your work days*/
+    @work_start varchar(4) = '9am', /*Use this to set a specific start of your work days*/
+    @work_end varchar(4) = '5pm', /*Use this to set a specific end of your work days*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
@@ -13922,6 +13922,18 @@ CREATE TABLE
 );
 
 /*
+AM/PM mapping table for workday stuff
+*/
+CREATE TABLE
+    #am_pm
+(
+    am_pm varchar(4),
+    t12 integer,
+    t24 integer
+);
+
+
+/*
 Try to be helpful by subbing in a database name if null
 */
 IF
@@ -13986,8 +13998,8 @@ DECLARE
     @utc_minutes_difference bigint,
     @utc_minutes_original bigint,
     @df integer,
-    @work_start_utc time(0),
-    @work_end_utc time(0);
+    @work_start_int integer,
+    @work_end_int integer;
 
 
 /*
@@ -14120,8 +14132,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @execution_type_desc nvarchar(60),
           @database_id int,
           @queries_top bigint,
-          @work_start_utc time(0),
-          @work_end_utc time(0)',
+          @work_start_int integer,
+          @work_end_int integer',
     @plans_top =
         CASE
             WHEN @include_plan_ids IS NULL
@@ -14323,8 +14335,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             SYSDATETIME()
         ),
     @df = @@DATEFIRST,
-    @work_start_utc = @work_start,
-    @work_end_utc = @work_end;
+    @work_start_int = 0,
+    @work_end_int = 0;
 
 /*
 Some parameters can't be NULL,
@@ -14952,55 +14964,117 @@ END;
 
 IF @workdays = 1
 BEGIN
-    IF  @work_start_utc IS NULL
-    AND @work_end_utc   IS NULL
+    SELECT
+        @work_start = LOWER(REPLACE(@work_start, ' ', '')),
+        @work_end   = LOWER(REPLACE(@work_end, ' ', ''));
+    
+    INSERT
+        #am_pm
+    (
+        am_pm,
+        t12,
+        t24
+    )
+    SELECT
+        am_pm = 
+            CASE
+                WHEN y.t24 BETWEEN 1 AND 11
+                THEN RTRIM(y.t12) + 'am'
+                WHEN y.t24 = 0
+                THEN RTRIM(y.t12) + 'am'
+                ELSE RTRIM(y.t12) + 'pm'
+            END,
+        y.t12,
+        y.t24
+    FROM
+    (
+        SELECT
+            t12 = 
+                CASE x.t12
+                     WHEN 0
+                     THEN 12
+                     ELSE x.t12
+                END,
+            t24 = 
+                CASE 
+                    WHEN x.t24 < 24
+                    THEN x.t24
+                    ELSE 0
+                END
+        FROM
+        (
+            SELECT TOP (24)
+                t12 = 
+                    ROW_NUMBER() OVER
+                    (
+                        ORDER BY
+                            1/0
+                    ) % 12,
+                t24 = 
+                    ROW_NUMBER() OVER
+                    (
+                        ORDER BY
+                            1/0
+                    )
+            FROM sys.messages AS m
+        ) AS x
+    ) AS y
+    ORDER BY
+        y.t24;
+    
+    SELECT
+        @work_start_int =
+        (
+            SELECT
+                ap.t24
+            FROM #am_pm AS ap
+            WHERE ap.am_pm = @work_start
+        ),
+        @work_end_int =
+        (
+            SELECT
+                ap.t24
+            FROM #am_pm AS ap
+            WHERE ap.am_pm = @work_end
+        );
+    
+    IF  @work_start_int IS NULL
+    AND @work_end_int   IS NULL
     BEGIN
          SELECT
-             @work_start_utc = '09:00',
-             @work_end_utc = '17:00';
+             @work_start_int = 9,
+             @work_end_int = 17;
     END;
-
-    IF  @work_start_utc IS NOT NULL
-    AND @work_end_utc   IS NULL
+    
+    IF  @work_start_int IS NOT NULL
+    AND @work_end_int   IS NULL
     BEGIN
         SELECT
-            @work_end_utc = 
-                DATEADD
-                (
-                    HOUR,
-                    8,
-                    @work_start_utc
-                );
+            @work_end_int = @work_start_int + 8;
     END;
-
-    IF  @work_start_utc IS NULL
-    AND @work_end_utc   IS NOT NULL
+    
+    IF  @work_start_int IS NULL
+    AND @work_end_int   IS NOT NULL
     BEGIN
         SELECT
-            @work_start_utc = 
-                DATEADD
-                (
-                    HOUR,
-                    -8,
-                    @work_end_utc
-                );
+            @work_start_int = @work_end_int - 8;
     END;
 
     SELECT
-        @work_start_utc =
-            DATEADD
+        @work_start_int += 
+            DATEDIFF
             (
                 MINUTE,
-                @utc_minutes_difference,
-                @work_start_utc
-            ),
-        @work_end_utc =
-            DATEADD
+                SYSDATETIME(),
+                SYSUTCDATETIME()
+            ) / 60,
+        @work_end_int += 
+            DATEDIFF
             (
                 MINUTE,
-                @utc_minutes_difference,
-                @work_end_utc
-            );
+                SYSDATETIME(),
+                SYSUTCDATETIME()
+            ) / 60;
  
     IF @df = 1
     BEGIN
@@ -15014,25 +15088,11 @@ BEGIN
                @where_clause += N'AND  DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 2 AND 6' + @nc10;
     END;/*df 7*/
 
-    IF  @work_start_utc IS NOT NULL
-    AND @work_end_utc IS NOT NULL
+    IF  @work_start_int IS NOT NULL
+    AND @work_end_int IS NOT NULL
     BEGIN
-        /*
-          depending on local TZ, work time might span midnight UTC;
-          account for that by splitting the interval into before/after midnight. for example:
-              [09:00 - 17:00] PST
-           =  [17:00 - 01:00] UTC
-           =  [17:00 - 00:00] + [00:00 - 01:00] UTC
-        */
-        IF (@work_start_utc < @work_end_utc)
         SELECT
-            @where_clause += N'AND  CAST(qsrs.last_execution_time as time(0)) BETWEEN @work_start_utc AND @work_end_utc' + @nc10;
-        ELSE
-        SELECT
-            @where_clause += N'AND  (' + @nc10 +
-                '    CAST(qsrs.last_execution_time as time(0)) BETWEEN @work_start_utc AND ''00:00'' ' + @nc10 +
-                '    OR CAST(qsrs.last_execution_time as time(0)) BETWEEN ''00:00'' AND @work_end_utc' + @nc10 +
-                ')' + @nc10;
+            @where_clause += N'AND  DATEPART(HOUR, qsrs.last_execution_time) BETWEEN @work_start_int AND @work_end_int' + @nc10;
     END; /*Work hours*/
 END; /*Final end*/
 
@@ -16545,8 +16605,8 @@ EXEC sys.sp_executesql
     @execution_type_desc,
     @database_id,
     @queries_top,
-    @work_start_utc,
-    @work_end_utc;
+    @work_start_int,
+    @work_end_int;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -16730,8 +16790,8 @@ EXEC sys.sp_executesql
     @execution_type_desc,
     @database_id,
     @queries_top,
-    @work_start_utc,
-    @work_end_utc;
+    @work_start_int,
+    @work_end_int;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -18073,6 +18133,8 @@ BEGIN
         #dm_exec_query_stats;
     TRUNCATE TABLE
         #query_types;
+    TRUNCATE TABLE
+        #am_pm;
 END;
 
 FETCH NEXT
@@ -20562,10 +20624,10 @@ BEGIN
            @utc_minutes_original,
         df =
             @df,
-        work_start_utc =
-            @work_start_utc,
-        work_end_utc =
-            @work_end_utc;
+        work_start_int =
+            @work_start_int,
+        work_end_int =
+            @work_end_int;
 
     IF EXISTS
        (
@@ -21296,6 +21358,29 @@ BEGIN
         FROM #troubleshoot_performance AS tp
         ORDER BY
             tp.id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#troubleshoot_performance is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #am_pm AS ap
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#am_pm',
+            ap.*
+        FROM #am_pm AS ap
+        ORDER BY
+            ap.t24
         OPTION(RECOMPILE);
     END;
     ELSE
