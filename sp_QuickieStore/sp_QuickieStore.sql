@@ -2093,10 +2093,17 @@ BEGIN
     BEGIN
         /*
           depending on local TZ, work time might span midnight UTC;
-          account for that by splitting the interval into before/after midnight. for example:
+          account for that by splitting the interval into before/after midnight.
+          for example:
               [09:00 - 17:00] PST
            =  [17:00 - 01:00] UTC
-           =  [17:00 - 00:00] + [00:00 - 01:00] UTC
+           =  [17:00 - 00:00) + [00:00 - 01:00] UTC
+
+          NB: because we don't have the benefit of the context of what day midnight
+          is occurring on, we have to rely on the behavior from the documentation of
+          the time DT of higher to lower precision resulting in truncation to split
+          the interval. i.e. 23:59:59.9999999 -> 23:59:59. which should make that
+          value safe to use as the endpoint for our "before midnight" interval.
         */
         IF (@work_start_utc < @work_end_utc)
         SELECT
@@ -2104,8 +2111,8 @@ BEGIN
         ELSE
         SELECT
             @where_clause += N'AND  (' + @nc10 +
-                '    CAST(qsrs.last_execution_time as time(0)) BETWEEN @work_start_utc AND ''00:00'' ' + @nc10 +
-                '    OR CAST(qsrs.last_execution_time as time(0)) BETWEEN ''00:00'' AND @work_end_utc' + @nc10 +
+                '    CAST(qsrs.last_execution_time as time(0)) BETWEEN @work_start_utc AND ''23:59:59'' ' + @nc10 +
+                '    OR CAST(qsrs.last_execution_time as time(0)) BETWEEN ''00:00:00'' AND @work_end_utc' + @nc10 +
                 ')' + @nc10;
     END; /*Work hours*/
 END; /*Final end*/
