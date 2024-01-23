@@ -1229,7 +1229,7 @@ BEGIN
                 (   
                     SECOND,    
                     @seconds_sample,    
-                    0   
+                    '19000101'   
                  ),    
                  114   
             );   
@@ -4592,9 +4592,9 @@ BEGIN
                 N' WHERE event_time < DATEADD   
                                       (   
                                           DAY,    
-                                          (-1 * @delete_retention_days   
-                                      ),    
-                                      SYSDATETIME()); ' + @nc10   
+                                          (-1 * @delete_retention_days),    
+                                          SYSDATETIME()
+                                      ); ' + @nc10   
         FROM #human_events_worker AS hew;   
            
         IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;   
