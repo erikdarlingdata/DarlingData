@@ -1044,11 +1044,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     DATEDIFF
                     (
                         MINUTE,
-                        0,
+                        '19000101',
                         tc.event_time
                     ) / @wait_round_interval_minutes *
                         @wait_round_interval_minutes,
-                    0
+                    '19000101'
                 ),
             tc.wait_type,
             waits = SUM(CONVERT(bigint, tc.waits)),
@@ -1074,11 +1074,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 DATEDIFF
                 (
                     MINUTE,
-                    0,
+                    '19000101',
                     tc.event_time
                 ) / @wait_round_interval_minutes *
                     @wait_round_interval_minutes,
-                0
+                '19000101'
             )
         ORDER BY
             event_time_rounded DESC,
@@ -1220,11 +1220,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     DATEDIFF
                     (
                         MINUTE,
-                        0,
+                        '19000101',
                         td.event_time
                     ) / @wait_round_interval_minutes *
                         @wait_round_interval_minutes,
-                    0
+                    '19000101'
                 ),
             td.wait_type,
             waits = SUM(CONVERT(bigint, td.waits)),
@@ -1250,11 +1250,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 DATEDIFF
                 (
                     MINUTE,
-                    0,
+                    '19000101',
                     td.event_time
                 ) / @wait_round_interval_minutes *
                     @wait_round_interval_minutes,
-                0
+                '19000101'
             )
         ORDER BY
             event_time_rounded DESC,
