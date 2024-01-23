@@ -1,4 +1,4 @@
--- Compile Date: 01/23/2024 21:15:17 UTC
+-- Compile Date: 01/23/2024 21:57:59 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -1045,11 +1045,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     DATEDIFF
                     (
                         MINUTE,
-                        0,
+                        '19000101',
                         tc.event_time
                     ) / @wait_round_interval_minutes *
                         @wait_round_interval_minutes,
-                    0
+                    '19000101'
                 ),
             tc.wait_type,
             waits = SUM(CONVERT(bigint, tc.waits)),
@@ -1075,11 +1075,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 DATEDIFF
                 (
                     MINUTE,
-                    0,
+                    '19000101',
                     tc.event_time
                 ) / @wait_round_interval_minutes *
                     @wait_round_interval_minutes,
-                0
+                '19000101'
             )
         ORDER BY
             event_time_rounded DESC,
@@ -1221,11 +1221,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     DATEDIFF
                     (
                         MINUTE,
-                        0,
+                        '19000101',
                         td.event_time
                     ) / @wait_round_interval_minutes *
                         @wait_round_interval_minutes,
-                    0
+                    '19000101'
                 ),
             td.wait_type,
             waits = SUM(CONVERT(bigint, td.waits)),
@@ -1251,11 +1251,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 DATEDIFF
                 (
                     MINUTE,
-                    0,
+                    '19000101',
                     td.event_time
                 ) / @wait_round_interval_minutes *
                     @wait_round_interval_minutes,
-                0
+                '19000101'
             )
         ORDER BY
             event_time_rounded DESC,
@@ -3884,7 +3884,7 @@ BEGIN
                 (   
                     SECOND,    
                     @seconds_sample,    
-                    0   
+                    '19000101'   
                  ),    
                  114   
             );   
@@ -7247,9 +7247,9 @@ BEGIN
                 N' WHERE event_time < DATEADD   
                                       (   
                                           DAY,    
-                                          (-1 * @delete_retention_days   
-                                      ),    
-                                      SYSDATETIME()); ' + @nc10   
+                                          (-1 * @delete_retention_days),    
+                                          SYSDATETIME()
+                                      ); ' + @nc10   
         FROM #human_events_worker AS hew;   
            
         IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;   
@@ -9967,7 +9967,7 @@ SELECT
                           )
                       )
                   ),
-                  0
+                  '19000101'
               ),
               14
           ) +
@@ -10056,7 +10056,7 @@ SELECT
                           )
                       )
                   ),
-                  0
+                  '19000101'
               ),
               14
           ) +
@@ -13008,8 +13008,8 @@ ALTER PROCEDURE
     @format_output bit = 1, /*returns numbers formatted with commas*/
     @get_all_databases bit = 0, /*looks for query store enabled databases and returns combined results from all of them*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
-    @work_start varchar(4) = '9am', /*Use this to set a specific start of your work days*/
-    @work_end varchar(4) = '5pm', /*Use this to set a specific end of your work days*/
+    @work_start time(0) = '9am', /*Use this to set a specific start of your work days*/
+    @work_end time(0) = '5pm', /*Use this to set a specific end of your work days*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
@@ -13922,18 +13922,6 @@ CREATE TABLE
 );
 
 /*
-AM/PM mapping table for workday stuff
-*/
-CREATE TABLE
-    #am_pm
-(
-    am_pm varchar(4),
-    t12 integer,
-    t24 integer
-);
-
-
-/*
 Try to be helpful by subbing in a database name if null
 */
 IF
@@ -13998,8 +13986,8 @@ DECLARE
     @utc_minutes_difference bigint,
     @utc_minutes_original bigint,
     @df integer,
-    @work_start_int integer,
-    @work_end_int integer;
+    @work_start_utc time(0),
+    @work_end_utc time(0);
 
 
 /*
@@ -14132,8 +14120,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @execution_type_desc nvarchar(60),
           @database_id int,
           @queries_top bigint,
-          @work_start_int integer,
-          @work_end_int integer',
+          @work_start_utc time(0),
+          @work_end_utc time(0)',
     @plans_top =
         CASE
             WHEN @include_plan_ids IS NULL
@@ -14256,8 +14244,10 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         )
         OPTION(RECOMPILE);',
     @troubleshoot_update = N'
-        UPDATE tp
-            SET tp.end_time = GETDATE()
+        UPDATE 
+            tp
+        SET 
+            tp.end_time = GETDATE()
         FROM #troubleshoot_performance AS tp
         WHERE tp.current_table = @current_table
         OPTION(RECOMPILE);',
@@ -14294,7 +14284,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                 DATEDIFF
                 (
                     DAY,
-                    0,
+                    '19000101',
                     SYSUTCDATETIME()
                 )
             )
@@ -14314,7 +14304,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                     DATEDIFF
                     (
                         DAY,
-                        0,
+                        '19000101',
                         SYSUTCDATETIME()
                     )
                 )
@@ -14335,8 +14325,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             SYSDATETIME()
         ),
     @df = @@DATEFIRST,
-    @work_start_int = 0,
-    @work_end_int = 0;
+    @work_start_utc = @work_start,
+    @work_end_utc = @work_end;
 
 /*
 Some parameters can't be NULL,
@@ -14402,7 +14392,7 @@ SELECT
                     DATEDIFF
                     (
                         DAY,
-                        0,
+                        '19000101',
                         SYSUTCDATETIME()
                     )
                 )
@@ -14430,7 +14420,7 @@ SELECT
                         DATEDIFF
                         (
                             DAY,
-                            0,
+                            '19000101',
                             SYSUTCDATETIME()
                         )
                     )
@@ -14964,90 +14954,16 @@ END;
 
 IF @workdays = 1
 BEGIN
-    SELECT
-        @work_start = LOWER(REPLACE(@work_start, ' ', '')),
-        @work_end   = LOWER(REPLACE(@work_end, ' ', ''));
-    
-    INSERT
-        #am_pm
-    (
-        am_pm,
-        t12,
-        t24
-    )
-    SELECT
-        am_pm = 
-            CASE
-                WHEN y.t24 BETWEEN 1 AND 11
-                THEN RTRIM(y.t12) + 'am'
-                WHEN y.t24 = 0
-                THEN RTRIM(y.t12) + 'am'
-                ELSE RTRIM(y.t12) + 'pm'
-            END,
-        y.t12,
-        y.t24
-    FROM
-    (
-        SELECT
-            t12 = 
-                CASE x.t12
-                     WHEN 0
-                     THEN 12
-                     ELSE x.t12
-                END,
-            t24 = 
-                CASE 
-                    WHEN x.t24 < 24
-                    THEN x.t24
-                    ELSE 0
-                END
-        FROM
-        (
-            SELECT TOP (24)
-                t12 = 
-                    ROW_NUMBER() OVER
-                    (
-                        ORDER BY
-                            1/0
-                    ) % 12,
-                t24 = 
-                    ROW_NUMBER() OVER
-                    (
-                        ORDER BY
-                            1/0
-                    )
-            FROM sys.messages AS m
-        ) AS x
-    ) AS y
-    ORDER BY
-        y.t24;
-    
-    SELECT
-        @work_start_int =
-        (
-            SELECT
-                ap.t24
-            FROM #am_pm AS ap
-            WHERE ap.am_pm = @work_start
-        ),
-        @work_end_int =
-        (
-            SELECT
-                ap.t24
-            FROM #am_pm AS ap
-            WHERE ap.am_pm = @work_end
-        );
-    
-    IF  @work_start_int IS NULL
-    AND @work_end_int   IS NULL
+    IF  @work_start_utc IS NULL
+    AND @work_end_utc   IS NULL
     BEGIN
          SELECT
-             @work_start_int = 9,
-             @work_end_int = 17;
+             @work_start_utc = '09:00',
+             @work_end_utc = '17:00';
     END;
-    
-    IF  @work_start_int IS NOT NULL
-    AND @work_end_int   IS NULL
+
+    IF  @work_start_utc IS NOT NULL
+    AND @work_end_utc   IS NULL
     BEGIN
         SELECT
             @work_end_utc =
@@ -15058,9 +14974,9 @@ BEGIN
                     @work_start_utc
                 );
     END;
-    
-    IF  @work_start_int IS NULL
-    AND @work_end_int   IS NOT NULL
+
+    IF  @work_start_utc IS NULL
+    AND @work_end_utc   IS NOT NULL
     BEGIN
         SELECT
             @work_start_utc =
@@ -15073,20 +14989,20 @@ BEGIN
     END;
 
     SELECT
-        @work_start_int += 
-            DATEDIFF
+        @work_start_utc =
+            DATEADD
             (
                 MINUTE,
-                SYSDATETIME(),
-                SYSUTCDATETIME()
-            ) / 60,
-        @work_end_int += 
-            DATEDIFF
+                @utc_minutes_difference,
+                @work_start_utc
+            ),
+        @work_end_utc =
+            DATEADD
             (
                 MINUTE,
-                SYSDATETIME(),
-                SYSUTCDATETIME()
-            ) / 60;
+                @utc_minutes_difference,
+                @work_end_utc
+            );
  
     IF @df = 1
     BEGIN
@@ -15100,8 +15016,8 @@ BEGIN
            @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 2 AND 6' + @nc10;
     END;/*df 7*/
 
-    IF  @work_start_int IS NOT NULL
-    AND @work_end_int IS NOT NULL
+    IF  @work_start_utc IS NOT NULL
+    AND @work_end_utc IS NOT NULL
     BEGIN
         /*
           depending on local TZ, work time might span midnight UTC;
@@ -16639,8 +16555,8 @@ EXEC sys.sp_executesql
     @execution_type_desc,
     @database_id,
     @queries_top,
-    @work_start_int,
-    @work_end_int;
+    @work_start_utc,
+    @work_end_utc;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -16824,8 +16740,8 @@ EXEC sys.sp_executesql
     @execution_type_desc,
     @database_id,
     @queries_top,
-    @work_start_int,
-    @work_end_int;
+    @work_start_utc,
+    @work_end_utc;
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -17317,28 +17233,29 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
-    UPDATE qsqt
-        SET
-            qsqt.total_grant_mb = deqs.total_grant_mb,
-            qsqt.last_grant_mb = deqs.last_grant_mb,
-            qsqt.min_grant_mb = deqs.min_grant_mb,
-            qsqt.max_grant_mb = deqs.max_grant_mb,
-            qsqt.total_used_grant_mb = deqs.total_used_grant_mb,
-            qsqt.last_used_grant_mb = deqs.last_used_grant_mb,
-            qsqt.min_used_grant_mb = deqs.min_used_grant_mb,
-            qsqt.max_used_grant_mb = deqs.max_used_grant_mb,
-            qsqt.total_ideal_grant_mb = deqs.total_ideal_grant_mb,
-            qsqt.last_ideal_grant_mb = deqs.last_ideal_grant_mb,
-            qsqt.min_ideal_grant_mb = deqs.min_ideal_grant_mb,
-            qsqt.max_ideal_grant_mb = deqs.max_ideal_grant_mb,
-            qsqt.total_reserved_threads = deqs.total_reserved_threads,
-            qsqt.last_reserved_threads = deqs.last_reserved_threads,
-            qsqt.min_reserved_threads = deqs.min_reserved_threads,
-            qsqt.max_reserved_threads = deqs.max_reserved_threads,
-            qsqt.total_used_threads = deqs.total_used_threads,
-            qsqt.last_used_threads = deqs.last_used_threads,
-            qsqt.min_used_threads = deqs.min_used_threads,
-            qsqt.max_used_threads = deqs.max_used_threads
+    UPDATE 
+        qsqt
+    SET
+        qsqt.total_grant_mb = deqs.total_grant_mb,
+        qsqt.last_grant_mb = deqs.last_grant_mb,
+        qsqt.min_grant_mb = deqs.min_grant_mb,
+        qsqt.max_grant_mb = deqs.max_grant_mb,
+        qsqt.total_used_grant_mb = deqs.total_used_grant_mb,
+        qsqt.last_used_grant_mb = deqs.last_used_grant_mb,
+        qsqt.min_used_grant_mb = deqs.min_used_grant_mb,
+        qsqt.max_used_grant_mb = deqs.max_used_grant_mb,
+        qsqt.total_ideal_grant_mb = deqs.total_ideal_grant_mb,
+        qsqt.last_ideal_grant_mb = deqs.last_ideal_grant_mb,
+        qsqt.min_ideal_grant_mb = deqs.min_ideal_grant_mb,
+        qsqt.max_ideal_grant_mb = deqs.max_ideal_grant_mb,
+        qsqt.total_reserved_threads = deqs.total_reserved_threads,
+        qsqt.last_reserved_threads = deqs.last_reserved_threads,
+        qsqt.min_reserved_threads = deqs.min_reserved_threads,
+        qsqt.max_reserved_threads = deqs.max_reserved_threads,
+        qsqt.total_used_threads = deqs.total_used_threads,
+        qsqt.last_used_threads = deqs.last_used_threads,
+        qsqt.min_used_threads = deqs.min_used_threads,
+        qsqt.max_used_threads = deqs.max_used_threads
     FROM #query_store_query_text AS qsqt
     JOIN #dm_exec_query_stats AS deqs
       ON qsqt.statement_sql_handle = deqs.statement_sql_handle
@@ -17697,8 +17614,10 @@ Update things to get the context settings for each query
 SELECT
     @current_table = 'updating context_settings in #query_store_runtime_stats';
 
-UPDATE qsrs
-    SET qsrs.context_settings =
+UPDATE 
+    qsrs
+SET 
+    qsrs.context_settings =
         SUBSTRING
         (
             CASE
@@ -18167,8 +18086,6 @@ BEGIN
         #dm_exec_query_stats;
     TRUNCATE TABLE
         #query_types;
-    TRUNCATE TABLE
-        #am_pm;
 END;
 
 FETCH NEXT
@@ -20388,7 +20305,7 @@ FROM
                         DATEDIFF
                         (
                             DAY, 
-                            0, 
+                            '19000101', 
                             SYSDATETIME()
                         )
                     )
@@ -20441,7 +20358,7 @@ FROM
                         DATEDIFF
                         (
                             DAY, 
-                            0, 
+                            '19000101', 
                             SYSDATETIME()
                         )
                     )
@@ -20658,10 +20575,10 @@ BEGIN
            @utc_minutes_original,
         df =
             @df,
-        work_start_int =
-            @work_start_int,
-        work_end_int =
-            @work_end_int;
+        work_start_utc =
+            @work_start_utc,
+        work_end_utc =
+            @work_end_utc;
 
     IF EXISTS
        (
@@ -21392,29 +21309,6 @@ BEGIN
         FROM #troubleshoot_performance AS tp
         ORDER BY
             tp.id
-        OPTION(RECOMPILE);
-    END;
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#troubleshoot_performance is empty';
-    END;
-
-    IF EXISTS
-       (
-          SELECT
-              1/0
-          FROM #am_pm AS ap
-       )
-    BEGIN
-        SELECT
-            table_name =
-                '#am_pm',
-            ap.*
-        FROM #am_pm AS ap
-        ORDER BY
-            ap.t24
         OPTION(RECOMPILE);
     END;
     ELSE
