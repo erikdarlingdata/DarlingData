@@ -221,8 +221,8 @@ BEGIN
                 WHEN N'@format_output' THEN '0 or 1'
                 WHEN N'@get_all_databases' THEN '0 or 1'
                 WHEN N'@workdays' THEN '0 or 1'
-                WHEN N'@work_start' THEN 'a "time" like 8am, 9am or something'
-                WHEN N'@work_end' THEN 'a "time" like 5pm, 6pm or something'
+                WHEN N'@work_start' THEN 'a time like 8am, 9am or something'
+                WHEN N'@work_end' THEN 'a time like 5pm, 6pm or something'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
                 WHEN N'@troubleshoot_performance' THEN '0 or 1'
@@ -2124,14 +2124,26 @@ BEGIN
     AND @work_end_int   IS NULL
     BEGIN
         SELECT
-            @work_end_int = @work_start_int + 8;
+            @work_end_utc =
+                DATEADD
+                (
+                    HOUR,
+                    8,
+                    @work_start_utc
+                );
     END;
     
     IF  @work_start_int IS NULL
     AND @work_end_int   IS NOT NULL
     BEGIN
         SELECT
-            @work_start_int = @work_end_int - 8;
+            @work_start_utc =
+                DATEADD
+                (
+                    HOUR,
+                    -8,
+                    @work_end_utc
+                );
     END;
 
     SELECT
@@ -2152,21 +2164,43 @@ BEGIN
  
     IF @df = 1
     BEGIN
-           SELECT
-               @where_clause += N'AND  DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 6' + @nc10;
+       SELECT
+           @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 6' + @nc10;
     END;/*df 1*/
     
     IF @df = 7
     BEGIN
-           SELECT
-               @where_clause += N'AND  DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 2 AND 6' + @nc10;
+       SELECT
+           @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 2 AND 6' + @nc10;
     END;/*df 7*/
 
     IF  @work_start_int IS NOT NULL
     AND @work_end_int IS NOT NULL
     BEGIN
+        /*
+          depending on local TZ, work time might span midnight UTC;
+          account for that by splitting the interval into before/after midnight.
+          for example:
+              [09:00 - 17:00] PST
+           =  [17:00 - 01:00] UTC
+           =  [17:00 - 00:00) + [00:00 - 01:00] UTC
+
+          NB: because we don't have the benefit of the context of what day midnight
+          is occurring on, we have to rely on the behavior from the documentation of
+          the time DT of higher to lower precision resulting in truncation to split
+          the interval. i.e. 23:59:59.9999999 -> 23:59:59. which should make that
+          value safe to use as the endpoint for our "before midnight" interval.
+        */
+        IF (@work_start_utc < @work_end_utc)
         SELECT
-            @where_clause += N'AND  DATEPART(HOUR, qsrs.last_execution_time) BETWEEN @work_start_int AND @work_end_int' + @nc10;
+            @where_clause += N'AND   CONVERT(time(0), qsrs.last_execution_time) BETWEEN @work_start_utc AND @work_end_utc' + @nc10;
+        ELSE
+        SELECT
+            @where_clause += N'AND  
+(' + @nc10 +
+N'      CONVERT(time(0), qsrs.last_execution_time) BETWEEN @work_start_utc AND ''23:59:59'' ' + @nc10 +
+N'   OR CONVERT(time(0), qsrs.last_execution_time) BETWEEN ''00:00:00'' AND @work_end_utc' + @nc10 +
+N')' + @nc10;
     END; /*Work hours*/
 END; /*Final end*/
 
