@@ -1,4 +1,4 @@
--- Compile Date: 01/23/2024 22:03:11 UTC
+-- Compile Date: 01/24/2024 11:58:54 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -3680,11 +3680,10 @@ AND EXISTS
 )   
 BEGIN   
         RAISERROR(N'You need to set up the blocked process report in order to use this:   
-    EXEC sys.sp_configure ''show advanced options'', 1;   
-    RECONFIGURE   
+    EXEC sys.sp_configure ''show advanced options'', 1;     
     EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */   
-    RECONFIGURE   
-    GO', 11, 0) WITH NOWAIT;   
+    RECONFIGURE;', 
+    11, 0) WITH NOWAIT;   
     RETURN;   
 END;   
    
@@ -7478,7 +7477,9 @@ BEGIN
             'hi, i''m sp_HumanEventsBlockViewer!' UNION ALL
     SELECT  'you can use me in conjunction with sp_HumanEvents to quickly parse the sqlserver.blocked_process_report event' UNION ALL
     SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
-    SELECT  'it will also work with another extended event session to capture blocking' UNION ALL
+    SELECT  'it will also work with any other extended event session that captures blocking' UNION ALL
+    SELECT  'just use the @session_name parameter to point me there' UNION ALL
+    SELECT  'EXEC dbo.sp_HumanEventsBlockViewer @session_name = N''blocked_process_report'';' UNION ALL
     SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
     SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
@@ -7564,6 +7565,42 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     RETURN;
 END;
+
+/*Check if the blocked process report is on at all*/
+IF EXISTS   
+(   
+    SELECT    
+        1/0   
+    FROM sys.configurations AS c   
+    WHERE c.name = N'blocked process threshold (s)'   
+    AND   CONVERT(int, c.value_in_use) = 0   
+)   
+BEGIN   
+    RAISERROR(N'The blocked process report needs to be enabled:   
+EXEC sys.sp_configure ''show advanced options'', 1;   
+EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */   
+RECONFIGURE;', 
+    11, 0) WITH NOWAIT;   
+    RETURN;   
+END;
+
+/*Check if the blocked process report is well-configured*/
+IF EXISTS   
+(   
+    SELECT    
+        1/0   
+    FROM sys.configurations AS c   
+    WHERE c.name = N'blocked process threshold (s)'   
+    AND   CONVERT(int, c.value_in_use) <> 5   
+)   
+BEGIN   
+    RAISERROR(N'For best results, set up the blocked process report like this:   
+EXEC sys.sp_configure ''show advanced options'', 1;   
+EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */   
+RECONFIGURE;', 
+    11, 0) WITH NOWAIT;   
+    RETURN;   
+END; 
 
 /*Set some variables for better decision-making later*/
 IF @debug = 1
