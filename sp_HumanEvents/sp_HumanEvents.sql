@@ -1025,11 +1025,10 @@ AND EXISTS
 )   
 BEGIN   
         RAISERROR(N'You need to set up the blocked process report in order to use this:   
-    EXEC sys.sp_configure ''show advanced options'', 1;   
-    RECONFIGURE   
+    EXEC sys.sp_configure ''show advanced options'', 1;     
     EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */   
-    RECONFIGURE   
-    GO', 11, 0) WITH NOWAIT;   
+    RECONFIGURE;', 
+    11, 0) WITH NOWAIT;   
     RETURN;   
 END;   
    
