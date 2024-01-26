@@ -11,7 +11,7 @@ GO
 
 /*
 This is a helper function I use in some of my presentations to look at locks taken.
-It's definitely not a replacements for sp_WhoIsActive, it just gives me what I care about at the moment.
+It's definitely not a replacement for sp_WhoIsActive, it just gives me what I care about at the moment.
 
 https://github.com/erikdarlingdata/DarlingData
 
@@ -64,23 +64,60 @@ SELECT
         ISNULL(i.name, N'OBJECT'),
     dtl.resource_type,
     dtl.request_status,
+    hobt_lock_count =
+        SUM
+        (
+            IIF
+            (
+                dtl.resource_associated_entity_id = P.hobt_id,
+                1,
+                0
+            )
+        ),
+    page_locks =
+        SUM
+        (
+            IIF
+            (
+                dtl.resource_type = N'PAGE',
+                1,
+                0
+            )
+        ),
+    row_locks =
+        SUM
+        (
+            IIF
+            (
+                dtl.resource_type IN (N'RID', N'KEY'),
+                1,
+                0
+            )
+        ),
     total_locks =
         COUNT_BIG(*)
 FROM sys.dm_tran_locks AS dtl WITH(NOLOCK)
 LEFT JOIN sys.partitions AS p WITH(NOLOCK)
   ON p.hobt_id = dtl.resource_associated_entity_id
-LEFT JOIN sys.indexes AS i WITH(NOLOCK)
-  ON  p.object_id = i.object_id
-  AND p.index_id  = i.index_id
+OUTER APPLY
+(
+    SELECT TOP (1)
+        i.name
+    FROM sys.indexes AS i WITH(NOLOCK)
+    WHERE  p.object_id = i.object_id
+    AND    p.index_id  = i.index_id
+) AS i
 WHERE (dtl.request_session_id = @spid OR @spid IS NULL)
 AND    dtl.resource_type <> N'DATABASE'
+AND    dtl.request_request_id = CURRENT_REQUEST_ID()
+AND    dtl.request_owner_id = CURRENT_TRANSACTION_ID()
 GROUP BY
     CASE dtl.resource_type
          WHEN N'OBJECT'
          THEN OBJECT_NAME(dtl.resource_associated_entity_id)
          ELSE OBJECT_NAME(p.object_id)
     END,
-    ISNULL(i.name, N'OBJECT'),
+    i.name,
     dtl.resource_type,
     dtl.request_mode,
     dtl.request_status;
