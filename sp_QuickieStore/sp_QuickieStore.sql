@@ -3449,7 +3449,7 @@ BEGIN
                     @query_text_search,
                 N'[', @escape_character + N'['), 
                 N']', @escape_character + N']')
-    END
+    END;
 
     SELECT
         @current_table = 'inserting #query_text_search',
@@ -3489,8 +3489,14 @@ WHERE EXISTS
     /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
     IF @escape_query_text_brackets = 1
     BEGIN
-        SELECT @sql = REPLACE(@sql,N'@query_text_search','@query_text_search ESCAPE '''+@escape_character+'''')
-    END
+        SELECT 
+            @sql = 
+                REPLACE
+                (
+                    @sql,
+                    N'@query_text_search',
+                    N'@query_text_search ESCAPE ''' + @escape_character + N'''')
+    END;
 
 /*If we're searching by a procedure name, limit the text search to it */
 IF
