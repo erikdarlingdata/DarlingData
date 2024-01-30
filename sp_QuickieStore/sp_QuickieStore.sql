@@ -76,6 +76,8 @@ ALTER PROCEDURE
     @ignore_plan_hashes nvarchar(4000) = NULL, /*a list of query plan hashes to ignore*/
     @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
+    @escape_query_text_brackets bit = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
+    @escape_character nchar(1) = '\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/    
     @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
@@ -87,8 +89,6 @@ ALTER PROCEDURE
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
-	@escape_query_text_brackets BIT = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
-	@escape_character NCHAR(1) = '\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/
     @version varchar(30) = NULL OUTPUT, /*OUTPUT; for support*/
     @version_date datetime = NULL OUTPUT /*OUTPUT; for support*/
 )
@@ -178,6 +178,8 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'a list of query plan hashes to ignore'
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@query_text_search' THEN 'query text to search for'
+                WHEN N'@escape_query_text_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
+                WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'    
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
@@ -189,8 +191,6 @@ BEGIN
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
-				WHEN N'@escape_query_text_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
-				WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'
                 WHEN N'@version' THEN 'OUTPUT; for support'
                 WHEN N'@version_date' THEN 'OUTPUT; for support'
             END,
@@ -219,6 +219,8 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'a string; comma separated for multiple hashes'
                 WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
+                WHEN N'@escape_query_text_brackets' THEN '0 or 1'
+                WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'    
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
@@ -230,8 +232,6 @@ BEGIN
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
                 WHEN N'@troubleshoot_performance' THEN '0 or 1'
-				WHEN N'@escape_query_text_brackets' THEN '0 or 1'
-				WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'
                 WHEN N'@version' THEN 'none; OUTPUT'
                 WHEN N'@version_date' THEN 'none; OUTPUT'
             END,
@@ -260,6 +260,8 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'NULL'
                 WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
+                WHEN N'@escape_query_text_brackets' THEN '0'
+                WHEN N'@escape_character' THEN '\'    
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
@@ -271,8 +273,6 @@ BEGIN
                 WHEN N'@debug' THEN '0'
                 WHEN N'@help' THEN '0'
                 WHEN N'@troubleshoot_performance' THEN '0'
-				WHEN N'@escape_query_text_brackets' THEN '0'
-				WHEN N'@escape_character' THEN '\'
                 WHEN N'@version' THEN 'none; OUTPUT'
                 WHEN N'@version_date' THEN 'none; OUTPUT'
             END
@@ -3440,11 +3440,16 @@ BEGIN
                 @query_text_search + N'%';
     END;
 
-	/* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
-	IF @escape_query_text_brackets = 1
-	BEGIN
-		SELECT @query_text_search = REPLACE(REPLACE(@query_text_search,'[',@escape_character+'['),']',@escape_character+']')
-	END
+    /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
+    IF @escape_query_text_brackets = 1
+    BEGIN
+        SELECT 
+            @query_text_search = 
+                REPLACE(REPLACE(
+                    @query_text_search,
+                N'[', @escape_character + N'['), 
+                N']', @escape_character + N']')
+    END
 
     SELECT
         @current_table = 'inserting #query_text_search',
@@ -3480,12 +3485,12 @@ WHERE EXISTS
                   AND   qsqt.query_sql_text LIKE @query_text_search
               )
       )';
-	
-	/* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
-	IF @escape_query_text_brackets = 1
-	BEGIN
-		SELECT @sql = REPLACE(@sql,N'@query_text_search','@query_text_search ESCAPE '''+@escape_character+'''')
-	END
+    
+    /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
+    IF @escape_query_text_brackets = 1
+    BEGIN
+        SELECT @sql = REPLACE(@sql,N'@query_text_search','@query_text_search ESCAPE '''+@escape_character+'''')
+    END
 
 /*If we're searching by a procedure name, limit the text search to it */
 IF
@@ -3505,9 +3510,9 @@ AND   EXISTS
       )';
 END;
 
-	SELECT
-    @sql += N'
-	OPTION(RECOMPILE);' + @nc10;
+    SELECT
+        @sql += N'
+    OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
     BEGIN
