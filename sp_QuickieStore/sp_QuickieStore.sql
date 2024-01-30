@@ -45,11 +45,11 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL   
-   BEGIN   
-       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');   
-   END;   
-GO 
+IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL  
+   BEGIN  
+       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');  
+   END;  
+GO
 
 ALTER PROCEDURE
     dbo.sp_QuickieStore
@@ -76,8 +76,8 @@ ALTER PROCEDURE
     @ignore_plan_hashes nvarchar(4000) = NULL, /*a list of query plan hashes to ignore*/
     @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
-    @escape_query_text_brackets bit = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
-    @escape_character nchar(1) = '\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/    
+    @escape_brackets bit = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
+    @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/   
     @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
@@ -95,10 +95,10 @@ ALTER PROCEDURE
 WITH RECOMPILE
 AS
 BEGIN
-SET STATISTICS XML OFF;   
+SET STATISTICS XML OFF;  
 SET NOCOUNT ON;
-SET XACT_ABORT ON;   
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;  
+SET XACT_ABORT ON;  
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; 
 
 BEGIN TRY
 /*
@@ -178,8 +178,8 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'a list of query plan hashes to ignore'
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@query_text_search' THEN 'query text to search for'
-                WHEN N'@escape_query_text_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
-                WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'    
+                WHEN N'@escape_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
+                WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'   
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
@@ -219,8 +219,8 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'a string; comma separated for multiple hashes'
                 WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
-                WHEN N'@escape_query_text_brackets' THEN '0 or 1'
-                WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'    
+                WHEN N'@escape_brackets' THEN '0 or 1'
+                WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'   
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
@@ -260,8 +260,8 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'NULL'
                 WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
-                WHEN N'@escape_query_text_brackets' THEN '0'
-                WHEN N'@escape_character' THEN '\'    
+                WHEN N'@escape_brackets' THEN '0'
+                WHEN N'@escape_character' THEN '\'   
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
@@ -356,8 +356,8 @@ BEGIN
         mit_license_yo =
            'i am MIT licensed, so like, do whatever'
     UNION ALL
-    
-    SELECT 
+   
+    SELECT
         mit_license_yo =
             'see printed messages for full license';
 
@@ -1348,9 +1348,9 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         )
         OPTION(RECOMPILE);',
     @troubleshoot_update = N'
-        UPDATE 
+        UPDATE
             tp
-        SET 
+        SET
             tp.end_time = GETDATE()
         FROM #troubleshoot_performance AS tp
         WHERE tp.current_table = @current_table
@@ -1644,10 +1644,10 @@ SELECT
                      SELECT
                          1/0
                      FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
-                     WHERE 
-                     ( 
+                     WHERE
+                     (
                           dqso.actual_state = 0
-                       OR dqso.actual_state IS NULL 
+                       OR dqso.actual_state IS NULL
                      )
                  )
             OR   NOT EXISTS
@@ -1720,7 +1720,7 @@ END;
 SELECT
     @sql += N'
 SELECT
-    database_id = 
+    database_id =
         @database_id,
     desired_state_desc,
     actual_state_desc,
@@ -1815,7 +1815,7 @@ END;
 IF @query_store_trouble = 1
 BEGIN
     SELECT
-        query_store_trouble = 
+        query_store_trouble =
              'Query Store may be in a disagreeable state',
         database_name =
             DB_NAME(qst.database_id),
@@ -1950,7 +1950,7 @@ IF @sort_order NOT IN
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
-  
+ 
    SELECT
        @sort_order = 'cpu';
 END;
@@ -1965,7 +1965,7 @@ AND @new = 0
 )
 BEGIN
    RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
-  
+ 
    SELECT
        @sort_order = N'cpu';
 END;
@@ -2093,7 +2093,7 @@ OPTION(RECOMPILE);' + @nc10;
     IF @query_store_waits_enabled = 0
     BEGIN
         RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
-       
+      
         IF @get_all_databases = 0
         BEGIN
             RETURN;
@@ -2245,13 +2245,13 @@ BEGIN
                 @utc_minutes_difference,
                 @work_end_utc
             );
- 
+
     IF @df = 1
     BEGIN
        SELECT
            @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 6' + @nc10;
     END;/*df 1*/
-    
+   
     IF @df = 7
     BEGIN
        SELECT
@@ -2280,7 +2280,7 @@ BEGIN
             @where_clause += N'AND   CONVERT(time(0), qsrs.last_execution_time) BETWEEN @work_start_utc AND @work_end_utc' + @nc10;
         ELSE
         SELECT
-            @where_clause += N'AND  
+            @where_clause += N'AND 
 (' + @nc10 +
 N'      CONVERT(time(0), qsrs.last_execution_time) BETWEEN @work_start_utc AND ''23:59:59'' ' + @nc10 +
 N'   OR CONVERT(time(0), qsrs.last_execution_time) BETWEEN ''00:00:00'' AND @work_end_utc' + @nc10 +
@@ -2456,12 +2456,12 @@ OR @ignore_query_ids  IS NOT NULL
 )
 BEGIN
     IF @include_plan_ids IS NOT NULL
-    BEGIN    
-        SELECT 
-            @include_plan_ids = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_plan_ids)), 
-                CHAR(10), N''), CHAR(13), N''), 
+    BEGIN   
+        SELECT
+            @include_plan_ids =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@include_plan_ids)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2489,11 +2489,11 @@ BEGIN
 
     IF @ignore_plan_ids IS NOT NULL
     BEGIN
-        SELECT 
-            @ignore_plan_ids = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_plan_ids)), 
-                CHAR(10), N''), CHAR(13), N''), 
+        SELECT
+            @ignore_plan_ids =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@ignore_plan_ids)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2521,11 +2521,11 @@ BEGIN
 
     IF @include_query_ids IS NOT NULL
     BEGIN
-        SELECT 
-            @include_query_ids = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_query_ids)), 
-                CHAR(10), N''), CHAR(13), N''), 
+        SELECT
+            @include_query_ids =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@include_query_ids)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #include_query_ids',
@@ -2624,11 +2624,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_query_ids IS NOT NULL
     BEGIN
-        SELECT 
-            @ignore_query_ids = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_query_ids)), 
-                CHAR(10), N''), CHAR(13), N''), 
+        SELECT
+            @ignore_query_ids =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@ignore_query_ids)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
         SELECT
             @current_table = 'inserting #ignore_query_ids',
@@ -2741,11 +2741,11 @@ OR @ignore_sql_handles   IS NOT NULL
 BEGIN
     IF @include_query_hashes IS NOT NULL
     BEGIN
-        SELECT 
-            @include_query_hashes = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_query_hashes)), 
-                CHAR(10), N''), CHAR(13), N''), 
+        SELECT
+            @include_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@include_query_hashes)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2852,11 +2852,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_query_hashes IS NOT NULL
     BEGIN
-        SELECT 
-            @ignore_query_hashes = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_query_hashes)), 
-                CHAR(10), N''), CHAR(13), N''), 
+        SELECT
+            @ignore_query_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@ignore_query_hashes)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -2963,11 +2963,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_plan_hashes IS NOT NULL
     BEGIN
-        SELECT 
-            @include_plan_hashes = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_plan_hashes)), 
-                CHAR(10), N''), CHAR(13), N''), 
+        SELECT
+            @include_plan_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@include_plan_hashes)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -3067,11 +3067,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_plan_hashes IS NOT NULL
     BEGIN
-        SELECT 
-            @ignore_plan_hashes = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_plan_hashes)), 
-                CHAR(10), N''), CHAR(13), N''), 
+        SELECT
+            @ignore_plan_hashes =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@ignore_plan_hashes)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -3171,11 +3171,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @include_sql_handles IS NOT NULL
     BEGIN
-        SELECT 
-            @include_sql_handles = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@include_sql_handles)), 
-                CHAR(10), N''), CHAR(13), N''), 
+        SELECT
+            @include_sql_handles =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@include_sql_handles)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -3290,11 +3290,11 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @ignore_sql_handles IS NOT NULL
     BEGIN
-        SELECT 
-            @ignore_sql_handles = 
-                REPLACE(REPLACE(REPLACE(REPLACE
-                (LTRIM(RTRIM(@ignore_sql_handles)), 
-                CHAR(10), N''), CHAR(13), N''), 
+        SELECT
+            @ignore_sql_handles =
+                REPLACE(REPLACE(REPLACE(REPLACE(
+                    LTRIM(RTRIM(@ignore_sql_handles)),
+                 CHAR(10), N''),  CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
 
         SELECT
@@ -3441,14 +3441,14 @@ BEGIN
     END;
 
     /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
-    IF @escape_query_text_brackets = 1
+    IF @escape_brackets = 1
     BEGIN
-        SELECT 
-            @query_text_search = 
+        SELECT
+            @query_text_search =
                 REPLACE(REPLACE(
                     @query_text_search,
-                N'[', @escape_character + N'['), 
-                N']', @escape_character + N']')
+                N'[', @escape_character + N'['),
+                N']', @escape_character + N']');
     END;
 
     SELECT
@@ -3485,17 +3485,18 @@ WHERE EXISTS
                   AND   qsqt.query_sql_text LIKE @query_text_search
               )
       )';
-    
+   
     /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
-    IF @escape_query_text_brackets = 1
+    IF @escape_brackets = 1
     BEGIN
-        SELECT 
-            @sql = 
+        SELECT
+            @sql =
                 REPLACE
                 (
                     @sql,
                     N'@query_text_search',
-                    N'@query_text_search ESCAPE ''' + @escape_character + N'''')
+                    N'@query_text_search ESCAPE ''' + @escape_character + N''''
+                );
     END;
 
 /*If we're searching by a procedure name, limit the text search to it */
@@ -4498,7 +4499,7 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
-    UPDATE 
+    UPDATE
         qsqt
     SET
         qsqt.total_grant_mb = deqs.total_grant_mb,
@@ -4601,7 +4602,7 @@ SELECT
     dqso.query_capture_mode_desc,'
     +
     CASE
-        WHEN 
+        WHEN
         (
              @product_version > 14
           OR @azure = 1
@@ -4882,9 +4883,9 @@ Update things to get the context settings for each query
 SELECT
     @current_table = 'updating context_settings in #query_store_runtime_stats';
 
-UPDATE 
+UPDATE
     qsrs
-SET 
+SET
     qsrs.context_settings =
         SUBSTRING
         (
@@ -5160,7 +5161,7 @@ OPTION(RECOMPILE);' + @nc10;
         PRINT LEN(@sql);
         PRINT @sql;
     END;
-   
+  
     INSERT
         #query_store_query_hints WITH(TABLOCK)
     (
@@ -5379,10 +5380,10 @@ BEGIN
         @current_table = 'selecting final results';
 
     SELECT
-        @sql += 
+        @sql +=
         CONVERT
         (
-            nvarchar(MAX), 
+            nvarchar(MAX),
         N'
 SELECT
     x.*
@@ -5403,7 +5404,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),           
+            nvarchar(MAX),          
             N'
     SELECT
         source =
@@ -5604,10 +5605,10 @@ FROM
     )
     BEGIN
         SELECT
-            @sql += 
+            @sql +=
         CONVERT
         (
-            nvarchar(MAX),            
+            nvarchar(MAX),           
             N'
     SELECT
         source =
@@ -5815,7 +5816,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),            
+            nvarchar(MAX),           
             N'
     SELECT
         source =
@@ -5983,10 +5984,10 @@ FROM
     )
     BEGIN
         SELECT
-            @sql += 
+            @sql +=
         CONVERT
         (
-            nvarchar(MAX),            
+            nvarchar(MAX),           
             N'
     SELECT
         source =
@@ -6126,7 +6127,7 @@ FROM
                 PARTITION BY
                     qsrs.plan_id
                 ORDER BY
-                    ' 
+                    '
         +
         CASE @sort_order
              WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
@@ -6149,7 +6150,7 @@ FROM
     Add on the from and stuff
     */
     SELECT
-        @sql += 
+        @sql +=
     CONVERT
     (
         nvarchar(MAX),
@@ -6211,7 +6212,7 @@ FROM
     )
     BEGIN
         SELECT
-            @sql += 
+            @sql +=
         CONVERT
         (
             nvarchar(MAX),
@@ -6264,7 +6265,7 @@ FROM
     )
     BEGIN
         SELECT
-            @sql += 
+            @sql +=
         CONVERT
         (
             nvarchar(MAX),
@@ -6310,7 +6311,7 @@ FROM
     END; /*End format output = 1 wait stats query*/
 
     SELECT
-        @sql += 
+        @sql +=
     CONVERT
     (
         nvarchar(MAX),
@@ -6349,7 +6350,7 @@ ORDER BY ' +
              END
     END
              + N' DESC
-OPTION(RECOMPILE);' 
+OPTION(RECOMPILE);'
     + @nc10
     );
 
@@ -6570,7 +6571,7 @@ BEGIN
                         THEN qsq.last_execution_time AT TIME ZONE @timezone
                     END,
                 last_execution_time_utc =
-                    qsq.last_execution_time,                 
+                    qsq.last_execution_time,                
                 qsq.count_compiles,
                 qsq.avg_compile_duration_ms,
                 qsq.total_compile_duration_ms,
@@ -6803,7 +6804,7 @@ BEGIN
                 result =
                     '#query_store_wait_stats is empty' +
                     CASE
-                        WHEN 
+                        WHEN
                         (
                                 @product_version = 13
                             AND @azure = 0
@@ -6840,7 +6841,7 @@ BEGIN
         BEGIN
             SELECT
                 @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
-           
+          
             SELECT
                 database_name =
                     DB_NAME(qsr.database_id),
@@ -6869,7 +6870,7 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql += 
+        @sql +=
     CONVERT
     (
         nvarchar(MAX),
@@ -6889,7 +6890,7 @@ BEGIN
         dqso.stale_query_threshold_days,
         dqso.max_plans_per_query,
         dqso.query_capture_mode_desc,'
-        + 
+        +
         CASE
             WHEN
             (
@@ -6917,7 +6918,7 @@ BEGIN
     );
 
     SELECT
-        @sql += 
+        @sql +=
     CONVERT
     (
         nvarchar(MAX),
@@ -7440,7 +7441,7 @@ BEGIN
         BEGIN
             SELECT
                 @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-          
+         
             SELECT
                 database_name =
                     DB_NAME(qsr.database_id),
@@ -7457,7 +7458,7 @@ BEGIN
               AND qsr.database_id = qspfl.database_id
             ORDER BY
                 qsr.replica_group_id
-            OPTION(RECOMPILE);         
+            OPTION(RECOMPILE);        
         END;
         ELSE
         BEGIN
@@ -7471,7 +7472,7 @@ BEGIN
         @sql = N'';
 
     SELECT
-        @sql += 
+        @sql +=
     CONVERT
     (
         nvarchar(MAX),
@@ -7509,7 +7510,7 @@ BEGIN
         END
         +
         CASE
-            WHEN 
+            WHEN
             (
                  @azure = 1
               OR @product_version > 14
@@ -7559,31 +7560,31 @@ FROM
         sort =
             1,
         period =
-            N'query store data for period ' + 
+            N'query store data for period ' +
             CONVERT
             (
-                nvarchar(10), 
+                nvarchar(10),
                 ISNULL
                 (
-                    @start_date_original, 
+                    @start_date_original,
                     DATEADD
                     (
-                        DAY, 
-                        -7, 
+                        DAY,
+                        -7,
                         DATEDIFF
                         (
-                            DAY, 
-                            '19000101', 
+                            DAY,
+                            '19000101',
                             SYSDATETIME()
                         )
                     )
-                ), 
+                ),
                 23
-            ) + 
-            N' through ' + 
+            ) +
+            N' through ' +
             CONVERT
             (
-                nvarchar(10), 
+                nvarchar(10),
                 ISNULL
                 (
                     @end_date_original,
@@ -7601,7 +7602,7 @@ FROM
             'to debug issues, use @debug = 1;',
         performance =
             'if this runs slowly, use to get query plans',
-        version_and_date = 
+        version_and_date =
             N'version: ' + CONVERT(nvarchar(10), @version),
         thanks =
             'thanks for using sp_QuickieStore!'
@@ -7612,31 +7613,31 @@ FROM
         sort =
             2,
         period =
-            N'query store data for period ' + 
+            N'query store data for period ' +
             CONVERT
             (
-                nvarchar(10), 
+                nvarchar(10),
                 ISNULL
                 (
-                    @start_date_original, 
+                    @start_date_original,
                     DATEADD
                     (
-                        DAY, 
-                        -7, 
+                        DAY,
+                        -7,
                         DATEDIFF
                         (
-                            DAY, 
-                            '19000101', 
+                            DAY,
+                            '19000101',
                             SYSDATETIME()
                         )
                     )
-                ), 
+                ),
                 23
-            ) + 
-            N' through ' + 
+            ) +
+            N' through ' +
             CONVERT
             (
-                nvarchar(10), 
+                nvarchar(10),
                 ISNULL
                 (
                     @end_date_original,
@@ -7654,12 +7655,12 @@ FROM
             'EXEC sp_QuickieStore @debug = 1;',
         performance =
             'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
-        version_and_date = 
+        version_and_date =
             N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
         thanks =
             'i hope you find it useful, or whatever'
 ) AS x
-ORDER BY 
+ORDER BY
     x.sort;
 
 END TRY
@@ -7741,6 +7742,10 @@ BEGIN
             @ignore_sql_handles,
         query_text_search =
             @query_text_search,
+        escape_brackets =
+            @escape_brackets,
+        escape_character =
+            @escape_character,
         wait_filter =
             @wait_filter,
         query_type =
@@ -7829,9 +7834,9 @@ BEGIN
             @troubleshoot_info,
         rc =
             @rc,
-       em = 
+       em =
            @em,
-       fo = 
+       fo =
           @fo,
        start_date_original =
            @start_date_original,
