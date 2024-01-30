@@ -593,6 +593,26 @@ CREATE TABLE
 );
 
 /*
+Query Store Trouble
+*/
+CREATE TABLE
+    #query_store_trouble
+(
+    database_id int NOT NULL,
+    desired_state_desc nvarchar(60) NULL,
+    actual_state_desc nvarchar(60) NULL,
+    readonly_reason nvarchar(100) NULL,
+    current_storage_size_mb bigint NULL,
+    flush_interval_seconds bigint NULL,
+    interval_length_minutes bigint NULL,
+    max_storage_size_mb bigint NULL,
+    stale_query_threshold_days bigint NULL,
+    max_plans_per_query bigint NULL,
+    query_capture_mode_desc nvarchar(60) NULL,
+    size_based_cleanup_mode_desc nvarchar(60) NULL
+);
+
+/*
 Plans and Plan information
 */
 CREATE TABLE
@@ -1043,6 +1063,7 @@ DECLARE
     @where_clause nvarchar(MAX),
     @procedure_exists bit,
     @query_store_exists bit,
+    @query_store_trouble bit,
     @query_store_waits_enabled bit,
     @sql_2022_views bit,
     @ags_present bit,
@@ -1212,6 +1233,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @where_clause = N'',
     @procedure_exists = 0,
     @query_store_exists = 0,
+    @query_store_trouble = 0,
     @query_store_waits_enabled = 0,
     @sql_2022_views = 0,
     @ags_present = 0,
@@ -1614,8 +1636,11 @@ SELECT
                      SELECT
                          1/0
                      FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
-                     WHERE ( dqso.actual_state = 0
-                               OR dqso.actual_state IS NULL )
+                     WHERE 
+                     ( 
+                          dqso.actual_state = 0
+                       OR dqso.actual_state IS NULL 
+                     )
                  )
             OR   NOT EXISTS
                  (
@@ -1664,6 +1689,141 @@ BEGIN
     BEGIN
         RETURN;
     END;
+END;
+
+/*
+If Query Store is enabled, but in read only mode for some reason, return some information about why
+*/
+SELECT
+    @current_table = 'checking for query store trouble',
+    @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    SET STATISTICS XML ON;
+END;
+
+SELECT
+    @sql += N'
+SELECT
+    database_id = 
+        @database_id,
+    desired_state_desc,
+    actual_state_desc,
+    readonly_reason =
+        CASE dqso.readonly_reason
+             WHEN 0
+             THEN ''None''
+             WHEN 2
+             THEN ''Database in single user mode''
+             WHEN 4
+             THEN ''Database is in emergency mode''
+             WHEN 8
+             THEN ''Database is AG secondary''
+             WHEN 65536
+             THEN ''Reached max size: '' +
+                  FORMAT(dqso.current_storage_size_mb, ''N0'') +
+                  '' of '' +
+                  FORMAT(dqso.max_storage_size_mb, ''N0'') +
+                  ''.''
+             WHEN 131072
+             THEN ''The number of different statements in Query Store has reached the internal memory limit''
+             WHEN 262144
+             THEN ''Size of in-memory items waiting to be persisted on disk has reached the internal memory limit''
+             WHEN 524288
+             THEN ''Database has reached disk size limit''
+             ELSE ''WOAH''
+        END,
+    current_storage_size_mb,
+    flush_interval_seconds,
+    interval_length_minutes,
+    max_storage_size_mb,
+    stale_query_threshold_days,
+    max_plans_per_query,
+    query_capture_mode_desc,
+    size_based_cleanup_mode_desc
+FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
+WHERE dqso.desired_state = 1
+OR    dqso.actual_state IN (1, 3)
+OR    dqso.desired_state <> dqso.actual_state
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #query_store_trouble WITH (TABLOCK)
+(
+    database_id,
+    desired_state_desc,
+    actual_state_desc,
+    readonly_reason,
+    current_storage_size_mb,
+    flush_interval_seconds,
+    interval_length_minutes,
+    max_storage_size_mb,
+    stale_query_threshold_days,
+    max_plans_per_query,
+    query_capture_mode_desc,
+    size_based_cleanup_mode_desc
+)
+EXEC sys.sp_executesql
+    @sql,
+  N'@database_id integer',
+    @database_id;
+
+IF @@ROWCOUNT > 0
+BEGIN
+    SELECT
+        @query_store_trouble = 1;
+END;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    SET STATISTICS XML OFF;
+
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXEC sys.sp_executesql
+        @troubleshoot_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+END;
+
+IF @query_store_trouble = 1
+BEGIN
+    SELECT
+        query_store_trouble = 
+             'Query Store may be in a disagreeable state',
+        database_name =
+            DB_NAME(qst.database_id),
+        qst.desired_state_desc,
+        qst.actual_state_desc,
+        qst.readonly_reason,
+        qst.current_storage_size_mb,
+        qst.flush_interval_seconds,
+        qst.interval_length_minutes,
+        qst.max_storage_size_mb,
+        qst.stale_query_threshold_days,
+        qst.max_plans_per_query,
+        qst.query_capture_mode_desc,
+        qst.size_based_cleanup_mode_desc
+    FROM #query_store_trouble AS qst
+    OPTION(RECOMPILE);
 END;
 
 /*
@@ -4410,8 +4570,11 @@ SELECT
     dqso.query_capture_mode_desc,'
     +
     CASE
-        WHEN (@product_version > 14
-              OR @azure = 1)
+        WHEN 
+        (
+             @product_version > 14
+          OR @azure = 1
+        )
         THEN N'
     dqso.capture_policy_execution_count,
     dqso.capture_policy_total_compile_cpu_time_ms,
@@ -6472,8 +6635,8 @@ BEGIN
           AND qsq.database_id = qsqt.database_id
         WHERE
         (
-            qsqt.total_grant_mb IS NOT NULL
-            OR qsqt.total_reserved_threads IS NOT NULL
+             qsqt.total_grant_mb IS NOT NULL
+          OR qsqt.total_reserved_threads IS NOT NULL
         )
         ORDER BY
             qsq.query_id
@@ -6699,8 +6862,8 @@ BEGIN
         CASE
             WHEN
             (
-                @azure = 1
-                OR @product_version > 13
+                 @azure = 1
+              OR @product_version > 13
             )
             THEN N'
         dqso.wait_stats_capture_mode_desc,'
@@ -6710,8 +6873,8 @@ BEGIN
         CASE
             WHEN
             (
-                @azure = 1
-                OR @product_version > 14
+                 @azure = 1
+              OR @product_version > 14
             )
             THEN N'
         dqso.capture_policy_execution_count,
@@ -7066,8 +7229,8 @@ BEGIN
           AND qsq.database_id = qsqt.database_id
         WHERE
         (
-           qsqt.total_grant_mb IS NOT NULL
-        OR qsqt.total_reserved_threads IS NOT NULL
+             qsqt.total_grant_mb IS NOT NULL
+          OR qsqt.total_reserved_threads IS NOT NULL
         )
         ORDER BY
             qsq.query_id
@@ -7317,8 +7480,8 @@ BEGIN
         CASE
             WHEN 
             (
-                @azure = 1
-                OR @product_version > 14
+                 @azure = 1
+              OR @product_version > 14
             )
             THEN N'
         capture_policy_execution_count =
@@ -7613,6 +7776,8 @@ BEGIN
             @procedure_exists,
         query_store_exists =
             @query_store_exists,
+        query_store_trouble =
+            @query_store_trouble,
         query_store_waits_enabled =
             @query_store_waits_enabled,
         sql_2022_views =
@@ -8057,6 +8222,27 @@ BEGIN
                 '#database_query_store_options',
             dqso.*
         FROM #database_query_store_options AS dqso
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#database_query_store_options is empty';
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #query_store_trouble AS qst
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#query_store_trouble',
+            qst.*
+        FROM #query_store_trouble AS qst
         OPTION(RECOMPILE);
     END;
     ELSE
