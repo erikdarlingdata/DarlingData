@@ -103,6 +103,10 @@ EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
     @query_text_search = 'WITH Comment'
 
+/*Only return queries with query hints (2022+)*/
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @only_query_with_hints = 1;
 
 /*Use expert mode to return additional columns*/
 EXEC dbo.sp_QuickieStore
@@ -141,7 +145,6 @@ This helps with scenarios where you have multiple production databases which hav
 EXEC dbo.sp_QuickieStore
     @include_sql_handles = 
         '0x0900F46AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000,0x0200000AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000';
-
 
 /*Troubleshoot performance*/
 EXEC dbo.sp_QuickieStore
