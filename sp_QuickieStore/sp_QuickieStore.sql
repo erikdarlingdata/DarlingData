@@ -45,10 +45,10 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL  
-   BEGIN  
-       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');  
-   END;  
+IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL 
+   BEGIN 
+       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;'); 
+   END; 
 GO
 
 ALTER PROCEDURE
@@ -77,7 +77,10 @@ ALTER PROCEDURE
     @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
     @escape_brackets bit = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
-    @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/   
+    @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/  
+    @only_queries_with_hints bit = 0, /*Set this bit to 1 to retrieve only queries with query hints*/
+    @only_queries_with_feedback bit = 0, /*Set this bit to 1 to retrieve only queries with query feedback*/
+    @only_queries_with_variants bit = 0, /*Set this bit to 1 to retrieve only queries with query variants*/
     @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
@@ -95,10 +98,10 @@ ALTER PROCEDURE
 WITH RECOMPILE
 AS
 BEGIN
-SET STATISTICS XML OFF;  
+SET STATISTICS XML OFF; 
 SET NOCOUNT ON;
-SET XACT_ABORT ON;  
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; 
+SET XACT_ABORT ON; 
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN TRY
 /*
@@ -179,7 +182,10 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@escape_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
-                WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'   
+                WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'  
+                WHEN N'@only_queries_with_hints' THEN 'only return queries with query hints'
+                WHEN N'@only_queries_with_feedback' THEN 'only return queries with query feedback'
+                WHEN N'@only_queries_with_variants' THEN 'only return queries with query variants'
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
@@ -220,7 +226,10 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@escape_brackets' THEN '0 or 1'
-                WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'   
+                WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'  
+                WHEN N'@only_queries_with_hints' THEN '0 or 1'
+                WHEN N'@only_queries_with_feedback' THEN '0 or 1'
+                WHEN N'@only_queries_with_variants' THEN '0 or 1'
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
@@ -261,7 +270,10 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@escape_brackets' THEN '0'
-                WHEN N'@escape_character' THEN '\'   
+                WHEN N'@escape_character' THEN '\'  
+                WHEN N'@only_queries_with_hints' THEN '0'
+                WHEN N'@only_queries_with_feedback' THEN '0'
+                WHEN N'@only_queries_with_variants' THEN '0'
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
@@ -324,11 +336,11 @@ BEGIN
     SELECT 'query store does not currently track some details about memory grants and thread usage' UNION ALL
     SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Plan Feedback (2022+, expert mode only): Lists queries that have been adjusted based on automated feedback mechanisms' UNION ALL
+    SELECT 'Query Store Plan Feedback (2022+, expert mode, ot when using only_queries_with_feedback): Lists queries that have been adjusted based on automated feedback mechanisms' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Hints (2022+, expert mode only): lists hints applied to queries from automated feedback mechanisms' UNION ALL
+    SELECT 'Query Store Hints (2022+, expert mode or when using @only_queries_with_hints): lists hints applied to queries from automated feedback mechanisms' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Variants (2022+, expert mode only): lists plan variants from the Parameter Sensitive Plan feedback mechanism' UNION ALL
+    SELECT 'Query Variants (2022+, expert mode or when using @only_queries_with_variants): lists plan variants from the Parameter Sensitive Plan feedback mechanism' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Waits By Query (2017+, expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
@@ -356,7 +368,7 @@ BEGIN
         mit_license_yo =
            'i am MIT licensed, so like, do whatever'
     UNION ALL
-   
+  
     SELECT
         mit_license_yo =
             'see printed messages for full license';
@@ -546,6 +558,33 @@ CREATE TABLE
             sql_handle_s,
             1
         ) PERSISTED NOT NULL PRIMARY KEY
+);
+
+/*
+Hold plan_ids for only query with hints
+*/
+CREATE TABLE
+    #only_queries_with_hints
+(
+    plan_id bigint PRIMARY KEY
+);
+
+/*
+Hold plan_ids for only query with feedback
+*/
+CREATE TABLE
+    #only_queries_with_feedback
+(
+    plan_id bigint PRIMARY KEY
+);
+
+/*
+Hold plan_ids for only query with variants
+*/
+CREATE TABLE
+    #only_queries_with_variants
+(
+    plan_id bigint PRIMARY KEY
 );
 
 /*
@@ -1467,6 +1506,12 @@ SELECT
         NULLIF(@ignore_plan_hashes, ''),
     @ignore_sql_handles =
         NULLIF(@ignore_sql_handles, ''),
+    @only_queries_with_hints =
+        ISNULL(@only_queries_with_hints, 0),
+    @only_queries_with_feedback =
+        ISNULL(@only_queries_with_feedback, 0),
+    @only_queries_with_variants =
+        ISNULL(@only_queries_with_variants, 0),
     @wait_filter =
         NULLIF(@wait_filter, ''),
     @format_output =
@@ -1950,7 +1995,7 @@ IF @sort_order NOT IN
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
- 
+
    SELECT
        @sort_order = 'cpu';
 END;
@@ -1965,9 +2010,52 @@ AND @new = 0
 )
 BEGIN
    RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
- 
+
    SELECT
        @sort_order = N'cpu';
+END;
+
+/*
+See if our cool new 2022 views exist.
+May have to tweak this if views aren't present in some cloudy situations.
+*/
+SELECT
+    @sql_2022_views =
+        CASE
+            WHEN COUNT_BIG(*) = 5
+            THEN 1
+            ELSE 0
+        END
+FROM sys.all_objects AS ao
+WHERE ao.name IN
+      (
+          N'query_store_plan_feedback',
+          N'query_store_query_hints',
+          N'query_store_query_variant',
+          N'query_store_replicas',
+          N'query_store_plan_forcing_locations'
+      )
+OPTION(RECOMPILE);
+
+/*
+Hints aren't in Query Store until 2022, so we can't do that on television
+*/
+IF
+(
+    (
+         @only_queries_with_hints    IS NOT NULL
+      OR @only_queries_with_feedback IS NOT NULL
+      OR @only_queries_with_variants IS NOT NULL
+    )
+AND @sql_2022_views = 0
+)
+BEGIN
+    RAISERROR('Query Store hints, feedback, and variants are not available prior to SQL Server 2022', 10, 1) WITH NOWAIT;
+
+    IF @get_all_databases = 0
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /*
@@ -2093,35 +2181,13 @@ OPTION(RECOMPILE);' + @nc10;
     IF @query_store_waits_enabled = 0
     BEGIN
         RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
-      
+     
         IF @get_all_databases = 0
         BEGIN
             RETURN;
         END;
     END;
 END; /*End wait stats checks*/
-
-/*
-See if our cool new 2022 views exist.
-May have to tweak this if views aren't present in some cloudy situations.
-*/
-SELECT
-    @sql_2022_views =
-        CASE
-            WHEN COUNT_BIG(*) = 5
-            THEN 1
-            ELSE 0
-        END
-FROM sys.all_objects AS ao
-WHERE ao.name IN
-      (
-          N'query_store_plan_feedback',
-          N'query_store_query_hints',
-          N'query_store_query_variant',
-          N'query_store_replicas',
-          N'query_store_plan_forcing_locations'
-      )
-OPTION(RECOMPILE);
 
 /*Check that the selected @timezone is valid*/
 IF @timezone IS NOT NULL
@@ -2251,7 +2317,7 @@ BEGIN
        SELECT
            @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 6' + @nc10;
     END;/*df 1*/
-   
+  
     IF @df = 7
     BEGIN
        SELECT
@@ -2280,7 +2346,7 @@ BEGIN
             @where_clause += N'AND   CONVERT(time(0), qsrs.last_execution_time) BETWEEN @work_start_utc AND @work_end_utc' + @nc10;
         ELSE
         SELECT
-            @where_clause += N'AND 
+            @where_clause += N'AND
 (' + @nc10 +
 N'      CONVERT(time(0), qsrs.last_execution_time) BETWEEN @work_start_utc AND ''23:59:59'' ' + @nc10 +
 N'   OR CONVERT(time(0), qsrs.last_execution_time) BETWEEN ''00:00:00'' AND @work_end_utc' + @nc10 +
@@ -2456,7 +2522,7 @@ OR @ignore_query_ids  IS NOT NULL
 )
 BEGIN
     IF @include_plan_ids IS NOT NULL
-    BEGIN   
+    BEGIN  
         SELECT
             @include_plan_ids =
                 REPLACE(REPLACE(REPLACE(REPLACE(
@@ -3407,6 +3473,231 @@ OPTION(RECOMPILE);' + @nc10;
     END; /*End ignore plan hashes*/
 END; /*End hash and handle filtering*/
 
+IF @sql_2022_views = 1
+BEGIN
+    IF @only_queries_with_hints = 1
+    BEGIN
+        SELECT
+            @current_table = 'inserting #only_queries_with_hints',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+        END;
+    
+        SELECT
+            @sql += N'
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
+              WHERE qsqh.query_id = qsp.query_id
+          )';
+    
+        SELECT
+            @sql += N'
+    OPTION(RECOMPILE);' + @nc10;
+    
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+    
+        INSERT
+            #only_queries_with_hints WITH(TABLOCK)
+        (
+            plan_id
+        )
+        EXEC sys.sp_executesql
+            @sql
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+    
+        SELECT
+            @where_clause += N'AND   EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #only_queries_with_hints AS qst
+               WHERE qst.plan_id = qsrs.plan_id
+           )' + @nc10;
+    END;
+    
+    IF @only_queries_with_feedback = 1
+    BEGIN
+        SELECT
+            @current_table = 'inserting #only_queries_with_feedback',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+        END;
+    
+        SELECT
+            @sql += N'
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_plan_feedback AS qsqf
+              WHERE qsqf.plan_id = qsp.plan_id
+          )';
+    
+        SELECT
+            @sql += N'
+    OPTION(RECOMPILE);' + @nc10;
+    
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+    
+        INSERT
+            #only_queries_with_feedback WITH(TABLOCK)
+        (
+            plan_id
+        )
+        EXEC sys.sp_executesql
+            @sql
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+    
+        SELECT
+            @where_clause += N'AND   EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #only_queries_with_feedback AS qst
+               WHERE qst.plan_id = qsrs.plan_id
+           )' + @nc10;
+    END;
+    
+    IF @only_queries_with_variants = 1
+    BEGIN
+        SELECT
+            @current_table = 'inserting #only_queries_with_variants',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+        END;
+    
+        SELECT
+            @sql += N'
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+              WHERE qsqv.query_variant_query_id = qsp.query_id
+          )';
+    
+        SELECT
+            @sql += N'
+    OPTION(RECOMPILE);' + @nc10;
+    
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+    
+        INSERT
+            #only_queries_with_variants WITH(TABLOCK)
+        (
+            plan_id
+        )
+        EXEC sys.sp_executesql
+            @sql
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+        
+        SELECT
+            @where_clause += N'AND   EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #only_queries_with_variants AS qst
+               WHERE qst.plan_id = qsrs.plan_id
+           )' + @nc10;
+    END;
+END;
+
 IF @query_text_search IS NOT NULL
 BEGIN
     IF
@@ -3485,7 +3776,7 @@ WHERE EXISTS
                   AND   qsqt.query_sql_text LIKE @query_text_search
               )
       )';
-   
+  
     /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
     IF @escape_brackets = 1
     BEGIN
@@ -5161,7 +5452,7 @@ OPTION(RECOMPILE);' + @nc10;
         PRINT LEN(@sql);
         PRINT @sql;
     END;
-  
+ 
     INSERT
         #query_store_query_hints WITH(TABLOCK)
     (
@@ -5404,7 +5695,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),          
+            nvarchar(MAX),         
             N'
     SELECT
         source =
@@ -5608,7 +5899,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),           
+            nvarchar(MAX),          
             N'
     SELECT
         source =
@@ -5816,7 +6107,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),           
+            nvarchar(MAX),          
             N'
     SELECT
         source =
@@ -5987,7 +6278,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),           
+            nvarchar(MAX),          
             N'
     SELECT
         source =
@@ -6381,77 +6672,88 @@ Return special things, unformatted
 */
 IF
 (
-    @expert_mode = 1
+    (
+         @expert_mode = 1
+      OR
+      (
+           @only_queries_with_hints = 1
+        OR @only_queries_with_feedback = 1
+        OR @only_queries_with_variants = 1
+      )
+    )
 AND @format_output = 0
 )
 BEGIN
     IF @sql_2022_views = 1
     BEGIN
-        IF EXISTS
-           (
-               SELECT
-                   1/0
-               FROM #query_store_plan_feedback AS qspf
-           )
+        IF @expert_mode = 1
         BEGIN
-            SELECT
-                @current_table = 'selecting plan feedback';
+            IF EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #query_store_plan_feedback AS qspf
+            )
+            BEGIN
+                SELECT
+                    @current_table = 'selecting plan feedback';
 
-            SELECT
-                database_name =
-                    DB_NAME(qspf.database_id),
-                qspf.plan_feedback_id,
-                qspf.plan_id,
-                qspf.feature_desc,
-                qspf.feedback_data,
-                qspf.state_desc,
-                create_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qspf.create_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qspf.create_time AT TIME ZONE @timezone
-                    END,
-                create_time_utc =
-                    qspf.create_time,
-                last_updated_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qspf.last_updated_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qspf.last_updated_time AT TIME ZONE @timezone
-                    END,
-                last_updated_time_utc =
-                    qspf.last_updated_time
-            FROM #query_store_plan_feedback AS qspf
-            ORDER BY
-                qspf.plan_id
-            OPTION(RECOMPILE);
-        END;
-        ELSE
-        BEGIN
-            SELECT
-                result = '#query_store_plan_feedback is empty';
+                SELECT
+                    database_name =
+                        DB_NAME(qspf.database_id),
+                    qspf.plan_feedback_id,
+                    qspf.plan_id,
+                    qspf.feature_desc,
+                    qspf.feedback_data,
+                    qspf.state_desc,
+                    create_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qspf.create_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qspf.create_time AT TIME ZONE @timezone
+                        END,
+                    create_time_utc =
+                        qspf.create_time,
+                    last_updated_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qspf.last_updated_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qspf.last_updated_time AT TIME ZONE @timezone
+                        END,
+                    last_updated_time_utc =
+                        qspf.last_updated_time
+                FROM #query_store_plan_feedback AS qspf
+                ORDER BY
+                    qspf.plan_id
+                OPTION(RECOMPILE);
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    result = '#query_store_plan_feedback is empty';
+            END;
         END;
 
         IF EXISTS
-           (
-               SELECT
-                   1/0
-               FROM #query_store_query_hints AS qsqh
-           )
+        (
+            SELECT
+                1/0
+            FROM #query_store_query_hints AS qsqh
+        )
         BEGIN
             SELECT
                 @current_table = 'selecting query hints';
@@ -6476,350 +6778,362 @@ BEGIN
                 result = '#query_store_query_hints is empty';
         END;
 
-        IF EXISTS
-           (
-               SELECT
-                   1/0
-               FROM #query_store_query_variant AS qsqv
-           )
+        IF @expert_mode = 1
         BEGIN
-            SELECT
-                @current_table = 'selecting query variants';
-
-            SELECT
-                database_name =
-                    DB_NAME(qsqv.database_id),
-                qsqv.query_variant_query_id,
-                qsqv.parent_query_id,
-                qsqv.dispatcher_plan_id
-            FROM #query_store_query_variant AS qsqv
-            ORDER BY
-                qsqv.parent_query_id
-            OPTION(RECOMPILE);
-        END;
-        ELSE
-        BEGIN
-            SELECT
-                result = '#query_store_query_variant is empty';
-        END;
-    END;
-
-    IF EXISTS
-       (
-           SELECT
-               1/0
-            FROM #query_store_query AS qsq
-       )
-    BEGIN
-        SELECT
-            @current_table = 'selecting compilation stats';
-
-        SELECT
-            x.*
-        FROM
-        (
-            SELECT
-                source =
-                    'compilation_stats',
-                database_name =
-                    DB_NAME(qsq.database_id),
-                qsq.query_id,
-                qsq.object_name,
-                qsq.query_text_id,
-                qsq.query_parameterization_type_desc,
-                initial_compile_start_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qsq.initial_compile_start_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qsq.initial_compile_start_time AT TIME ZONE @timezone
-                    END,
-                initial_compile_start_time_utc =
-                    qsq.initial_compile_start_time,
-                last_compile_start_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qsq.last_compile_start_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qsq.last_compile_start_time AT TIME ZONE @timezone
-                    END,
-                last_compile_start_time_utc =
-                    qsq.last_compile_start_time,
-                last_execution_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qsq.last_execution_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qsq.last_execution_time AT TIME ZONE @timezone
-                    END,
-                last_execution_time_utc =
-                    qsq.last_execution_time,                
-                qsq.count_compiles,
-                qsq.avg_compile_duration_ms,
-                qsq.total_compile_duration_ms,
-                qsq.last_compile_duration_ms,
-                qsq.avg_bind_duration_ms,
-                qsq.total_bind_duration_ms,
-                qsq.last_bind_duration_ms,
-                qsq.avg_bind_cpu_time_ms,
-                qsq.total_bind_cpu_time_ms,
-                qsq.last_bind_cpu_time_ms,
-                qsq.avg_optimize_duration_ms,
-                qsq.total_optimize_duration_ms,
-                qsq.last_optimize_duration_ms,
-                qsq.avg_optimize_cpu_time_ms,
-                qsq.total_optimize_cpu_time_ms,
-                qsq.last_optimize_cpu_time_ms,
-                qsq.avg_compile_memory_mb,
-                qsq.total_compile_memory_mb,
-                qsq.last_compile_memory_mb,
-                qsq.max_compile_memory_mb,
-                qsq.query_hash,
-                qsq.batch_sql_handle,
-                qsqt.statement_sql_handle,
-                qsq.last_compile_batch_sql_handle,
-                qsq.last_compile_batch_offset_start,
-                qsq.last_compile_batch_offset_end,
-                ROW_NUMBER() OVER
-                (
-                    PARTITION BY
-                        qsq.query_id,
-                        qsq.query_text_id
-                    ORDER BY
-                        qsq.query_id
-                ) AS n
-            FROM #query_store_query AS qsq
-            CROSS APPLY
+            IF EXISTS
             (
-                SELECT TOP (1)
-                    qsqt.*
-                FROM #query_store_query_text AS qsqt
-                WHERE qsqt.query_text_id = qsq.query_text_id
-                AND   qsqt.database_id = qsq.database_id
-            ) AS qsqt
-        ) AS x
-        WHERE x.n = 1
-        ORDER BY
-            x.query_id
-        OPTION(RECOMPILE);
+                SELECT
+                    1/0
+                FROM #query_store_query_variant AS qsqv
+            )
+            BEGIN
+                SELECT
+                    @current_table = 'selecting query variants';
 
-    END; /*End compilation stats query*/
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#query_store_query is empty';
+                SELECT
+                    database_name =
+                        DB_NAME(qsqv.database_id),
+                    qsqv.query_variant_query_id,
+                    qsqv.parent_query_id,
+                    qsqv.dispatcher_plan_id
+                FROM #query_store_query_variant AS qsqv
+                ORDER BY
+                    qsqv.parent_query_id
+                OPTION(RECOMPILE);
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    result = '#query_store_query_variant is empty';
+            END;
+        END;
     END;
 
-    IF @rc > 0
+    IF @expert_mode = 1
     BEGIN
-        SELECT
-            @current_table = 'selecting resource stats';
-
-        SELECT
-            source =
-                'resource_stats',
-            database_name =
-                DB_NAME(qsq.database_id),
-            qsq.query_id,
-            qsq.object_name,
-            qsqt.total_grant_mb,
-            qsqt.last_grant_mb,
-            qsqt.min_grant_mb,
-            qsqt.max_grant_mb,
-            qsqt.total_used_grant_mb,
-            qsqt.last_used_grant_mb,
-            qsqt.min_used_grant_mb,
-            qsqt.max_used_grant_mb,
-            qsqt.total_ideal_grant_mb,
-            qsqt.last_ideal_grant_mb,
-            qsqt.min_ideal_grant_mb,
-            qsqt.max_ideal_grant_mb,
-            qsqt.total_reserved_threads,
-            qsqt.last_reserved_threads,
-            qsqt.min_reserved_threads,
-            qsqt.max_reserved_threads,
-            qsqt.total_used_threads,
-            qsqt.last_used_threads,
-            qsqt.min_used_threads,
-            qsqt.max_used_threads
-        FROM #query_store_query AS qsq
-        JOIN #query_store_query_text AS qsqt
-          ON  qsq.query_text_id = qsqt.query_text_id
-          AND qsq.database_id = qsqt.database_id
-        WHERE
+        IF EXISTS
         (
-             qsqt.total_grant_mb IS NOT NULL
-          OR qsqt.total_reserved_threads IS NOT NULL
+            SELECT
+                1/0
+                FROM #query_store_query AS qsq
         )
-        ORDER BY
-            qsq.query_id
-        OPTION(RECOMPILE);
-
-    END; /*End resource stats query*/
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#dm_exec_query_stats is empty';
-    END;
-
-    IF @new = 1
-    BEGIN
-        IF EXISTS
-           (
-               SELECT
-                   1/0
-                FROM #query_store_wait_stats AS qsws
-           )
         BEGIN
             SELECT
-                @current_table = 'selecting wait stats by query';
-
-            SELECT DISTINCT
-                source =
-                    'query_store_wait_stats_by_query',
-                database_name =
-                    DB_NAME(qsws.database_id),
-                qsws.plan_id,
-                x.object_name,
-                qsws.wait_category_desc,
-                qsws.total_query_wait_time_ms,
-                total_query_duration_ms =
-                    x.total_duration_ms,
-                qsws.avg_query_wait_time_ms,
-                avg_query_duration_ms =
-                    x.avg_duration_ms,
-                qsws.last_query_wait_time_ms,
-                last_query_duration_ms =
-                    x.last_duration_ms,
-                qsws.min_query_wait_time_ms,
-                min_query_duration_ms =
-                    x.min_duration_ms,
-                qsws.max_query_wait_time_ms,
-                max_query_duration_ms =
-                    x.max_duration_ms
-            FROM #query_store_wait_stats AS qsws
-            CROSS APPLY
-            (
-                SELECT
-                    qsrs.avg_duration_ms,
-                    qsrs.last_duration_ms,
-                    qsrs.min_duration_ms,
-                    qsrs.max_duration_ms,
-                    qsrs.total_duration_ms,
-                    qsq.object_name
-                FROM #query_store_runtime_stats AS qsrs
-                JOIN #query_store_plan AS qsp
-                  ON  qsrs.plan_id = qsp.plan_id
-                  AND qsrs.database_id = qsp.database_id
-                JOIN #query_store_query AS qsq
-                  ON  qsp.query_id = qsq.query_id
-                  AND qsp.database_id = qsq.database_id
-                WHERE qsws.plan_id = qsrs.plan_id
-                AND   qsws.database_id = qsrs.database_id
-            ) AS x
-            ORDER BY
-                qsws.plan_id,
-                qsws.total_query_wait_time_ms DESC
-            OPTION(RECOMPILE);
+                @current_table = 'selecting compilation stats';
 
             SELECT
-                @current_table = 'selecting wait stats in total';
-
-            SELECT
-                source =
-                    'query_store_wait_stats_total',
-                database_name =
-                    DB_NAME(qsws.database_id),
-                qsws.wait_category_desc,
-                total_query_wait_time_ms =
-                    SUM(qsws.total_query_wait_time_ms),
-                total_query_duration_ms =
-                    SUM(x.total_duration_ms),
-                avg_query_wait_time_ms =
-                    SUM(qsws.avg_query_wait_time_ms),
-                avg_query_duration_ms =
-                    SUM(x.avg_duration_ms),
-                last_query_wait_time_ms =
-                    SUM(qsws.last_query_wait_time_ms),
-                last_query_duration_ms =
-                    SUM(x.last_duration_ms),
-                min_query_wait_time_ms =
-                    SUM(qsws.min_query_wait_time_ms),
-                min_query_duration_ms =
-                    SUM(x.min_duration_ms),
-                max_query_wait_time_ms =
-                    SUM(qsws.max_query_wait_time_ms),
-                max_query_duration_ms =
-                    SUM(x.max_duration_ms)
-            FROM #query_store_wait_stats AS qsws
-            CROSS APPLY
+                x.*
+            FROM
             (
                 SELECT
-                    qsrs.avg_duration_ms,
-                    qsrs.last_duration_ms,
-                    qsrs.min_duration_ms,
-                    qsrs.max_duration_ms,
-                    qsrs.total_duration_ms,
-                    qsq.object_name
-                FROM #query_store_runtime_stats AS qsrs
-                JOIN #query_store_plan AS qsp
-                  ON  qsrs.plan_id = qsp.plan_id
-                  AND qsrs.database_id = qsp.database_id
-                JOIN #query_store_query AS qsq
-                  ON  qsp.query_id = qsq.query_id
-                  AND qsp.database_id = qsq.database_id
-                WHERE qsws.plan_id = qsrs.plan_id
+                    source =
+                        'compilation_stats',
+                    database_name =
+                        DB_NAME(qsq.database_id),
+                    qsq.query_id,
+                    qsq.object_name,
+                    qsq.query_text_id,
+                    qsq.query_parameterization_type_desc,
+                    initial_compile_start_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qsq.initial_compile_start_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qsq.initial_compile_start_time AT TIME ZONE @timezone
+                        END,
+                    initial_compile_start_time_utc =
+                        qsq.initial_compile_start_time,
+                    last_compile_start_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qsq.last_compile_start_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qsq.last_compile_start_time AT TIME ZONE @timezone
+                        END,
+                    last_compile_start_time_utc =
+                        qsq.last_compile_start_time,
+                    last_execution_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qsq.last_execution_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qsq.last_execution_time AT TIME ZONE @timezone
+                        END,
+                    last_execution_time_utc =
+                        qsq.last_execution_time,               
+                    qsq.count_compiles,
+                    qsq.avg_compile_duration_ms,
+                    qsq.total_compile_duration_ms,
+                    qsq.last_compile_duration_ms,
+                    qsq.avg_bind_duration_ms,
+                    qsq.total_bind_duration_ms,
+                    qsq.last_bind_duration_ms,
+                    qsq.avg_bind_cpu_time_ms,
+                    qsq.total_bind_cpu_time_ms,
+                    qsq.last_bind_cpu_time_ms,
+                    qsq.avg_optimize_duration_ms,
+                    qsq.total_optimize_duration_ms,
+                    qsq.last_optimize_duration_ms,
+                    qsq.avg_optimize_cpu_time_ms,
+                    qsq.total_optimize_cpu_time_ms,
+                    qsq.last_optimize_cpu_time_ms,
+                    qsq.avg_compile_memory_mb,
+                    qsq.total_compile_memory_mb,
+                    qsq.last_compile_memory_mb,
+                    qsq.max_compile_memory_mb,
+                    qsq.query_hash,
+                    qsq.batch_sql_handle,
+                    qsqt.statement_sql_handle,
+                    qsq.last_compile_batch_sql_handle,
+                    qsq.last_compile_batch_offset_start,
+                    qsq.last_compile_batch_offset_end,
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY
+                            qsq.query_id,
+                            qsq.query_text_id
+                        ORDER BY
+                            qsq.query_id
+                    ) AS n
+                FROM #query_store_query AS qsq
+                CROSS APPLY
+                (
+                    SELECT TOP (1)
+                        qsqt.*
+                    FROM #query_store_query_text AS qsqt
+                    WHERE qsqt.query_text_id = qsq.query_text_id
+                    AND   qsqt.database_id = qsq.database_id
+                ) AS qsqt
             ) AS x
-            GROUP BY
-                qsws.wait_category_desc,
-                qsws.database_id
+            WHERE x.n = 1
             ORDER BY
-                SUM(qsws.total_query_wait_time_ms) DESC
+                x.query_id
             OPTION(RECOMPILE);
 
-        END; /*End unformatted wait stats*/
+        END; /*End compilation stats query*/
         ELSE
         BEGIN
             SELECT
                 result =
-                    '#query_store_wait_stats is empty' +
-                    CASE
-                        WHEN
-                        (
-                                @product_version = 13
-                            AND @azure = 0
-                        )
-                        THEN ' because it''s not available < 2017'
-                        WHEN EXISTS
-                             (
-                                 SELECT
-                                     1/0
-                                 FROM #database_query_store_options AS dqso
-                                 WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
-                             )
-                        THEN ' because you have it disabled in your Query Store options'
-                        ELSE ' for the queries in the results'
-                    END;
+                    '#query_store_query is empty';
+        END;
+    END;
+
+    IF @expert_mode = 1
+    BEGIN
+        IF @rc > 0
+        BEGIN
+            SELECT
+                @current_table = 'selecting resource stats';
+
+            SELECT
+                source =
+                    'resource_stats',
+                database_name =
+                    DB_NAME(qsq.database_id),
+                qsq.query_id,
+                qsq.object_name,
+                qsqt.total_grant_mb,
+                qsqt.last_grant_mb,
+                qsqt.min_grant_mb,
+                qsqt.max_grant_mb,
+                qsqt.total_used_grant_mb,
+                qsqt.last_used_grant_mb,
+                qsqt.min_used_grant_mb,
+                qsqt.max_used_grant_mb,
+                qsqt.total_ideal_grant_mb,
+                qsqt.last_ideal_grant_mb,
+                qsqt.min_ideal_grant_mb,
+                qsqt.max_ideal_grant_mb,
+                qsqt.total_reserved_threads,
+                qsqt.last_reserved_threads,
+                qsqt.min_reserved_threads,
+                qsqt.max_reserved_threads,
+                qsqt.total_used_threads,
+                qsqt.last_used_threads,
+                qsqt.min_used_threads,
+                qsqt.max_used_threads
+            FROM #query_store_query AS qsq
+            JOIN #query_store_query_text AS qsqt
+            ON  qsq.query_text_id = qsqt.query_text_id
+            AND qsq.database_id = qsqt.database_id
+            WHERE
+            (
+                qsqt.total_grant_mb IS NOT NULL
+            OR qsqt.total_reserved_threads IS NOT NULL
+            )
+            ORDER BY
+                qsq.query_id
+            OPTION(RECOMPILE);
+
+        END; /*End resource stats query*/
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#dm_exec_query_stats is empty';
+        END;
+    END;
+
+    IF @new = 1
+    BEGIN
+        IF @expert_mode = 1
+        BEGIN
+            IF EXISTS
+            (
+                SELECT
+                    1/0
+                    FROM #query_store_wait_stats AS qsws
+            )
+            BEGIN
+                SELECT
+                    @current_table = 'selecting wait stats by query';
+
+                SELECT DISTINCT
+                    source =
+                        'query_store_wait_stats_by_query',
+                    database_name =
+                        DB_NAME(qsws.database_id),
+                    qsws.plan_id,
+                    x.object_name,
+                    qsws.wait_category_desc,
+                    qsws.total_query_wait_time_ms,
+                    total_query_duration_ms =
+                        x.total_duration_ms,
+                    qsws.avg_query_wait_time_ms,
+                    avg_query_duration_ms =
+                        x.avg_duration_ms,
+                    qsws.last_query_wait_time_ms,
+                    last_query_duration_ms =
+                        x.last_duration_ms,
+                    qsws.min_query_wait_time_ms,
+                    min_query_duration_ms =
+                        x.min_duration_ms,
+                    qsws.max_query_wait_time_ms,
+                    max_query_duration_ms =
+                        x.max_duration_ms
+                FROM #query_store_wait_stats AS qsws
+                CROSS APPLY
+                (
+                    SELECT
+                        qsrs.avg_duration_ms,
+                        qsrs.last_duration_ms,
+                        qsrs.min_duration_ms,
+                        qsrs.max_duration_ms,
+                        qsrs.total_duration_ms,
+                        qsq.object_name
+                    FROM #query_store_runtime_stats AS qsrs
+                    JOIN #query_store_plan AS qsp
+                    ON  qsrs.plan_id = qsp.plan_id
+                    AND qsrs.database_id = qsp.database_id
+                    JOIN #query_store_query AS qsq
+                    ON  qsp.query_id = qsq.query_id
+                    AND qsp.database_id = qsq.database_id
+                    WHERE qsws.plan_id = qsrs.plan_id
+                    AND   qsws.database_id = qsrs.database_id
+                ) AS x
+                ORDER BY
+                    qsws.plan_id,
+                    qsws.total_query_wait_time_ms DESC
+                OPTION(RECOMPILE);
+
+                SELECT
+                    @current_table = 'selecting wait stats in total';
+
+                SELECT
+                    source =
+                        'query_store_wait_stats_total',
+                    database_name =
+                        DB_NAME(qsws.database_id),
+                    qsws.wait_category_desc,
+                    total_query_wait_time_ms =
+                        SUM(qsws.total_query_wait_time_ms),
+                    total_query_duration_ms =
+                        SUM(x.total_duration_ms),
+                    avg_query_wait_time_ms =
+                        SUM(qsws.avg_query_wait_time_ms),
+                    avg_query_duration_ms =
+                        SUM(x.avg_duration_ms),
+                    last_query_wait_time_ms =
+                        SUM(qsws.last_query_wait_time_ms),
+                    last_query_duration_ms =
+                        SUM(x.last_duration_ms),
+                    min_query_wait_time_ms =
+                        SUM(qsws.min_query_wait_time_ms),
+                    min_query_duration_ms =
+                        SUM(x.min_duration_ms),
+                    max_query_wait_time_ms =
+                        SUM(qsws.max_query_wait_time_ms),
+                    max_query_duration_ms =
+                        SUM(x.max_duration_ms)
+                FROM #query_store_wait_stats AS qsws
+                CROSS APPLY
+                (
+                    SELECT
+                        qsrs.avg_duration_ms,
+                        qsrs.last_duration_ms,
+                        qsrs.min_duration_ms,
+                        qsrs.max_duration_ms,
+                        qsrs.total_duration_ms,
+                        qsq.object_name
+                    FROM #query_store_runtime_stats AS qsrs
+                    JOIN #query_store_plan AS qsp
+                    ON  qsrs.plan_id = qsp.plan_id
+                    AND qsrs.database_id = qsp.database_id
+                    JOIN #query_store_query AS qsq
+                    ON  qsp.query_id = qsq.query_id
+                    AND qsp.database_id = qsq.database_id
+                    WHERE qsws.plan_id = qsrs.plan_id
+                ) AS x
+                GROUP BY
+                    qsws.wait_category_desc,
+                    qsws.database_id
+                ORDER BY
+                    SUM(qsws.total_query_wait_time_ms) DESC
+                OPTION(RECOMPILE);
+
+            END; /*End unformatted wait stats*/
+            ELSE
+            BEGIN
+                SELECT
+                    result =
+                        '#query_store_wait_stats is empty' +
+                        CASE
+                            WHEN
+                            (
+                                    @product_version = 13
+                                AND @azure = 0
+                            )
+                            THEN ' because it''s not available < 2017'
+                            WHEN EXISTS
+                                (
+                                    SELECT
+                                        1/0
+                                    FROM #database_query_store_options AS dqso
+                                    WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                                )
+                            THEN ' because you have it disabled in your Query Store options'
+                            ELSE ' for the queries in the results'
+                        END;
+            END;
         END;
     END; /*End wait stats queries*/
 
@@ -6829,113 +7143,119 @@ BEGIN
     AND @ags_present = 1
     )
     BEGIN
-        IF EXISTS
-           (
-               SELECT
-                   1/0
-               FROM #query_store_replicas AS qsr
-               JOIN #query_store_plan_forcing_locations AS qspfl
-                 ON  qsr.replica_group_id = qspfl.replica_group_id
-                 AND qsr.database_id = qspfl.database_id
-           )
+        IF @expert_mode = 1
         BEGIN
-            SELECT
-                @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
-          
-            SELECT
-                database_name =
-                    DB_NAME(qsr.database_id),
-                qsr.replica_group_id,
-                qsr.role_type,
-                qsr.replica_name,
-                qspfl.plan_forcing_location_id,
-                qspfl.query_id,
-                qspfl.plan_id,
-                qspfl.replica_group_id
-            FROM #query_store_replicas AS qsr
-            JOIN #query_store_plan_forcing_locations AS qspfl
-              ON qsr.replica_group_id = qspfl.replica_group_id
-            ORDER BY
-                qsr.replica_group_id;
-        END;
-        ELSE
+            IF EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #query_store_replicas AS qsr
+                JOIN #query_store_plan_forcing_locations AS qspfl
+                    ON  qsr.replica_group_id = qspfl.replica_group_id
+                    AND qsr.database_id = qspfl.database_id
+            )
             BEGIN
                 SELECT
-                    result = 'Availability Group information is empty';
+                    @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
+           
+                SELECT
+                    database_name =
+                        DB_NAME(qsr.database_id),
+                    qsr.replica_group_id,
+                    qsr.role_type,
+                    qsr.replica_name,
+                    qspfl.plan_forcing_location_id,
+                    qspfl.query_id,
+                    qspfl.plan_id,
+                    qspfl.replica_group_id
+                FROM #query_store_replicas AS qsr
+                JOIN #query_store_plan_forcing_locations AS qspfl
+                ON qsr.replica_group_id = qspfl.replica_group_id
+                ORDER BY
+                    qsr.replica_group_id;
+            END;
+            ELSE
+                BEGIN
+                    SELECT
+                        result = 'Availability Group information is empty';
+            END;
         END;
     END;
 
-    SELECT
-        @current_table = 'selecting query store options',
-        @sql = N'';
-
-    SELECT
-        @sql +=
-    CONVERT
-    (
-        nvarchar(MAX),
-        N'
-    SELECT
-        source =
-            ''query_store_options'',
-        database_name =
-            DB_NAME(dqso.database_id),
-        dqso.desired_state_desc,
-        dqso.actual_state_desc,
-        dqso.readonly_reason,
-        dqso.current_storage_size_mb,
-        dqso.flush_interval_seconds,
-        dqso.interval_length_minutes,
-        dqso.max_storage_size_mb,
-        dqso.stale_query_threshold_days,
-        dqso.max_plans_per_query,
-        dqso.query_capture_mode_desc,'
-        +
-        CASE
-            WHEN
-            (
-                 @azure = 1
-              OR @product_version > 13
-            )
-            THEN N'
-        dqso.wait_stats_capture_mode_desc,'
-            ELSE N''
-        END
-        +
-        CASE
-            WHEN
-            (
-                 @azure = 1
-              OR @product_version > 14
-            )
-            THEN N'
-        dqso.capture_policy_execution_count,
-        dqso.capture_policy_total_compile_cpu_time_ms,
-        dqso.capture_policy_total_execution_cpu_time_ms,
-        dqso.capture_policy_stale_threshold_hours,'
-            ELSE N''
-        END
-    );
-
-    SELECT
-        @sql +=
-    CONVERT
-    (
-        nvarchar(MAX),
-        N'
-    dqso.size_based_cleanup_mode_desc
-    FROM #database_query_store_options AS dqso
-    OPTION(RECOMPILE);'
-    );
-
-    IF @debug = 1
+    IF @expert_mode = 1
     BEGIN
-        PRINT LEN(@sql);
-        PRINT @sql;
-    END;
+        SELECT
+            @current_table = 'selecting query store options',
+            @sql = N'';
 
-    EXEC sys.sp_executesql
-        @sql;
+        SELECT
+            @sql +=
+        CONVERT
+        (
+            nvarchar(MAX),
+            N'
+        SELECT
+            source =
+                ''query_store_options'',
+            database_name =
+                DB_NAME(dqso.database_id),
+            dqso.desired_state_desc,
+            dqso.actual_state_desc,
+            dqso.readonly_reason,
+            dqso.current_storage_size_mb,
+            dqso.flush_interval_seconds,
+            dqso.interval_length_minutes,
+            dqso.max_storage_size_mb,
+            dqso.stale_query_threshold_days,
+            dqso.max_plans_per_query,
+            dqso.query_capture_mode_desc,'
+            +
+            CASE
+                WHEN
+                (
+                    @azure = 1
+                OR @product_version > 13
+                )
+                THEN N'
+            dqso.wait_stats_capture_mode_desc,'
+                ELSE N''
+            END
+            +
+            CASE
+                WHEN
+                (
+                    @azure = 1
+                OR @product_version > 14
+                )
+                THEN N'
+            dqso.capture_policy_execution_count,
+            dqso.capture_policy_total_compile_cpu_time_ms,
+            dqso.capture_policy_total_execution_cpu_time_ms,
+            dqso.capture_policy_stale_threshold_hours,'
+                ELSE N''
+            END
+        );
+
+        SELECT
+            @sql +=
+        CONVERT
+        (
+            nvarchar(MAX),
+            N'
+        dqso.size_based_cleanup_mode_desc
+        FROM #database_query_store_options AS dqso
+        OPTION(RECOMPILE);'
+        );
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXEC sys.sp_executesql
+            @sql;
+    END;
 END; /*End expert mode format output = 0*/
 
 /*
@@ -6943,70 +7263,81 @@ Return special things, formatted
 */
 IF
 (
-    @expert_mode = 1
+    (
+        @expert_mode = 1
+      OR
+      (
+           @only_queries_with_hints = 1
+        OR @only_queries_with_feedback = 1
+        OR @only_queries_with_variants = 1
+      )
+    )
 AND @format_output = 1
 )
 BEGIN
     IF @sql_2022_views = 1
     BEGIN
-        IF EXISTS
-           (
-               SELECT
-                   1/0
-               FROM #query_store_plan_feedback AS qspf
-           )
+        IF @expert_mode = 1
         BEGIN
-            SELECT
-                @current_table = 'selecting plan feedback';
+            IF EXISTS
+               (
+                   SELECT
+                       1/0
+                   FROM #query_store_plan_feedback AS qspf
+               )
+            BEGIN
+                SELECT
+                    @current_table = 'selecting plan feedback';
 
-            SELECT
-                database_name =
-                    DB_NAME(qspf.database_id),
-                qspf.plan_feedback_id,
-                qspf.plan_id,
-                qspf.feature_desc,
-                qspf.feedback_data,
-                qspf.state_desc,
-                create_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qspf.create_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qspf.create_time AT TIME ZONE @timezone
-                    END,
-                create_time_utc =
-                    qspf.create_time,
-                last_updated_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qspf.last_updated_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qspf.last_updated_time AT TIME ZONE @timezone
-                    END,
-                last_updated_time_utc =
-                    qspf.last_updated_time
-            FROM #query_store_plan_feedback AS qspf
-            ORDER BY
-                qspf.plan_id
-            OPTION(RECOMPILE);
-        END;
-        ELSE
-        BEGIN
-            SELECT
-                result = '#query_store_plan_feedback is empty';
-        END;
+                SELECT
+                    database_name =
+                        DB_NAME(qspf.database_id),
+                    qspf.plan_feedback_id,
+                    qspf.plan_id,
+                    qspf.feature_desc,
+                    qspf.feedback_data,
+                    qspf.state_desc,
+                    create_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qspf.create_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qspf.create_time AT TIME ZONE @timezone
+                        END,
+                    create_time_utc =
+                        qspf.create_time,
+                    last_updated_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qspf.last_updated_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qspf.last_updated_time AT TIME ZONE @timezone
+                        END,
+                    last_updated_time_utc =
+                        qspf.last_updated_time
+                FROM #query_store_plan_feedback AS qspf
+                ORDER BY
+                    qspf.plan_id
+                OPTION(RECOMPILE);
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    result = '#query_store_plan_feedback is empty';
+            END;
+        END
 
         IF EXISTS
            (
@@ -7038,242 +7369,251 @@ BEGIN
                 result = '#query_store_query_hints is empty';
         END;
 
-        IF EXISTS
-           (
-               SELECT
-                   1/0
-               FROM #query_store_query_variant AS qsqv
-           )
+        IF @expert_mode = 1
         BEGIN
-            SELECT
-                @current_table = 'selecting query variants';
+            IF EXISTS
+               (
+                   SELECT
+                       1/0
+                   FROM #query_store_query_variant AS qsqv
+               )
+            BEGIN
+                SELECT
+                    @current_table = 'selecting query variants';
 
-            SELECT
-                database_name =
-                    DB_NAME(qsqv.database_id),
-                qsqv.query_variant_query_id,
-                qsqv.parent_query_id,
-                qsqv.dispatcher_plan_id
-            FROM #query_store_query_variant AS qsqv
-            ORDER BY
-                qsqv.parent_query_id
-            OPTION(RECOMPILE);
-        END;
-        ELSE
-        BEGIN
-            SELECT
-                result = '#query_store_query_variant is empty';
+                SELECT
+                    database_name =
+                        DB_NAME(qsqv.database_id),
+                    qsqv.query_variant_query_id,
+                    qsqv.parent_query_id,
+                    qsqv.dispatcher_plan_id
+                FROM #query_store_query_variant AS qsqv
+                ORDER BY
+                    qsqv.parent_query_id
+                OPTION(RECOMPILE);
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    result = '#query_store_query_variant is empty';
+            END;
         END;
     END;
 
-    IF EXISTS
-       (
-          SELECT
-              1/0
-          FROM #query_store_query AS qsq
-       )
+    IF @expert_mode = 1
     BEGIN
-        SELECT
-            @current_table = 'selecting compilation stats';
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #query_store_query AS qsq
+           )
+        BEGIN
+            SELECT
+                @current_table = 'selecting compilation stats';
 
-        SELECT
-            x.*
-        FROM
-        (
+            SELECT
+                x.*
+            FROM
+            (
+                SELECT
+                    source =
+                        'compilation_stats',
+                    database_name =
+                        DB_NAME(qsq.database_id),
+                    qsq.query_id,
+                    qsq.object_name,
+                    qsq.query_text_id,
+                    qsq.query_parameterization_type_desc,
+                    initial_compile_start_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qsq.initial_compile_start_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qsq.initial_compile_start_time AT TIME ZONE @timezone
+                        END,
+                    initial_compile_start_time_utc =
+                        qsq.initial_compile_start_time,
+                    last_compile_start_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qsq.last_compile_start_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qsq.last_compile_start_time AT TIME ZONE @timezone
+                        END,
+                    last_compile_start_time_utc =
+                        qsq.last_compile_start_time,
+                    last_execution_time =
+                        CASE
+                            WHEN @timezone IS NULL
+                            THEN
+                                DATEADD
+                                (
+                                    MINUTE,
+                                    @utc_minutes_original,
+                                    qsq.last_execution_time
+                                )
+                            WHEN @timezone IS NOT NULL
+                            THEN qsq.last_execution_time AT TIME ZONE @timezone
+                        END,
+                    last_execution_time_utc =
+                        qsq.last_execution_time,
+                    count_compiles =
+                        FORMAT(qsq.count_compiles, 'N0'),
+                    avg_compile_duration_ms =
+                        FORMAT(qsq.avg_compile_duration_ms, 'N0'),
+                    total_compile_duration_ms =
+                        FORMAT(qsq.total_compile_duration_ms, 'N0'),
+                    last_compile_duration_ms =
+                        FORMAT(qsq.last_compile_duration_ms, 'N0'),
+                    avg_bind_duration_ms =
+                        FORMAT(qsq.avg_bind_duration_ms, 'N0'),
+                    total_bind_duration_ms =
+                        FORMAT(qsq.total_bind_duration_ms, 'N0'),
+                    last_bind_duration_ms =
+                        FORMAT(qsq.last_bind_duration_ms, 'N0'),
+                    avg_bind_cpu_time_ms =
+                        FORMAT(qsq.avg_bind_cpu_time_ms, 'N0'),
+                    total_bind_cpu_time_ms =
+                        FORMAT(qsq.total_bind_cpu_time_ms, 'N0'),
+                    last_bind_cpu_time_ms =
+                        FORMAT(qsq.last_bind_cpu_time_ms, 'N0'),
+                    avg_optimize_duration_ms =
+                        FORMAT(qsq.avg_optimize_duration_ms, 'N0'),
+                    total_optimize_duration_ms =
+                        FORMAT(qsq.total_optimize_duration_ms, 'N0'),
+                    last_optimize_duration_ms =
+                        FORMAT(qsq.last_optimize_duration_ms, 'N0'),
+                    avg_optimize_cpu_time_ms =
+                        FORMAT(qsq.avg_optimize_cpu_time_ms, 'N0'),
+                    total_optimize_cpu_time_ms =
+                        FORMAT(qsq.total_optimize_cpu_time_ms, 'N0'),
+                    last_optimize_cpu_time_ms =
+                        FORMAT(qsq.last_optimize_cpu_time_ms, 'N0'),
+                    avg_compile_memory_mb =
+                        FORMAT(qsq.avg_compile_memory_mb, 'N0'),
+                    total_compile_memory_mb =
+                        FORMAT(qsq.total_compile_memory_mb, 'N0'),
+                    last_compile_memory_mb =
+                        FORMAT(qsq.last_compile_memory_mb, 'N0'),
+                    max_compile_memory_mb =
+                        FORMAT(qsq.max_compile_memory_mb, 'N0'),
+                    qsq.query_hash,
+                    qsq.batch_sql_handle,
+                    qsqt.statement_sql_handle,
+                    qsq.last_compile_batch_sql_handle,
+                    qsq.last_compile_batch_offset_start,
+                    qsq.last_compile_batch_offset_end,
+                    ROW_NUMBER() OVER
+                    (
+                        PARTITION BY
+                            qsq.query_id,
+                            qsq.query_text_id
+                        ORDER BY
+                            qsq.query_id
+                    ) AS n
+                FROM #query_store_query AS qsq
+                CROSS APPLY
+                (
+                    SELECT TOP (1)
+                        qsqt.*
+                    FROM #query_store_query_text AS qsqt
+                    WHERE qsqt.query_text_id = qsq.query_text_id
+                    AND   qsqt.database_id = qsq.database_id
+                ) AS qsqt
+            ) AS x
+            WHERE x.n = 1
+            ORDER BY
+                x.query_id
+            OPTION(RECOMPILE);
+
+        END; /*End query store query, format output = 1*/
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#query_store_query is empty';
+        END;
+    END;
+
+    IF @expert_mode = 1
+    BEGIN
+        IF @rc > 0
+        BEGIN
+            SELECT
+                @current_table = 'selecting resource stats';
+
             SELECT
                 source =
-                    'compilation_stats',
+                    'resource_stats',
                 database_name =
                     DB_NAME(qsq.database_id),
                 qsq.query_id,
                 qsq.object_name,
-                qsq.query_text_id,
-                qsq.query_parameterization_type_desc,
-                initial_compile_start_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qsq.initial_compile_start_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qsq.initial_compile_start_time AT TIME ZONE @timezone
-                    END,
-                initial_compile_start_time_utc =
-                    qsq.initial_compile_start_time,
-                last_compile_start_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qsq.last_compile_start_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qsq.last_compile_start_time AT TIME ZONE @timezone
-                    END,
-                last_compile_start_time_utc =
-                    qsq.last_compile_start_time,
-                last_execution_time =
-                    CASE
-                        WHEN @timezone IS NULL
-                        THEN
-                            DATEADD
-                            (
-                                MINUTE,
-                                @utc_minutes_original,
-                                qsq.last_execution_time
-                            )
-                        WHEN @timezone IS NOT NULL
-                        THEN qsq.last_execution_time AT TIME ZONE @timezone
-                    END,
-                last_execution_time_utc =
-                    qsq.last_execution_time,
-                count_compiles =
-                    FORMAT(qsq.count_compiles, 'N0'),
-                avg_compile_duration_ms =
-                    FORMAT(qsq.avg_compile_duration_ms, 'N0'),
-                total_compile_duration_ms =
-                    FORMAT(qsq.total_compile_duration_ms, 'N0'),
-                last_compile_duration_ms =
-                    FORMAT(qsq.last_compile_duration_ms, 'N0'),
-                avg_bind_duration_ms =
-                    FORMAT(qsq.avg_bind_duration_ms, 'N0'),
-                total_bind_duration_ms =
-                    FORMAT(qsq.total_bind_duration_ms, 'N0'),
-                last_bind_duration_ms =
-                    FORMAT(qsq.last_bind_duration_ms, 'N0'),
-                avg_bind_cpu_time_ms =
-                    FORMAT(qsq.avg_bind_cpu_time_ms, 'N0'),
-                total_bind_cpu_time_ms =
-                    FORMAT(qsq.total_bind_cpu_time_ms, 'N0'),
-                last_bind_cpu_time_ms =
-                    FORMAT(qsq.last_bind_cpu_time_ms, 'N0'),
-                avg_optimize_duration_ms =
-                    FORMAT(qsq.avg_optimize_duration_ms, 'N0'),
-                total_optimize_duration_ms =
-                    FORMAT(qsq.total_optimize_duration_ms, 'N0'),
-                last_optimize_duration_ms =
-                    FORMAT(qsq.last_optimize_duration_ms, 'N0'),
-                avg_optimize_cpu_time_ms =
-                    FORMAT(qsq.avg_optimize_cpu_time_ms, 'N0'),
-                total_optimize_cpu_time_ms =
-                    FORMAT(qsq.total_optimize_cpu_time_ms, 'N0'),
-                last_optimize_cpu_time_ms =
-                    FORMAT(qsq.last_optimize_cpu_time_ms, 'N0'),
-                avg_compile_memory_mb =
-                    FORMAT(qsq.avg_compile_memory_mb, 'N0'),
-                total_compile_memory_mb =
-                    FORMAT(qsq.total_compile_memory_mb, 'N0'),
-                last_compile_memory_mb =
-                    FORMAT(qsq.last_compile_memory_mb, 'N0'),
-                max_compile_memory_mb =
-                    FORMAT(qsq.max_compile_memory_mb, 'N0'),
-                qsq.query_hash,
-                qsq.batch_sql_handle,
-                qsqt.statement_sql_handle,
-                qsq.last_compile_batch_sql_handle,
-                qsq.last_compile_batch_offset_start,
-                qsq.last_compile_batch_offset_end,
-                ROW_NUMBER() OVER
-                (
-                    PARTITION BY
-                        qsq.query_id,
-                        qsq.query_text_id
-                    ORDER BY
-                        qsq.query_id
-                ) AS n
+                total_grant_mb =
+                    FORMAT(qsqt.total_grant_mb, 'N0'),
+                last_grant_mb =
+                    FORMAT(qsqt.last_grant_mb, 'N0'),
+                min_grant_mb =
+                    FORMAT(qsqt.min_grant_mb, 'N0'),
+                max_grant_mb =
+                    FORMAT(qsqt.max_grant_mb, 'N0'),
+                total_used_grant_mb =
+                    FORMAT(qsqt.total_used_grant_mb, 'N0'),
+                last_used_grant_mb =
+                    FORMAT(qsqt.last_used_grant_mb, 'N0'),
+                min_used_grant_mb =
+                    FORMAT(qsqt.min_used_grant_mb, 'N0'),
+                max_used_grant_mb =
+                    FORMAT(qsqt.max_used_grant_mb, 'N0'),
+                total_ideal_grant_mb =
+                    FORMAT(qsqt.total_ideal_grant_mb, 'N0'),
+                last_ideal_grant_mb =
+                    FORMAT(qsqt.last_ideal_grant_mb, 'N0'),
+                min_ideal_grant_mb =
+                    FORMAT(qsqt.min_ideal_grant_mb, 'N0'),
+                max_ideal_grant_mb =
+                    FORMAT(qsqt.max_ideal_grant_mb, 'N0'),
+                qsqt.total_reserved_threads,
+                qsqt.last_reserved_threads,
+                qsqt.min_reserved_threads,
+                qsqt.max_reserved_threads,
+                qsqt.total_used_threads,
+                qsqt.last_used_threads,
+                qsqt.min_used_threads,
+                qsqt.max_used_threads
             FROM #query_store_query AS qsq
-            CROSS APPLY
+            JOIN #query_store_query_text AS qsqt
+              ON  qsq.query_text_id = qsqt.query_text_id
+              AND qsq.database_id = qsqt.database_id
+            WHERE
             (
-                SELECT TOP (1)
-                    qsqt.*
-                FROM #query_store_query_text AS qsqt
-                WHERE qsqt.query_text_id = qsq.query_text_id
-                AND   qsqt.database_id = qsq.database_id
-            ) AS qsqt
-        ) AS x
-        WHERE x.n = 1
-        ORDER BY
-            x.query_id
-        OPTION(RECOMPILE);
+                 qsqt.total_grant_mb IS NOT NULL
+              OR qsqt.total_reserved_threads IS NOT NULL
+            )
+            ORDER BY
+                qsq.query_id
+            OPTION(RECOMPILE);
 
-    END; /*End query store query, format output = 1*/
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#query_store_query is empty';
-    END;
-
-    IF @rc > 0
-    BEGIN
-        SELECT
-            @current_table = 'selecting resource stats';
-
-        SELECT
-            source =
-                'resource_stats',
-            database_name =
-                DB_NAME(qsq.database_id),
-            qsq.query_id,
-            qsq.object_name,
-            total_grant_mb =
-                FORMAT(qsqt.total_grant_mb, 'N0'),
-            last_grant_mb =
-                FORMAT(qsqt.last_grant_mb, 'N0'),
-            min_grant_mb =
-                FORMAT(qsqt.min_grant_mb, 'N0'),
-            max_grant_mb =
-                FORMAT(qsqt.max_grant_mb, 'N0'),
-            total_used_grant_mb =
-                FORMAT(qsqt.total_used_grant_mb, 'N0'),
-            last_used_grant_mb =
-                FORMAT(qsqt.last_used_grant_mb, 'N0'),
-            min_used_grant_mb =
-                FORMAT(qsqt.min_used_grant_mb, 'N0'),
-            max_used_grant_mb =
-                FORMAT(qsqt.max_used_grant_mb, 'N0'),
-            total_ideal_grant_mb =
-                FORMAT(qsqt.total_ideal_grant_mb, 'N0'),
-            last_ideal_grant_mb =
-                FORMAT(qsqt.last_ideal_grant_mb, 'N0'),
-            min_ideal_grant_mb =
-                FORMAT(qsqt.min_ideal_grant_mb, 'N0'),
-            max_ideal_grant_mb =
-                FORMAT(qsqt.max_ideal_grant_mb, 'N0'),
-            qsqt.total_reserved_threads,
-            qsqt.last_reserved_threads,
-            qsqt.min_reserved_threads,
-            qsqt.max_reserved_threads,
-            qsqt.total_used_threads,
-            qsqt.last_used_threads,
-            qsqt.min_used_threads,
-            qsqt.max_used_threads
-        FROM #query_store_query AS qsq
-        JOIN #query_store_query_text AS qsqt
-          ON  qsq.query_text_id = qsqt.query_text_id
-          AND qsq.database_id = qsqt.database_id
-        WHERE
-        (
-             qsqt.total_grant_mb IS NOT NULL
-          OR qsqt.total_reserved_threads IS NOT NULL
-        )
-        ORDER BY
-            qsq.query_id
-        OPTION(RECOMPILE);
-
-    END; /*End resource stats, format output = 1*/
-    ELSE
-    BEGIN
-        SELECT
-            result =
-                '#dm_exec_query_stats is empty';
+        END; /*End resource stats, format output = 1*/
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#dm_exec_query_stats is empty';
+        END;
     END;
 
     IF @new = 1
@@ -7284,6 +7624,7 @@ BEGIN
                    1/0
                 FROM #query_store_wait_stats AS qsws
            )
+        AND @expert_mode = 1
         BEGIN
             SELECT
                 @current_table = 'selecting wait stats by query';
@@ -7429,119 +7770,126 @@ BEGIN
     AND @ags_present = 1
     )
     BEGIN
-        IF EXISTS
-           (
-               SELECT
-                   1/0
-               FROM #query_store_replicas AS qsr
-               JOIN #query_store_plan_forcing_locations AS qspfl
-                 ON  qsr.replica_group_id = qspfl.replica_group_id
-                 AND qsr.replica_group_id = qspfl.database_id
-           )
+        IF @expert_mode = 1
         BEGIN
-            SELECT
-                @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-         
-            SELECT
-                database_name =
-                    DB_NAME(qsr.database_id),
-                qsr.replica_group_id,
-                qsr.role_type,
-                qsr.replica_name,
-                qspfl.plan_forcing_location_id,
-                qspfl.query_id,
-                qspfl.plan_id,
-                qspfl.replica_group_id
-            FROM #query_store_replicas AS qsr
-            JOIN #query_store_plan_forcing_locations AS qspfl
-              ON  qsr.replica_group_id = qspfl.replica_group_id
-              AND qsr.database_id = qspfl.database_id
-            ORDER BY
-                qsr.replica_group_id
-            OPTION(RECOMPILE);        
-        END;
-        ELSE
-        BEGIN
-            SELECT
-                result = 'Availability Group information is empty';
+            IF EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #query_store_replicas AS qsr
+                JOIN #query_store_plan_forcing_locations AS qspfl
+                    ON  qsr.replica_group_id = qspfl.replica_group_id
+                    AND qsr.replica_group_id = qspfl.database_id
+            )
+            BEGIN
+                SELECT
+                    @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
+           
+                SELECT
+                    database_name =
+                        DB_NAME(qsr.database_id),
+                    qsr.replica_group_id,
+                    qsr.role_type,
+                    qsr.replica_name,
+                    qspfl.plan_forcing_location_id,
+                    qspfl.query_id,
+                    qspfl.plan_id,
+                    qspfl.replica_group_id
+                FROM #query_store_replicas AS qsr
+                JOIN #query_store_plan_forcing_locations AS qspfl
+                ON  qsr.replica_group_id = qspfl.replica_group_id
+                AND qsr.database_id = qspfl.database_id
+                ORDER BY
+                    qsr.replica_group_id
+                OPTION(RECOMPILE);       
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    result = 'Availability Group information is empty';
+            END;
         END;
     END;
 
-    SELECT
-        @current_table = 'selecting query store options',
-        @sql = N'';
-
-    SELECT
-        @sql +=
-    CONVERT
-    (
-        nvarchar(MAX),
-        N'
-    SELECT
-        source =
-            ''query_store_options'',
-        database_name =
-            DB_NAME(dqso.database_id),
-        dqso.desired_state_desc,
-        dqso.actual_state_desc,
-        dqso.readonly_reason,
-        current_storage_size_mb =
-            FORMAT(dqso.current_storage_size_mb, ''N0''),
-        flush_interval_seconds =
-            FORMAT(dqso.flush_interval_seconds, ''N0''),
-        interval_length_minutes =
-            FORMAT(dqso.interval_length_minutes, ''N0''),
-        max_storage_size_mb =
-            FORMAT(dqso.max_storage_size_mb, ''N0''),
-        dqso.stale_query_threshold_days,
-        max_plans_per_query =
-            FORMAT(dqso.max_plans_per_query, ''N0''),
-        dqso.query_capture_mode_desc,'
-        +
-        CASE
-            WHEN
-            (
-                @azure = 1
-                OR @product_version > 13
-            )
-            THEN N'
-        dqso.wait_stats_capture_mode_desc,'
-            ELSE N''
-        END
-        +
-        CASE
-            WHEN
-            (
-                 @azure = 1
-              OR @product_version > 14
-            )
-            THEN N'
-        capture_policy_execution_count =
-            FORMAT(dqso.capture_policy_execution_count, ''N0''),
-        capture_policy_total_compile_cpu_time_ms =
-            FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, ''N0''),
-        capture_policy_total_execution_cpu_time_ms =
-           FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, ''N0''),
-        capture_policy_stale_threshold_hours =
-            FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),'
-            ELSE N''
-        END
-        );
-
-    SELECT
-        @sql += N'
-    dqso.size_based_cleanup_mode_desc
-    FROM #database_query_store_options AS dqso
-    OPTION(RECOMPILE);';
-
-    IF @debug = 1
+    IF @expert_mode = 1
     BEGIN
-        PRINT LEN(@sql);
-        PRINT @sql;
-    END;
+        SELECT
+            @current_table = 'selecting query store options',
+            @sql = N'';
 
-    EXEC sys.sp_executesql
-        @sql;
+        SELECT
+            @sql +=
+        CONVERT
+        (
+            nvarchar(MAX),
+            N'
+        SELECT
+            source =
+                ''query_store_options'',
+            database_name =
+                DB_NAME(dqso.database_id),
+            dqso.desired_state_desc,
+            dqso.actual_state_desc,
+            dqso.readonly_reason,
+            current_storage_size_mb =
+                FORMAT(dqso.current_storage_size_mb, ''N0''),
+            flush_interval_seconds =
+                FORMAT(dqso.flush_interval_seconds, ''N0''),
+            interval_length_minutes =
+                FORMAT(dqso.interval_length_minutes, ''N0''),
+            max_storage_size_mb =
+                FORMAT(dqso.max_storage_size_mb, ''N0''),
+            dqso.stale_query_threshold_days,
+            max_plans_per_query =
+                FORMAT(dqso.max_plans_per_query, ''N0''),
+            dqso.query_capture_mode_desc,'
+            +
+            CASE
+                WHEN
+                (
+                    @azure = 1
+                    OR @product_version > 13
+                )
+                THEN N'
+            dqso.wait_stats_capture_mode_desc,'
+                ELSE N''
+            END
+            +
+            CASE
+                WHEN
+                (
+                     @azure = 1
+                  OR @product_version > 14
+                )
+                THEN N'
+            capture_policy_execution_count =
+                FORMAT(dqso.capture_policy_execution_count, ''N0''),
+            capture_policy_total_compile_cpu_time_ms =
+                FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, ''N0''),
+            capture_policy_total_execution_cpu_time_ms =
+               FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, ''N0''),
+            capture_policy_stale_threshold_hours =
+                FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),'
+                ELSE N''
+            END
+            );
+
+        SELECT
+            @sql += N'
+        dqso.size_based_cleanup_mode_desc
+        FROM #database_query_store_options AS dqso
+        OPTION(RECOMPILE);';
+   
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXEC sys.sp_executesql
+            @sql;
+    END;
 
 END; /*End expert mode = 1, format output = 1*/
 
@@ -7746,6 +8094,12 @@ BEGIN
             @escape_brackets,
         escape_character =
             @escape_character,
+        only_query_with_hints =
+            @only_queries_with_hints,
+        only_query_with_feedback =
+            @only_queries_with_feedback,
+        only_query_with_hints =
+            @only_queries_with_variants,
         wait_filter =
             @wait_filter,
         query_type =
@@ -8492,7 +8846,7 @@ BEGIN
         BEGIN
             SELECT
                 result =
-                    '#query_store_query_hints is empty';
+                    '#query_store_plan_feedback is empty';
         END;
 
         IF EXISTS
@@ -8588,6 +8942,75 @@ BEGIN
                     result =
                         '#query_store_plan_forcing_locations is empty';
             END;
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #only_queries_with_hints AS oqwh
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#only_queries_with_hints',
+                oqwh.*
+            FROM #only_queries_with_hints AS oqwh
+            ORDER BY
+                oqwh.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#only_queries_with_hints is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #only_queries_with_feedback AS oqwf
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#only_queries_with_feedback',
+                oqwf.*
+            FROM #only_queries_with_feedback AS oqwf
+            ORDER BY
+                oqwf.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#only_queries_with_feedback is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #only_queries_with_variants AS oqwv
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#only_queries_with_variants',
+                oqwv.*
+            FROM #only_queries_with_variants AS oqwv
+            ORDER BY
+                oqwv.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#only_queries_with_variants is empty';
         END;
     END;
 

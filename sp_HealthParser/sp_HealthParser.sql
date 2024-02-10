@@ -49,6 +49,7 @@ ALTER PROCEDURE
     @wait_duration_ms bigint = 0, /*Minimum duration to show query waits*/
     @wait_round_interval_minutes bigint = 60, /*Nearest interval to round wait stats to*/
     @skip_locks bit = 0, /*Skip the blocking and deadlocks*/
+    @pending_task_threshold integer = 10, /*Minimum number of pending tasks to care about*/
     @debug bit = 0, /*Select from temp tables to get event data in raw xml*/
     @help bit = 0, /*Get help*/
     @version varchar(30) = NULL OUTPUT, /*Script version*/
@@ -95,6 +96,7 @@ BEGIN
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
                     WHEN N'@skip_locks' THEN N'skip the blocking and deadlocking section'                                       
+                    WHEN N'@pending_task_threshold' THEN N'minimum number of pending tasks to display'                                        
                     WHEN N'@version' THEN N'OUTPUT; for support'
                     WHEN N'@version_date' THEN N'OUTPUT; for support'
                     WHEN N'@help' THEN N'how you got here'
@@ -111,6 +113,7 @@ BEGIN
                     WHEN N'@wait_duration_ms' THEN N'the minimum duration of a wait for queries with interesting waits'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for top wait stats by count and duration'
                     WHEN N'@skip_locks' THEN N'0 or 1'
+                    WHEN N'@pending_task_threshold' THEN N'a valid integer'                    
                     WHEN N'@version' THEN N'none'
                     WHEN N'@version_date' THEN N'none'
                     WHEN N'@help' THEN N'0 or 1'
@@ -127,6 +130,7 @@ BEGIN
                     WHEN N'@wait_duration_ms' THEN N'0'
                     WHEN N'@wait_round_interval_minutes' THEN N'60'
                     WHEN N'@skip_locks' THEN N'0'
+                    WHEN N'@pending_task_threshold' THEN N'10'
                     WHEN N'@version' THEN N'none; OUTPUT'
                     WHEN N'@version_date' THEN N'none; OUTPUT'
                     WHEN N'@help' THEN N'0'
@@ -293,6 +297,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nchar(1), @azure),
         @mi_msg =
             CONVERT(nchar(1), @mi);
+
+    /*If any parameters that expect non-NULL default values get passed in with NULLs, fix them*/
+    SELECT
+        @what_to_check = ISNULL(@what_to_check, 'all'),
+        @warnings_only = ISNULL(@warnings_only, 0),
+        @wait_duration_ms = ISNULL(@wait_duration_ms, 0),
+        @wait_round_interval_minutes = ISNULL(@wait_round_interval_minutes, 60),
+        @skip_locks = ISNULL(@skip_locks, 0),
+        @pending_task_threshold = ISNULL(@pending_task_threshold, 10);
 
     IF @debug = 1
     BEGIN
@@ -1015,7 +1028,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         AND   NOT EXISTS
               (
                   SELECT
@@ -1191,7 +1204,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         AND   NOT EXISTS
               (
                   SELECT
@@ -1369,7 +1382,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
         OUTER APPLY w.x.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "IO_SUBSYSTEM"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
        
         IF @debug = 1
@@ -1475,6 +1488,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        AND  (w.x.exist('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks[.>= sql:variable("@pending_task_threshold")])') = 1 OR @warnings_only = 0)
         OPTION(RECOMPILE);
        
         IF @debug = 1
@@ -1562,7 +1576,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INTO #memory
         FROM #sp_server_diagnostics_component_result AS s
         CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
-        WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only IS NULL)
+        WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
        
         IF @debug = 1
@@ -1656,7 +1670,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
         WHERE w.x.exist('(data[@name="component"]/text[.= "SYSTEM"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
         
         IF @debug = 1
@@ -1795,7 +1809,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
         AND   w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
        
         IF @debug = 1
