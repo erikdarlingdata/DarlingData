@@ -1,4 +1,4 @@
--- Compile Date: 02/10/2024 20:23:13 UTC
+-- Compile Date: 02/10/2024 20:38:19 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -13313,7 +13313,7 @@ BEGIN
     SELECT 'query store does not currently track some details about memory grants and thread usage' UNION ALL
     SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Plan Feedback (2022+, expert mode, ot when using only_queries_with_feedback): Lists queries that have been adjusted based on automated feedback mechanisms' UNION ALL
+    SELECT 'Query Store Plan Feedback (2022+, expert mode, or when using only_queries_with_feedback): Lists queries that have been adjusted based on automated feedback mechanisms' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Hints (2022+, expert mode or when using @only_queries_with_hints): lists hints applied to queries from automated feedback mechanisms' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
