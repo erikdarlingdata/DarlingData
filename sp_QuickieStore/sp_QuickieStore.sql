@@ -45,10 +45,10 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL  
-   BEGIN  
-       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');  
-   END;  
+IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL 
+   BEGIN 
+       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;'); 
+   END; 
 GO
 
 ALTER PROCEDURE
@@ -77,8 +77,10 @@ ALTER PROCEDURE
     @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
     @escape_brackets bit = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
-    @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/   
-    @only_query_with_hints bit = 0, /*Set this bit to 1 to retrieve only queries with query hints */
+    @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/  
+    @only_queries_with_hints bit = 0, /*Set this bit to 1 to retrieve only queries with query hints*/
+    @only_queries_with_feedback bit = 0, /*Set this bit to 1 to retrieve only queries with query feedback*/
+    @only_queries_with_variants bit = 0, /*Set this bit to 1 to retrieve only queries with query variants*/
     @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
@@ -96,10 +98,10 @@ ALTER PROCEDURE
 WITH RECOMPILE
 AS
 BEGIN
-SET STATISTICS XML OFF;  
+SET STATISTICS XML OFF; 
 SET NOCOUNT ON;
-SET XACT_ABORT ON;  
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; 
+SET XACT_ABORT ON; 
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN TRY
 /*
@@ -180,8 +182,10 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@escape_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
-                WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'   
-                WHEN N'@only_query_with_hints' THEN 'only return queries with query hints'
+                WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'  
+                WHEN N'@only_queries_with_hints' THEN 'only return queries with query hints'
+                WHEN N'@only_queries_with_feedback' THEN 'only return queries with query feedback'
+                WHEN N'@only_queries_with_variants' THEN 'only return queries with query variants'
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
@@ -222,8 +226,10 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@escape_brackets' THEN '0 or 1'
-                WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'   
-                WHEN N'@only_query_with_hints' THEN '0 or 1'
+                WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'  
+                WHEN N'@only_queries_with_hints' THEN '0 or 1'
+                WHEN N'@only_queries_with_feedback' THEN '0 or 1'
+                WHEN N'@only_queries_with_variants' THEN '0 or 1'
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
@@ -264,8 +270,10 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@escape_brackets' THEN '0'
-                WHEN N'@escape_character' THEN '\'   
-                WHEN N'@only_query_with_hints' THEN '0'
+                WHEN N'@escape_character' THEN '\'  
+                WHEN N'@only_queries_with_hints' THEN '0'
+                WHEN N'@only_queries_with_feedback' THEN '0'
+                WHEN N'@only_queries_with_variants' THEN '0'
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
@@ -328,11 +336,11 @@ BEGIN
     SELECT 'query store does not currently track some details about memory grants and thread usage' UNION ALL
     SELECT 'so i go back to a plan cache view to try to track it down' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Plan Feedback (2022+, expert mode only): Lists queries that have been adjusted based on automated feedback mechanisms' UNION ALL
+    SELECT 'Query Store Plan Feedback (2022+, expert mode, ot when using only_queries_with_feedback): Lists queries that have been adjusted based on automated feedback mechanisms' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Store Hints (2022+, expert mode or when using @only_query_with_hints): lists hints applied to queries from automated feedback mechanisms' UNION ALL
+    SELECT 'Query Store Hints (2022+, expert mode or when using @only_queries_with_hints): lists hints applied to queries from automated feedback mechanisms' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
-    SELECT 'Query Variants (2022+, expert mode only): lists plan variants from the Parameter Sensitive Plan feedback mechanism' UNION ALL
+    SELECT 'Query Variants (2022+, expert mode or when using @only_queries_with_variants): lists plan variants from the Parameter Sensitive Plan feedback mechanism' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Waits By Query (2017+, expert mode only): information about query duration and logged wait stats' UNION ALL
     SELECT 'it can sometimes be useful to compare query duration to query wait times' UNION ALL
@@ -360,7 +368,7 @@ BEGIN
         mit_license_yo =
            'i am MIT licensed, so like, do whatever'
     UNION ALL
-   
+  
     SELECT
         mit_license_yo =
             'see printed messages for full license';
@@ -556,7 +564,25 @@ CREATE TABLE
 Hold plan_ids for only query with hints
 */
 CREATE TABLE
-    #only_query_with_hints
+    #only_queries_with_hints
+(
+    plan_id bigint PRIMARY KEY
+);
+
+/*
+Hold plan_ids for only query with feedback
+*/
+CREATE TABLE
+    #only_queries_with_feedback
+(
+    plan_id bigint PRIMARY KEY
+);
+
+/*
+Hold plan_ids for only query with variants
+*/
+CREATE TABLE
+    #only_queries_with_variants
 (
     plan_id bigint PRIMARY KEY
 );
@@ -1480,8 +1506,12 @@ SELECT
         NULLIF(@ignore_plan_hashes, ''),
     @ignore_sql_handles =
         NULLIF(@ignore_sql_handles, ''),
-    @only_query_with_hints =
-        ISNULL(@only_query_with_hints, 0),
+    @only_queries_with_hints =
+        ISNULL(@only_queries_with_hints, 0),
+    @only_queries_with_feedback =
+        ISNULL(@only_queries_with_feedback, 0),
+    @only_queries_with_variants =
+        ISNULL(@only_queries_with_variants, 0),
     @wait_filter =
         NULLIF(@wait_filter, ''),
     @format_output =
@@ -1965,7 +1995,7 @@ IF @sort_order NOT IN
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
- 
+
    SELECT
        @sort_order = 'cpu';
 END;
@@ -1980,21 +2010,47 @@ AND @new = 0
 )
 BEGIN
    RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
- 
+
    SELECT
        @sort_order = N'cpu';
 END;
+
+/*
+See if our cool new 2022 views exist.
+May have to tweak this if views aren't present in some cloudy situations.
+*/
+SELECT
+    @sql_2022_views =
+        CASE
+            WHEN COUNT_BIG(*) = 5
+            THEN 1
+            ELSE 0
+        END
+FROM sys.all_objects AS ao
+WHERE ao.name IN
+      (
+          N'query_store_plan_feedback',
+          N'query_store_query_hints',
+          N'query_store_query_variant',
+          N'query_store_replicas',
+          N'query_store_plan_forcing_locations'
+      )
+OPTION(RECOMPILE);
 
 /*
 Hints aren't in Query Store until 2022, so we can't do that on television
 */
 IF
 (
-    @only_query_with_hints IS NOT NULL
-AND @new = 0
+    (
+         @only_queries_with_hints    IS NOT NULL
+      OR @only_queries_with_feedback IS NOT NULL
+      OR @only_queries_with_variants IS NOT NULL
+    )
+AND @sql_2022_views = 0
 )
 BEGIN
-    RAISERROR('Query Store hints are not available prior to SQL Server 2022', 10, 1) WITH NOWAIT;
+    RAISERROR('Query Store hints, feedback, and variants are not available prior to SQL Server 2022', 10, 1) WITH NOWAIT;
 
     IF @get_all_databases = 0
     BEGIN
@@ -2125,35 +2181,13 @@ OPTION(RECOMPILE);' + @nc10;
     IF @query_store_waits_enabled = 0
     BEGIN
         RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
-      
+     
         IF @get_all_databases = 0
         BEGIN
             RETURN;
         END;
     END;
 END; /*End wait stats checks*/
-
-/*
-See if our cool new 2022 views exist.
-May have to tweak this if views aren't present in some cloudy situations.
-*/
-SELECT
-    @sql_2022_views =
-        CASE
-            WHEN COUNT_BIG(*) = 5
-            THEN 1
-            ELSE 0
-        END
-FROM sys.all_objects AS ao
-WHERE ao.name IN
-      (
-          N'query_store_plan_feedback',
-          N'query_store_query_hints',
-          N'query_store_query_variant',
-          N'query_store_replicas',
-          N'query_store_plan_forcing_locations'
-      )
-OPTION(RECOMPILE);
 
 /*Check that the selected @timezone is valid*/
 IF @timezone IS NOT NULL
@@ -2283,7 +2317,7 @@ BEGIN
        SELECT
            @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 6' + @nc10;
     END;/*df 1*/
-   
+  
     IF @df = 7
     BEGIN
        SELECT
@@ -2312,7 +2346,7 @@ BEGIN
             @where_clause += N'AND   CONVERT(time(0), qsrs.last_execution_time) BETWEEN @work_start_utc AND @work_end_utc' + @nc10;
         ELSE
         SELECT
-            @where_clause += N'AND 
+            @where_clause += N'AND
 (' + @nc10 +
 N'      CONVERT(time(0), qsrs.last_execution_time) BETWEEN @work_start_utc AND ''23:59:59'' ' + @nc10 +
 N'   OR CONVERT(time(0), qsrs.last_execution_time) BETWEEN ''00:00:00'' AND @work_end_utc' + @nc10 +
@@ -2488,7 +2522,7 @@ OR @ignore_query_ids  IS NOT NULL
 )
 BEGIN
     IF @include_plan_ids IS NOT NULL
-    BEGIN   
+    BEGIN  
         SELECT
             @include_plan_ids =
                 REPLACE(REPLACE(REPLACE(REPLACE(
@@ -3439,85 +3473,229 @@ OPTION(RECOMPILE);' + @nc10;
     END; /*End ignore plan hashes*/
 END; /*End hash and handle filtering*/
 
-IF @only_query_with_hints = 1
+IF @sql_2022_views = 1
 BEGIN
-    SELECT
-        @current_table = 'inserting #only_query_with_hints',
-        @sql = @isolation_level;
-
-    IF @troubleshoot_performance = 1
+    IF @only_queries_with_hints = 1
     BEGIN
-        EXEC sys.sp_executesql
-            @troubleshoot_insert,
-          N'@current_table nvarchar(100)',
-            @current_table;
-
-        SET STATISTICS XML ON;
-    END;
-
-    SELECT
-        @sql += N'
-SELECT DISTINCT
-    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          WHERE qsp.query_id = qsq.query_id
-          AND EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
-                  WHERE qsqh.query_id = qsq.query_id
-              )
-      )';
-
-    SELECT
-        @sql += N'
+        SELECT
+            @current_table = 'inserting #only_queries_with_hints',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+        END;
+    
+        SELECT
+            @sql += N'
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
+              WHERE qsqh.query_id = qsp.query_id
+          )';
+    
+        SELECT
+            @sql += N'
     OPTION(RECOMPILE);' + @nc10;
-
-    IF @debug = 1
-    BEGIN
-        PRINT LEN(@sql);
-        PRINT @sql;
-    END;
-
-    INSERT
-        #only_query_with_hints WITH(TABLOCK)
-    (
-        plan_id
-    )
-    EXEC sys.sp_executesql
-        @sql
-
-    IF @troubleshoot_performance = 1
-    BEGIN
-        SET STATISTICS XML OFF;
-
+    
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+    
+        INSERT
+            #only_queries_with_hints WITH(TABLOCK)
+        (
+            plan_id
+        )
         EXEC sys.sp_executesql
-            @troubleshoot_update,
-          N'@current_table nvarchar(100)',
-            @current_table;
-
-        EXEC sys.sp_executesql
-            @troubleshoot_info,
-          N'@sql nvarchar(max),
-            @current_table nvarchar(100)',
-            @sql,
-            @current_table;
+            @sql
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+    
+        SELECT
+            @where_clause += N'AND   EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #only_queries_with_hints AS qst
+               WHERE qst.plan_id = qsrs.plan_id
+           )' + @nc10;
     END;
-
-    SELECT
-        @where_clause += N'AND   EXISTS
-       (
-           SELECT
-               1/0
-           FROM #only_query_with_hints AS qst
-           WHERE qst.plan_id = qsrs.plan_id
-       )' + @nc10;
+    
+    IF @only_queries_with_feedback = 1
+    BEGIN
+        SELECT
+            @current_table = 'inserting #only_queries_with_feedback',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+        END;
+    
+        SELECT
+            @sql += N'
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_plan_feedback AS qsqf
+              WHERE qsqf.plan_id = qsp.plan_id
+          )';
+    
+        SELECT
+            @sql += N'
+    OPTION(RECOMPILE);' + @nc10;
+    
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+    
+        INSERT
+            #only_queries_with_feedback WITH(TABLOCK)
+        (
+            plan_id
+        )
+        EXEC sys.sp_executesql
+            @sql
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+    
+        SELECT
+            @where_clause += N'AND   EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #only_queries_with_feedback AS qst
+               WHERE qst.plan_id = qsrs.plan_id
+           )' + @nc10;
+    END;
+    
+    IF @only_queries_with_variants = 1
+    BEGIN
+        SELECT
+            @current_table = 'inserting #only_queries_with_variants',
+            @sql = @isolation_level;
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            SET STATISTICS XML ON;
+        END;
+    
+        SELECT
+            @sql += N'
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+              WHERE qsqv.query_variant_query_id = qsp.query_id
+          )';
+    
+        SELECT
+            @sql += N'
+    OPTION(RECOMPILE);' + @nc10;
+    
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+    
+        INSERT
+            #only_queries_with_variants WITH(TABLOCK)
+        (
+            plan_id
+        )
+        EXEC sys.sp_executesql
+            @sql
+    
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+        
+        SELECT
+            @where_clause += N'AND   EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #only_queries_with_variants AS qst
+               WHERE qst.plan_id = qsrs.plan_id
+           )' + @nc10;
+    END;
 END;
 
 IF @query_text_search IS NOT NULL
@@ -3598,7 +3776,7 @@ WHERE EXISTS
                   AND   qsqt.query_sql_text LIKE @query_text_search
               )
       )';
-   
+  
     /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
     IF @escape_brackets = 1
     BEGIN
@@ -5274,7 +5452,7 @@ OPTION(RECOMPILE);' + @nc10;
         PRINT LEN(@sql);
         PRINT @sql;
     END;
-  
+ 
     INSERT
         #query_store_query_hints WITH(TABLOCK)
     (
@@ -5517,7 +5695,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),          
+            nvarchar(MAX),         
             N'
     SELECT
         source =
@@ -5721,7 +5899,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),           
+            nvarchar(MAX),          
             N'
     SELECT
         source =
@@ -5929,7 +6107,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),           
+            nvarchar(MAX),          
             N'
     SELECT
         source =
@@ -6100,7 +6278,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),           
+            nvarchar(MAX),          
             N'
     SELECT
         source =
@@ -6495,8 +6673,13 @@ Return special things, unformatted
 IF
 (
     (
-            @expert_mode = 1
-         OR @only_query_with_hints = 1
+         @expert_mode = 1
+      OR
+      (
+           @only_queries_with_hints = 1
+        OR @only_queries_with_feedback = 1
+        OR @only_queries_with_variants = 1
+      )
     )
 AND @format_output = 0
 )
@@ -6504,7 +6687,7 @@ BEGIN
     IF @sql_2022_views = 1
     BEGIN
         IF @expert_mode = 1
-        BEGIN 
+        BEGIN
             IF EXISTS
             (
                 SELECT
@@ -6596,7 +6779,7 @@ BEGIN
         END;
 
         IF @expert_mode = 1
-        BEGIN 
+        BEGIN
             IF EXISTS
             (
                 SELECT
@@ -6627,7 +6810,7 @@ BEGIN
     END;
 
     IF @expert_mode = 1
-    BEGIN 
+    BEGIN
         IF EXISTS
         (
             SELECT
@@ -6695,7 +6878,7 @@ BEGIN
                             THEN qsq.last_execution_time AT TIME ZONE @timezone
                         END,
                     last_execution_time_utc =
-                        qsq.last_execution_time,                
+                        qsq.last_execution_time,               
                     qsq.count_compiles,
                     qsq.avg_compile_duration_ms,
                     qsq.total_compile_duration_ms,
@@ -6755,7 +6938,7 @@ BEGIN
     END;
 
     IF @expert_mode = 1
-    BEGIN 
+    BEGIN
         IF @rc > 0
         BEGIN
             SELECT
@@ -6813,7 +6996,7 @@ BEGIN
     IF @new = 1
     BEGIN
         IF @expert_mode = 1
-        BEGIN 
+        BEGIN
             IF EXISTS
             (
                 SELECT
@@ -6961,7 +7144,7 @@ BEGIN
     )
     BEGIN
         IF @expert_mode = 1
-        BEGIN 
+        BEGIN
             IF EXISTS
             (
                 SELECT
@@ -6974,7 +7157,7 @@ BEGIN
             BEGIN
                 SELECT
                     @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
-            
+           
                 SELECT
                     database_name =
                         DB_NAME(qsr.database_id),
@@ -7000,7 +7183,7 @@ BEGIN
     END;
 
     IF @expert_mode = 1
-    BEGIN 
+    BEGIN
         SELECT
             @current_table = 'selecting query store options',
             @sql = N'';
@@ -7082,7 +7265,12 @@ IF
 (
     (
         @expert_mode = 1
-     OR @only_query_with_hints = 1
+      OR
+      (
+           @only_queries_with_hints = 1
+        OR @only_queries_with_feedback = 1
+        OR @only_queries_with_variants = 1
+      )
     )
 AND @format_output = 1
 )
@@ -7090,7 +7278,7 @@ BEGIN
     IF @sql_2022_views = 1
     BEGIN
         IF @expert_mode = 1
-        BEGIN 
+        BEGIN
             IF EXISTS
                (
                    SELECT
@@ -7182,7 +7370,7 @@ BEGIN
         END;
 
         IF @expert_mode = 1
-        BEGIN 
+        BEGIN
             IF EXISTS
                (
                    SELECT
@@ -7213,7 +7401,7 @@ BEGIN
     END;
 
     IF @expert_mode = 1
-    BEGIN 
+    BEGIN
         IF EXISTS
            (
               SELECT
@@ -7361,8 +7549,8 @@ BEGIN
     END;
 
     IF @expert_mode = 1
-    BEGIN 
-        IF @rc > 0 
+    BEGIN
+        IF @rc > 0
         BEGIN
             SELECT
                 @current_table = 'selecting resource stats';
@@ -7583,7 +7771,7 @@ BEGIN
     )
     BEGIN
         IF @expert_mode = 1
-        BEGIN 
+        BEGIN
             IF EXISTS
             (
                 SELECT
@@ -7596,7 +7784,7 @@ BEGIN
             BEGIN
                 SELECT
                     @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-            
+           
                 SELECT
                     database_name =
                         DB_NAME(qsr.database_id),
@@ -7613,7 +7801,7 @@ BEGIN
                 AND qsr.database_id = qspfl.database_id
                 ORDER BY
                     qsr.replica_group_id
-                OPTION(RECOMPILE);        
+                OPTION(RECOMPILE);       
             END;
             ELSE
             BEGIN
@@ -7624,7 +7812,7 @@ BEGIN
     END;
 
     IF @expert_mode = 1
-    BEGIN 
+    BEGIN
         SELECT
             @current_table = 'selecting query store options',
             @sql = N'';
@@ -7691,7 +7879,7 @@ BEGIN
         dqso.size_based_cleanup_mode_desc
         FROM #database_query_store_options AS dqso
         OPTION(RECOMPILE);';
-    
+   
 
         IF @debug = 1
         BEGIN
@@ -7907,7 +8095,11 @@ BEGIN
         escape_character =
             @escape_character,
         only_query_with_hints =
-            @only_query_with_hints,
+            @only_queries_with_hints,
+        only_query_with_feedback =
+            @only_queries_with_feedback,
+        only_query_with_hints =
+            @only_queries_with_variants,
         wait_filter =
             @wait_filter,
         query_type =
@@ -8750,6 +8942,75 @@ BEGIN
                     result =
                         '#query_store_plan_forcing_locations is empty';
             END;
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #only_queries_with_hints AS oqwh
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#only_queries_with_hints',
+                oqwh.*
+            FROM #only_queries_with_hints AS oqwh
+            ORDER BY
+                oqwh.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#only_queries_with_hints is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #only_queries_with_feedback AS oqwf
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#only_queries_with_feedback',
+                oqwf.*
+            FROM #only_queries_with_feedback AS oqwf
+            ORDER BY
+                oqwf.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#only_queries_with_feedback is empty';
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #only_queries_with_variants AS oqwv
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#only_queries_with_variants',
+                oqwv.*
+            FROM #only_queries_with_variants AS oqwv
+            ORDER BY
+                oqwv.plan_id
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#only_queries_with_variants is empty';
         END;
     END;
 
