@@ -1,4 +1,4 @@
--- Compile Date: 02/10/2024 20:38:19 UTC
+-- Compile Date: 02/13/2024 13:32:25 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -13058,6 +13058,8 @@ ALTER PROCEDURE
     @only_queries_with_hints bit = 0, /*Set this bit to 1 to retrieve only queries with query hints*/
     @only_queries_with_feedback bit = 0, /*Set this bit to 1 to retrieve only queries with query feedback*/
     @only_queries_with_variants bit = 0, /*Set this bit to 1 to retrieve only queries with query variants*/
+    @only_queries_with_forced_plans bit = 0, /*Set this bit to 1 to retrieve only queries with forced plans*/
+    @only_queries_with_forced_plan_failures bit = 0, /*Set this bit to 1 to retrieve only queries with forced plan failures*/
     @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
@@ -13163,6 +13165,8 @@ BEGIN
                 WHEN N'@only_queries_with_hints' THEN 'only return queries with query hints'
                 WHEN N'@only_queries_with_feedback' THEN 'only return queries with query feedback'
                 WHEN N'@only_queries_with_variants' THEN 'only return queries with query variants'
+                WHEN N'@only_queries_with_forced_plans' THEN 'only return queries with forced plans'
+                WHEN N'@only_queries_with_forced_plan_failures' THEN 'only return queries with forced plan failures'                              
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
@@ -13207,6 +13211,8 @@ BEGIN
                 WHEN N'@only_queries_with_hints' THEN '0 or 1'
                 WHEN N'@only_queries_with_feedback' THEN '0 or 1'
                 WHEN N'@only_queries_with_variants' THEN '0 or 1'
+                WHEN N'@only_queries_with_forced_plans' THEN '0 or 1'
+                WHEN N'@only_queries_with_forced_plan_failures' THEN '0 or 1'                   
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
@@ -13251,6 +13257,8 @@ BEGIN
                 WHEN N'@only_queries_with_hints' THEN '0'
                 WHEN N'@only_queries_with_feedback' THEN '0'
                 WHEN N'@only_queries_with_variants' THEN '0'
+                WHEN N'@only_queries_with_forced_plans' THEN '0'
+                WHEN N'@only_queries_with_forced_plan_failures' THEN '0'   
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
@@ -13397,7 +13405,7 @@ CREATE TABLE
 );
 
 /*
-Hold plan_ids for procedures we're searching
+Hold plan_ids for ad hoc or procedures we're searching for
 */
 CREATE TABLE
     #query_types
@@ -13565,6 +13573,18 @@ CREATE TABLE
 );
 
 /*
+Hold plan_ids for forced plans and/or forced plan failures
+I'm overloading this a bit for simplicity, since searching for 
+failures is just an extension of searching for forced plans
+*/
+
+CREATE TABLE
+    #forced_plans_failures
+(
+    plan_id bigint PRIMARY KEY
+);
+
+/*
 Hold plan_ids for matching query text
 */
 CREATE TABLE
@@ -13664,7 +13684,10 @@ CREATE TABLE
     last_execution_time datetimeoffset(7) NULL,
     avg_compile_duration_ms float NULL,
     last_compile_duration_ms bigint NULL,
-    plan_forcing_type_desc nvarchar(60) NULL
+    plan_forcing_type_desc nvarchar(60) NULL,
+    has_compile_replay_script bit NULL,
+    is_optimized_plan_forcing_disabled bit NULL,
+    plan_type_desc nvarchar(120) NULL
 );
 
 /*
@@ -14489,6 +14512,10 @@ SELECT
         ISNULL(@only_queries_with_feedback, 0),
     @only_queries_with_variants =
         ISNULL(@only_queries_with_variants, 0),
+    @only_queries_with_forced_plans = 
+        ISNULL(@only_queries_with_forced_plans, 0),
+    @only_queries_with_forced_plan_failures =
+        ISNULL(@only_queries_with_forced_plan_failures, 0),
     @wait_filter =
         NULLIF(@wait_filter, ''),
     @format_output =
@@ -16675,6 +16702,84 @@ BEGIN
     END;
 END;
 
+IF 
+(
+     @only_queries_with_forced_plans = 1
+  OR @only_queries_with_forced_plan_failures = 1
+)
+BEGIN
+    SELECT
+        @current_table = 'inserting #forced_plans_failures',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE qsp.is_forced_plan = 1';
+
+IF @only_queries_with_forced_plan_failures = 1
+BEGIN
+    SELECT @sql += N'
+AND   qsp.last_force_failure_reason > 0'
+END
+
+    SELECT
+        @sql += N'
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #forced_plans_failures WITH(TABLOCK)
+    (
+        plan_id
+    )
+    EXEC sys.sp_executesql
+        @sql
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+    
+    SELECT
+        @where_clause += N'AND   EXISTS
+       (
+           SELECT
+               1/0
+           FROM #forced_plans_failures AS fpf
+           WHERE fpf.plan_id = qsrs.plan_id
+       )' + @nc10;
+END;
+
 IF @query_text_search IS NOT NULL
 BEGIN
     IF
@@ -17352,18 +17457,45 @@ SELECT
     (qsp.avg_compile_duration / 1000.),
     (qsp.last_compile_duration / 1000.),';
 
-IF @new = 1
+IF 
+(
+      @new = 0
+  AND @sql_2022_views = 0
+)
 BEGIN
     SELECT
         @sql += N'
-    qsp.plan_forcing_type_desc';
+    NULL,
+    NULL,
+    NULL,
+    NULL';
 END;
 
-IF @new = 0
+IF 
+(
+      @new = 1 
+  AND @sql_2022_views = 0
+)
 BEGIN
     SELECT
         @sql += N'
+    qsp.plan_forcing_type_desc,
+    NULL,
+    NULL,
     NULL';
+END;
+
+IF 
+(
+      @new = 1 
+  AND @sql_2022_views = 1
+)
+BEGIN
+    SELECT @sql += N'
+    qsp.plan_forcing_type_desc,
+    qsp.has_compile_replay_script,
+    qsp.is_optimized_plan_forcing_disabled,
+    qsp.plan_type_desc';
 END;
 
 SELECT
@@ -17413,7 +17545,10 @@ INSERT
     last_execution_time,
     avg_compile_duration_ms,
     last_compile_duration_ms,
-    plan_forcing_type_desc
+    plan_forcing_type_desc,
+    has_compile_replay_script,
+    is_optimized_plan_forcing_disabled,
+    plan_type_desc
 )
 EXEC sys.sp_executesql
     @sql,
@@ -18620,9 +18755,21 @@ BEGIN
     TRUNCATE TABLE
         #maintenance_plans;
     TRUNCATE TABLE
+        #query_text_search;
+    TRUNCATE TABLE
         #dm_exec_query_stats;
     TRUNCATE TABLE
         #query_types;
+    TRUNCATE TABLE
+        #wait_filter;
+    TRUNCATE TABLE
+        #only_queries_with_hints;
+    TRUNCATE TABLE
+        #only_queries_with_feedback;
+    TRUNCATE TABLE
+        #only_queries_with_variants;
+    TRUNCATE TABLE
+        #forced_plans_failures;
 END;
 
 FETCH NEXT
@@ -18714,11 +18861,16 @@ FROM
         has_query_store_hints =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
         has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
+        qsp.has_compile_replay_script,
+        qsp.is_optimized_plan_forcing_disabled,
+        qsp.plan_type_desc,'
                  ELSE
         N''
                  END +
-        N''
+        N'
+        qsp.force_failure_count,
+        qsp.last_force_failure_reason_desc,'
         +
         CONVERT
         (
@@ -18728,8 +18880,6 @@ FROM
                  THEN
         N'
         qsp.plan_forcing_type_desc,
-        qsp.force_failure_count,
-        qsp.last_force_failure_reason_desc,
         w.top_waits,'
                  ELSE
         N''
@@ -18918,11 +19068,16 @@ FROM
         has_query_store_hints =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
         has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
+        qsp.has_compile_replay_script,
+        qsp.is_optimized_plan_forcing_disabled,
+        qsp.plan_type_desc,'
                  ELSE
         N''
                  END +
-        N''
+        N'
+        qsp.force_failure_count,
+        qsp.last_force_failure_reason_desc,'
         +
         CONVERT
         (
@@ -18932,8 +19087,6 @@ FROM
                  THEN
         N'
         qsp.plan_forcing_type_desc,
-        qsp.force_failure_count,
-        qsp.last_force_failure_reason_desc,
         w.top_waits,'
                  ELSE
         N''
@@ -19126,11 +19279,16 @@ FROM
         has_query_store_hints =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
         has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
+        qsp.has_compile_replay_script,
+        qsp.is_optimized_plan_forcing_disabled,
+        qsp.plan_type_desc,'
                  ELSE
         N''
                  END +
-        N''
+        N'
+        qsp.force_failure_count,
+        qsp.last_force_failure_reason_desc,'
         +
         CONVERT
         (
@@ -19140,8 +19298,6 @@ FROM
                  THEN
         N'
         qsp.plan_forcing_type_desc,
-        qsp.force_failure_count,
-        qsp.last_force_failure_reason_desc,
         w.top_waits,'
                  ELSE
         N''
@@ -19298,11 +19454,16 @@ FROM
         has_query_store_hints =
             CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
         has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,'
+            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
+        qsp.has_compile_replay_script,
+        qsp.is_optimized_plan_forcing_disabled,
+        qsp.plan_type_desc,'
                  ELSE
         N''
                  END +
-        N''
+        N'
+        qsp.force_failure_count,
+        qsp.last_force_failure_reason_desc,'
         +
         CONVERT
         (
@@ -19312,8 +19473,6 @@ FROM
                  THEN
         N'
         qsp.plan_forcing_type_desc,
-        qsp.force_failure_count,
-        qsp.last_force_failure_reason_desc,
         w.top_waits,'
                  ELSE
         N''
@@ -21077,6 +21236,10 @@ BEGIN
             @only_queries_with_feedback,
         only_query_with_hints =
             @only_queries_with_variants,
+        only_queries_with_forced_plans =
+            @only_queries_with_forced_plans,
+        only_queries_with_forced_plan_failures =
+            @only_queries_with_forced_plan_failures,
         wait_filter =
             @wait_filter,
         query_type =
@@ -21989,6 +22152,29 @@ BEGIN
                 result =
                     '#only_queries_with_variants is empty';
         END;
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #forced_plans_failures AS fpf
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#forced_plans_failures',
+            fpf.*
+        FROM #forced_plans_failures AS fpf
+        ORDER BY
+            fpf.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#forced_plans_failures is empty';
     END;
 
     IF EXISTS
