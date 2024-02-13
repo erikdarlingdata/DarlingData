@@ -2070,9 +2070,9 @@ Hints aren't in Query Store until 2022, so we can't do that on television
 IF
 (
     (
-         @only_queries_with_hints    IS NOT NULL
-      OR @only_queries_with_feedback IS NOT NULL
-      OR @only_queries_with_variants IS NOT NULL
+         @only_queries_with_hints    = 1
+      OR @only_queries_with_feedback = 1
+      OR @only_queries_with_variants = 1
     )
 AND @sql_2022_views = 0
 )
