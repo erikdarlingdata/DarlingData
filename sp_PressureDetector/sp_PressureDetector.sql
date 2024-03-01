@@ -54,7 +54,7 @@ ALTER PROCEDURE
     @skip_plan_xml bit = 0, /*if you want to skip getting plan XML*/
     @minimum_disk_latency_ms smallint = 100, /*low bound for reporting disk latency*/
     @cpu_utilization_threshold smallint = 50, /*low bound for reporting high cpu utlization*/
-    @skip_waits bit = NULL, /*skips waits when you do not need them on every run*/
+    @skip_waits bit = 0, /*skips waits when you do not need them on every run*/
     @help bit = 0, /*how you got here*/
     @debug bit = 0, /*prints dynamic sql, displays parameter and variable values, and table contents*/
     @version varchar(5) = NULL OUTPUT, /*OUTPUT; for support*/
