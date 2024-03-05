@@ -776,6 +776,58 @@ OPTION(MAXDOP 1, RECOMPILE);',
         EXEC sys.sp_executesql
             @disk_check;
 
+        WITH 
+            file_metrics AS
+        (
+            SELECT
+                fm.hours_uptime,
+                fm.drive,
+                fm.database_name,
+                fm.database_file_details,
+                fm.file_size_gb,
+                fm.avg_read_stall_ms,
+                fm.avg_write_stall_ms,
+                fm.total_gb_read,
+                fm.total_gb_written,
+                total_read_count =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                fm.total_read_count
+                            ),
+                            1
+                        ),
+                        N'.00',
+                        N''
+                    ),
+                total_write_count =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                fm.total_write_count
+                            ),
+                            1
+                        ),
+                        N'.00',
+                        N''
+                    ),
+                total_avg_stall_ms = 
+                    fm.avg_read_stall_ms +
+                    fm.avg_write_stall_ms
+            FROM @file_metrics AS fm
+            WHERE fm.avg_read_stall_ms  > @minimum_disk_latency_ms
+            OR    fm.avg_write_stall_ms > @minimum_disk_latency_ms
+        )
         SELECT
             fm.hours_uptime,
             fm.drive,
@@ -786,44 +838,34 @@ OPTION(MAXDOP 1, RECOMPILE);',
             fm.avg_write_stall_ms,
             fm.total_gb_read,
             fm.total_gb_written,
-            total_read_count =
-                REPLACE
-                (
-                    CONVERT
-                    (
-                        nvarchar(30),
-                        CONVERT
-                        (
-                            money,
-                            fm.total_read_count
-                        ),
-                        1
-                    ),
-                    N'.00',
-                    N''
-                ),
-            total_write_count =
-                REPLACE
-                (
-                    CONVERT
-                    (
-                        nvarchar(30),
-                        CONVERT
-                        (
-                            money,
-                            fm.total_write_count
-                        ),
-                        1
-                    ),
-                    N'.00',
-                    N''
-                )
-        FROM @file_metrics AS fm
-        WHERE fm.avg_read_stall_ms  > @minimum_disk_latency_ms
-        OR    fm.avg_write_stall_ms > @minimum_disk_latency_ms
-        ORDER BY
-            fm.avg_read_stall_ms +
-            fm.avg_write_stall_ms DESC;
+            fm.total_read_count,
+            fm.total_write_count,
+            fm.total_avg_stall_ms
+        FROM file_metrics AS fm
+        
+        UNION ALL
+        
+        SELECT
+            hours_uptime = 0,
+            drive = N'Nothing to see here',
+            database_name = N'By default, only >100 ms latency is reported',
+            database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
+            file_size_gb = 0,
+            avg_read_stall_ms = 0,
+            avg_write_stall_ms = 0,
+            total_gb_read = 0,
+            total_gb_written = 0,
+            total_read_count = N'0',
+            total_write_count = N'0',
+            total_avg_stall = 0
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM file_metrics AS fm
+        )
+    ORDER BY
+        total_avg_stall_ms DESC;    
     END; /*End file stats*/
 
     /*
