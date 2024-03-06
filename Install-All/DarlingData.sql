@@ -1,4 +1,4 @@
--- Compile Date: 03/05/2024 19:41:15 UTC
+-- Compile Date: 03/06/2024 14:28:49 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -175,7 +175,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ', 0, 1) WITH NOWAIT;
   
         RETURN;
-    END;
+    END; /*End help section*/
 
     IF @debug = 1
     BEGIN
@@ -308,6 +308,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @skip_locks = ISNULL(@skip_locks, 0),
         @pending_task_threshold = ISNULL(@pending_task_threshold, 10);
 
+    SELECT
+       @what_to_check = LOWER(@what_to_check);
+
+    IF @what_to_check NOT IN 
+       (
+           'all', 
+           'waits', 
+           'disk', 
+           'cpu', 
+           'memory', 
+           'system', 
+           'locking'
+       )
+    BEGIN
+        SELECT
+            @what_to_check = 
+                CASE 
+                    WHEN @what_to_check = 'wait'
+                    THEN 'waits'
+                    WHEN @what_to_check IN ('lock', 'locks')
+                    THEN 'locking'
+                    ELSE 'all'
+                END;
+    END;
+
     IF @debug = 1
     BEGIN
         RAISERROR('Creating temp tables', 0, 1) WITH NOWAIT;
@@ -383,7 +408,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF', N'DBMIRROR_DBM_MUTEX', N'DBMIRROR_SEND'
         )
         OPTION(RECOMPILE);
-    END;
+    END; /*End waits ignore*/
 
     IF @debug = 1
     BEGIN
@@ -460,7 +485,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             BEGIN
                 SET STATISTICS XML OFF;
             END;
-        END;
+        END; 
      
         /*Grab data from the sp_server_diagnostics_component_result component*/
         SELECT
@@ -508,7 +533,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /*Grab data from the xml_deadlock_report component*/
-        IF @what_to_check IN ('all', 'locking')
+        IF 
+        (
+             @what_to_check IN ('all', 'locking')
+         AND @skip_locks = 0
+        )
         BEGIN
             IF @debug = 1
             BEGIN
@@ -559,7 +588,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SET STATISTICS XML OFF;
             END;
         END;
-    END;
+    END; /*End 2016+ data collection*/
   
     IF NOT EXISTS
     (
@@ -674,7 +703,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /*Grab data from the xml_deadlock_report component*/
-        IF @what_to_check IN ('all', 'locking')
+        IF
+        (
+             @what_to_check IN ('all', 'locking')
+         AND @skip_locks = 0
+        )
         BEGIN
             IF @debug = 1
             BEGIN
@@ -726,7 +759,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SET STATISTICS XML OFF;
             END;
         END;
-    END;
+    END; /*End < 2017 collection*/
 
     IF @mi = 1
     BEGIN
@@ -838,7 +871,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE e.x.exist('@name[.= "sp_server_diagnostics_component_result"]') = 1
         OPTION(RECOMPILE);
 
-        IF @what_to_check IN ('all', 'locking')
+        IF
+        (
+             @what_to_check IN ('all', 'locking')
+         AND @skip_locks = 0
+        )
         BEGIN
         IF @debug = 1
             BEGIN
@@ -858,7 +895,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE e.x.exist('@name[.= "xml_deadlock_report"]') = 1
             OPTION(RECOMPILE);
         END;
-    END;
+    END; /*End Managed Instance collection*/
   
     IF @debug = 1
     BEGIN
@@ -948,57 +985,83 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 x.event_time DESC;
         END;
            
-        SELECT
-            finding = 'queries with significant waits',
-            wq.event_time,
-            wq.wait_type,
-            duration_ms =
-                REPLACE
-                (
-                    CONVERT
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #waits_queries AS wq
+        )
+        BEGIN
+            SELECT
+                finding = 
+                    CASE
+                        WHEN @what_to_check NOT IN ('all', 'waits')
+                        THEN 'waits skipped, @what_to_check set to ' + @what_to_check
+                        WHEN @what_to_check IN ('all', 'waits')
+                        THEN 'no queries with significant waits found between ' + 
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date)) +
+                             ' with a minimum duration of ' + 
+                             RTRIM(@wait_duration_ms) +
+                             '.'
+                        ELSE 'no queries with significant waits found!'
+                    END;
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                finding = 'queries with significant waits',
+                wq.event_time,
+                wq.wait_type,
+                duration_ms =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            wq.duration_ms
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                wq.duration_ms
+                            ),
+                            1
                         ),
-                        1
+                    N'.00',
+                    N''
                     ),
-                N'.00',
-                N''
-                ),
-            signal_duration_ms =
-                REPLACE
-                (
-                    CONVERT
+                signal_duration_ms =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            wq.signal_duration_ms
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                wq.signal_duration_ms
+                            ),
+                            1
                         ),
-                        1
+                    N'.00',
+                    N''
                     ),
-                N'.00',
-                N''
-                ),
-            wq.wait_resource,
-            query_text =
-                (
-                    SELECT
-                        [processing-instruction(query)] =
-                            wq.query_text
-                    FOR XML
-                        PATH(N''),
-                        TYPE
-                ),
-            wq.session_id
-        FROM #waits_queries AS wq
-        ORDER BY
-            wq.duration_ms DESC
-        OPTION(RECOMPILE);
+                wq.wait_resource,
+                query_text =
+                    (
+                        SELECT
+                            [processing-instruction(query)] =
+                                wq.query_text
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    ),
+                wq.session_id
+            FROM #waits_queries AS wq
+            ORDER BY
+                wq.duration_ms DESC
+            OPTION(RECOMPILE);
+        END;
           
         /*Waits by count*/
         IF @debug = 1
@@ -1099,79 +1162,105 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             waits DESC
         OPTION(RECOMPILE);
 
-        SELECT
-            t.finding,
-            t.event_time_rounded,
-            t.wait_type,
-            waits =
-                REPLACE
-                (
-                    CONVERT
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #tc AS t
+        )
+        BEGIN
+            SELECT
+                finding = 
+                    CASE
+                        WHEN @what_to_check NOT IN ('all', 'waits')
+                        THEN 'waits skipped, @what_to_check set to ' + @what_to_check
+                        WHEN @what_to_check IN ('all', 'waits')
+                        THEN 'no significant waits found between ' + 
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date)) +
+                             ' with a minimum duration of ' + 
+                             RTRIM(@wait_duration_ms) +
+                             '.'
+                        ELSE 'no significant waits found!'
+                    END;
+        END;
+        ELSE
+        BEGIN        
+            SELECT
+                t.finding,
+                t.event_time_rounded,
+                t.wait_type,
+                waits =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            t.waits
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                t.waits
+                            ),
+                            1
                         ),
-                        1
+                    N'.00',
+                    N''
                     ),
-                N'.00',
-                N''
-                ),
-            total_wait_time_ms =
-                REPLACE
-                (
-                    CONVERT
+                total_wait_time_ms =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            t.total_wait_time_ms
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                t.total_wait_time_ms
+                            ),
+                            1
                         ),
-                        1
+                    N'.00',
+                    N''
                     ),
-                N'.00',
-                N''
-                ),
-            average_wait_time_ms =
-                REPLACE
-                (
-                    CONVERT
+                average_wait_time_ms =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            t.average_wait_time_ms
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                t.average_wait_time_ms
+                            ),
+                            1
                         ),
-                        1
+                    N'.00',
+                    N''
                     ),
-                N'.00',
-                N''
-                ),
-            max_wait_time_ms =
-                REPLACE
-                (
-                    CONVERT
+                max_wait_time_ms =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            t.max_wait_time_ms
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                t.max_wait_time_ms
+                            ),
+                            1
                         ),
-                        1
-                    ),
-                N'.00',
-                N''
-                )
-        FROM #tc AS t
-        ORDER BY
-            t.event_time_rounded DESC,
-            t.waits DESC
-        OPTION(RECOMPILE);
+                    N'.00',
+                    N''
+                    )
+            FROM #tc AS t
+            ORDER BY
+                t.event_time_rounded DESC,
+                t.waits DESC
+            OPTION(RECOMPILE);
+        END;
            
         /*Grab waits by duration*/
         IF @debug = 1
@@ -1192,9 +1281,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ), 
                     w.x.value('@timestamp', 'datetime2')
                 ),
-            name = w.x.value('@name', 'nvarchar(256)'),
-            component = w.x.value('(data[@name="component"]/text/text())[1]', 'nvarchar(256)'),
-            state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
             waits = w2.x2.value('@waits', 'bigint'),
             average_wait_time_ms = CONVERT(bigint, w2.x2.value('@averageWaitTime', 'bigint')),
@@ -1275,80 +1361,106 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             total_wait_time_ms DESC
         OPTION(RECOMPILE);
 
-        SELECT
-            t.finding,
-            t.event_time_rounded,
-            t.wait_type,
-            waits =
-                REPLACE
-                (
-                    CONVERT
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #td AS t
+        )
+        BEGIN
+            SELECT
+                finding = 
+                    CASE
+                        WHEN @what_to_check NOT IN ('all', 'waits')
+                        THEN 'waits skipped, @what_to_check set to ' + @what_to_check
+                        WHEN @what_to_check IN ('all', 'waits')
+                        THEN 'no significant waits found between ' + 
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date)) +
+                             ' with a minimum duration of ' + 
+                             RTRIM(@wait_duration_ms) +
+                             '.'
+                        ELSE 'no significant waits found!'
+                    END;
+        END;
+        ELSE
+        BEGIN        
+            SELECT
+                t.finding,
+                t.event_time_rounded,
+                t.wait_type,
+                waits =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            t.waits
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                t.waits
+                            ),
+                            1
                         ),
-                        1
+                    N'.00',
+                    N''
                     ),
-                N'.00',
-                N''
-                ),
-            total_wait_time_ms =
-                REPLACE
-                (
-                    CONVERT
+                total_wait_time_ms =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            t.total_wait_time_ms
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                t.total_wait_time_ms
+                            ),
+                            1
                         ),
-                        1
+                    N'.00',
+                    N''
                     ),
-                N'.00',
-                N''
-                ),
-            average_wait_time_ms =
-                REPLACE
-                (
-                    CONVERT
+                average_wait_time_ms =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            t.average_wait_time_ms
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                t.average_wait_time_ms
+                            ),
+                            1
                         ),
-                        1
+                    N'.00',
+                    N''
                     ),
-                N'.00',
-                N''
-                ),
-            max_wait_time_ms =
-                REPLACE
-                (
-                    CONVERT
+                max_wait_time_ms =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            t.max_wait_time_ms
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                t.max_wait_time_ms
+                            ),
+                            1
                         ),
-                        1
-                    ),
-                N'.00',
-                N''
-                )
-        FROM #td AS t
-        ORDER BY
-            t.event_time_rounded DESC,
-            t.total_wait_time_ms DESC
-        OPTION(RECOMPILE);
-    END;
+                    N'.00',
+                    N''
+                    )
+            FROM #td AS t
+            ORDER BY
+                t.event_time_rounded DESC,
+                t.total_wait_time_ms DESC
+            OPTION(RECOMPILE);
+        END;
+    END; /*End wait stats*/
   
     /*Grab IO stuff*/
     IF @what_to_check IN ('all', 'disk')
@@ -1420,35 +1532,61 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             i.event_time DESC
         OPTION(RECOMPILE);
 
-        SELECT
-            i.finding,
-            i.event_time,
-            i.state,
-            i.ioLatchTimeouts,
-            i.intervalLongIos,
-            i.totalLongIos,
-            longestPendingRequests_duration_ms =
-                REPLACE
-                (
-                    CONVERT
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #i AS i
+        )
+        BEGIN
+            SELECT
+                finding = 
+                    CASE
+                        WHEN @what_to_check NOT IN ('all', 'disk')
+                        THEN 'disk skipped, @what_to_check set to ' + @what_to_check
+                        WHEN @what_to_check IN ('all', 'disk')
+                        THEN 'no io issues found between ' + 
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date)) +
+                             ' with @warnings_only set to ' + 
+                             RTRIM(@warnings_only) +
+                             '.'
+                        ELSE 'no io issues found!'
+                    END;
+        END;
+        ELSE
+        BEGIN        
+            SELECT
+                i.finding,
+                i.event_time,
+                i.state,
+                i.ioLatchTimeouts,
+                i.intervalLongIos,
+                i.totalLongIos,
+                longestPendingRequests_duration_ms =
+                    REPLACE
                     (
-                        nvarchar(30),
                         CONVERT
                         (
-                            money,
-                            i.longestPendingRequests_duration_ms
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                i.longestPendingRequests_duration_ms
+                            ),
+                            1
                         ),
-                        1
+                    N'.00',
+                    N''
                     ),
-                N'.00',
-                N''
-                ),
-            i.longestPendingRequests_filePath
-        FROM #i AS i
-        ORDER BY
-            i.event_time DESC
-        OPTION(RECOMPILE);
-    END;
+                i.longestPendingRequests_filePath
+            FROM #i AS i
+            ORDER BY
+                i.event_time DESC
+            OPTION(RECOMPILE);
+        END;
+    END; /*End disk*/
   
     /*Grab CPU details*/
     IF @what_to_check IN ('all', 'cpu')
@@ -1502,24 +1640,50 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 x.event_time DESC;
         END;
         
-        SELECT
-            finding = 'cpu task details',
-            sd.event_time,
-            sd.state,
-            sd.maxWorkers,
-            sd.workersCreated,
-            sd.workersIdle,
-            sd.tasksCompletedWithinInterval,
-            sd.pendingTasks,
-            sd.oldestPendingTaskWaitingTime,
-            sd.hasUnresolvableDeadlockOccurred,
-            sd.hasDeadlockedSchedulersOccurred,
-            sd.didBlockingOccur
-        FROM #scheduler_details AS sd
-        ORDER BY
-            sd.event_time DESC
-        OPTION(RECOMPILE);
-    END;
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #scheduler_details AS sd
+        )
+        BEGIN
+            SELECT
+                finding = 
+                    CASE
+                        WHEN @what_to_check NOT IN ('all', 'cpu')
+                        THEN 'cpu skipped, @what_to_check set to ' + @what_to_check
+                        WHEN @what_to_check IN ('all', 'cpu')
+                        THEN 'no cpu issues found between ' + 
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date)) +
+                             ' with @warnings_only set to ' + 
+                             RTRIM(@warnings_only) +
+                             '.'
+                        ELSE 'no cpu issues found!'
+                    END;            
+        END;
+        ELSE
+        BEGIN         
+            SELECT
+                finding = 'cpu task details',
+                sd.event_time,
+                sd.state,
+                sd.maxWorkers,
+                sd.workersCreated,
+                sd.workersIdle,
+                sd.tasksCompletedWithinInterval,
+                sd.pendingTasks,
+                sd.oldestPendingTaskWaitingTime,
+                sd.hasUnresolvableDeadlockOccurred,
+                sd.hasDeadlockedSchedulersOccurred,
+                sd.didBlockingOccur
+            FROM #scheduler_details AS sd
+            ORDER BY
+                sd.event_time DESC
+            OPTION(RECOMPILE);
+        END;
+    END; /*End CPU*/
   
     /*Grab memory details*/
     IF @what_to_check IN ('all', 'memory')
@@ -1590,45 +1754,71 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 x.event_time DESC;
         END;
         
-        SELECT
-            finding = 'memory conditions',
-            m.event_time,
-            m.lastNotification,
-            m.outOfMemoryExceptions,
-            m.isAnyPoolOutOfMemory,
-            m.processOutOfMemoryPeriod,
-            m.name,
-            m.available_physical_memory_gb,
-            m.available_virtual_memory_gb,
-            m.available_paging_file_gb,
-            m.working_set_gb,
-            m.percent_of_committed_memory_in_ws,
-            m.page_faults,
-            m.system_physical_memory_high,
-            m.system_physical_memory_low,
-            m.process_physical_memory_low,
-            m.process_virtual_memory_low,
-            m.vm_reserved_gb,
-            m.vm_committed_gb,
-            m.locked_pages_allocated,
-            m.large_pages_allocated,
-            m.emergency_memory_gb,
-            m.emergency_memory_in_use_gb,
-            m.target_committed_gb,
-            m.current_committed_gb,
-            m.pages_allocated,
-            m.pages_reserved,
-            m.pages_free,
-            m.pages_in_use,
-            m.page_alloc_potential,
-            m.numa_growth_phase,
-            m.last_oom_factor,
-            m.last_os_error
-        FROM #memory AS m
-        ORDER BY
-            m.event_time DESC
-        OPTION(RECOMPILE);
-    END;
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #memory AS m
+        )
+        BEGIN
+            SELECT
+                finding = 
+                    CASE
+                        WHEN @what_to_check NOT IN ('all', 'memory')
+                        THEN 'memory skipped, @what_to_check set to ' + @what_to_check
+                        WHEN @what_to_check IN ('all', 'memory')
+                        THEN 'no memory issues found between ' + 
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date)) +
+                             ' with @warnings_only set to ' + 
+                             RTRIM(@warnings_only) +
+                             '.'
+                        ELSE 'no memory issues found!'
+                    END;
+        END;
+        ELSE
+        BEGIN 
+            SELECT
+                finding = 'memory conditions',
+                m.event_time,
+                m.lastNotification,
+                m.outOfMemoryExceptions,
+                m.isAnyPoolOutOfMemory,
+                m.processOutOfMemoryPeriod,
+                m.name,
+                m.available_physical_memory_gb,
+                m.available_virtual_memory_gb,
+                m.available_paging_file_gb,
+                m.working_set_gb,
+                m.percent_of_committed_memory_in_ws,
+                m.page_faults,
+                m.system_physical_memory_high,
+                m.system_physical_memory_low,
+                m.process_physical_memory_low,
+                m.process_virtual_memory_low,
+                m.vm_reserved_gb,
+                m.vm_committed_gb,
+                m.locked_pages_allocated,
+                m.large_pages_allocated,
+                m.emergency_memory_gb,
+                m.emergency_memory_in_use_gb,
+                m.target_committed_gb,
+                m.current_committed_gb,
+                m.pages_allocated,
+                m.pages_reserved,
+                m.pages_free,
+                m.pages_in_use,
+                m.page_alloc_potential,
+                m.numa_growth_phase,
+                m.last_oom_factor,
+                m.last_os_error
+            FROM #memory AS m
+            ORDER BY
+                m.event_time DESC
+            OPTION(RECOMPILE);
+        END;
+    END; /*End memory*/
       
     /*Grab health stuff*/
     IF @what_to_check IN ('all', 'system')
@@ -1684,29 +1874,55 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 x.event_time DESC;
         END;
        
-        SELECT
-            finding = 'overall system health',
-            h.event_time,
-            h.state,
-            h.spinlockBackoffs,
-            h.sickSpinlockType,
-            h.sickSpinlockTypeAfterAv,
-            h.latchWarnings,
-            h.isAccessViolationOccurred,
-            h.writeAccessViolationCount,
-            h.totalDumpRequests,
-            h.intervalDumpRequests,
-            h.nonYieldingTasksReported,
-            h.pageFaults,
-            h.systemCpuUtilization,
-            h.sqlCpuUtilization,
-            h.BadPagesDetected,
-            h.BadPagesFixed
-        FROM #health AS h
-        ORDER BY
-            h.event_time DESC
-        OPTION(RECOMPILE);
-    END;
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #health AS h
+        )
+        BEGIN
+            SELECT
+                finding = 
+                    CASE
+                        WHEN @what_to_check NOT IN ('all', 'system')
+                        THEN 'system health skipped, @what_to_check set to ' + @what_to_check
+                        WHEN @what_to_check IN ('all', 'system')
+                        THEN 'no system health issues found between ' + 
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date)) +
+                             ' with @warnings_only set to ' + 
+                             RTRIM(@warnings_only) +
+                             '.'
+                        ELSE 'no system health issues found!'
+                    END;
+        END;
+        ELSE
+        BEGIN         
+            SELECT
+                finding = 'overall system health',
+                h.event_time,
+                h.state,
+                h.spinlockBackoffs,
+                h.sickSpinlockType,
+                h.sickSpinlockTypeAfterAv,
+                h.latchWarnings,
+                h.isAccessViolationOccurred,
+                h.writeAccessViolationCount,
+                h.totalDumpRequests,
+                h.intervalDumpRequests,
+                h.nonYieldingTasksReported,
+                h.pageFaults,
+                h.systemCpuUtilization,
+                h.sqlCpuUtilization,
+                h.BadPagesDetected,
+                h.BadPagesFixed
+            FROM #health AS h
+            ORDER BY
+                h.event_time DESC
+            OPTION(RECOMPILE);
+        END;
+    END; /*End system*/
   
     /*Grab useless stuff*/
    
@@ -1783,8 +1999,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
   
     /*Grab blocking stuff*/
-    IF  @what_to_check IN ('all', 'locking')
+    IF  
+    (
+        @what_to_check IN ('all', 'locking')
     AND @skip_locks = 0
+    )
     BEGIN
         IF @debug = 1
         BEGIN
@@ -2664,7 +2883,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             aap.avg_worker_time_ms DESC
         OPTION(RECOMPILE);
-    END;
+    END; /*End locks*/
 END; /*Final End*/
 GO
 SET ANSI_NULLS ON;
@@ -8915,7 +9134,7 @@ JOIN hierarchy h
   ON  h.monitor_loop = b.monitor_loop
   AND h.blocking_desc = b.blocking_desc
   AND h.blocked_desc = b.blocked_desc
-OPTION(RECOMPILE);
+OPTION(RECOMPILE, MAXRECURSION 0);
 
 IF @debug = 1
 BEGIN
@@ -10908,7 +11127,7 @@ GO
 ALTER PROCEDURE
     dbo.sp_PressureDetector
 (
-    @what_to_check nvarchar(6) = N'all', /*areas to check for pressure*/
+    @what_to_check varchar(6) = 'all', /*areas to check for pressure*/
     @skip_queries bit = 0, /*if you want to skip looking at running queries*/
     @skip_plan_xml bit = 0, /*if you want to skip getting plan XML*/
     @minimum_disk_latency_ms smallint = 100, /*low bound for reporting disk latency*/
@@ -10978,7 +11197,7 @@ BEGIN
                 WHEN N'@skip_plan_xml' THEN N'0 or 1'
                 WHEN N'@minimum_disk_latency_ms' THEN N'a reasonable number of milliseconds for disk latency'
                 WHEN N'@cpu_utilization_threshold' THEN N'a reasonable cpu utlization percentage'
-                WHEN N'@skip_waits' THEN N'NULL, 0, 1'
+                WHEN N'@skip_waits' THEN N'0 or 1'
                 WHEN N'@help' THEN N'0 or 1'
                 WHEN N'@debug' THEN N'0 or 1'
                 WHEN N'@version' THEN N'none'
@@ -10987,12 +11206,12 @@ BEGIN
         defaults =
             CASE
                 ap.name
-                WHEN N'@what_to_check' THEN N'both'
+                WHEN N'@what_to_check' THEN N'all'
                 WHEN N'@skip_queries' THEN N'0'
                 WHEN N'@skip_plan_xml' THEN N'0'
                 WHEN N'@minimum_disk_latency_ms' THEN N'100'
                 WHEN N'@cpu_utilization_threshold' THEN N'50'
-                WHEN N'@skip_waits' THEN N'NULL'
+                WHEN N'@skip_waits' THEN N'0'
                 WHEN N'@help' THEN N'0'
                 WHEN N'@debug' THEN N'0'
                 WHEN N'@version' THEN N'none; OUTPUT'
@@ -11040,6 +11259,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     RETURN;
 END; /*End help section*/
 
+    /*
+    Fix parameters and check the values, etc.
+    */
+    SELECT
+        @what_to_check = ISNULL(@what_to_check, 'all'),
+        @skip_queries = ISNULL(@skip_queries, 0),
+        @skip_plan_xml = ISNULL(@skip_plan_xml, 0),
+        @minimum_disk_latency_ms = ISNULL(@minimum_disk_latency_ms, 100),
+        @cpu_utilization_threshold = ISNULL(@cpu_utilization_threshold, 50),
+        @skip_waits = ISNULL(@skip_waits, 0),
+        @help = ISNULL(@help, 0),
+        @debug = ISNULL(@debug, 0);
+
+    SELECT
+        @what_to_check = LOWER(@what_to_check);
+
+    IF @what_to_check NOT IN ('cpu', 'memory', 'all')
+    BEGIN
+        RAISERROR('@what_to_check was set to %s, setting to all', 0, 1, @what_to_check) WITH NOWAIT;
+        
+        SELECT
+            @what_to_check = 'all';
+    END;
+    
+    
     /*
     Declarations of Variablependence
     */
@@ -11176,19 +11420,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
         wait_duration_ms bigint,
         threadpool_waits sysname
     );
-
-    IF  @what_to_check = N'all'
-    AND @skip_waits IS NULL
-    BEGIN
-        SELECT
-            @skip_waits = 0;
-    END;
   
     /*
     Check to see if the DAC is enabled.
     If it's not, give people some helpful information.
     */
-    IF @what_to_check = N'all'
+    IF @what_to_check = 'all'
     BEGIN
         IF @debug = 1
         BEGIN
@@ -11255,16 +11492,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /*
     Look at wait stats related to performance only
     */
-    IF
-    (
-            @what_to_check = N'all'
-        AND @skip_waits <> 1
-    )
-    OR
-    (
-            @what_to_check IN (N'cpu', N'memory')
-        AND @skip_waits = 0
-    )
+    IF @skip_waits = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -11476,7 +11704,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /*
     This section looks at disk metrics
     */
-    IF @what_to_check = N'all'
+    IF @what_to_check = 'all'
     BEGIN
         IF @debug = 1
         BEGIN
@@ -11733,7 +11961,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     IF
     (
         @azure = 0
-    AND @what_to_check = N'all'
+    AND @what_to_check = 'all'
     )
     BEGIN
         IF @debug = 1
@@ -11868,7 +12096,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     END; /*End tempdb check*/
 
     /*Memory info, utilization and usage*/
-    IF @what_to_check IN (N'all', N'memory')
+    IF @what_to_check IN ('all', 'memory')
     BEGIN
         IF @debug = 1
         BEGIN
@@ -12217,7 +12445,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     IF
     (
         @skip_queries = 0
-    AND @what_to_check IN (N'all', N'memory')
+    AND @what_to_check IN ('all', 'memory')
     )
     BEGIN
         IF @debug = 1
@@ -12405,7 +12633,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /*
     Looking at CPU config and indicators
     */
-    IF @what_to_check IN (N'all', N'cpu')
+    IF @what_to_check IN ('all', 'cpu')
     BEGIN
         IF @debug = 1
         BEGIN
@@ -12691,7 +12919,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF
         (
             @skip_queries = 0
-        AND @what_to_check IN (N'all', N'cpu')
+        AND @what_to_check IN ('all', 'cpu')
         )
         BEGIN
             IF @debug = 1
