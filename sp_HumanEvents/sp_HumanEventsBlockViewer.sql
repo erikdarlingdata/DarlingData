@@ -1516,7 +1516,7 @@ JOIN hierarchy h
   ON  h.monitor_loop = b.monitor_loop
   AND h.blocking_desc = b.blocking_desc
   AND h.blocked_desc = b.blocked_desc
-OPTION(RECOMPILE);
+OPTION(RECOMPILE, MAXRECURSION 0);
 
 IF @debug = 1
 BEGIN
