@@ -49,7 +49,7 @@ GO
 ALTER PROCEDURE
     dbo.sp_PressureDetector
 (
-    @what_to_check nvarchar(6) = N'all', /*areas to check for pressure*/
+    @what_to_check varchar(6) = 'all', /*areas to check for pressure*/
     @skip_queries bit = 0, /*if you want to skip looking at running queries*/
     @skip_plan_xml bit = 0, /*if you want to skip getting plan XML*/
     @minimum_disk_latency_ms smallint = 100, /*low bound for reporting disk latency*/
@@ -119,7 +119,7 @@ BEGIN
                 WHEN N'@skip_plan_xml' THEN N'0 or 1'
                 WHEN N'@minimum_disk_latency_ms' THEN N'a reasonable number of milliseconds for disk latency'
                 WHEN N'@cpu_utilization_threshold' THEN N'a reasonable cpu utlization percentage'
-                WHEN N'@skip_waits' THEN N'NULL, 0, 1'
+                WHEN N'@skip_waits' THEN N'0 or 1'
                 WHEN N'@help' THEN N'0 or 1'
                 WHEN N'@debug' THEN N'0 or 1'
                 WHEN N'@version' THEN N'none'
@@ -128,12 +128,12 @@ BEGIN
         defaults =
             CASE
                 ap.name
-                WHEN N'@what_to_check' THEN N'both'
+                WHEN N'@what_to_check' THEN N'all'
                 WHEN N'@skip_queries' THEN N'0'
                 WHEN N'@skip_plan_xml' THEN N'0'
                 WHEN N'@minimum_disk_latency_ms' THEN N'100'
                 WHEN N'@cpu_utilization_threshold' THEN N'50'
-                WHEN N'@skip_waits' THEN N'NULL'
+                WHEN N'@skip_waits' THEN N'0'
                 WHEN N'@help' THEN N'0'
                 WHEN N'@debug' THEN N'0'
                 WHEN N'@version' THEN N'none; OUTPUT'
@@ -181,6 +181,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     RETURN;
 END; /*End help section*/
 
+    /*
+    Fix parameters and check the values, etc.
+    */
+    SELECT
+        @what_to_check = ISNULL(@what_to_check, 'all'),
+        @skip_queries = ISNULL(@skip_queries, 0),
+        @skip_plan_xml = ISNULL(@skip_plan_xml, 0),
+        @minimum_disk_latency_ms = ISNULL(@minimum_disk_latency_ms, 100),
+        @cpu_utilization_threshold = ISNULL(@cpu_utilization_threshold, 50),
+        @skip_waits = ISNULL(@skip_waits, 0),
+        @help = ISNULL(@help, 0),
+        @debug = ISNULL(@debug, 0);
+
+    SELECT
+        @what_to_check = LOWER(@what_to_check);
+
+    IF @what_to_check NOT IN ('cpu', 'memory', 'all')
+    BEGIN
+        RAISERROR('@what_to_check was set to %s, setting to all', 0, 1, @what_to_check) WITH NOWAIT;
+        
+        SELECT
+            @what_to_check = 'all';
+    END;
+    
+    
     /*
     Declarations of Variablependence
     */
@@ -317,19 +342,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
         wait_duration_ms bigint,
         threadpool_waits sysname
     );
-
-    IF  @what_to_check = N'all'
-    AND @skip_waits IS NULL
-    BEGIN
-        SELECT
-            @skip_waits = 0;
-    END;
   
     /*
     Check to see if the DAC is enabled.
     If it's not, give people some helpful information.
     */
-    IF @what_to_check = N'all'
+    IF @what_to_check = 'all'
     BEGIN
         IF @debug = 1
         BEGIN
@@ -396,16 +414,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /*
     Look at wait stats related to performance only
     */
-    IF
-    (
-            @what_to_check = N'all'
-        AND @skip_waits <> 1
-    )
-    OR
-    (
-            @what_to_check IN (N'cpu', N'memory')
-        AND @skip_waits = 0
-    )
+    IF @skip_waits = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -617,7 +626,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /*
     This section looks at disk metrics
     */
-    IF @what_to_check = N'all'
+    IF @what_to_check = 'all'
     BEGIN
         IF @debug = 1
         BEGIN
@@ -874,7 +883,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     IF
     (
         @azure = 0
-    AND @what_to_check = N'all'
+    AND @what_to_check = 'all'
     )
     BEGIN
         IF @debug = 1
@@ -1009,7 +1018,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     END; /*End tempdb check*/
 
     /*Memory info, utilization and usage*/
-    IF @what_to_check IN (N'all', N'memory')
+    IF @what_to_check IN ('all', 'memory')
     BEGIN
         IF @debug = 1
         BEGIN
@@ -1358,7 +1367,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     IF
     (
         @skip_queries = 0
-    AND @what_to_check IN (N'all', N'memory')
+    AND @what_to_check IN ('all', 'memory')
     )
     BEGIN
         IF @debug = 1
@@ -1546,7 +1555,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /*
     Looking at CPU config and indicators
     */
-    IF @what_to_check IN (N'all', N'cpu')
+    IF @what_to_check IN ('all', 'cpu')
     BEGIN
         IF @debug = 1
         BEGIN
@@ -1832,7 +1841,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF
         (
             @skip_queries = 0
-        AND @what_to_check IN (N'all', N'cpu')
+        AND @what_to_check IN ('all', 'cpu')
         )
         BEGIN
             IF @debug = 1
