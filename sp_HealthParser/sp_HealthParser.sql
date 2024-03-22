@@ -404,7 +404,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'SNI_HTTP_ACCEPT', N'SOS_WORK_DISPATCHER', N'SP_SERVER_DIAGNOSTICS_SLEEP', N'SQLTRACE_BUFFER_FLUSH',  N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
             N'SQLTRACE_WAIT_ENTRIES', N'UCS_SESSION_REGISTRATION', N'VDI_CLIENT_OTHER', N'WAIT_FOR_RESULTS', N'WAITFOR', N'WAITFOR_TASKSHUTDOWN', N'WAIT_XTP_RECOVERY',
             N'WAIT_XTP_HOST_WAIT', N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', N'WAIT_XTP_CKPT_CLOSE', N'XE_DISPATCHER_JOIN', N'XE_DISPATCHER_WAIT', N'XE_TIMER_EVENT',
-            N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF', N'DBMIRROR_DBM_MUTEX', N'DBMIRROR_SEND'
+            N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF', N'DBMIRROR_DBM_MUTEX', N'DBMIRROR_SEND', N'ASYNC_NETWORK_IO'
         )
         OPTION(RECOMPILE);
     END; /*End waits ignore*/
@@ -1128,16 +1128,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ),
             tc.wait_type,
             waits = SUM(CONVERT(bigint, tc.waits)),
-            total_wait_time_ms =
-                SUM
-                (
-                    CONVERT
-                    (
-                        bigint, 
-                        tc.waits * 
-                        tc.average_wait_time_ms
-                    )
-                ) + MAX(tc.max_wait_time_ms),
             average_wait_time_ms = CONVERT(bigint, AVG(tc.average_wait_time_ms)),
             max_wait_time_ms = CONVERT(bigint, MAX(tc.max_wait_time_ms))
         INTO #tc
@@ -1156,9 +1146,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     @wait_round_interval_minutes,
                 '19000101'
             )
-        ORDER BY
-            event_time_rounded DESC,
-            waits DESC
         OPTION(RECOMPILE);
 
         IF NOT EXISTS
@@ -1200,22 +1187,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             (
                                 money,
                                 t.waits
-                            ),
-                            1
-                        ),
-                    N'.00',
-                    N''
-                    ),
-                total_wait_time_ms =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                t.total_wait_time_ms
                             ),
                             1
                         ),
@@ -1291,6 +1262,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        AND   w2.x2.exist('@averageWaitTime[.>=1000]') = 1
         AND   NOT EXISTS
               (
                   SELECT
@@ -1326,19 +1298,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     '19000101'
                 ),
             td.wait_type,
-            waits = SUM(CONVERT(bigint, td.waits)),
-            total_wait_time_ms =
-                SUM
-                (
-                    CONVERT
-                    (
-                        bigint, 
-                        td.waits * 
-                        td.average_wait_time_ms
-                    )
-                ) + MAX(td.max_wait_time_ms),
-            average_wait_time_ms = CONVERT(bigint, AVG(td.average_wait_time_ms)),
-            max_wait_time_ms = CONVERT(bigint, MAX(td.max_wait_time_ms))
+            td.waits,
+            td.average_wait_time_ms,
+            td.max_wait_time_ms
         INTO #td
         FROM #topwaits_duration AS td
         GROUP BY
@@ -1354,10 +1316,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ) / @wait_round_interval_minutes *
                     @wait_round_interval_minutes,
                 '19000101'
-            )
-        ORDER BY
-            event_time_rounded DESC,
-            total_wait_time_ms DESC
+            ),
+            td.waits,
+            td.average_wait_time_ms,
+            td.max_wait_time_ms
         OPTION(RECOMPILE);
 
         IF NOT EXISTS
@@ -1386,77 +1348,88 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ELSE
         BEGIN        
             SELECT
-                t.finding,
-                t.event_time_rounded,
-                t.wait_type,
-                waits =
-                    REPLACE
-                    (
-                        CONVERT
+                x.finding,
+                x.event_time_rounded,
+                x.wait_type,
+                x.average_wait_time_ms,
+                x.max_wait_time_ms
+            FROM
+            (
+                SELECT
+                    t.finding,
+                    t.event_time_rounded,
+                    t.wait_type,
+                    waits =
+                        REPLACE
                         (
-                            nvarchar(30),
                             CONVERT
                             (
-                                money,
-                                t.waits
+                                nvarchar(30),
+                                CONVERT
+                                (
+                                    money,
+                                    t.waits
+                                ),
+                                1
                             ),
-                            1
+                        N'.00',
+                        N''
                         ),
-                    N'.00',
-                    N''
-                    ),
-                total_wait_time_ms =
-                    REPLACE
-                    (
-                        CONVERT
+                    average_wait_time_ms =
+                        REPLACE
                         (
-                            nvarchar(30),
                             CONVERT
                             (
-                                money,
-                                t.total_wait_time_ms
+                                nvarchar(30),
+                                CONVERT
+                                (
+                                    money,
+                                    t.average_wait_time_ms
+                                ),
+                                1
                             ),
-                            1
+                        N'.00',
+                        N''
                         ),
-                    N'.00',
-                    N''
-                    ),
-                average_wait_time_ms =
-                    REPLACE
-                    (
-                        CONVERT
+                    max_wait_time_ms =
+                        REPLACE
                         (
-                            nvarchar(30),
                             CONVERT
                             (
-                                money,
-                                t.average_wait_time_ms
+                                nvarchar(30),
+                                CONVERT
+                                (
+                                    money,
+                                    t.max_wait_time_ms
+                                ),
+                                1
                             ),
-                            1
+                        N'.00',
+                        N''
                         ),
-                    N'.00',
-                    N''
-                    ),
-                max_wait_time_ms =
-                    REPLACE
-                    (
-                        CONVERT
+                    s = 
+                        ROW_NUMBER() OVER
                         (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
+                            ORDER BY
+                                t.event_time_rounded DESC,
+                                t.waits DESC
+                        ),
+                    n = 
+                        ROW_NUMBER() OVER
+                        (
+                            PARTITION BY
+                                t.wait_type,
+                                t.waits,
+                                t.average_wait_time_ms,
                                 t.max_wait_time_ms
-                            ),
-                            1
-                        ),
-                    N'.00',
-                    N''
-                    )
-            FROM #td AS t
+                            ORDER BY
+                                t.event_time_rounded
+                        )
+                FROM #td AS t
+            ) AS x
+            WHERE x.n = 1
             ORDER BY
-                t.event_time_rounded DESC,
-                t.total_wait_time_ms DESC
+                x.s
             OPTION(RECOMPILE);
         END;
     END; /*End wait stats*/
@@ -1527,8 +1500,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             i.intervalLongIos,
             i.totalLongIos,
             ISNULL(i.longestPendingRequests_filePath, 'N/A')
-        ORDER BY
-            i.event_time DESC
         OPTION(RECOMPILE);
 
         IF NOT EXISTS
