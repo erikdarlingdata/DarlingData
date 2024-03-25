@@ -1,4 +1,4 @@
--- Compile Date: 03/22/2024 15:30:09 UTC
+-- Compile Date: 03/25/2024 17:17:48 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -12274,16 +12274,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
         )
         AND   p.counter_name IN 
         (
-            N'Forwarded Records/sec', N'Table Lock Escalations/sec',  
-            N'Checkpoint pages/sec', N'Database pages', N'Page reads/sec', N'Page writes/sec', N'Active Transactions',
-            N'Log Bytes Flushed/sec', N'Log Flush Wait Time', N'Log Flush Waits/sec', N'Log Flush Write Time (ms)',
-            N'Log Flushes/sec', N'Transactions/sec', N'Lock Requests/sec', N'Lock Timeouts/sec', N'Lock Wait Time (ms)',
-            N'Lock Waits/sec', N'Number of Deadlocks/sec', N'Database Cache Memory (KB)',
-            N'Free Memory (KB)', N'Granted Workspace Memory (KB)', N'Lock Memory (KB)', N'Memory Grants Outstanding',
-            N'Memory Grants Pending', N'Optimizer Memory (KB)', N'SQL Cache Memory (KB)',
+            N'Forwarded Records/sec', N'Table Lock Escalations/sec', N'Page reads/sec', N'Page writes/sec',
+            N'Transactions/sec', N'Lock Requests/sec', N'Lock Wait Time (ms)', N'Lock Waits/sec', N'Number of Deadlocks/sec',
+            N'Granted Workspace Memory (KB)', N'Lock Memory (KB)', N'Memory Grants Pending', N'SQL Cache Memory (KB)',
             N'Stolen Server Memory (KB)', N'Target Server Memory (KB)', N'Total Server Memory (KB)',
-            N'Batch Requests/sec', N'SQL Compilations/sec', N'SQL Re-Compilations/sec',
-            N'Longest Transaction Running Time',
+            N'Batch Requests/sec', N'SQL Compilations/sec', N'SQL Re-Compilations/sec', N'Longest Transaction Running Time',
             N'Lock waits', N'Log buffer waits', N'Log write waits', N'Memory grant queue waits', N'Network IO waits',
             N'Non-Page latch waits', N'Page IO latch waits', N'Page latch waits', N'Thread-safe memory objects waits',
             N'Wait for the worker', N'Active parallel threads', N'Active requests', N'Blocked tasks',
@@ -14856,6 +14851,7 @@ DECLARE
     @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(MAX),
+    @query_text_search_original_value nvarchar(4000),
     @procedure_exists bit,
     @query_store_exists bit,
     @query_store_trouble bit,
@@ -14879,6 +14875,23 @@ DECLARE
     @work_start_utc time(0),
     @work_end_utc time(0);
 
+/*
+In cases where we are escaping @query_text_search and
+looping over multiple databases, we need to make sure
+to not escape the string more than once.
+
+The solution is to reset to the original value each loop.
+This therefore needs to be done before the cursor.
+*/
+IF
+(
+    @get_all_databases = 1
+AND @escape_brackets = 1
+)
+BEGIN
+    SELECT
+         @query_text_search_original_value = @query_text_search;
+END;
 
 /*
 This section is in a cursor whether we
@@ -14886,7 +14899,7 @@ hit one database, or multiple
 
 I do all the variable assignment in the
 cursor block because some of them
-are are assigned for the specific database
+are assigned for the specific database
 that is currently being looked at
 */
 INSERT
@@ -15026,6 +15039,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
          END,
     @nc10 = NCHAR(10),
     @where_clause = N'',
+    @query_text_search = 
+        CASE
+            WHEN @get_all_databases = 1 AND @escape_brackets = 1
+            THEN @query_text_search_original_value
+            ELSE @query_text_search
+         END,
     @procedure_exists = 0,
     @query_store_exists = 0,
     @query_store_trouble = 0,
