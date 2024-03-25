@@ -1131,6 +1131,7 @@ DECLARE
     @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(MAX),
+    @query_text_search_original_value nvarchar(4000),
     @procedure_exists bit,
     @query_store_exists bit,
     @query_store_trouble bit,
@@ -1154,6 +1155,23 @@ DECLARE
     @work_start_utc time(0),
     @work_end_utc time(0);
 
+/*
+In cases where we are escaping @query_text_search and
+looping over multiple databases, we need to make sure
+to not escape the string more than once.
+
+The solution is to reset to the original value each loop.
+This therefore needs to be done before the cursor.
+*/
+IF
+(
+    @get_all_databases = 1
+AND @escape_brackets = 1
+)
+BEGIN
+    SELECT
+         @query_text_search_original_value = @query_text_search;
+END;
 
 /*
 This section is in a cursor whether we
@@ -1161,7 +1179,7 @@ hit one database, or multiple
 
 I do all the variable assignment in the
 cursor block because some of them
-are are assigned for the specific database
+are assigned for the specific database
 that is currently being looked at
 */
 INSERT
@@ -1301,6 +1319,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
          END,
     @nc10 = NCHAR(10),
     @where_clause = N'',
+    @query_text_search = 
+        CASE
+            WHEN @get_all_databases = 1 AND @escape_brackets = 1
+            THEN @query_text_search_original_value
+            ELSE @query_text_search
+         END,
     @procedure_exists = 0,
     @query_store_exists = 0,
     @query_store_trouble = 0,
