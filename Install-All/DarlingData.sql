@@ -1,4 +1,4 @@
--- Compile Date: 03/26/2024 17:50:46 UTC
+-- Compile Date: 03/26/2024 18:07:46 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11816,7 +11816,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         (w2.hours_wait_time - w.hours_wait_time) / 1000.
                     ),
                 avg_ms_per_wait =
-                    (w2.avg_ms_per_wait - w.avg_ms_per_wait),
+                    (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2,
                 percent_signal_waits =
                     CONVERT
                     (
@@ -11949,7 +11949,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 CONVERT
                 (
                     decimal(38, 2),
-                    vfs.io_stall_read_ms / (1.0 * vfs.num_of_reads)
+                    ISNULL
+                    (
+                        vfs.io_stall_read_ms / 
+                          (1.0 * NULLIF(vfs.num_of_reads, 0)), 
+                        0
+                    )
                 ),
             total_gb_written =
                 CASE
@@ -11967,7 +11972,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 CONVERT
                 (
                     decimal(38, 2),
-                    vfs.io_stall_write_ms / (1.0 * vfs.num_of_writes)
+                    ISNULL
+                    (
+                        vfs.io_stall_write_ms / 
+                          (1.0 * NULLIF(vfs.num_of_writes, 0)), 
+                        0
+                    )
                 ),
             sample_time = 
                 GETDATE()
@@ -11986,8 +11996,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
           AND vfs.database_id = f.database_id'
         END +
         N'
-        WHERE vfs.num_of_reads > 0
-        AND   vfs.num_of_writes > 0;'
+        WHERE 
+        (
+             vfs.num_of_reads > 0
+          OR vfs.num_of_writes > 0
+        );'
         );
       
         IF @debug = 1
