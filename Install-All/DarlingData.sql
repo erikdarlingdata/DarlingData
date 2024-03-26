@@ -1,4 +1,4 @@
--- Compile Date: 03/25/2024 17:17:48 UTC
+-- Compile Date: 03/26/2024 03:18:35 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -47,7 +47,7 @@ ALTER PROCEDURE
     @end_date datetimeoffset(7) = NULL, /*End date for events*/
     @warnings_only bit = 0, /*Only show results from recorded warnings*/
     @database_name sysname = NULL, /*Filter to a specific database for blocking)*/
-    @wait_duration_ms bigint = 0, /*Minimum duration to show query waits*/
+    @wait_duration_ms bigint = 500, /*Minimum duration to show query waits*/
     @wait_round_interval_minutes bigint = 60, /*Nearest interval to round wait stats to*/
     @skip_locks bit = 0, /*Skip the blocking and deadlocks*/
     @pending_task_threshold integer = 10, /*Minimum number of pending tasks to care about*/
@@ -1166,8 +1166,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
                              RTRIM(CONVERT(date, @end_date)) +
-                             ' with a minimum duration of ' + 
-                             RTRIM(@wait_duration_ms) +
                              '.'
                         ELSE 'no significant waits found!'
                     END;
@@ -1263,7 +1261,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
-        AND   w2.x2.exist('@averageWaitTime[.>=1000]') = 1
+        AND   w2.x2.exist('@averageWaitTime[.>= sql:variable("@wait_duration_ms")]') = 1
         AND   NOT EXISTS
               (
                   SELECT
@@ -1340,7 +1338,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
                              RTRIM(CONVERT(date, @end_date)) +
-                             ' with a minimum duration of ' + 
+                             ' with a minimum average duration of ' + 
                              RTRIM(@wait_duration_ms) +
                              '.'
                         ELSE 'no significant waits found!'
