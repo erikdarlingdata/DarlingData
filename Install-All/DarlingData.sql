@@ -1,4 +1,4 @@
--- Compile Date: 03/26/2024 13:27:09 UTC
+-- Compile Date: 03/26/2024 17:50:46 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11807,8 +11807,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
             SELECT
                 w.wait_type,
                 w.description,
-                sample_seconds =
-                    DATEDIFF(SECOND, w.sample_time, w2.sample_time),
                 sample_cpu_time_seconds =
                     (w2.hours_cpu_time - w.hours_cpu_time) / 1000.,
                 wait_time_seconds = 
@@ -11840,7 +11838,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         ),
                         N'.00',
                         N''
-                    )
+                    ),
+                sample_seconds =
+                    DATEDIFF(SECOND, w.sample_time, w2.sample_time)
             FROM @waits AS w
             JOIN @waits AS w2
               ON  w.wait_type = w2.wait_type
@@ -12156,8 +12156,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 f.database_name,
                 f.database_file_details,
                 f.file_size_gb,
-                sample_seconds =
-                    DATEDIFF(SECOND, f.sample_time_o, f.sample_time_t),
                 f.avg_read_stall_ms,
                 f.avg_write_stall_ms,
                 f.total_read_stall,
@@ -12194,7 +12192,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         ),
                         N'.00',
                         N''
-                    )
+                    ),
+                sample_seconds =
+                    DATEDIFF(SECOND, f.sample_time_o, f.sample_time_t)
             FROM f
             WHERE f.total_read_count  > 0
             OR    f.total_write_count > 0
@@ -12346,7 +12346,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     total_difference_per_second = 
                         FORMAT((dopc2.cntr_value - dopc.cntr_value) / 
                          DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 'N0'),
-                    sample_difference_seconds = 
+                    sample_seconds = 
                         DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
                     first_sample_time = 
                         dopc.sample_time,
@@ -12370,7 +12370,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 p.second_cntr_value,
                 p.total_difference,
                 p.total_difference_per_second,
-                p.sample_difference_seconds
+                p.sample_seconds
             FROM p
             ORDER BY
                 p.object_name,
