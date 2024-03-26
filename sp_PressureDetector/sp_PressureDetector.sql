@@ -761,7 +761,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 w.wait_type,
                 w.description,
                 sample_cpu_time_seconds =
-                    (w2.hours_cpu_time - w.hours_cpu_time) / 1000.,
+                    CONVERT
+                    (
+                        decimal(38,2),
+                        (w2.hours_cpu_time - w.hours_cpu_time) / 1000.
+                    ),
                 wait_time_seconds = 
                     CONVERT
                     (
@@ -1039,8 +1043,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 fm.drive,
                 fm.database_name,
                 fm.database_file_details,
-                fm.file_size_gb,
                 fm.hours_uptime,
+                fm.file_size_gb,
                 fm.avg_read_stall_ms,
                 fm.avg_write_stall_ms,
                 fm.total_avg_stall_ms,
@@ -1056,8 +1060,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 drive = N'Nothing to see here',
                 database_name = N'By default, only >100 ms latency is reported',
                 database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
-                file_size_gb = 0,
                 hours_uptime = 0,
+                file_size_gb = 0,
                 avg_read_stall_ms = 0,
                 avg_write_stall_ms = 0,
                 total_avg_stall = 0,
@@ -1279,9 +1283,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 p.object_name,
                 p.counter_name,
                 p.instance_name,
+                p.hours_uptime,
                 p.total,
-                p.total_per_second,
-                p.hours_uptime
+                p.total_per_second
             FROM p
             WHERE p.cntr_value > 0
             ORDER BY
