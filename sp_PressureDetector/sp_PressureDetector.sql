@@ -773,7 +773,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         (w2.hours_wait_time - w.hours_wait_time) / 1000.
                     ),
                 avg_ms_per_wait =
-                    (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2,
+                    CONVERT
+                    (
+                        decimal(38,1),
+                        (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2
+                    ),
                 percent_signal_waits =
                     CONVERT
                     (
@@ -1094,13 +1098,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     fm.database_file_details,
                     fm.file_size_gb,
                     avg_read_stall_ms =
-                        (fm2.avg_read_stall_ms - fm.avg_read_stall_ms),
+                        (fm2.avg_read_stall_ms + fm.avg_read_stall_ms) / 2,
                     avg_write_stall_ms =
-                        (fm2.avg_write_stall_ms - fm.avg_write_stall_ms),
+                        (fm2.avg_write_stall_ms + fm.avg_write_stall_ms) / 2,
                     total_read_stall = 
                         (
-                            (fm2.avg_read_stall_ms + fm2.avg_write_stall_ms) - 
-                            (fm.avg_read_stall_ms + fm.avg_write_stall_ms)
+                            (fm2.avg_read_stall_ms + fm2.avg_write_stall_ms) + 
+                            (fm.avg_read_stall_ms + fm.avg_write_stall_ms) / 2
                         ),
                     total_gb_read =
                         (fm2.total_gb_read - fm.total_gb_read),
