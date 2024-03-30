@@ -1,4 +1,4 @@
--- Compile Date: 03/26/2024 20:00:13 UTC
+-- Compile Date: 03/30/2024 14:09:41 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11820,7 +11820,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         (w2.hours_wait_time - w.hours_wait_time) / 1000.
                     ),
                 avg_ms_per_wait =
-                    (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2,
+                    CONVERT
+                    (
+                        decimal(38,1),
+                        (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2
+                    ),
                 percent_signal_waits =
                     CONVERT
                     (
@@ -12141,13 +12145,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     fm.database_file_details,
                     fm.file_size_gb,
                     avg_read_stall_ms =
-                        (fm2.avg_read_stall_ms - fm.avg_read_stall_ms),
+                        (fm2.avg_read_stall_ms + fm.avg_read_stall_ms) / 2,
                     avg_write_stall_ms =
-                        (fm2.avg_write_stall_ms - fm.avg_write_stall_ms),
+                        (fm2.avg_write_stall_ms + fm.avg_write_stall_ms) / 2,
                     total_read_stall = 
                         (
-                            (fm2.avg_read_stall_ms + fm2.avg_write_stall_ms) - 
-                            (fm.avg_read_stall_ms + fm.avg_write_stall_ms)
+                            (fm2.avg_read_stall_ms + fm2.avg_write_stall_ms) + 
+                            (fm.avg_read_stall_ms + fm.avg_write_stall_ms) / 2
                         ),
                     total_gb_read =
                         (fm2.total_gb_read - fm.total_gb_read),
@@ -14936,6 +14940,21 @@ FROM sys.databases AS d
 WHERE @get_all_databases = 1
 AND   d.is_query_store_on = 1
 AND   d.database_id > 4
+AND   d.state = 0 
+AND   d.is_in_standby = 0 
+AND   d.is_read_only = 0
+AND   NOT EXISTS
+(
+    SELECT 
+        1/0
+    FROM sys.dm_hadr_availability_replica_states AS s
+    JOIN sys.availability_databases_cluster AS c
+      ON  s.group_id = c.group_id 
+      AND d.name = c.database_name
+    WHERE s.is_local <> 1
+    AND   s.role_desc <> N'PRIMARY'
+    AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
+)
 OPTION(RECOMPILE);
 
 DECLARE
