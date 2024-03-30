@@ -1,4 +1,4 @@
--- Compile Date: 03/30/2024 14:09:41 UTC
+-- Compile Date: 03/30/2024 14:23:05 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -66,8 +66,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.2',
-        @version_date = '20240201';
+        @version = '1.5',
+        @version_date = '20240401';
 
     IF @help = 1
     BEGIN
@@ -2944,8 +2944,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;   
    
 SELECT    
-    @version = '5.2',    
-    @version_date = '20240201';   
+    @version = '5.5',    
+    @version_date = '20240401';   
    
 IF @help = 1   
 BEGIN   
@@ -7669,8 +7669,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '3.2',
-    @version_date = '20240201';
+    @version = '3.5',
+    @version_date = '20240401';
 
 IF @help = 1
 BEGIN
@@ -10426,8 +10426,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
     SELECT
-        @version = '1.2',
-        @version_date = '20240201';
+        @version = '1.5',
+        @version_date = '20240401';
 
     IF @help = 1
     BEGIN
@@ -11118,8 +11118,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.2',
-    @version_date = '20240201';
+    @version = '4.5',
+    @version_date = '20240401';
 
 
 IF @help = 1
@@ -13870,8 +13870,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.2',
-    @version_date = '20240201';
+    @version = '4.5',
+    @version_date = '20240401';
 
 /*
 Helpful section! For help.
