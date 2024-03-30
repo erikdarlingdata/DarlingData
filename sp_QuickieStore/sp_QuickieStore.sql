@@ -1201,6 +1201,21 @@ FROM sys.databases AS d
 WHERE @get_all_databases = 1
 AND   d.is_query_store_on = 1
 AND   d.database_id > 4
+AND   d.state = 0 
+AND   d.is_in_standby = 0 
+AND   d.is_read_only = 0
+AND   NOT EXISTS
+(
+    SELECT 
+        1/0
+    FROM sys.dm_hadr_availability_replica_states AS s
+    JOIN sys.availability_databases_cluster AS c
+      ON  s.group_id = c.group_id 
+      AND d.name = c.database_name
+    WHERE s.is_local <> 1
+    AND   s.role_desc <> N'PRIMARY'
+    AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
+)
 OPTION(RECOMPILE);
 
 DECLARE
