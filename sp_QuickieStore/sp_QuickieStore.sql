@@ -442,7 +442,7 @@ Hold plan_ids for plans we want
 CREATE TABLE
     #include_plan_ids
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY WITH (IGNORE_DUP_KEY = ON)
 );
 
 /*
@@ -460,7 +460,7 @@ Hold plan_ids for ignored plans
 CREATE TABLE
     #ignore_plan_ids
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY WITH (IGNORE_DUP_KEY = ON)
 );
 
 /*
