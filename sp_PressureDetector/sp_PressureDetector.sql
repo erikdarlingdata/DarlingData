@@ -367,6 +367,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         percent_signal_waits decimal(38,2),
         waiting_tasks_count_n bigint,
         sample_time datetime,
+        sorting bigint,
         waiting_tasks_count AS 
             REPLACE
             (
@@ -519,7 +520,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             avg_ms_per_wait,
             percent_signal_waits,
             waiting_tasks_count_n,
-            sample_time
+            sample_time,
+            sorting
         )
         SELECT
             hours_uptime =
@@ -655,7 +657,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ),
             dows.waiting_tasks_count,
             sample_time = 
-                GETDATE()
+                GETDATE(),
+            sorting =
+                ROW_NUMBER() OVER (ORDER BY dows.wait_time_ms DESC)
         FROM sys.dm_os_wait_stats AS dows
         WHERE
         (
@@ -748,7 +752,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     )
             FROM @waits AS w
             ORDER BY
-                w.hours_wait_time DESC;
+                w.sorting;
         END;
 
         IF 
