@@ -3930,10 +3930,11 @@ BEGIN
     BEGIN
         SELECT
             @query_text_search =
-                REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(
                     @query_text_search,
                 N'[', @escape_character + N'['),
-                N']', @escape_character + N']');
+                N']', @escape_character + N']'),
+                N'_', @escape_character + N'_');
     END;
 
     SELECT
@@ -4185,6 +4186,7 @@ WHERE NOT EXISTS
           AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
           AND   qsqt.query_sql_text NOT LIKE N''SELECT StatMan%''
           AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
+          AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
       )
 OPTION(RECOMPILE);' + @nc10;
 
