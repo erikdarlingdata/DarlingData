@@ -5970,13 +5970,19 @@ FROM
                  THEN TRY_CAST(qsp.query_plan AS XML)
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
                  THEN 
-                     CONVERT
                      (
-                         xml,
-                         N''-- This is a huge query plan'' + NCHAR(13) + NCHAR(10) +
-                         N''-- Remove these headers, save it as a .sqlplan file, and re-open it'' + NCHAR(13) + NCHAR(10) +
-                         REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                         SELECT
+                             (
+                                 SELECT
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                     NCHAR(13) + NCHAR(10) + N''--'' COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                             )
+                             FOR XML PATH(''''),
+                                   TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -6191,13 +6197,19 @@ FROM
                  THEN TRY_CAST(qsp.query_plan AS XML)
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
                  THEN 
-                     CONVERT
                      (
-                         xml,
-                         N''-- This is a huge query plan'' + NCHAR(13) + NCHAR(10) +
-                         N''-- Remove these headers, save it as a .sqlplan file, and re-open it'' + NCHAR(13) + NCHAR(10) +
-                         REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                         SELECT
+                             (
+                                 SELECT
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                     NCHAR(13) + NCHAR(10) + N''--'' COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                             )
+                             FOR XML PATH(''''),
+                                   TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -6416,13 +6428,19 @@ FROM
                  THEN TRY_CAST(qsp.query_plan AS XML)
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
                  THEN 
-                     CONVERT
                      (
-                         xml,
-                         N''-- This is a huge query plan'' + NCHAR(13) + NCHAR(10) +
-                         N''-- Remove these headers, save it as a .sqlplan file, and re-open it'' + NCHAR(13) + NCHAR(10) +
-                         REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                         SELECT
+                             (
+                                 SELECT
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                     NCHAR(13) + NCHAR(10) + N''--'' COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                             )
+                             FOR XML PATH(''''),
+                                   TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -6605,13 +6623,20 @@ FROM
                  THEN TRY_CAST(qsp.query_plan AS XML)
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
                  THEN 
-                     CONVERT
                      (
-                         xml,
-                         N''-- This is a huge query plan'' + NCHAR(13) + NCHAR(10) +
-                         N''-- Remove these headers, save it as a .sqlplan file, and re-open it'' + NCHAR(13) + NCHAR(10) +
-                         REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                         SELECT REPLACE(REPLACE(
+                             (
+                                 SELECT
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                     NCHAR(13) + NCHAR(10) + N''--'' COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                             ),
+                             ''&lt;'', ''<''), ''&gt;'', ''>'')
+                             FOR XML PATH(''''),
+                                   TYPE
                      )
              END,
         qsp.compatibility_level,'
