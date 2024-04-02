@@ -1182,41 +1182,79 @@ cursor block because some of them
 are assigned for the specific database
 that is currently being looked at
 */
-INSERT
-    #databases WITH(TABLOCK)
-(
-    database_name
-)
-SELECT
-    database_name =
-        ISNULL(@database_name, DB_NAME())
-WHERE @get_all_databases = 0
 
-UNION ALL
-
-SELECT
-    database_name =
-        d.name
-FROM sys.databases AS d
-WHERE @get_all_databases = 1
-AND   d.is_query_store_on = 1
-AND   d.database_id > 4
-AND   d.state = 0 
-AND   d.is_in_standby = 0 
-AND   d.is_read_only = 0
-AND   NOT EXISTS
+IF
 (
-    SELECT 
-        1/0
-    FROM sys.dm_hadr_availability_replica_states AS s
-    JOIN sys.availability_databases_cluster AS c
-      ON  s.group_id = c.group_id 
-      AND d.name = c.database_name
-    WHERE s.is_local <> 1
-    AND   s.role_desc <> N'PRIMARY'
-    AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-)
-OPTION(RECOMPILE);
+SELECT
+    CONVERT
+    (
+        sysname,
+        SERVERPROPERTY('EngineEdition')
+    )
+) IN (5, 8)
+BEGIN
+    INSERT INTO 
+        #databases WITH(TABLOCK)
+    (
+        database_name
+    )
+    SELECT
+        database_name = 
+            ISNULL(@database_name, DB_NAME())
+    WHERE @get_all_databases = 0
+
+    UNION ALL
+
+    SELECT
+        database_name = 
+            d.name
+    FROM sys.databases AS d
+    WHERE @get_all_databases = 1
+    AND   d.is_query_store_on = 1
+    AND   d.database_id > 4
+    AND   d.state = 0 
+    AND   d.is_in_standby = 0 
+    AND   d.is_read_only = 0
+    OPTION(RECOMPILE);
+END
+ELSE
+BEGIN    
+    INSERT
+        #databases WITH(TABLOCK)
+    (
+        database_name
+    )
+    SELECT
+        database_name =
+            ISNULL(@database_name, DB_NAME())
+    WHERE @get_all_databases = 0
+    
+    UNION ALL
+    
+    SELECT
+        database_name =
+            d.name
+    FROM sys.databases AS d
+    WHERE @get_all_databases = 1
+    AND   d.is_query_store_on = 1
+    AND   d.database_id > 4
+    AND   d.state = 0 
+    AND   d.is_in_standby = 0 
+    AND   d.is_read_only = 0
+    AND   NOT EXISTS
+    (
+        SELECT 
+            1/0
+        FROM sys.dm_hadr_availability_replica_states AS s
+        JOIN sys.availability_databases_cluster AS c
+          ON  s.group_id = c.group_id 
+          AND d.name = c.database_name
+        WHERE s.is_local <> 1
+        AND   s.role_desc <> N'PRIMARY'
+        AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
+    )
+    OPTION(RECOMPILE);
+END;
 
 DECLARE
     database_cursor CURSOR
@@ -1246,17 +1284,6 @@ BEGIN
 END;
 
 SELECT
-    @azure =
-        CASE
-            WHEN
-                CONVERT
-                (
-                    sysname,
-                    SERVERPROPERTY('EDITION')
-                ) = N'SQL Azure'
-            THEN 1
-            ELSE 0
-        END,
     @engine =
         CONVERT
         (
