@@ -2404,6 +2404,90 @@ OPTION(RECOMPILE);
 
 IF @debug = 1
 BEGIN
+    RAISERROR('Inserting #block_findings, check_id 6.4', 0, 1) WITH NOWAIT;
+END;
+
+INSERT
+    #block_findings
+(
+    check_id,
+    database_name,
+    object_name,
+    finding_group,
+    finding,
+    sort_order
+)
+SELECT
+    check_id =
+        6,
+    database_name =
+        b.database_name,
+    object_name =
+        N'-',
+    finding_group =
+        N'Compile Lock Blocking',
+    finding =
+        N'There have been ' +
+        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+        N' compile locks blocking sessions in ' +
+        b.database_name +
+        N'.',
+   sort_order =  
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+FROM #blocks AS b
+WHERE b.wait_resource LIKE N'%COMPILE%'
+AND   (b.database_name = @database_name
+       OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name
+       OR @object_name IS NULL)
+GROUP BY
+    b.database_name
+OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 6.5', 0, 1) WITH NOWAIT;
+END;
+
+INSERT
+    #block_findings
+(
+    check_id,
+    database_name,
+    object_name,
+    finding_group,
+    finding,
+    sort_order
+)
+SELECT
+    check_id =
+        6,
+    database_name =
+        b.database_name,
+    object_name =
+        N'-',
+    finding_group =
+        N'Application Lock Blocking',
+    finding =
+        N'There have been ' +
+        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+        N' application locks blocking sessions in ' +
+        b.database_name +
+        N'.',
+   sort_order =  
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+FROM #blocks AS b
+WHERE b.wait_resource LIKE N'APPLICATION%'
+AND   (b.database_name = @database_name
+       OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name
+       OR @object_name IS NULL)
+GROUP BY
+    b.database_name
+OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
     RAISERROR('Inserting #block_findings, check_id 7.1', 0, 1) WITH NOWAIT;
 END;
 

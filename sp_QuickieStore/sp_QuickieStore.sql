@@ -5964,7 +5964,21 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = TRY_CAST(qsp.query_plan AS XML),
+        query_plan = 
+             CASE
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS XML)
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 THEN 
+                     CONVERT
+                     (
+                         xml,
+                         N''-- This is a huge query plan'' + NCHAR(13) + NCHAR(10) +
+                         N''-- Remove these headers, save it as a .sqlplan file, and re-open it'' + NCHAR(13) + NCHAR(10) +
+                         REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                     )
+             END,
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -6171,7 +6185,21 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = TRY_CAST(qsp.query_plan AS XML),
+        query_plan = 
+             CASE
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS XML)
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 THEN 
+                     CONVERT
+                     (
+                         xml,
+                         N''-- This is a huge query plan'' + NCHAR(13) + NCHAR(10) +
+                         N''-- Remove these headers, save it as a .sqlplan file, and re-open it'' + NCHAR(13) + NCHAR(10) +
+                         REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                     )
+             END,
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -6382,7 +6410,21 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = TRY_CAST(qsp.query_plan AS XML),
+        query_plan = 
+             CASE
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS XML)
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 THEN 
+                     CONVERT
+                     (
+                         xml,
+                         N''-- This is a huge query plan'' + NCHAR(13) + NCHAR(10) +
+                         N''-- Remove these headers, save it as a .sqlplan file, and re-open it'' + NCHAR(13) + NCHAR(10) +
+                         REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                     )
+             END,
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -6557,7 +6599,21 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = TRY_CAST(qsp.query_plan AS XML),
+        query_plan = 
+             CASE
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS XML)
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 THEN 
+                     CONVERT
+                     (
+                         xml,
+                         N''-- This is a huge query plan'' + NCHAR(13) + NCHAR(10) +
+                         N''-- Remove these headers, save it as a .sqlplan file, and re-open it'' + NCHAR(13) + NCHAR(10) +
+                         REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                     )
+             END,
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
