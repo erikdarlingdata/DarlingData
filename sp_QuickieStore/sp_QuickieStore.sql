@@ -1284,6 +1284,17 @@ BEGIN
 END;
 
 SELECT
+    @azure =
+        CASE
+            WHEN
+                CONVERT
+                (
+                    sysname,
+                    SERVERPROPERTY('EDITION')
+                ) = N'SQL Azure'
+            THEN 1
+            ELSE 0
+        END,
     @engine =
         CONVERT
         (
@@ -3831,7 +3842,8 @@ WHERE qsp.is_forced_plan = 1';
 
 IF @only_queries_with_forced_plan_failures = 1
 BEGIN
-    SELECT @sql += N'
+    SELECT 
+        @sql += N'
 AND   qsp.last_force_failure_reason > 0'
 END
 
@@ -4591,7 +4603,8 @@ IF
   AND @sql_2022_views = 1
 )
 BEGIN
-    SELECT @sql += N'
+    SELECT 
+        @sql += N'
     qsp.plan_forcing_type_desc,
     qsp.has_compile_replay_script,
     qsp.is_optimized_plan_forcing_disabled,
