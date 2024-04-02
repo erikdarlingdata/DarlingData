@@ -1,4 +1,4 @@
--- Compile Date: 03/30/2024 14:23:05 UTC
+-- Compile Date: 04/02/2024 15:52:43 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11414,6 +11414,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         percent_signal_waits decimal(38,2),
         waiting_tasks_count_n bigint,
         sample_time datetime,
+        sorting bigint,
         waiting_tasks_count AS 
             REPLACE
             (
@@ -11566,7 +11567,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             avg_ms_per_wait,
             percent_signal_waits,
             waiting_tasks_count_n,
-            sample_time
+            sample_time,
+            sorting
         )
         SELECT
             hours_uptime =
@@ -11702,7 +11704,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ),
             dows.waiting_tasks_count,
             sample_time = 
-                GETDATE()
+                GETDATE(),
+            sorting =
+                ROW_NUMBER() OVER (ORDER BY dows.wait_time_ms DESC)
         FROM sys.dm_os_wait_stats AS dows
         WHERE
         (
@@ -11795,7 +11799,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     )
             FROM @waits AS w
             ORDER BY
-                w.hours_wait_time DESC;
+                w.sorting;
         END;
 
         IF 
@@ -14181,7 +14185,7 @@ Hold plan_ids for plans we want
 CREATE TABLE
     #include_plan_ids
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY WITH (IGNORE_DUP_KEY = ON)
 );
 
 /*
@@ -14199,7 +14203,7 @@ Hold plan_ids for ignored plans
 CREATE TABLE
     #ignore_plan_ids
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY WITH (IGNORE_DUP_KEY = ON)
 );
 
 /*
@@ -14921,41 +14925,79 @@ cursor block because some of them
 are assigned for the specific database
 that is currently being looked at
 */
-INSERT
-    #databases WITH(TABLOCK)
-(
-    database_name
-)
-SELECT
-    database_name =
-        ISNULL(@database_name, DB_NAME())
-WHERE @get_all_databases = 0
 
-UNION ALL
-
-SELECT
-    database_name =
-        d.name
-FROM sys.databases AS d
-WHERE @get_all_databases = 1
-AND   d.is_query_store_on = 1
-AND   d.database_id > 4
-AND   d.state = 0 
-AND   d.is_in_standby = 0 
-AND   d.is_read_only = 0
-AND   NOT EXISTS
+IF
 (
-    SELECT 
-        1/0
-    FROM sys.dm_hadr_availability_replica_states AS s
-    JOIN sys.availability_databases_cluster AS c
-      ON  s.group_id = c.group_id 
-      AND d.name = c.database_name
-    WHERE s.is_local <> 1
-    AND   s.role_desc <> N'PRIMARY'
-    AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-)
-OPTION(RECOMPILE);
+SELECT
+    CONVERT
+    (
+        sysname,
+        SERVERPROPERTY('EngineEdition')
+    )
+) IN (5, 8)
+BEGIN
+    INSERT INTO 
+        #databases WITH(TABLOCK)
+    (
+        database_name
+    )
+    SELECT
+        database_name = 
+            ISNULL(@database_name, DB_NAME())
+    WHERE @get_all_databases = 0
+
+    UNION ALL
+
+    SELECT
+        database_name = 
+            d.name
+    FROM sys.databases AS d
+    WHERE @get_all_databases = 1
+    AND   d.is_query_store_on = 1
+    AND   d.database_id > 4
+    AND   d.state = 0 
+    AND   d.is_in_standby = 0 
+    AND   d.is_read_only = 0
+    OPTION(RECOMPILE);
+END
+ELSE
+BEGIN    
+    INSERT
+        #databases WITH(TABLOCK)
+    (
+        database_name
+    )
+    SELECT
+        database_name =
+            ISNULL(@database_name, DB_NAME())
+    WHERE @get_all_databases = 0
+    
+    UNION ALL
+    
+    SELECT
+        database_name =
+            d.name
+    FROM sys.databases AS d
+    WHERE @get_all_databases = 1
+    AND   d.is_query_store_on = 1
+    AND   d.database_id > 4
+    AND   d.state = 0 
+    AND   d.is_in_standby = 0 
+    AND   d.is_read_only = 0
+    AND   NOT EXISTS
+    (
+        SELECT 
+            1/0
+        FROM sys.dm_hadr_availability_replica_states AS s
+        JOIN sys.availability_databases_cluster AS c
+          ON  s.group_id = c.group_id 
+          AND d.name = c.database_name
+        WHERE s.is_local <> 1
+        AND   s.role_desc <> N'PRIMARY'
+        AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
+    )
+    OPTION(RECOMPILE);
+END;
 
 DECLARE
     database_cursor CURSOR
@@ -16020,19 +16062,30 @@ BEGIN
 END;
 ELSE
 BEGIN
-    SELECT
-        @ags_present =
-            CASE
-                WHEN EXISTS
-                     (
-                         SELECT
-                             1/0
-                         FROM sys.availability_groups AS ag
-                     )
-                THEN 1
-                ELSE 0
-            END
+    IF
+    (
+        SELECT
+            CONVERT
+            (
+                sysname,
+                SERVERPROPERTY('EngineEdition')
+            )
+    ) NOT IN (5, 8)
+    BEGIN
+        SELECT
+            @ags_present =
+                CASE
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM sys.availability_groups AS ag
+                         )
+                    THEN 1
+                    ELSE 0
+                END
         OPTION(RECOMPILE);
+    END
 END;
 
 /*
@@ -17532,7 +17585,8 @@ WHERE qsp.is_forced_plan = 1';
 
 IF @only_queries_with_forced_plan_failures = 1
 BEGIN
-    SELECT @sql += N'
+    SELECT 
+        @sql += N'
 AND   qsp.last_force_failure_reason > 0'
 END
 
@@ -18292,7 +18346,8 @@ IF
   AND @sql_2022_views = 1
 )
 BEGIN
-    SELECT @sql += N'
+    SELECT 
+        @sql += N'
     qsp.plan_forcing_type_desc,
     qsp.has_compile_replay_script,
     qsp.is_optimized_plan_forcing_disabled,
