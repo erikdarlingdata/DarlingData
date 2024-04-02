@@ -2308,19 +2308,30 @@ BEGIN
 END;
 ELSE
 BEGIN
-    SELECT
-        @ags_present =
-            CASE
-                WHEN EXISTS
-                     (
-                         SELECT
-                             1/0
-                         FROM sys.availability_groups AS ag
-                     )
-                THEN 1
-                ELSE 0
-            END
+    IF
+    (
+        SELECT
+            CONVERT
+            (
+                sysname,
+                SERVERPROPERTY('EngineEdition')
+            )
+    ) NOT IN (5, 8)
+    BEGIN
+        SELECT
+            @ags_present =
+                CASE
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM sys.availability_groups AS ag
+                         )
+                    THEN 1
+                    ELSE 0
+                END
         OPTION(RECOMPILE);
+    END
 END;
 
 /*
