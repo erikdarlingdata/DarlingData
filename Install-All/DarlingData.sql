@@ -1,4 +1,4 @@
--- Compile Date: 04/03/2024 16:34:16 UTC
+-- Compile Date: 04/03/2024 19:51:09 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11526,11 +11526,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
         database_file_details nvarchar(1000),
         file_size_gb decimal(38,2),
         total_gb_read decimal(38,2),
+        total_mb_read decimal(38,2),
         total_read_count bigint,
         avg_read_stall_ms decimal(38,2),
         total_gb_written decimal(38,2),
+        total_mb_written decimal(38,2),
         total_write_count bigint,
         avg_write_stall_ms decimal(38,2),
+        io_stall_read_ms bigint,
+        io_stall_write_ms bigint,
         sample_time datetime
     );
 
@@ -12039,6 +12043,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
                          )
                     ELSE 0
                 END,
+            total_mb_read =
+                CASE
+                    WHEN vfs.num_of_bytes_read > 0
+                    THEN CONVERT
+                         (
+                             decimal(38, 2),
+                             vfs.num_of_bytes_read / 1048576.
+                         )
+                    ELSE 0
+                END,                
             total_read_count =  
                 vfs.num_of_reads,
             avg_read_stall_ms =
@@ -12048,7 +12062,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ISNULL
                     (
                         vfs.io_stall_read_ms / 
-                          (1.0 * NULLIF(vfs.num_of_reads, 0)), 
+                          (NULLIF(vfs.num_of_reads, 0)), 
                         0
                     )
                 ),
@@ -12062,6 +12076,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
                          )
                     ELSE 0
                 END,
+            total_mb_written =
+                CASE
+                    WHEN vfs.num_of_bytes_written > 0
+                    THEN CONVERT
+                         (
+                             decimal(38, 2),
+                             vfs.num_of_bytes_written / 1048576.
+                         )
+                    ELSE 0
+                END,
             total_write_count =
                 vfs.num_of_writes,
             avg_write_stall_ms =
@@ -12071,10 +12095,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ISNULL
                     (
                         vfs.io_stall_write_ms / 
-                          (1.0 * NULLIF(vfs.num_of_writes, 0)), 
+                          (NULLIF(vfs.num_of_writes, 0)), 
                         0
                     )
                 ),
+            io_stall_read_ms,
+            io_stall_write_ms,
             sample_time = 
                 GETDATE()
         FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs
@@ -12094,7 +12120,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         N'
         WHERE 
         (
-             vfs.num_of_reads > 0
+             vfs.num_of_reads  > 0
           OR vfs.num_of_writes > 0
         );'
         );
@@ -12114,11 +12140,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
             database_file_details,
             file_size_gb,
             total_gb_read,
+            total_mb_read,
             total_read_count,
             avg_read_stall_ms,
             total_gb_written,
+            total_mb_written,
             total_write_count,
             avg_write_stall_ms,
+            io_stall_read_ms,
+            io_stall_write_ms,
             sample_time
         )
         EXEC sys.sp_executesql
@@ -12233,26 +12263,52 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     fm.database_file_details,
                     fm.file_size_gb,
                     avg_read_stall_ms =
-                        CONVERT
-                        (
-                            decimal(38, 2),
-                            (fm2.avg_read_stall_ms + fm.avg_read_stall_ms) / 2
-                        ),
+                        CASE 
+                            WHEN (fm2.total_read_count - fm.total_read_count) = 0
+                            THEN 0.00
+                            ELSE
+                                CONVERT
+                                (
+                                    decimal(38, 2),                                    
+                                    (fm2.io_stall_read_ms - fm.io_stall_read_ms) /
+                                    (fm2.total_read_count  - fm.total_read_count) 
+                                )
+                        END,
                     avg_write_stall_ms =
-                        CONVERT
-                        (
-                            decimal(38, 2),
-                            (fm2.avg_write_stall_ms + fm.avg_write_stall_ms) / 2
-                        ),
+                        CASE
+                            WHEN (fm2.total_write_count - fm.total_write_count) = 0
+                            THEN 0.00
+                            ELSE
+                                CONVERT
+                                (
+                                    decimal(38, 2),
+                                    (fm2.io_stall_write_ms - fm.io_stall_write_ms) /
+                                    (fm2.total_write_count  - fm.total_write_count) 
+                                )
+                        END,
                     total_avg_stall = 
-                        (
-                            (fm2.avg_read_stall_ms + fm2.avg_write_stall_ms) + 
-                            (fm.avg_read_stall_ms + fm.avg_write_stall_ms) / 2
-                        ),
-                    total_gb_read =
-                        (fm2.total_gb_read - fm.total_gb_read),
-                    total_gb_written = 
-                        (fm2.total_gb_written - fm.total_gb_written),                
+                        CASE
+                            WHEN (fm2.total_read_count  - fm.total_read_count) +
+                                 (fm2.total_write_count - fm.total_write_count) = 0
+                            THEN 0.00
+                            ELSE
+                                CONVERT
+                                (
+                                    decimal(38,2),
+                                    (
+                                        (fm2.io_stall_read_ms  - fm.io_stall_read_ms) +
+                                        (fm2.io_stall_write_ms - fm.io_stall_write_ms) 
+                                    ) /                                
+                                    (
+                                        (fm2.total_read_count  - fm.total_read_count) +
+                                        (fm2.total_write_count - fm.total_write_count) 
+                                    ) 
+                                )
+                        END,
+                    total_mb_read =
+                        (fm2.total_mb_read - fm.total_mb_read),
+                    total_mb_written = 
+                        (fm2.total_mb_written - fm.total_mb_written),                
                     total_read_count = 
                         (fm2.total_read_count - fm.total_read_count),
                     total_write_count = 
@@ -12276,8 +12332,38 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 f.avg_read_stall_ms,
                 f.avg_write_stall_ms,
                 f.total_avg_stall,
-                f.total_gb_read,
-                f.total_gb_written,
+                total_mb_read =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                f.total_mb_read
+                            ),
+                            1
+                        ),
+                        N'.00',
+                        N''
+                    ),
+                total_mb_written =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                f.total_mb_written
+                            ),
+                            1
+                        ),
+                        N'.00',
+                        N''
+                    ),
                 total_read_count =
                     REPLACE
                     (
@@ -12313,8 +12399,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 sample_seconds =
                     DATEDIFF(SECOND, f.sample_time_o, f.sample_time_t)
             FROM f
-            WHERE f.total_read_count  > 0
-            OR    f.total_write_count > 0
+            WHERE 
+            (
+                 f.total_read_count  > 0
+              OR f.total_write_count > 0
+            )
             ORDER BY
                 f.total_avg_stall DESC;
         END
@@ -13733,7 +13822,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             x.*
         FROM @file_metrics AS x
         ORDER BY
-            x.database_name
+            x.database_name,
+            x.sample_time
         OPTION(RECOMPILE);
 
         SELECT
