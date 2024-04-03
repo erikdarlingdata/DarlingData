@@ -1102,10 +1102,18 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     fm.database_file_details,
                     fm.file_size_gb,
                     avg_read_stall_ms =
-                        (fm2.avg_read_stall_ms + fm.avg_read_stall_ms) / 2,
+                        CONVERT
+                        (
+                            decimal(38, 2),
+                            (fm2.avg_read_stall_ms + fm.avg_read_stall_ms) / 2
+                        ),
                     avg_write_stall_ms =
-                        (fm2.avg_write_stall_ms + fm.avg_write_stall_ms) / 2,
-                    total_read_stall = 
+                        CONVERT
+                        (
+                            decimal(38, 2),
+                            (fm2.avg_write_stall_ms + fm.avg_write_stall_ms) / 2
+                        ),
+                    total_avg_stall = 
                         (
                             (fm2.avg_read_stall_ms + fm2.avg_write_stall_ms) + 
                             (fm.avg_read_stall_ms + fm.avg_write_stall_ms) / 2
@@ -1136,7 +1144,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 f.file_size_gb,
                 f.avg_read_stall_ms,
                 f.avg_write_stall_ms,
-                f.total_read_stall,
+                f.total_avg_stall,
                 f.total_gb_read,
                 f.total_gb_written,
                 total_read_count =
@@ -1177,7 +1185,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             WHERE f.total_read_count  > 0
             OR    f.total_write_count > 0
             ORDER BY
-                f.total_read_stall DESC;
+                f.total_avg_stall DESC;
         END
     END; /*End file stats*/
 
