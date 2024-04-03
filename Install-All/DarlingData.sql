@@ -1,4 +1,4 @@
--- Compile Date: 04/02/2024 15:52:43 UTC
+-- Compile Date: 04/03/2024 14:22:21 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -9991,6 +9991,90 @@ OPTION(RECOMPILE);
 
 IF @debug = 1
 BEGIN
+    RAISERROR('Inserting #block_findings, check_id 6.4', 0, 1) WITH NOWAIT;
+END;
+
+INSERT
+    #block_findings
+(
+    check_id,
+    database_name,
+    object_name,
+    finding_group,
+    finding,
+    sort_order
+)
+SELECT
+    check_id =
+        6,
+    database_name =
+        b.database_name,
+    object_name =
+        N'-',
+    finding_group =
+        N'Compile Lock Blocking',
+    finding =
+        N'There have been ' +
+        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+        N' compile locks blocking sessions in ' +
+        b.database_name +
+        N'.',
+   sort_order =  
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+FROM #blocks AS b
+WHERE b.wait_resource LIKE N'%COMPILE%'
+AND   (b.database_name = @database_name
+       OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name
+       OR @object_name IS NULL)
+GROUP BY
+    b.database_name
+OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Inserting #block_findings, check_id 6.5', 0, 1) WITH NOWAIT;
+END;
+
+INSERT
+    #block_findings
+(
+    check_id,
+    database_name,
+    object_name,
+    finding_group,
+    finding,
+    sort_order
+)
+SELECT
+    check_id =
+        6,
+    database_name =
+        b.database_name,
+    object_name =
+        N'-',
+    finding_group =
+        N'Application Lock Blocking',
+    finding =
+        N'There have been ' +
+        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+        N' application locks blocking sessions in ' +
+        b.database_name +
+        N'.',
+   sort_order =  
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+FROM #blocks AS b
+WHERE b.wait_resource LIKE N'APPLICATION%'
+AND   (b.database_name = @database_name
+       OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name
+       OR @object_name IS NULL)
+GROUP BY
+    b.database_name
+OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
     RAISERROR('Inserting #block_findings, check_id 7.1', 0, 1) WITH NOWAIT;
 END;
 
@@ -17673,10 +17757,11 @@ BEGIN
     BEGIN
         SELECT
             @query_text_search =
-                REPLACE(REPLACE(
+                REPLACE(REPLACE(REPLACE(
                     @query_text_search,
                 N'[', @escape_character + N'['),
-                N']', @escape_character + N']');
+                N']', @escape_character + N']'),
+                N'_', @escape_character + N'_');
     END;
 
     SELECT
@@ -17928,6 +18013,7 @@ WHERE NOT EXISTS
           AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
           AND   qsqt.query_sql_text NOT LIKE N''SELECT StatMan%''
           AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
+          AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -19705,7 +19791,24 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = TRY_CAST(qsp.query_plan AS XML),
+        query_plan = 
+             CASE
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS XML)
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 THEN 
+                     (
+                         SELECT
+                             N''-- '' + NCHAR(13) + NCHAR(10) +
+                             N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                             N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                             NCHAR(13) + NCHAR(10) +
+                             REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                             NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                         FOR XML PATH(N''''), 
+                                 TYPE
+                     )
+             END,
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -19912,7 +20015,24 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = TRY_CAST(qsp.query_plan AS XML),
+        query_plan = 
+             CASE
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS XML)
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 THEN 
+                     (
+                         SELECT
+                             N''-- '' + NCHAR(13) + NCHAR(10) +
+                             N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                             N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                             NCHAR(13) + NCHAR(10) +
+                             REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                             NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                         FOR XML PATH(N''''), 
+                                 TYPE
+                     )
+             END,
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -20123,7 +20243,24 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = TRY_CAST(qsp.query_plan AS XML),
+        query_plan = 
+             CASE
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS XML)
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 THEN 
+                     (
+                         SELECT
+                             N''-- '' + NCHAR(13) + NCHAR(10) +
+                             N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                             N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                             NCHAR(13) + NCHAR(10) +
+                             REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                             NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                         FOR XML PATH(N''''), 
+                                 TYPE
+                     )
+             END,
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
@@ -20298,7 +20435,24 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = TRY_CAST(qsp.query_plan AS XML),
+        query_plan = 
+             CASE
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS XML)
+                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 THEN 
+                     (
+                         SELECT
+                             N''-- '' + NCHAR(13) + NCHAR(10) +
+                             N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                             N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                             NCHAR(13) + NCHAR(10) +
+                             REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                             NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                         FOR XML PATH(N''''), 
+                                 TYPE
+                     )
+             END,
         qsp.compatibility_level,'
         +
             CASE @sql_2022_views
