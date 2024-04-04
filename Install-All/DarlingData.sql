@@ -1,4 +1,4 @@
--- Compile Date: 04/03/2024 19:51:09 UTC
+-- Compile Date: 04/04/2024 02:00:53 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11484,7 +11484,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      @@SERVICENAME + 
                      N':'
             END +
-            N'%';
+            N'%',
+        @memory_grant_cap xml
 
     DECLARE
         @waits table
@@ -12478,15 +12479,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
         )
         AND   p.counter_name IN 
         (
-            N'Forwarded Records/sec', N'Table Lock Escalations/sec', N'Page reads/sec', N'Page writes/sec',
-            N'Transactions/sec', N'Lock Requests/sec', N'Lock Wait Time (ms)', N'Lock Waits/sec', N'Number of Deadlocks/sec',
-            N'Granted Workspace Memory (KB)', N'Lock Memory (KB)', N'Memory Grants Pending', N'SQL Cache Memory (KB)',
-            N'Stolen Server Memory (KB)', N'Target Server Memory (KB)', N'Total Server Memory (KB)',
-            N'Batch Requests/sec', N'SQL Compilations/sec', N'SQL Re-Compilations/sec', N'Longest Transaction Running Time',
-            N'Lock waits', N'Log buffer waits', N'Log write waits', N'Memory grant queue waits', N'Network IO waits',
-            N'Non-Page latch waits', N'Page IO latch waits', N'Page latch waits', N'Thread-safe memory objects waits',
-            N'Wait for the worker', N'Active parallel threads', N'Active requests', N'Blocked tasks',
-            N'Query optimizations/sec', N'Queued requests', N'Reduced memory grants/sec', N'Requests completed/sec'
+            N'Forwarded Records/sec', N'Table Lock Escalations/sec', N'Page reads/sec', N'Page writes/sec', N'Checkpoint pages/sec', N'Requests completed/sec',
+            N'Transactions/sec', N'Lock Requests/sec', N'Lock Wait Time (ms)', N'Lock Waits/sec', N'Number of Deadlocks/sec', N'Log Flushes/sec',
+            N'Granted Workspace Memory (KB)', N'Lock Memory (KB)', N'Memory Grants Pending', N'SQL Cache Memory (KB)', N'Background writer pages/sec',
+            N'Stolen Server Memory (KB)', N'Target Server Memory (KB)', N'Total Server Memory (KB)', N'Lazy writes/sec', N'Readahead pages/sec',
+            N'Batch Requests/sec', N'SQL Compilations/sec', N'SQL Re-Compilations/sec', N'Longest Transaction Running Time', N'Log Bytes Flushed/sec',
+            N'Lock waits', N'Log buffer waits', N'Log write waits', N'Memory grant queue waits', N'Network IO waits', N'Log Flush Write Time (ms)',
+            N'Non-Page latch waits', N'Page IO latch waits', N'Page latch waits', N'Thread-safe memory objects waits', N'Wait for the worker', 
+            N'Active parallel threads', N'Active requests', N'Blocked tasks', N'Query optimizations/sec', N'Queued requests', N'Reduced memory grants/sec'
         );
 
         IF @sample_seconds = 0
@@ -12965,8 +12965,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
               )
             AND
               (
-                  t.record.exist('(Record/ResourceMonitor/IndicatorsProcess[. > 0])') = 1
-               OR t.record.exist('(Record/ResourceMonitor/IndicatorsSystem[. > 0])') = 1
+                  t.record.exist('(Record/ResourceMonitor/IndicatorsProcess[. > 1])') = 1
+               OR t.record.exist('(Record/ResourceMonitor/IndicatorsSystem[. > 1])') = 1
               )
             ORDER BY
                 sample_time DESC
@@ -12992,6 +12992,50 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SELECT
             low_memory =
                @low_memory;
+            
+        SELECT
+            @memory_grant_cap = 
+            (
+                SELECT 
+                    group_name =
+                        drgwg.name,
+                    max_grant_percent = 
+                        drgwg.request_max_memory_grant_percent
+                FROM sys.dm_resource_governor_workload_groups AS drgwg
+                FOR XML 
+                    PATH(''), 
+                    TYPE                 
+            );
+
+        IF @memory_grant_cap IS NULL
+        BEGIN
+            SELECT
+                @memory_grant_cap = 
+                (
+                    
+                    SELECT
+                        x.*
+                    FROM 
+                    (
+                        SELECT
+                            group_name =
+                                N'internal',
+                            max_grant_percent =
+                                25
+                        
+                        UNION ALL
+                        
+                        SELECT
+                            group_name =
+                                N'default',
+                            max_grant_percent =
+                                25
+                    ) AS x
+                    FOR XML 
+                        PATH(''), 
+                        TYPE  
+                );
+        END;
 
         SELECT
             deqrs.resource_semaphore_id,
@@ -13010,6 +13054,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     FROM sys.configurations AS c
                     WHERE c.name = N'max server memory (MB)'
                 ) / 1024,
+            max_memory_grant_cap =
+                @memory_grant_cap,
             memory_model =
                 (
                     SELECT
@@ -13918,7 +13964,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
             pass =
                 @pass,
             [waitfor] = 
-                @waitfor;
+                @waitfor,
+            prefix =
+                @prefix,
+            memory_grant_cap =
+                @memory_grant_cap;
        
     END; /*End Debug*/
 END; /*Final End*/
