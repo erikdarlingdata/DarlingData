@@ -15,10 +15,9 @@ All scripts have a version and version date. Make sure you're on a recent versio
 
 Questions about *how the scripts work* can be answered here. 
 
-If you have questions about the results, performance tuning, or SQL Server in general, you'll wanna hit a Q&A site:
-
- * [Top Answers](https://topanswers.xyz/databases)
- * [Stack Exchange](https://dba.stackexchange.com/)
+If you have questions about the results, performance tuning, or SQL Server in general, you'll wanna hit a Q&A site like:
+* https://topanswers.xyz/databases
+* https://dba.stackexchange.com/
 
 **Okay, what's your question?**
 
