@@ -24,5 +24,4 @@ If you have questions about the results, performance tuning, or SQL Server in ge
 
 Enter your query and press F5.
 
-
-
+**IMPORTANT: If you're going to contribute code, [please read the contributing guide](https://github.com/erikdarlingdata/DarlingData/blob/main/CONTRIBUTING.md) first.**
