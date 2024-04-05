@@ -15,4 +15,5 @@ Look in the stored procedure, and it'll have a version date & number near the to
 
 **Which versions of SQL Server and which OS are affected by this issue? Did this work in previous versions of our procedures?**
 
-**IMPORTANT: If you're going to contribute code, [please read the contributing guide](https://github.com/erikdarlingdata/DarlingData/blob/main/CONTRIBUTING.md) first.**
+**IMPORTANT: If you're going to contribute code, please read the contributing guide first.**
+https://github.com/erikdarlingdata/DarlingData/blob/main/CONTRIBUTING.md
