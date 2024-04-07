@@ -16,7 +16,7 @@ Check out the [Github issues list], just in case someone already opened a simila
 
 You should use the template for reporting bugs, to provide as much detail as possible. All of my stored procedures should have a `@debug` parameter that can help you track down more detail, too.
 
-Please make sure all pull requests point to the dev branch, and not the main branch.
+Please make sure that you fork the **dev** branch, and all pull requests point to the **dev** branch, **not** the main branch.
 
 ## Requesting Features
 
@@ -28,7 +28,7 @@ Likewise, please don't be disappointed if I don't want to spend time building a 
 
 As much as I'd like everyone to be happy with my tools, I work on them in my spare time, and can't do free development for everything and everyone.
 
-Please make sure all pull requests point to the dev branch, and not the main branch.
+Please make sure that you fork the **dev** branch, and all pull requests point to the **dev** branch, **not** the main branch.
 
 ## Working On Code
 
@@ -38,7 +38,7 @@ There is a template for feature requests that asks some important questions, and
 
 I am guilty of not doing that at times, but it's my repo, and I abuse the issues feature a bit to make notes for myself.
 
-Please make sure all pull requests point to the dev branch, and not the main branch.
+Please make sure that you fork the **dev** branch, and all pull requests point to the **dev** branch, **not** the main branch.
 
 ## Code Standards
 
@@ -61,7 +61,7 @@ I have a particular formatting style that I stick to. You can code things howeve
 * Parentheses in TOP expressions, e.g. TOP (1000)
 * Aligning parentheses 
 
-Please make sure all pull requests point to the dev branch, and not the main branch.
+Please make sure that you fork the **dev** branch, and all pull requests point to the **dev** branch, **not** the main branch.
 
 [Github issues list]:https://github.com/erikdarlingdata/DarlingData/issues
 [closed issues list]: https://github.com/erikdarlingdata/DarlingData/issues?q=is%3Aissue+is%3Aclosed
