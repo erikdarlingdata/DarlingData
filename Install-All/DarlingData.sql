@@ -1,4 +1,4 @@
--- Compile Date: 04/07/2024 14:52:34 UTC
+-- Compile Date: 04/07/2024 15:00:58 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -12480,7 +12480,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         AND   p.counter_name IN 
         (
             N'Forwarded Records/sec', N'Table Lock Escalations/sec', N'Page reads/sec', N'Page writes/sec', N'Checkpoint pages/sec', N'Requests completed/sec',
-            N'Transactions/sec', N'Lock Requests/sec', N'Lock Wait Time (ms)', N'Lock Waits/sec', N'Number of Deadlocks/sec', N'Log Flushes/sec',
+            N'Transactions/sec', N'Lock Requests/sec', N'Lock Wait Time (ms)', N'Lock Waits/sec', N'Number of Deadlocks/sec', N'Log Flushes/sec', N'Page lookups/sec',
             N'Granted Workspace Memory (KB)', N'Lock Memory (KB)', N'Memory Grants Pending', N'SQL Cache Memory (KB)', N'Background writer pages/sec',
             N'Stolen Server Memory (KB)', N'Target Server Memory (KB)', N'Total Server Memory (KB)', N'Lazy writes/sec', N'Readahead pages/sec',
             N'Batch Requests/sec', N'SQL Compilations/sec', N'SQL Re-Compilations/sec', N'Longest Transaction Running Time', N'Log Bytes Flushed/sec',
