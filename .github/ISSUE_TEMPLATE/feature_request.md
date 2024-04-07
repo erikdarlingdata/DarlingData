@@ -15,3 +15,6 @@ A clear and concise description of any alternative solutions or features you've 
 
 **Are you ready to build the code for the feature?**
 As much as we'd love to build everything that everyone wants for free, we need your help. Open source is built with your help and code. Are you ready to commit time to this project? Have you got existing code you can help contribute to solve the problem?
+
+**IMPORTANT: If you're going to contribute code, please read the contributing guide first.**
+https://github.com/erikdarlingdata/DarlingData/blob/main/CONTRIBUTING.md
