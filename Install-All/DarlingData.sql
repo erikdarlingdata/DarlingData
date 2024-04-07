@@ -1,4 +1,4 @@
--- Compile Date: 04/05/2024 01:44:22 UTC
+-- Compile Date: 04/07/2024 14:52:34 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -15334,17 +15334,9 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @work_start_utc time(0),
           @work_end_utc time(0)',
     @plans_top =
-        CASE
-            WHEN @include_plan_ids IS NULL
-            THEN 1
-            ELSE 10
-         END,
+        9223372036854775807,
     @queries_top =
-        CASE
-            WHEN @include_query_ids IS NULL
-            THEN 1
-            ELSE 10
-         END,
+        9223372036854775807,
     @nc10 = NCHAR(10),
     @where_clause = N'',
     @query_text_search = 
@@ -18324,65 +18316,65 @@ SELECT
     @sql += N'
 SELECT
     @database_id,
-    qsrs.runtime_stats_id,
+    MAX(qsrs.runtime_stats_id),
     qsrs.plan_id,
-    qsrs.runtime_stats_interval_id,
-    qsrs.execution_type_desc,
-    qsrs.first_execution_time,
-    qsrs.last_execution_time,
-    qsrs.count_executions,
-    (qsrs.avg_duration / 1000.),
-    (qsrs.last_duration / 1000.),
-    (qsrs.min_duration / 1000.),
-    (qsrs.max_duration / 1000.),
-    (qsrs.avg_cpu_time / 1000.),
-    (qsrs.last_cpu_time / 1000.),
-    (qsrs.min_cpu_time / 1000.),
-    (qsrs.max_cpu_time / 1000.),
-    ((qsrs.avg_logical_io_reads * 8.) / 1024.),
-    ((qsrs.last_logical_io_reads * 8.) / 1024.),
-    ((qsrs.min_logical_io_reads * 8.) / 1024.),
-    ((qsrs.max_logical_io_reads * 8.) / 1024.),
-    ((qsrs.avg_logical_io_writes * 8.) / 1024.),
-    ((qsrs.last_logical_io_writes * 8.) / 1024.),
-    ((qsrs.min_logical_io_writes * 8.) / 1024.),
-    ((qsrs.max_logical_io_writes * 8.) / 1024.),
-    ((qsrs.avg_physical_io_reads * 8.) / 1024.),
-    ((qsrs.last_physical_io_reads * 8.) / 1024.),
-    ((qsrs.min_physical_io_reads * 8.) / 1024.),
-    ((qsrs.max_physical_io_reads * 8.) / 1024.),
-    (qsrs.avg_clr_time / 1000.),
-    (qsrs.last_clr_time / 1000.),
-    (qsrs.min_clr_time / 1000.),
-    (qsrs.max_clr_time / 1000.),
-    qsrs.last_dop,
-    qsrs.min_dop,
-    qsrs.max_dop,
-    ((qsrs.avg_query_max_used_memory * 8.) / 1024.),
-    ((qsrs.last_query_max_used_memory * 8.) / 1024.),
-    ((qsrs.min_query_max_used_memory * 8.) / 1024.),
-    ((qsrs.max_query_max_used_memory * 8.) / 1024.),
-    qsrs.avg_rowcount,
-    qsrs.last_rowcount,
-    qsrs.min_rowcount,
-    qsrs.max_rowcount,';
+    MAX(qsrs.runtime_stats_interval_id),
+    MAX(qsrs.execution_type_desc),
+    MIN(qsrs.first_execution_time),
+    MAX(qsrs.last_execution_time),
+    SUM(qsrs.count_executions),
+    AVG((qsrs.avg_duration / 1000.)),
+    SUM((qsrs.last_duration / 1000.)),
+    SUM((qsrs.min_duration / 1000.)),
+    SUM((qsrs.max_duration / 1000.)),
+    AVG((qsrs.avg_cpu_time / 1000.)),
+    SUM((qsrs.last_cpu_time / 1000.)),
+    SUM((qsrs.min_cpu_time / 1000.)),
+    SUM((qsrs.max_cpu_time / 1000.)),
+    AVG(((qsrs.avg_logical_io_reads * 8.) / 1024.)),
+    SUM(((qsrs.last_logical_io_reads * 8.) / 1024.)),
+    SUM(((qsrs.min_logical_io_reads * 8.) / 1024.)),
+    SUM(((qsrs.max_logical_io_reads * 8.) / 1024.)),
+    AVG(((qsrs.avg_logical_io_writes * 8.) / 1024.)),
+    SUM(((qsrs.last_logical_io_writes * 8.) / 1024.)),
+    SUM(((qsrs.min_logical_io_writes * 8.) / 1024.)),
+    SUM(((qsrs.max_logical_io_writes * 8.) / 1024.)),
+    AVG(((qsrs.avg_physical_io_reads * 8.) / 1024.)),
+    SUM(((qsrs.last_physical_io_reads * 8.) / 1024.)),
+    SUM(((qsrs.min_physical_io_reads * 8.) / 1024.)),
+    SUM(((qsrs.max_physical_io_reads * 8.) / 1024.)),
+    AVG((qsrs.avg_clr_time / 1000.)),
+    SUM((qsrs.last_clr_time / 1000.)),
+    SUM((qsrs.min_clr_time / 1000.)),
+    SUM((qsrs.max_clr_time / 1000.)),
+    MAX(qsrs.last_dop),
+    MIN(qsrs.min_dop),
+    MAX(qsrs.max_dop),
+    AVG(((qsrs.avg_query_max_used_memory * 8.) / 1024.)),
+    SUM(((qsrs.last_query_max_used_memory * 8.) / 1024.)),
+    SUM(((qsrs.min_query_max_used_memory * 8.) / 1024.)),
+    SUM(((qsrs.max_query_max_used_memory * 8.) / 1024.)),
+    AVG(qsrs.avg_rowcount),
+    MAX(qsrs.last_rowcount),
+    MIN(qsrs.min_rowcount),
+    MAX(qsrs.max_rowcount),';
 
 IF @new = 1
     BEGIN
         SELECT
             @sql += N'
-    ((qsrs.avg_num_physical_io_reads * 8.) / 1024.),
-    ((qsrs.last_num_physical_io_reads * 8.) / 1024.),
-    ((qsrs.min_num_physical_io_reads * 8.) / 1024.),
-    ((qsrs.max_num_physical_io_reads * 8.) / 1024.),
-    (qsrs.avg_log_bytes_used / 100000000.),
-    (qsrs.last_log_bytes_used / 100000000.),
-    (qsrs.min_log_bytes_used / 100000000.),
-    (qsrs.max_log_bytes_used / 100000000.),
-    ((qsrs.avg_tempdb_space_used * 8) / 1024.),
-    ((qsrs.last_tempdb_space_used * 8) / 1024.),
-    ((qsrs.min_tempdb_space_used * 8) / 1024.),
-    ((qsrs.max_tempdb_space_used * 8) / 1024.),';
+    AVG(((qsrs.avg_num_physical_io_reads * 8.) / 1024.)),
+    MAX(((qsrs.last_num_physical_io_reads * 8.) / 1024.)),
+    MIN(((qsrs.min_num_physical_io_reads * 8.) / 1024.)),
+    MAX(((qsrs.max_num_physical_io_reads * 8.) / 1024.)),
+    AVG((qsrs.avg_log_bytes_used / 100000000.)),
+    MAX((qsrs.last_log_bytes_used / 100000000.)),
+    MIN((qsrs.min_log_bytes_used / 100000000.)),
+    MAX((qsrs.max_log_bytes_used / 100000000.)),
+    AVG(((qsrs.avg_tempdb_space_used * 8) / 1024.)),
+    MAX(((qsrs.last_tempdb_space_used * 8) / 1024.)),
+    MIN(((qsrs.min_tempdb_space_used * 8) / 1024.)),
+    MAX(((qsrs.max_tempdb_space_used * 8) / 1024.)),';
     END;
 
 IF @new = 0
@@ -18430,6 +18422,8 @@ CASE @sort_order
      ELSE N'qsrs.avg_cpu_time'
 END + N' DESC
 ) AS qsrs
+GROUP BY
+    qsrs.plan_id
 OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 
 IF @debug = 1
@@ -19947,12 +19941,13 @@ FROM
                  THEN 
                      (
                          SELECT
-                             N''-- '' + NCHAR(13) + NCHAR(10) +
-                             N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
-                             N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
-                             NCHAR(13) + NCHAR(10) +
-                             REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                             NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                             [processing-instruction(query_plan)] =
+                                 N''-- '' + NCHAR(13) + NCHAR(10) +
+                                 N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                 N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                 NCHAR(13) + NCHAR(10) +
+                                 REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                 NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
                          FOR XML PATH(N''''), 
                                  TYPE
                      )
@@ -20171,12 +20166,13 @@ FROM
                  THEN 
                      (
                          SELECT
-                             N''-- '' + NCHAR(13) + NCHAR(10) +
-                             N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
-                             N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
-                             NCHAR(13) + NCHAR(10) +
-                             REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                             NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                             [processing-instruction(query_plan)] =
+                                 N''-- '' + NCHAR(13) + NCHAR(10) +
+                                 N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                 N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                 NCHAR(13) + NCHAR(10) +
+                                 REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                 NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
                          FOR XML PATH(N''''), 
                                  TYPE
                      )
@@ -20399,12 +20395,13 @@ FROM
                  THEN 
                      (
                          SELECT
-                             N''-- '' + NCHAR(13) + NCHAR(10) +
-                             N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
-                             N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
-                             NCHAR(13) + NCHAR(10) +
-                             REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                             NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                             [processing-instruction(query_plan)] =
+                                 N''-- '' + NCHAR(13) + NCHAR(10) +
+                                 N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                 N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                 NCHAR(13) + NCHAR(10) +
+                                 REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                 NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
                          FOR XML PATH(N''''), 
                                  TYPE
                      )
@@ -20591,12 +20588,13 @@ FROM
                  THEN 
                      (
                          SELECT
-                             N''-- '' + NCHAR(13) + NCHAR(10) +
-                             N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
-                             N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
-                             NCHAR(13) + NCHAR(10) +
-                             REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                             NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2 AS [processing-instruction(query_plan)]
+                             [processing-instruction(query_plan)] =
+                                 N''-- '' + NCHAR(13) + NCHAR(10) +
+                                 N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                 N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                 NCHAR(13) + NCHAR(10) +
+                                 REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                 NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
                          FOR XML PATH(N''''), 
                                  TYPE
                      )
