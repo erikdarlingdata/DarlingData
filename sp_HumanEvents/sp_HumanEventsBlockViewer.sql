@@ -151,6 +151,49 @@ BEGIN
     OPTION(RECOMPILE);
 
     SELECT
+        blocked_process_report_setup = 
+            N'check the messages tab for setup commands';
+
+    RAISERROR('
+The blocked process report needs to be enabled:   
+EXEC sys.sp_configure ''show advanced options'', 1;   
+EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */   
+RECONFIGURE;', 0, 1) WITH NOWAIT;
+
+    RAISERROR('
+/*Create an extended event to log the blocked process report*/
+/*
+This won''t work in Azure SQLDB, you need to customize it to create:
+ * ON DATABASE instead of ON SERVER
+ * With a ring_buffer target
+*/
+CREATE EVENT SESSION 
+    blocked_process_report
+ON SERVER
+    ADD EVENT 
+        sqlserver.blocked_process_report
+    ADD TARGET 
+        package0.event_file
+    (
+        SET filename = N''bpr''
+    )
+WITH
+(
+    MAX_MEMORY = 4096KB,
+    EVENT_RETENTION_MODE = ALLOW_SINGLE_EVENT_LOSS,
+    MAX_DISPATCH_LATENCY = 5 SECONDS,
+    MAX_EVENT_SIZE = 0KB,
+    MEMORY_PARTITION_MODE = NONE,
+    TRACK_CAUSALITY = OFF,
+    STARTUP_STATE = ON
+);
+
+ALTER EVENT SESSION
+    blocked_process_report
+ON SERVER 
+    STATE = START; ', 0, 1) WITH NOWAIT;
+    
+    SELECT
         mit_license_yo = 'i am MIT licensed, so like, do whatever'
  
     UNION ALL
@@ -1323,12 +1366,12 @@ END;
 CREATE CLUSTERED INDEX
     blocking
 ON #blocked
-    (monitor_loop, blocking_desc);
+    (monitor_loop, blocking_desc, blocked_desc);
 
 CREATE INDEX
     blocked
 ON #blocked
-    (monitor_loop, blocked_desc);  
+    (monitor_loop, blocked_desc, blocking_desc);  
 
 IF @debug = 1
 BEGIN
@@ -1443,12 +1486,12 @@ END;
 CREATE CLUSTERED INDEX
     blocking
 ON #blocking
-    (monitor_loop, blocking_desc);
+    (monitor_loop, blocking_desc, blocked_desc);
 
 CREATE INDEX
     blocked
 ON #blocking
-    (monitor_loop, blocked_desc);  
+    (monitor_loop, blocked_desc, blocking_desc);  
 
 IF @debug = 1
 BEGIN
@@ -1542,16 +1585,8 @@ END;
 SELECT
     kheb.event_time,
     kheb.database_name,
-    contentious_object =
-        ISNULL
-        (
-            kheb.contentious_object,
-            N'Unresolved: ' +
-            N'database: ' +
-            kheb.database_name +
-            N' object_id: ' +
-            RTRIM(kheb.object_id)
-        ),
+    kheb.object_id,
+    contentious_object = CONVERT(nvarchar(4000), NULL),
     kheb.activity,
     blocking_tree =
         REPLICATE(' > ', kheb.blocking_level) +
@@ -1696,19 +1731,7 @@ INTO #blocks
 FROM
 (             
     SELECT
-        bg.*,
-        contentious_object =
-            OBJECT_SCHEMA_NAME
-            (
-                bg.object_id,
-                bg.database_id          
-            ) +
-            N'.' +
-            OBJECT_NAME
-            (
-                bg.object_id,
-                bg.database_id
-            )
+        bg.*
     FROM #blocking AS bg
     WHERE (bg.database_name = @database_name
            OR @database_name IS NULL)
@@ -1716,23 +1739,45 @@ FROM
     UNION ALL
  
     SELECT
-        bd.*,
-        contentious_object =
-            OBJECT_SCHEMA_NAME
-            (
-                bd.object_id,
-                bd.database_id          
-            ) +
-            N'.' +
-            OBJECT_NAME
-            (
-                bd.object_id,
-                bd.database_id
-            )
+        bd.*
     FROM #blocked AS bd   
     WHERE (bd.database_name = @database_name
            OR @database_name IS NULL)
 ) AS kheb
+OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
+    RAISERROR('Updating #blocks contentious_object column', 0, 1) WITH NOWAIT;
+END;
+UPDATE b
+    SET b.contentious_object = 
+        ISNULL
+        (
+            co.contentious_object,
+            N'Unresolved: ' +
+            N'database: ' +
+            b.database_name +
+            N' object_id: ' +
+            RTRIM(b.object_id)
+        )
+FROM #blocks AS b
+CROSS APPLY
+(
+    SELECT
+        contentious_object =        
+            OBJECT_SCHEMA_NAME
+            (
+                b.object_id,
+                b.database_id          
+            ) +
+            N'.' +
+            OBJECT_NAME
+            (
+                b.object_id,
+                b.database_id
+            )
+) AS co
 OPTION(RECOMPILE);
 
 SELECT

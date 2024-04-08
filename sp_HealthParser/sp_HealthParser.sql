@@ -318,7 +318,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            'cpu', 
            'memory', 
            'system', 
-           'locking'
+           'blocking',
+           'blocks',
+           'deadlock',
+           'deadlocks',
+           'locking',
+           'locks'
        )
     BEGIN
         SELECT
@@ -326,7 +331,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CASE 
                     WHEN @what_to_check = 'wait'
                     THEN 'waits'
-                    WHEN @what_to_check IN ('lock', 'locks')
+                    WHEN @what_to_check IN 
+                         ('blocking', 'blocks', 'deadlock', 'deadlocks', 'lock', 'locks')
                     THEN 'locking'
                     ELSE 'all'
                 END;
@@ -626,7 +632,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            ) AS xml
            CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-           WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
+           WHERE ca.utc_timestamp >= @start_date 
+           AND   ca.utc_timestamp < @end_date
            OPTION(RECOMPILE);';
           
             IF @debug = 1
@@ -675,7 +682,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ) AS xml
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
         CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-        WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
+        WHERE ca.utc_timestamp >= @start_date 
+        AND   ca.utc_timestamp < @end_date
         OPTION(RECOMPILE);';
   
         IF @debug = 1
@@ -732,7 +740,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ) AS xml
             CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
             CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-            WHERE ca.utc_timestamp >= @start_date AND ca.utc_timestamp < @end_date
+            WHERE ca.utc_timestamp >= @start_date 
+            AND   ca.utc_timestamp < @end_date
             OPTION(RECOMPILE);';
             
             IF @debug = 1
@@ -995,7 +1004,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 finding = 
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' + @what_to_check
+                        THEN 'waits skipped, @what_to_check set to ' + 
+                             @what_to_check
                         WHEN @what_to_check IN ('all', 'waits')
                         THEN 'no queries with significant waits found between ' + 
                              RTRIM(CONVERT(date, @start_date)) +
@@ -1159,7 +1169,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 finding = 
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' + @what_to_check
+                        THEN 'waits skipped, @what_to_check set to ' + 
+                             @what_to_check
                         WHEN @what_to_check IN ('all', 'waits')
                         THEN 'no significant waits found between ' + 
                              RTRIM(CONVERT(date, @start_date)) +
@@ -1331,7 +1342,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 finding = 
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' + @what_to_check
+                        THEN 'waits skipped, @what_to_check set to ' + 
+                             @what_to_check
                         WHEN @what_to_check IN ('all', 'waits')
                         THEN 'no significant waits found between ' + 
                              RTRIM(CONVERT(date, @start_date)) +
@@ -1511,7 +1523,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 finding = 
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'disk')
-                        THEN 'disk skipped, @what_to_check set to ' + @what_to_check
+                        THEN 'disk skipped, @what_to_check set to ' + 
+                             @what_to_check
                         WHEN @what_to_check IN ('all', 'disk')
                         THEN 'no io issues found between ' + 
                              RTRIM(CONVERT(date, @start_date)) +
@@ -1619,7 +1632,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 finding = 
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'cpu')
-                        THEN 'cpu skipped, @what_to_check set to ' + @what_to_check
+                        THEN 'cpu skipped, @what_to_check set to ' + 
+                             @what_to_check
                         WHEN @what_to_check IN ('all', 'cpu')
                         THEN 'no cpu issues found between ' + 
                              RTRIM(CONVERT(date, @start_date)) +
@@ -1733,7 +1747,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 finding = 
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'memory')
-                        THEN 'memory skipped, @what_to_check set to ' + @what_to_check
+                        THEN 'memory skipped, @what_to_check set to ' + 
+                             @what_to_check
                         WHEN @what_to_check IN ('all', 'memory')
                         THEN 'no memory issues found between ' + 
                              RTRIM(CONVERT(date, @start_date)) +
@@ -1853,7 +1868,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 finding = 
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'system')
-                        THEN 'system health skipped, @what_to_check set to ' + @what_to_check
+                        THEN 'system health skipped, @what_to_check set to ' + 
+                             @what_to_check
                         WHEN @what_to_check IN ('all', 'system')
                         THEN 'no system health issues found between ' + 
                              RTRIM(CONVERT(date, @start_date)) +
