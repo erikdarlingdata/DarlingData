@@ -1,4 +1,4 @@
-﻿SET ANSI_NULLS ON;
+SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
@@ -16,14 +16,14 @@ GO
 ██╔══██║██╔══╝  ██╔══██║██║     ██║   ██╔══██║
 ██║  ██║███████╗██║  ██║███████╗██║   ██║  ██║
 ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝  ╚═╝
-                                              
+
 ██████╗  █████╗ ██████╗ ███████╗███████╗██████╗
 ██╔══██╗██╔══██╗██╔══██╗██╔════╝██╔════╝██╔══██╗
 ██████╔╝███████║██████╔╝███████╗█████╗  ██████╔╝
 ██╔═══╝ ██╔══██║██╔══██╗╚════██║██╔══╝  ██╔══██╗
 ██║     ██║  ██║██║  ██║███████║███████╗██║  ██║
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
-                                              
+
 
 Copyright 2024 Darling Data, LLC
 https://www.erikdarling.com/
@@ -32,11 +32,11 @@ For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
 */
 
-IF OBJECT_ID('dbo.sp_HealthParser') IS NULL   
-   BEGIN   
-       EXEC ('CREATE PROCEDURE dbo.sp_HealthParser AS RETURN 138;');   
-   END;   
-GO 
+IF OBJECT_ID('dbo.sp_HealthParser') IS NULL
+   BEGIN
+       EXEC ('CREATE PROCEDURE dbo.sp_HealthParser AS RETURN 138;');
+   END;
+GO
 
 ALTER PROCEDURE
     dbo.sp_HealthParser
@@ -95,8 +95,8 @@ BEGIN
                     WHEN N'@database_name' THEN N'database name to show blocking events for'
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
-                    WHEN N'@skip_locks' THEN N'skip the blocking and deadlocking section'                                       
-                    WHEN N'@pending_task_threshold' THEN N'minimum number of pending tasks to display'                                        
+                    WHEN N'@skip_locks' THEN N'skip the blocking and deadlocking section'
+                    WHEN N'@pending_task_threshold' THEN N'minimum number of pending tasks to display'
                     WHEN N'@version' THEN N'OUTPUT; for support'
                     WHEN N'@version_date' THEN N'OUTPUT; for support'
                     WHEN N'@help' THEN N'how you got here'
@@ -113,7 +113,7 @@ BEGIN
                     WHEN N'@wait_duration_ms' THEN N'the minimum duration of a wait for queries with interesting waits'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for top wait stats by count and duration'
                     WHEN N'@skip_locks' THEN N'0 or 1'
-                    WHEN N'@pending_task_threshold' THEN N'a valid integer'                    
+                    WHEN N'@pending_task_threshold' THEN N'a valid integer'
                     WHEN N'@version' THEN N'none'
                     WHEN N'@version_date' THEN N'none'
                     WHEN N'@help' THEN N'0 or 1'
@@ -147,12 +147,12 @@ BEGIN
 
         SELECT
             mit_license_yo = 'i am MIT licensed, so like, do whatever'
-      
+
         UNION ALL
-      
+
         SELECT
             mit_license_yo = 'see printed messages for full license';
-      
+
         RAISERROR('
 MIT License
 
@@ -172,7 +172,7 @@ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVE
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ', 0, 1) WITH NOWAIT;
-  
+
         RETURN;
     END; /*End help section*/
 
@@ -224,7 +224,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         RAISERROR('Fixing variables', 0, 1) WITH NOWAIT;
     END;
-  
+
     SELECT
         @start_date =
             CASE
@@ -310,14 +310,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SELECT
        @what_to_check = LOWER(@what_to_check);
 
-    IF @what_to_check NOT IN 
+    IF @what_to_check NOT IN
        (
-           'all', 
-           'waits', 
-           'disk', 
-           'cpu', 
-           'memory', 
-           'system', 
+           'all',
+           'waits',
+           'disk',
+           'cpu',
+           'memory',
+           'system',
            'blocking',
            'blocks',
            'deadlock',
@@ -327,11 +327,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
        )
     BEGIN
         SELECT
-            @what_to_check = 
-                CASE 
+            @what_to_check =
+                CASE
                     WHEN @what_to_check = 'wait'
                     THEN 'waits'
-                    WHEN @what_to_check IN 
+                    WHEN @what_to_check IN
                          ('blocking', 'blocks', 'deadlock', 'deadlocks', 'lock', 'locks')
                     THEN 'locking'
                     ELSE 'all'
@@ -348,13 +348,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         wait_type nvarchar(60)
     );
-  
+
     CREATE TABLE
         #wait_info
     (
         wait_info xml NOT NULL
     );
-  
+
     CREATE TABLE
         #sp_server_diagnostics_component_result
     (
@@ -381,12 +381,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /*The more you ignore waits, the worser they get*/
     IF @what_to_check IN ('all', 'waits')
-    BEGIN    
+    BEGIN
         IF @debug = 1
         BEGIN
             RAISERROR('Inserting ignorable waits to #ignore', 0, 1) WITH NOWAIT;
         END;
-        
+
         INSERT
             #ignore WITH(TABLOCKX)
         (
@@ -423,7 +423,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #ignore AS i ORDER BY i.wait_type
         OPTION(RECOMPILE);
     END;
-  
+
     /*
     The column timestamp_utc is 2017+ only, but terribly broken:
     https://dba.stackexchange.com/q/323147/32281
@@ -467,14 +467,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ) AS xml
             CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
             OPTION(RECOMPILE);';
-            
+
             IF @debug = 1
             BEGIN
                 PRINT @sql;
                 RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
                 SET STATISTICS XML ON;
             END;
-            
+
             INSERT INTO
                 #wait_info WITH (TABLOCKX)
             (
@@ -485,13 +485,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 @params,
                 @start_date,
                 @end_date;
-            
+
             IF @debug = 1
             BEGIN
                 SET STATISTICS XML OFF;
             END;
-        END; 
-     
+        END;
+
         /*Grab data from the sp_server_diagnostics_component_result component*/
         SELECT
             @sql = N'
@@ -513,14 +513,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ) AS xml
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
         OPTION(RECOMPILE);';
-      
+
         IF @debug = 1
-        BEGIN 
+        BEGIN
             PRINT @sql;
             RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
             SET STATISTICS XML ON;
         END;
-       
+
         INSERT INTO
             #sp_server_diagnostics_component_result WITH(TABLOCKX)
         (
@@ -538,7 +538,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /*Grab data from the xml_deadlock_report component*/
-        IF 
+        IF
         (
              @what_to_check IN ('all', 'locking')
          AND @skip_locks = 0
@@ -569,14 +569,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ) AS xml
             CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
             OPTION(RECOMPILE);';
-            
+
             IF @debug = 1
             BEGIN
                 PRINT @sql;
                 RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
                 SET STATISTICS XML ON;
             END;
-            
+
             INSERT INTO
                 #xml_deadlock_report WITH(TABLOCKX)
             (
@@ -587,14 +587,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 @params,
                 @start_date,
                 @end_date;
-            
+
             IF @debug = 1
             BEGIN
                 SET STATISTICS XML OFF;
             END;
         END;
     END; /*End 2016+ data collection*/
-  
+
     IF NOT EXISTS
     (
         SELECT
@@ -632,17 +632,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            ) AS xml
            CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-           WHERE ca.utc_timestamp >= @start_date 
+           WHERE ca.utc_timestamp >= @start_date
            AND   ca.utc_timestamp < @end_date
            OPTION(RECOMPILE);';
-          
+
             IF @debug = 1
             BEGIN
                 PRINT @sql;
                 RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
                 SET STATISTICS XML ON;
             END;
-           
+
            INSERT INTO
                #wait_info WITH (TABLOCKX)
            (
@@ -653,7 +653,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                @params,
                @start_date,
                @end_date;
-           
+
            IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
        END;
 
@@ -661,8 +661,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF @debug = 1
         BEGIN
             RAISERROR('Checking sp_server_diagnostics_component_result for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
-        END;       
-       
+        END;
+
         SELECT
             @sql = N'
         SELECT
@@ -682,17 +682,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ) AS xml
         CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
         CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-        WHERE ca.utc_timestamp >= @start_date 
+        WHERE ca.utc_timestamp >= @start_date
         AND   ca.utc_timestamp < @end_date
         OPTION(RECOMPILE);';
-  
+
         IF @debug = 1
         BEGIN
             RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
             PRINT @sql;
             SET STATISTICS XML ON;
         END;
-       
+
         INSERT INTO
             #sp_server_diagnostics_component_result WITH(TABLOCKX)
         (
@@ -703,7 +703,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @params,
             @start_date,
             @end_date;
-       
+
         IF @debug = 1
         BEGIN
             SET STATISTICS XML OFF;
@@ -720,7 +720,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             BEGIN
                 RAISERROR('Checking locking for not Managed Instance', 0, 1) WITH NOWAIT;
             END;
-           
+
             SELECT
                 @sql = N'
             SELECT
@@ -740,17 +740,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ) AS xml
             CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
             CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-            WHERE ca.utc_timestamp >= @start_date 
+            WHERE ca.utc_timestamp >= @start_date
             AND   ca.utc_timestamp < @end_date
             OPTION(RECOMPILE);';
-            
+
             IF @debug = 1
             BEGIN
                 PRINT @sql;
                 RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
                 SET STATISTICS XML ON;
             END;
-            
+
             INSERT INTO
                 #xml_deadlock_report WITH(TABLOCKX)
             (
@@ -761,7 +761,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 @params,
                 @start_date,
                 @end_date;
-            
+
             IF @debug = 1
             BEGIN
                 SET STATISTICS XML OFF;
@@ -808,7 +808,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Inserting #ring_buffer', 0, 1) WITH NOWAIT;
         END;
-       
+
         INSERT
             #ring_buffer WITH(TABLOCKX)
         (
@@ -904,19 +904,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OPTION(RECOMPILE);
         END;
     END; /*End Managed Instance collection*/
-  
+
     IF @debug = 1
     BEGIN
         SELECT TOP (100)
             table_name = '#wait_info, top 100 rows',
             x.*
         FROM #wait_info AS x;
-        
-        SELECT TOP (100) 
-            table_name = '#sp_server_diagnostics_component_result, top 100 rows', 
-            x.* 
+
+        SELECT TOP (100)
+            table_name = '#sp_server_diagnostics_component_result, top 100 rows',
+            x.*
         FROM #sp_server_diagnostics_component_result AS x;
-       
+
         SELECT TOP (100)
             table_name = '#xml_deadlock_report, top 100 rows',
             x.*
@@ -932,16 +932,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT
-            event_time = 
+            event_time =
                 DATEADD
                 (
-                    MINUTE, 
+                    MINUTE,
                     DATEDIFF
                     (
-                        MINUTE, 
-                        GETUTCDATE(), 
+                        MINUTE,
+                        GETUTCDATE(),
                         SYSDATETIME()
-                    ), 
+                    ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
             wait_type = w.x.value('(data[@name="wait_type"]/text/text())[1]', 'nvarchar(60)'),
@@ -971,7 +971,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Adding query_text to #waits_queries', 0, 1) WITH NOWAIT;
         END;
-           
+
         ALTER TABLE #waits_queries
         ADD query_text AS
             REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -982,7 +982,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
             NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
         PERSISTED;
-           
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -992,7 +992,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-           
+
         IF NOT EXISTS
         (
             SELECT
@@ -1001,17 +1001,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         BEGIN
             SELECT
-                finding = 
+                finding =
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' + 
+                        THEN 'waits skipped, @what_to_check set to ' +
                              @what_to_check
                         WHEN @what_to_check IN ('all', 'waits')
-                        THEN 'no queries with significant waits found between ' + 
+                        THEN 'no queries with significant waits found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
                              RTRIM(CONVERT(date, @end_date)) +
-                             ' with a minimum duration of ' + 
+                             ' with a minimum duration of ' +
                              RTRIM(@wait_duration_ms) +
                              '.'
                         ELSE 'no queries with significant waits found!'
@@ -1071,7 +1071,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 wq.duration_ms DESC
             OPTION(RECOMPILE);
         END;
-          
+
         /*Waits by count*/
         IF @debug = 1
         BEGIN
@@ -1079,16 +1079,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT
-            event_time = 
+            event_time =
                 DATEADD
                 (
-                    MINUTE, 
+                    MINUTE,
                     DATEDIFF
                     (
-                        MINUTE, 
-                        GETUTCDATE(), 
+                        MINUTE,
+                        GETUTCDATE(),
                         SYSDATETIME()
-                    ), 
+                    ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
@@ -1110,7 +1110,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
               )
         OPTION(RECOMPILE);
-           
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -1120,7 +1120,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-           
+
         SELECT
             finding = 'waits by count',
             event_time_rounded =
@@ -1166,13 +1166,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         BEGIN
             SELECT
-                finding = 
+                finding =
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' + 
+                        THEN 'waits skipped, @what_to_check set to ' +
                              @what_to_check
                         WHEN @what_to_check IN ('all', 'waits')
-                        THEN 'no significant waits found between ' + 
+                        THEN 'no significant waits found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
                              RTRIM(CONVERT(date, @end_date)) +
@@ -1181,7 +1181,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     END;
         END;
         ELSE
-        BEGIN        
+        BEGIN
             SELECT
                 t.finding,
                 t.event_time_rounded,
@@ -1240,7 +1240,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 t.waits DESC
             OPTION(RECOMPILE);
         END;
-           
+
         /*Grab waits by duration*/
         IF @debug = 1
         BEGIN
@@ -1248,16 +1248,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT
-            event_time = 
+            event_time =
                 DATEADD
                 (
-                    MINUTE, 
+                    MINUTE,
                     DATEDIFF
                     (
-                        MINUTE, 
-                        GETUTCDATE(), 
+                        MINUTE,
+                        GETUTCDATE(),
                         SYSDATETIME()
-                    ), 
+                    ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
             wait_type = w2.x2.value('@waitType', 'nvarchar(60)'),
@@ -1280,7 +1280,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
               )
         OPTION(RECOMPILE);
-           
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -1290,7 +1290,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-           
+
         SELECT
             finding = 'waits by duration',
             event_time_rounded =
@@ -1339,24 +1339,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         BEGIN
             SELECT
-                finding = 
+                finding =
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' + 
+                        THEN 'waits skipped, @what_to_check set to ' +
                              @what_to_check
                         WHEN @what_to_check IN ('all', 'waits')
-                        THEN 'no significant waits found between ' + 
+                        THEN 'no significant waits found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
                              RTRIM(CONVERT(date, @end_date)) +
-                             ' with a minimum average duration of ' + 
+                             ' with a minimum average duration of ' +
                              RTRIM(@wait_duration_ms) +
                              '.'
                         ELSE 'no significant waits found!'
                     END;
         END;
         ELSE
-        BEGIN        
+        BEGIN
             SELECT
                 x.finding,
                 x.event_time_rounded,
@@ -1417,14 +1417,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         N'.00',
                         N''
                         ),
-                    s = 
+                    s =
                         ROW_NUMBER() OVER
                         (
                             ORDER BY
                                 t.event_time_rounded DESC,
                                 t.waits DESC
                         ),
-                    n = 
+                    n =
                         ROW_NUMBER() OVER
                         (
                             PARTITION BY
@@ -1443,7 +1443,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OPTION(RECOMPILE);
         END;
     END; /*End wait stats*/
-  
+
     /*Grab IO stuff*/
     IF @what_to_check IN ('all', 'disk')
     BEGIN
@@ -1453,16 +1453,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT
-            event_time = 
+            event_time =
                 DATEADD
                 (
-                    MINUTE, 
+                    MINUTE,
                     DATEDIFF
                     (
-                        MINUTE, 
-                        GETUTCDATE(), 
+                        MINUTE,
+                        GETUTCDATE(),
                         SYSDATETIME()
-                    ), 
+                    ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
             state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
@@ -1479,7 +1479,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE w.x.exist('(data[@name="component"]/text[.= "IO_SUBSYSTEM"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
-       
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -1489,7 +1489,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-        
+
         SELECT
             finding = 'potential io issues',
             i.event_time,
@@ -1520,24 +1520,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         BEGIN
             SELECT
-                finding = 
+                finding =
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'disk')
-                        THEN 'disk skipped, @what_to_check set to ' + 
+                        THEN 'disk skipped, @what_to_check set to ' +
                              @what_to_check
                         WHEN @what_to_check IN ('all', 'disk')
-                        THEN 'no io issues found between ' + 
+                        THEN 'no io issues found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
                              RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' + 
+                             ' with @warnings_only set to ' +
                              RTRIM(@warnings_only) +
                              '.'
                         ELSE 'no io issues found!'
                     END;
         END;
         ELSE
-        BEGIN        
+        BEGIN
             SELECT
                 i.finding,
                 i.event_time,
@@ -1568,7 +1568,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OPTION(RECOMPILE);
         END;
     END; /*End disk*/
-  
+
     /*Grab CPU details*/
     IF @what_to_check IN ('all', 'cpu')
     BEGIN
@@ -1578,16 +1578,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT
-            event_time = 
+            event_time =
                 DATEADD
                 (
-                    MINUTE, 
+                    MINUTE,
                     DATEDIFF
                     (
-                        MINUTE, 
-                        GETUTCDATE(), 
+                        MINUTE,
+                        GETUTCDATE(),
                         SYSDATETIME()
-                    ), 
+                    ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
             name = w.x.value('@name', 'nvarchar(256)'),
@@ -1610,7 +1610,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
         AND  (w.x.exist('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks[.>= sql:variable("@pending_task_threshold")])') = 1 OR @warnings_only = 0)
         OPTION(RECOMPILE);
-       
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -1620,7 +1620,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-        
+
         IF NOT EXISTS
         (
             SELECT
@@ -1629,24 +1629,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         BEGIN
             SELECT
-                finding = 
+                finding =
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'cpu')
-                        THEN 'cpu skipped, @what_to_check set to ' + 
+                        THEN 'cpu skipped, @what_to_check set to ' +
                              @what_to_check
                         WHEN @what_to_check IN ('all', 'cpu')
-                        THEN 'no cpu issues found between ' + 
+                        THEN 'no cpu issues found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
                              RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' + 
+                             ' with @warnings_only set to ' +
                              RTRIM(@warnings_only) +
                              '.'
                         ELSE 'no cpu issues found!'
-                    END;            
+                    END;
         END;
         ELSE
-        BEGIN         
+        BEGIN
             SELECT
                 finding = 'cpu task details',
                 sd.event_time,
@@ -1666,7 +1666,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OPTION(RECOMPILE);
         END;
     END; /*End CPU*/
-  
+
     /*Grab memory details*/
     IF @what_to_check IN ('all', 'memory')
     BEGIN
@@ -1676,16 +1676,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT
-            event_time = 
+            event_time =
                 DATEADD
                 (
-                    MINUTE, 
+                    MINUTE,
                     DATEDIFF
                     (
-                        MINUTE, 
-                        GETUTCDATE(), 
+                        MINUTE,
+                        GETUTCDATE(),
                         SYSDATETIME()
-                    ), 
+                    ),
                     s.sp_server_diagnostics_component_result.value('(//@timestamp)[1]', 'datetime2')
                 ),
             lastNotification = r.c.value('@lastNotification', 'varchar(128)'),
@@ -1725,7 +1725,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
         WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
-       
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -1735,7 +1735,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-        
+
         IF NOT EXISTS
         (
             SELECT
@@ -1744,24 +1744,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         BEGIN
             SELECT
-                finding = 
+                finding =
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'memory')
-                        THEN 'memory skipped, @what_to_check set to ' + 
+                        THEN 'memory skipped, @what_to_check set to ' +
                              @what_to_check
                         WHEN @what_to_check IN ('all', 'memory')
-                        THEN 'no memory issues found between ' + 
+                        THEN 'no memory issues found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
                              RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' + 
+                             ' with @warnings_only set to ' +
                              RTRIM(@warnings_only) +
                              '.'
                         ELSE 'no memory issues found!'
                     END;
         END;
         ELSE
-        BEGIN 
+        BEGIN
             SELECT
                 finding = 'memory conditions',
                 m.event_time,
@@ -1802,7 +1802,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OPTION(RECOMPILE);
         END;
     END; /*End memory*/
-      
+
     /*Grab health stuff*/
     IF @what_to_check IN ('all', 'system')
     BEGIN
@@ -1812,23 +1812,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT
-            event_time = 
+            event_time =
                 DATEADD
                 (
-                    MINUTE, 
+                    MINUTE,
                     DATEDIFF
                     (
-                        MINUTE, 
-                        GETUTCDATE(), 
+                        MINUTE,
+                        GETUTCDATE(),
                         SYSDATETIME()
-                    ), 
+                    ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
             state = w.x.value('(data[@name="state"]/text/text())[1]', 'nvarchar(256)'),
             spinlockBackoffs = w.x.value('(/event/data[@name="data"]/value/system/@spinlockBackoffs)[1]', 'bigint'),
-            sickSpinlockType = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),    
+            sickSpinlockType = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockType)[1]', 'nvarchar(256)'),
             sickSpinlockTypeAfterAv = w.x.value('(/event/data[@name="data"]/value/system/@sickSpinlockTypeAfterAv)[1]', 'nvarchar(256)'),
-            latchWarnings = w.x.value('(/event/data[@name="data"]/value/system/@latchWarnings)[1]', 'bigint'),           
+            latchWarnings = w.x.value('(/event/data[@name="data"]/value/system/@latchWarnings)[1]', 'bigint'),
             isAccessViolationOccurred = w.x.value('(/event/data[@name="data"]/value/system/@isAccessViolationOccurred)[1]', 'bigint'),
             writeAccessViolationCount = w.x.value('(/event/data[@name="data"]/value/system/@writeAccessViolationCount)[1]', 'bigint'),
             totalDumpRequests = w.x.value('(/event/data[@name="data"]/value/system/@totalDumpRequests)[1]', 'bigint'),
@@ -1846,7 +1846,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE w.x.exist('(data[@name="component"]/text[.= "SYSTEM"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
-        
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -1856,7 +1856,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-       
+
         IF NOT EXISTS
         (
             SELECT
@@ -1865,24 +1865,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         BEGIN
             SELECT
-                finding = 
+                finding =
                     CASE
                         WHEN @what_to_check NOT IN ('all', 'system')
-                        THEN 'system health skipped, @what_to_check set to ' + 
+                        THEN 'system health skipped, @what_to_check set to ' +
                              @what_to_check
                         WHEN @what_to_check IN ('all', 'system')
-                        THEN 'no system health issues found between ' + 
+                        THEN 'no system health issues found between ' +
                              RTRIM(CONVERT(date, @start_date)) +
                              ' and ' +
                              RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' + 
+                             ' with @warnings_only set to ' +
                              RTRIM(@warnings_only) +
                              '.'
                         ELSE 'no system health issues found!'
                     END;
         END;
         ELSE
-        BEGIN         
+        BEGIN
             SELECT
                 finding = 'overall system health',
                 h.event_time,
@@ -1907,22 +1907,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OPTION(RECOMPILE);
         END;
     END; /*End system*/
-  
+
     /*Grab useless stuff*/
-   
+
     /*
     I'm pulling this out for now, until I find a good use for it.
     SELECT
-        event_time = 
+        event_time =
             DATEADD
             (
-                MINUTE, 
+                MINUTE,
                 DATEDIFF
                 (
-                    MINUTE, 
-                    GETUTCDATE(), 
+                    MINUTE,
+                    GETUTCDATE(),
                     SYSDATETIME()
-                ), 
+                ),
                 w.x.value('(//@timestamp)[1]', 'datetime2')
             ),
         sessionId =
@@ -1966,7 +1966,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         SELECT TOP (100) table_name = '#useless, top 100 rows', x.* FROM #useless AS x ORDER BY x.event_time DESC;
     END;
-  
+
     SELECT
         finding = 'cpu intensive requests',
         u.event_time,
@@ -1981,9 +1981,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         u.cpuTimeMs DESC
     OPTION(RECOMPILE);
     */
-  
+
     /*Grab blocking stuff*/
-    IF  
+    IF
     (
         @what_to_check IN ('all', 'locking')
     AND @skip_locks = 0
@@ -1995,16 +1995,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT
-            event_time = 
+            event_time =
                 DATEADD
                 (
-                    MINUTE, 
+                    MINUTE,
                     DATEDIFF
                     (
-                        MINUTE, 
-                        GETUTCDATE(), 
+                        MINUTE,
+                        GETUTCDATE(),
                         SYSDATETIME()
-                    ), 
+                    ),
                     w.x.value('(//@timestamp)[1]', 'datetime2')
                 ),
             human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
@@ -2015,7 +2015,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   w.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
-       
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -2025,7 +2025,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-        
+
         /*Blocked queries*/
         IF @debug = 1
         BEGIN
@@ -2034,9 +2034,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         SELECT
             bx.event_time,
-            currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'), 
+            currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
             spid = bd.value('(process/@spid)[1]', 'int'),
-            ecid = bd.value('(process/@ecid)[1]', 'int'),        
+            ecid = bd.value('(process/@ecid)[1]', 'int'),
             query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
             wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
             lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
@@ -2065,7 +2065,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Adding query_text to #blocked', 0, 1) WITH NOWAIT;
         END;
-        
+
         ALTER TABLE #blocked
         ADD query_text AS
            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -2076,7 +2076,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
         PERSISTED;
-       
+
         IF @debug = 1
         BEGIN
             SELECT TOP (100)
@@ -2086,7 +2086,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-        
+
         /*Blocking queries*/
         IF @debug = 1
         BEGIN
@@ -2126,7 +2126,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Adding query_text to #blocking', 0, 1) WITH NOWAIT;
         END;
-        
+
         ALTER TABLE #blocking
         ADD query_text AS
            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -2137,17 +2137,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
         PERSISTED;
-       
+
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) 
-                table_name = '#blocking, top 100 rows', 
-                x.* 
-            FROM #blocking AS x 
-            ORDER BY 
+            SELECT TOP (100)
+                table_name = '#blocking, top 100 rows',
+                x.*
+            FROM #blocking AS x
+            ORDER BY
                 x.event_time DESC;
         END;
-        
+
         /*Put it together*/
         IF @debug = 1
         BEGIN
@@ -2167,7 +2167,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN
                         (
                             SELECT
-                                [processing-instruction(query)] =                                   
+                                [processing-instruction(query)] =
                                     OBJECT_SCHEMA_NAME
                                     (
                                             SUBSTRING
@@ -2274,33 +2274,33 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             kheb.blocked_process_report
         INTO #blocks
         FROM
-        (            
+        (
             SELECT
                 bg.*
             FROM #blocking AS bg
             WHERE (bg.currentdbname = @database_name
                    OR @database_name IS NULL)
-        
+
             UNION ALL
-        
+
             SELECT
                 bd.*
-            FROM #blocked AS bd  
+            FROM #blocked AS bd
             WHERE (bd.currentdbname = @database_name
                    OR @database_name IS NULL)
         ) AS kheb
         OPTION(RECOMPILE);
-       
+
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) 
-                table_name = '#blocks, top 100 rows', 
-                x.* 
-            FROM #blocks AS x 
-            ORDER BY 
+            SELECT TOP (100)
+                table_name = '#blocks, top 100 rows',
+                x.*
+            FROM #blocks AS x
+            ORDER BY
                 x.event_time DESC;
         END;
-        
+
         SELECT
             finding = 'blocked process report',
             b.event_time,
@@ -2333,7 +2333,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE +1
             END
         OPTION(RECOMPILE);
-        
+
         /*Grab available plans from the cache*/
         IF @debug = 1
         BEGIN
@@ -2361,9 +2361,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
             WHERE (b.currentdbname = @database_name
                     OR @database_name IS NULL)
-         
+
             UNION ALL
-         
+
             SELECT
                 finding =
                     CONVERT(varchar(30), 'available plans for blocking'),
@@ -2387,7 +2387,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Inserting to #deadlocks', 0, 1) WITH NOWAIT;
         END;
-       
+
         SELECT
             x.xml_deadlock_report,
             event_date = x.xml_deadlock_report.value('(event/@timestamp)[1]', 'datetime2'),
@@ -2396,12 +2396,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INTO #deadlocks
         FROM #xml_deadlock_report AS x
         OPTION(RECOMPILE);
-       
+
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) 
-                table_name = '#deadlocks, top 100 rows', 
-                x.* 
+            SELECT TOP (100)
+                table_name = '#deadlocks, top 100 rows',
+                x.*
             FROM #deadlocks AS x;
         END;
 
@@ -2409,7 +2409,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Inserting to #deadlocks_parsed', 0, 1) WITH NOWAIT;
         END;
-       
+
         SELECT
             x.event_date,
             x.id,
@@ -2480,7 +2480,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     500
                 ),
             x.deadlock_resources,
-            x.deadlock_graph,       
+            x.deadlock_graph,
             x.process_xml
         INTO #deadlocks_parsed
         FROM
@@ -2525,9 +2525,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #deadlocks AS d
             CROSS APPLY d.xml_deadlock_report.nodes('//deadlock/process-list/process') AS e(x)
         ) AS x
-        WHERE (x.database_id = @dbid 
+        WHERE (x.database_id = @dbid
                OR @dbid IS NULL)
-        OR    (x.current_database_name = @database_name 
+        OR    (x.current_database_name = @database_name
                OR @database_name IS NULL)
         OPTION(RECOMPILE);
 
@@ -2535,7 +2535,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Adding query_text to #deadlocks_parsed', 0, 1) WITH NOWAIT;
         END;
-       
+
         ALTER TABLE #deadlocks_parsed
         ADD query_text AS
            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
@@ -2546,12 +2546,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
         PERSISTED;
-       
+
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) 
-                table_name = '#deadlocks_parsed, top 100 rows', 
-                x.* 
+            SELECT TOP (100)
+                table_name = '#deadlocks_parsed, top 100 rows',
+                x.*
             FROM #deadlocks_parsed AS x;
         END;
 
@@ -2559,7 +2559,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Returning deadlocks', 0, 1) WITH NOWAIT;
         END;
-       
+
         SELECT
             finding = 'xml deadlock report',
             dp.event_date,
@@ -2578,7 +2578,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN
                         (
                             SELECT
-                                [processing-instruction(query)] =                                   
+                                [processing-instruction(query)] =
                                     OBJECT_SCHEMA_NAME
                                     (
                                             SUBSTRING
@@ -2654,7 +2654,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Inserting #available_plans (deadlocks)', 0, 1) WITH NOWAIT;
         END;
-       
+
         INSERT
             #available_plans WITH (TABLOCKX)
         (
@@ -2679,12 +2679,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #deadlocks_parsed AS dp
         CROSS APPLY dp.process_xml.nodes('//executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS e(x)
         OPTION(RECOMPILE);
-       
+
         IF @debug = 1
         BEGIN
-            SELECT TOP (100) 
-                table_name = '#available_plans, top 100 rows', 
-                x.* 
+            SELECT TOP (100)
+                table_name = '#available_plans, top 100 rows',
+                x.*
             FROM #available_plans AS x;
         END;
 
@@ -2692,7 +2692,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Inserting #dm_exec_query_stats_sh', 0, 1) WITH NOWAIT;
         END;
-        
+
         SELECT
             deqs.sql_handle,
             deqs.plan_handle,
@@ -2738,7 +2738,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             min_used_grant_mb =
                 deqs.min_used_grant_kb * 8. / 1024.,
             max_used_grant_mb =
-                deqs.max_used_grant_kb * 8. / 1024., 
+                deqs.max_used_grant_kb * 8. / 1024.,
             deqs.min_reserved_threads,
             deqs.max_reserved_threads,
             deqs.min_used_threads,
@@ -2759,7 +2759,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Indexing #dm_exec_query_stats_sh', 0, 1) WITH NOWAIT;
         END;
-       
+
         CREATE CLUSTERED INDEX
             deqs_sh
         ON #dm_exec_query_stats_sh
@@ -2772,7 +2772,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Inserting #all_available_plans (deadlocks)', 0, 1) WITH NOWAIT;
         END;
-        
+
         SELECT
             ap.finding,
             ap.currentdbname,
@@ -2851,7 +2851,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             ap.avg_worker_time_ms DESC
         OPTION(RECOMPILE);
-       
+
         SELECT
             aap.*
         FROM #all_avalable_plans AS aap
@@ -2859,7 +2859,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             aap.avg_worker_time_ms DESC
         OPTION(RECOMPILE);
-       
+
         SELECT
             aap.*
         FROM #all_avalable_plans AS aap
