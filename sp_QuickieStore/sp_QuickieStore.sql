@@ -2044,6 +2044,19 @@ OPTION(RECOMPILE);' + @nc10;
     IF
     (
         @procedure_exists = 0
+    AND @get_all_databases = 1
+    )
+    BEGIN
+        FETCH NEXT
+        FROM database_cursor
+        INTO @database_name;
+
+        CONTINUE;
+    END;
+
+    IF
+    (
+        @procedure_exists = 0
     AND @get_all_databases = 0
     )
         BEGIN
