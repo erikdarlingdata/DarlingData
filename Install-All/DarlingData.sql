@@ -1,4 +1,4 @@
--- Compile Date: 04/16/2024 21:20:45 UTC
+-- Compile Date: 04/23/2024 19:05:13 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -18806,9 +18806,17 @@ SELECT
     query_capture_mode_desc,
     size_based_cleanup_mode_desc
 FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
-WHERE dqso.desired_state = 1
-OR    dqso.actual_state IN (1, 3)
-OR    dqso.desired_state <> dqso.actual_state
+WHERE
+(
+     dqso.desired_state <> 4
+  OR dqso.readonly_reason <> 8
+)
+AND
+(
+      dqso.desired_state = 1
+   OR dqso.actual_state IN (1, 3)
+   OR dqso.desired_state <> dqso.actual_state
+)
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
