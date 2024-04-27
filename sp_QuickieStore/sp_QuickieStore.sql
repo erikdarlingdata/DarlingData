@@ -2047,6 +2047,10 @@ OPTION(RECOMPILE);' + @nc10;
     AND @get_all_databases = 1
     )
     BEGIN
+        RAISERROR('The stored procedure %s does not appear to have any entries in Query Store for database %s
+Check that you spelled everything correctly and you''re in the right database
+We will skip this database and continue',
+                       10, 1, @procedure_name, @database_name) WITH NOWAIT;
         FETCH NEXT
         FROM database_cursor
         INTO @database_name;
