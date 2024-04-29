@@ -1,4 +1,4 @@
-﻿SET ANSI_NULLS ON;
+SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
@@ -45,10 +45,10 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL 
-   BEGIN 
-       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;'); 
-   END; 
+IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL
+   BEGIN
+       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');
+   END;
 GO
 
 ALTER PROCEDURE
@@ -77,7 +77,7 @@ ALTER PROCEDURE
     @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
     @escape_brackets bit = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
-    @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/  
+    @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/
     @only_queries_with_hints bit = 0, /*Set this bit to 1 to retrieve only queries with query hints*/
     @only_queries_with_feedback bit = 0, /*Set this bit to 1 to retrieve only queries with query feedback*/
     @only_queries_with_variants bit = 0, /*Set this bit to 1 to retrieve only queries with query variants*/
@@ -100,9 +100,9 @@ ALTER PROCEDURE
 WITH RECOMPILE
 AS
 BEGIN
-SET STATISTICS XML OFF; 
+SET STATISTICS XML OFF;
 SET NOCOUNT ON;
-SET XACT_ABORT ON; 
+SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN TRY
@@ -184,12 +184,12 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@query_text_search' THEN 'query text to search for'
                 WHEN N'@escape_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
-                WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'  
+                WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'
                 WHEN N'@only_queries_with_hints' THEN 'only return queries with query hints'
                 WHEN N'@only_queries_with_feedback' THEN 'only return queries with query feedback'
                 WHEN N'@only_queries_with_variants' THEN 'only return queries with query variants'
                 WHEN N'@only_queries_with_forced_plans' THEN 'only return queries with forced plans'
-                WHEN N'@only_queries_with_forced_plan_failures' THEN 'only return queries with forced plan failures'                              
+                WHEN N'@only_queries_with_forced_plan_failures' THEN 'only return queries with forced plan failures'
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
@@ -230,12 +230,12 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@escape_brackets' THEN '0 or 1'
-                WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'  
+                WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'
                 WHEN N'@only_queries_with_hints' THEN '0 or 1'
                 WHEN N'@only_queries_with_feedback' THEN '0 or 1'
                 WHEN N'@only_queries_with_variants' THEN '0 or 1'
                 WHEN N'@only_queries_with_forced_plans' THEN '0 or 1'
-                WHEN N'@only_queries_with_forced_plan_failures' THEN '0 or 1'                   
+                WHEN N'@only_queries_with_forced_plan_failures' THEN '0 or 1'
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
@@ -276,12 +276,12 @@ BEGIN
                 WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
                 WHEN N'@escape_brackets' THEN '0'
-                WHEN N'@escape_character' THEN '\'  
+                WHEN N'@escape_character' THEN '\'
                 WHEN N'@only_queries_with_hints' THEN '0'
                 WHEN N'@only_queries_with_feedback' THEN '0'
                 WHEN N'@only_queries_with_variants' THEN '0'
                 WHEN N'@only_queries_with_forced_plans' THEN '0'
-                WHEN N'@only_queries_with_forced_plan_failures' THEN '0'   
+                WHEN N'@only_queries_with_forced_plan_failures' THEN '0'
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
@@ -376,7 +376,7 @@ BEGIN
         mit_license_yo =
            'i am MIT licensed, so like, do whatever'
     UNION ALL
-  
+
     SELECT
         mit_license_yo =
             'see printed messages for full license';
@@ -597,7 +597,7 @@ CREATE TABLE
 
 /*
 Hold plan_ids for forced plans and/or forced plan failures
-I'm overloading this a bit for simplicity, since searching for 
+I'm overloading this a bit for simplicity, since searching for
 failures is just an extension of searching for forced plans
 */
 
@@ -1193,32 +1193,32 @@ SELECT
     )
 ) IN (5, 8)
 BEGIN
-    INSERT INTO 
+    INSERT INTO
         #databases WITH(TABLOCK)
     (
         database_name
     )
     SELECT
-        database_name = 
+        database_name =
             ISNULL(@database_name, DB_NAME())
     WHERE @get_all_databases = 0
 
     UNION ALL
 
     SELECT
-        database_name = 
+        database_name =
             d.name
     FROM sys.databases AS d
     WHERE @get_all_databases = 1
     AND   d.is_query_store_on = 1
     AND   d.database_id > 4
-    AND   d.state = 0 
-    AND   d.is_in_standby = 0 
+    AND   d.state = 0
+    AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
     OPTION(RECOMPILE);
 END
 ELSE
-BEGIN    
+BEGIN
     INSERT
         #databases WITH(TABLOCK)
     (
@@ -1228,9 +1228,9 @@ BEGIN
         database_name =
             ISNULL(@database_name, DB_NAME())
     WHERE @get_all_databases = 0
-    
+
     UNION ALL
-    
+
     SELECT
         database_name =
             d.name
@@ -1238,16 +1238,16 @@ BEGIN
     WHERE @get_all_databases = 1
     AND   d.is_query_store_on = 1
     AND   d.database_id > 4
-    AND   d.state = 0 
-    AND   d.is_in_standby = 0 
+    AND   d.state = 0
+    AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
     AND   NOT EXISTS
     (
-        SELECT 
+        SELECT
             1/0
         FROM sys.dm_hadr_availability_replica_states AS s
         JOIN sys.availability_databases_cluster AS c
-          ON  s.group_id = c.group_id 
+          ON  s.group_id = c.group_id
           AND d.name = c.database_name
         WHERE s.is_local <> 1
         AND   s.role_desc <> N'PRIMARY'
@@ -1364,7 +1364,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         9223372036854775807,
     @nc10 = NCHAR(10),
     @where_clause = N'',
-    @query_text_search = 
+    @query_text_search =
         CASE
             WHEN @get_all_databases = 1 AND @escape_brackets = 1
             THEN @query_text_search_original_value
@@ -1604,7 +1604,7 @@ SELECT
         ISNULL(@only_queries_with_feedback, 0),
     @only_queries_with_variants =
         ISNULL(@only_queries_with_variants, 0),
-    @only_queries_with_forced_plans = 
+    @only_queries_with_forced_plans =
         ISNULL(@only_queries_with_forced_plans, 0),
     @only_queries_with_forced_plan_failures =
         ISNULL(@only_queries_with_forced_plan_failures, 0),
@@ -2302,7 +2302,7 @@ OPTION(RECOMPILE);' + @nc10;
     IF @query_store_waits_enabled = 0
     BEGIN
         RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
-     
+
         IF @get_all_databases = 0
         BEGIN
             RETURN;
@@ -2449,7 +2449,7 @@ BEGIN
        SELECT
            @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 6' + @nc10;
     END;/*df 1*/
-  
+
     IF @df = 7
     BEGIN
        SELECT
@@ -2654,7 +2654,7 @@ OR @ignore_query_ids  IS NOT NULL
 )
 BEGIN
     IF @include_plan_ids IS NOT NULL
-    BEGIN  
+    BEGIN
         SELECT
             @include_plan_ids =
                 REPLACE(REPLACE(REPLACE(REPLACE(
@@ -3612,17 +3612,17 @@ BEGIN
         SELECT
             @current_table = 'inserting #only_queries_with_hints',
             @sql = @isolation_level;
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             SET STATISTICS XML ON;
         END;
-    
+
         SELECT
             @sql += N'
     SELECT DISTINCT
@@ -3635,17 +3635,17 @@ BEGIN
               FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
               WHERE qsqh.query_id = qsp.query_id
           )';
-    
+
         SELECT
             @sql += N'
     OPTION(RECOMPILE);' + @nc10;
-    
+
         IF @debug = 1
         BEGIN
             PRINT LEN(@sql);
             PRINT @sql;
         END;
-    
+
         INSERT
             #only_queries_with_hints WITH(TABLOCK)
         (
@@ -3653,16 +3653,16 @@ BEGIN
         )
         EXEC sys.sp_executesql
             @sql
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
@@ -3670,7 +3670,7 @@ BEGIN
                 @sql,
                 @current_table;
         END;
-    
+
         SELECT
             @where_clause += N'AND   EXISTS
            (
@@ -3680,23 +3680,23 @@ BEGIN
                WHERE qst.plan_id = qsrs.plan_id
            )' + @nc10;
     END;
-    
+
     IF @only_queries_with_feedback = 1
     BEGIN
         SELECT
             @current_table = 'inserting #only_queries_with_feedback',
             @sql = @isolation_level;
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             SET STATISTICS XML ON;
         END;
-    
+
         SELECT
             @sql += N'
     SELECT DISTINCT
@@ -3709,17 +3709,17 @@ BEGIN
               FROM ' + @database_name_quoted + N'.sys.query_store_plan_feedback AS qsqf
               WHERE qsqf.plan_id = qsp.plan_id
           )';
-    
+
         SELECT
             @sql += N'
     OPTION(RECOMPILE);' + @nc10;
-    
+
         IF @debug = 1
         BEGIN
             PRINT LEN(@sql);
             PRINT @sql;
         END;
-    
+
         INSERT
             #only_queries_with_feedback WITH(TABLOCK)
         (
@@ -3727,16 +3727,16 @@ BEGIN
         )
         EXEC sys.sp_executesql
             @sql
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
@@ -3744,7 +3744,7 @@ BEGIN
                 @sql,
                 @current_table;
         END;
-    
+
         SELECT
             @where_clause += N'AND   EXISTS
            (
@@ -3754,23 +3754,23 @@ BEGIN
                WHERE qst.plan_id = qsrs.plan_id
            )' + @nc10;
     END;
-    
+
     IF @only_queries_with_variants = 1
     BEGIN
         SELECT
             @current_table = 'inserting #only_queries_with_variants',
             @sql = @isolation_level;
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
             EXEC sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             SET STATISTICS XML ON;
         END;
-    
+
         SELECT
             @sql += N'
     SELECT DISTINCT
@@ -3783,17 +3783,17 @@ BEGIN
               FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
               WHERE qsqv.query_variant_query_id = qsp.query_id
           )';
-    
+
         SELECT
             @sql += N'
     OPTION(RECOMPILE);' + @nc10;
-    
+
         IF @debug = 1
         BEGIN
             PRINT LEN(@sql);
             PRINT @sql;
         END;
-    
+
         INSERT
             #only_queries_with_variants WITH(TABLOCK)
         (
@@ -3801,16 +3801,16 @@ BEGIN
         )
         EXEC sys.sp_executesql
             @sql
-    
+
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-    
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
@@ -3818,7 +3818,7 @@ BEGIN
                 @sql,
                 @current_table;
         END;
-        
+
         SELECT
             @where_clause += N'AND   EXISTS
            (
@@ -3830,7 +3830,7 @@ BEGIN
     END;
 END;
 
-IF 
+IF
 (
      @only_queries_with_forced_plans = 1
   OR @only_queries_with_forced_plan_failures = 1
@@ -3859,7 +3859,7 @@ WHERE qsp.is_forced_plan = 1';
 
 IF @only_queries_with_forced_plan_failures = 1
 BEGIN
-    SELECT 
+    SELECT
         @sql += N'
 AND   qsp.last_force_failure_reason > 0'
 END
@@ -3898,7 +3898,7 @@ OPTION(RECOMPILE);' + @nc10;
             @sql,
             @current_table;
     END;
-    
+
     SELECT
         @where_clause += N'AND   EXISTS
        (
@@ -3988,7 +3988,7 @@ WHERE EXISTS
                   AND   qsqt.query_sql_text LIKE @query_text_search
               )
       )';
-  
+
     /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
     IF @escape_brackets = 1
     BEGIN
@@ -4590,7 +4590,7 @@ SELECT
     (qsp.avg_compile_duration / 1000.),
     (qsp.last_compile_duration / 1000.),';
 
-IF 
+IF
 (
       @new = 0
   AND @sql_2022_views = 0
@@ -4604,9 +4604,9 @@ BEGIN
     NULL';
 END;
 
-IF 
+IF
 (
-      @new = 1 
+      @new = 1
   AND @sql_2022_views = 0
 )
 BEGIN
@@ -4618,13 +4618,13 @@ BEGIN
     NULL';
 END;
 
-IF 
+IF
 (
-      @new = 1 
+      @new = 1
   AND @sql_2022_views = 1
 )
 BEGIN
-    SELECT 
+    SELECT
         @sql += N'
     qsp.plan_forcing_type_desc,
     qsp.has_compile_replay_script,
@@ -5698,7 +5698,7 @@ OPTION(RECOMPILE);' + @nc10;
         PRINT LEN(@sql);
         PRINT @sql;
     END;
- 
+
     INSERT
         #query_store_query_hints WITH(TABLOCK)
     (
@@ -5953,7 +5953,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),         
+            nvarchar(MAX),
             N'
     SELECT
         source =
@@ -5983,12 +5983,12 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = 
+        query_plan =
              CASE
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
                  THEN TRY_CAST(qsp.query_plan AS XML)
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
-                 THEN 
+                 THEN
                      (
                          SELECT
                              [processing-instruction(query_plan)] =
@@ -5998,7 +5998,7 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''), 
+                         FOR XML PATH(N''''),
                                  TYPE
                      )
              END,
@@ -6178,7 +6178,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),          
+            nvarchar(MAX),
             N'
     SELECT
         source =
@@ -6208,12 +6208,12 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = 
+        query_plan =
              CASE
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
                  THEN TRY_CAST(qsp.query_plan AS XML)
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
-                 THEN 
+                 THEN
                      (
                          SELECT
                              [processing-instruction(query_plan)] =
@@ -6223,7 +6223,7 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''), 
+                         FOR XML PATH(N''''),
                                  TYPE
                      )
              END,
@@ -6407,7 +6407,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),          
+            nvarchar(MAX),
             N'
     SELECT
         source =
@@ -6437,12 +6437,12 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = 
+        query_plan =
              CASE
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
                  THEN TRY_CAST(qsp.query_plan AS XML)
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
-                 THEN 
+                 THEN
                      (
                          SELECT
                              [processing-instruction(query_plan)] =
@@ -6452,7 +6452,7 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''), 
+                         FOR XML PATH(N''''),
                                  TYPE
                      )
              END,
@@ -6599,7 +6599,7 @@ FROM
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),          
+            nvarchar(MAX),
             N'
     SELECT
         source =
@@ -6630,12 +6630,12 @@ FROM
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
-        query_plan = 
+        query_plan =
              CASE
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
                  THEN TRY_CAST(qsp.query_plan AS XML)
                  WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
-                 THEN 
+                 THEN
                      (
                          SELECT
                              [processing-instruction(query_plan)] =
@@ -6645,7 +6645,7 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''), 
+                         FOR XML PATH(N''''),
                                  TYPE
                      )
              END,
@@ -7220,7 +7220,7 @@ BEGIN
                             THEN qsq.last_execution_time AT TIME ZONE @timezone
                         END,
                     last_execution_time_utc =
-                        qsq.last_execution_time,               
+                        qsq.last_execution_time,
                     qsq.count_compiles,
                     qsq.avg_compile_duration_ms,
                     qsq.total_compile_duration_ms,
@@ -7499,7 +7499,7 @@ BEGIN
             BEGIN
                 SELECT
                     @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
-           
+
                 SELECT
                     database_name =
                         DB_NAME(qsr.database_id),
@@ -8126,7 +8126,7 @@ BEGIN
             BEGIN
                 SELECT
                     @current_table = '#query_store_replicas and #query_store_plan_forcing_locations';
-           
+
                 SELECT
                     database_name =
                         DB_NAME(qsr.database_id),
@@ -8143,7 +8143,7 @@ BEGIN
                 AND qsr.database_id = qspfl.database_id
                 ORDER BY
                     qsr.replica_group_id
-                OPTION(RECOMPILE);       
+                OPTION(RECOMPILE);
             END;
             ELSE
             BEGIN
@@ -8221,7 +8221,7 @@ BEGIN
         dqso.size_based_cleanup_mode_desc
         FROM #database_query_store_options AS dqso
         OPTION(RECOMPILE);';
-   
+
 
         IF @debug = 1
         BEGIN
