@@ -1,4 +1,4 @@
-name: Regenerate SQL Main File
+name: Format and Regenerate SQL Main File
 on: 
   push:
     branches:
@@ -10,11 +10,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
       - name: Checkout Code
         run: |
           git config --global user.name 'Darling Data'
           git config --global user.email 'erik@erikdarling.com'
           git checkout
+      - name: Trim trailing whitespace and replace Tabs
+        shell: pwsh
+        run: |
+          $changedFiles = git --no-pager diff --name-only --relative  --diff-filter=AM "${{ github.event.before }}" "${{ github.sha }}" -- '***.sql'
+          $tabSize = 4
+          $changedFiles | ForEach-Object {
+            $outputString = ""
+            $fullPath = $_
+            $Content = Get-Content $fullPath
+            foreach ($Ctnt in $Content) {
+              $CharArray = $Ctnt.ToCharArray()
+              $lineOutput = ""
+              $slidingOffset = 0
+              for ($charIdx = 0; $charIdx -lt $CharArray.Length; $charIdx++) {
+                  if ($CharArray[$charIdx] -eq "`t") {
+                      $currentTab = $tabSize - (($charIdx + $slidingOffset) % $tabSize)
+                      $slidingOffset += $currentTab - 1
+                      $lineOutput += (" " * $currentTab) 
+                  }
+                  else {
+                      $lineOutput += $CharArray[$charIdx] 
+                  }
+              }
+              $outputString += $lineOutput.TrimEnd() + "`n"   # Add line output with trailing spaces removed to the output string, and add newline
+            }
+            Set-Content -Path $fullPath -Value ($outputString.TrimEnd())
+          }  
       - name: Compile SQL File
         shell: pwsh
         run: | 
@@ -22,6 +51,6 @@ jobs:
           ./Merge-All.ps1
       - name: Commit Updated File
         run: |
-          git add ./Install-All/DarlingData.sql
-          git commit -am "Automation: Building SQL File"
+          git add .
+          git commit -am "Automation: Format and Build SQL File"
           git push
