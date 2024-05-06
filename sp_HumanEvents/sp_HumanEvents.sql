@@ -2185,6 +2185,7 @@ BEGIN
         )   
         SELECT    
             pattern = N'total compiles',   
+            k.database_name,
             k.object_name,   
             statement_text =    
                 (   
@@ -2437,6 +2438,7 @@ IF @compile_events = 1
         SELECT    
             pattern = N'total recompiles',   
             k.recompile_cause,   
+            k.database_name,
             k.object_name,   
             statement_text =    
                 (   
