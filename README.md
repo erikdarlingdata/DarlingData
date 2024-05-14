@@ -332,7 +332,7 @@ The SQL Server error log can have a lot of good information in it about what's g
 
 The problem is that it's hard to know *what* to look for, and what else was going on once you filter it.
 
-It's another notoriously bad Microoft GUI, just like Query Store and Extended Events.
+It's another notoriously bad Microsoft GUI, just like Query Store and Extended Events.
 
 I created sp_LogHunter to search through your error logs for the important stuff, with some configurability for you, and return everything ordered by log entry time.
 
