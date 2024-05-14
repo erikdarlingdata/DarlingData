@@ -2447,7 +2447,7 @@ BEGIN
     IF @df = 1
     BEGIN
        SELECT
-           @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 6' + @nc10;
+           @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 5' + @nc10;
     END;/*df 1*/
   
     IF @df = 7
