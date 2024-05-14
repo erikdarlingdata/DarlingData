@@ -1,4 +1,4 @@
--- Compile Date: 05/06/2024 19:37:00 UTC
+-- Compile Date: 05/14/2024 12:23:09 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -16485,7 +16485,7 @@ BEGIN
     IF @df = 1
     BEGIN
        SELECT
-           @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 6' + @nc10;
+           @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 5' + @nc10;
     END;/*df 1*/
 
     IF @df = 7
