@@ -1,4 +1,4 @@
--- Compile Date: 05/16/2024 13:04:42 UTC
+-- Compile Date: 05/16/2024 20:15:31 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -16129,7 +16129,7 @@ like the wait stats DMV, and tempdb spills columns
 IF
 (
    @product_version > 13
-OR @azure = 1
+OR @engine IN (5, 8)
 )
 BEGIN
    SELECT
@@ -16338,12 +16338,10 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @query_store_waits_enabled = 0
     BEGIN
-        RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
-
-        IF @get_all_databases = 0
+        IF @debug = 1
         BEGIN
-            RETURN;
-        END;
+            RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
+        END
     END;
 END; /*End wait stats checks*/
 
