@@ -257,7 +257,6 @@ EXEC sys.sp_configure ''show advanced options'', 1;
 EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
 RECONFIGURE;',
     10, 0) WITH NOWAIT;
-    RETURN;
 END;
 
 /*Set some variables for better decision-making later*/
