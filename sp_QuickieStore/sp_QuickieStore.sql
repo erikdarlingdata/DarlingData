@@ -2092,7 +2092,7 @@ like the wait stats DMV, and tempdb spills columns
 IF
 (
    @product_version > 13
-OR @azure = 1
+OR @engine IN (5, 8)
 )
 BEGIN
    SELECT
