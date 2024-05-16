@@ -1,4 +1,4 @@
--- Compile Date: 05/16/2024 13:03:24 UTC
+-- Compile Date: 05/16/2024 13:04:42 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -7862,7 +7862,6 @@ EXEC sys.sp_configure ''show advanced options'', 1;
 EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
 RECONFIGURE;',
     10, 0) WITH NOWAIT;
-    RETURN;
 END;
 
 /*Set some variables for better decision-making later*/
