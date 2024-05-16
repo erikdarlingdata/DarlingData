@@ -2301,9 +2301,9 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @query_store_waits_enabled = 0
     BEGIN
-        IF @debug = 1 
-        BEGIN 
-            RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT; 
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
         END
     END;
 END; /*End wait stats checks*/
