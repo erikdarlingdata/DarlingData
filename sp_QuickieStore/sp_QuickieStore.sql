@@ -8239,125 +8239,132 @@ BEGIN
 
 END; /*End expert mode = 1, format output = 1*/
 
-SELECT
-    x.all_done,
-    x.period,
-    x.support,
-    x.help,
-    x.problems,
-    x.performance,
-    x.version_and_date,
-    x.thanks
-FROM
+/*
+Return help table, unless told not to
+*/
+IF
 (
-    SELECT
-        sort =
-            1,
-        period =
-            N'query store data for period ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
-                (
-                    @start_date_original,
-                    DATEADD
-                    (
-                        DAY,
-                        -7,
-                        DATEDIFF
-                        (
-                            DAY,
-                            '19000101',
-                            SYSDATETIME()
-                        )
-                    )
-                ),
-                23
-            ) +
-            N' through ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
-                (
-                    @end_date_original,
-                    SYSDATETIME()
-                ),
-                23
-            ),
-        all_done =
-            'brought to you by darling data!',
-        support =
-            'for support, head over to github',
-        help =
-            'for local help, use @help = 1',
-        problems =
-            'to debug issues, use @debug = 1;',
-        performance =
-            'if this runs slowly, use to get query plans',
-        version_and_date =
-            N'version: ' + CONVERT(nvarchar(10), @version),
-        thanks =
-            'thanks for using sp_QuickieStore!'
-
-    UNION ALL
-
-    SELECT
-        sort =
-            2,
-        period =
-            N'query store data for period ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
-                (
-                    @start_date_original,
-                    DATEADD
-                    (
-                        DAY,
-                        -7,
-                        DATEDIFF
-                        (
-                            DAY,
-                            '19000101',
-                            SYSDATETIME()
-                        )
-                    )
-                ),
-                23
-            ) +
-            N' through ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
-                (
-                    @end_date_original,
-                    SYSDATETIME()
-                ),
-                23
-            ),
-        all_done =
-            'https://www.erikdarling.com/',
-        support =
-            'https://github.com/erikdarlingdata/DarlingData',
-        help =
-            'EXEC sp_QuickieStore @help = 1;',
-        problems =
-            'EXEC sp_QuickieStore @debug = 1;',
-        performance =
-            'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
-        version_and_date =
-            N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
-        thanks =
-            'i hope you find it useful, or whatever'
-) AS x
-WHERE
     @hide_help_table <> 1
-ORDER BY
-    x.sort;
+)
+BEGIN
+    SELECT
+        x.all_done,
+        x.period,
+        x.support,
+        x.help,
+        x.problems,
+        x.performance,
+        x.version_and_date,
+        x.thanks
+    FROM
+    (
+        SELECT
+            sort =
+                1,
+            period =
+                N'query store data for period ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    ISNULL
+                    (
+                        @start_date_original,
+                        DATEADD
+                        (
+                            DAY,
+                            -7,
+                            DATEDIFF
+                            (
+                                DAY,
+                                '19000101',
+                                SYSDATETIME()
+                            )
+                        )
+                    ),
+                    23
+                ) +
+                N' through ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    ISNULL
+                    (
+                        @end_date_original,
+                        SYSDATETIME()
+                    ),
+                    23
+                ),
+            all_done =
+                'brought to you by darling data!',
+            support =
+                'for support, head over to github',
+            help =
+                'for local help, use @help = 1',
+            problems =
+                'to debug issues, use @debug = 1;',
+            performance =
+                'if this runs slowly, use to get query plans',
+            version_and_date =
+                N'version: ' + CONVERT(nvarchar(10), @version),
+            thanks =
+                'thanks for using sp_QuickieStore!'
+    
+        UNION ALL
+    
+        SELECT
+            sort =
+                2,
+            period =
+                N'query store data for period ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    ISNULL
+                    (
+                        @start_date_original,
+                        DATEADD
+                        (
+                            DAY,
+                            -7,
+                            DATEDIFF
+                            (
+                                DAY,
+                                '19000101',
+                                SYSDATETIME()
+                            )
+                        )
+                    ),
+                    23
+                ) +
+                N' through ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    ISNULL
+                    (
+                        @end_date_original,
+                        SYSDATETIME()
+                    ),
+                    23
+                ),
+            all_done =
+                'https://www.erikdarling.com/',
+            support =
+                'https://github.com/erikdarlingdata/DarlingData',
+            help =
+                'EXEC sp_QuickieStore @help = 1;',
+            problems =
+                'EXEC sp_QuickieStore @debug = 1;',
+            performance =
+                'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
+            version_and_date =
+                N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
+            thanks =
+                'i hope you find it useful, or whatever'
+    ) AS x
+    ORDER BY
+        x.sort;
+END; /*End hide_help_table <> 1 */
 
 END TRY
 
