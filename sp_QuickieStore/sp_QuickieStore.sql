@@ -86,6 +86,7 @@ ALTER PROCEDURE
     @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
+    @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/ 
     @format_output bit = 1, /*returns numbers formatted with commas*/
     @get_all_databases bit = 0, /*looks for query store enabled databases and returns combined results from all of them*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
@@ -193,6 +194,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
+                WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'      
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
@@ -239,6 +241,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
+                WHEN N'@hide_help_table' THEN '0 or 1'
                 WHEN N'@format_output' THEN '0 or 1'
                 WHEN N'@get_all_databases' THEN '0 or 1'
                 WHEN N'@workdays' THEN '0 or 1'
@@ -285,6 +288,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
+                WHEN N'@hide_help_table' THEN '0'
                 WHEN N'@format_output' THEN '1'
                 WHEN N'@get_all_databases' THEN '0'
                 WHEN N'@workdays' THEN '0'
@@ -1574,6 +1578,8 @@ SELECT
         ISNULL(@top, 10),
     @expert_mode =
         ISNULL(@expert_mode, 0),
+    @hide_help_table = 
+        ISNULL(@hide_help_table, 0),
     @procedure_schema =
         NULLIF(@procedure_schema, ''),
     @procedure_name =
@@ -8348,6 +8354,8 @@ FROM
         thanks =
             'i hope you find it useful, or whatever'
 ) AS x
+WHERE
+    @hide_help_table <> 1
 ORDER BY
     x.sort;
 
@@ -8450,6 +8458,8 @@ BEGIN
             @query_type,
         expert_mode =
             @expert_mode,
+        hide_help_table = 
+            @hide_help_table,
         format_output =
             @format_output,
         get_all_databases =
