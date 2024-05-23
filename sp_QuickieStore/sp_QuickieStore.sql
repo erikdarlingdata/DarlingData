@@ -86,6 +86,7 @@ ALTER PROCEDURE
     @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
+    @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/ 
     @format_output bit = 1, /*returns numbers formatted with commas*/
     @get_all_databases bit = 0, /*looks for query store enabled databases and returns combined results from all of them*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
@@ -193,6 +194,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
+                WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'      
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
@@ -239,6 +241,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
+                WHEN N'@hide_help_table' THEN '0 or 1'
                 WHEN N'@format_output' THEN '0 or 1'
                 WHEN N'@get_all_databases' THEN '0 or 1'
                 WHEN N'@workdays' THEN '0 or 1'
@@ -285,6 +288,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
+                WHEN N'@hide_help_table' THEN '0'
                 WHEN N'@format_output' THEN '1'
                 WHEN N'@get_all_databases' THEN '0'
                 WHEN N'@workdays' THEN '0'
@@ -1574,6 +1578,8 @@ SELECT
         ISNULL(@top, 10),
     @expert_mode =
         ISNULL(@expert_mode, 0),
+    @hide_help_table = 
+        ISNULL(@hide_help_table, 0),
     @procedure_schema =
         NULLIF(@procedure_schema, ''),
     @procedure_name =
@@ -8233,123 +8239,132 @@ BEGIN
 
 END; /*End expert mode = 1, format output = 1*/
 
-SELECT
-    x.all_done,
-    x.period,
-    x.support,
-    x.help,
-    x.problems,
-    x.performance,
-    x.version_and_date,
-    x.thanks
-FROM
+/*
+Return help table, unless told not to
+*/
+IF
 (
+    @hide_help_table <> 1
+)
+BEGIN
     SELECT
-        sort =
-            1,
-        period =
-            N'query store data for period ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
+        x.all_done,
+        x.period,
+        x.support,
+        x.help,
+        x.problems,
+        x.performance,
+        x.version_and_date,
+        x.thanks
+    FROM
+    (
+        SELECT
+            sort =
+                1,
+            period =
+                N'query store data for period ' +
+                CONVERT
                 (
-                    @start_date_original,
-                    DATEADD
+                    nvarchar(10),
+                    ISNULL
                     (
-                        DAY,
-                        -7,
-                        DATEDIFF
+                        @start_date_original,
+                        DATEADD
                         (
                             DAY,
-                            '19000101',
-                            SYSDATETIME()
+                            -7,
+                            DATEDIFF
+                            (
+                                DAY,
+                                '19000101',
+                                SYSDATETIME()
+                            )
                         )
-                    )
-                ),
-                23
-            ) +
-            N' through ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
+                    ),
+                    23
+                ) +
+                N' through ' +
+                CONVERT
                 (
-                    @end_date_original,
-                    SYSDATETIME()
-                ),
-                23
-            ),
-        all_done =
-            'brought to you by darling data!',
-        support =
-            'for support, head over to github',
-        help =
-            'for local help, use @help = 1',
-        problems =
-            'to debug issues, use @debug = 1;',
-        performance =
-            'if this runs slowly, use to get query plans',
-        version_and_date =
-            N'version: ' + CONVERT(nvarchar(10), @version),
-        thanks =
-            'thanks for using sp_QuickieStore!'
-
-    UNION ALL
-
-    SELECT
-        sort =
-            2,
-        period =
-            N'query store data for period ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
-                (
-                    @start_date_original,
-                    DATEADD
+                    nvarchar(10),
+                    ISNULL
                     (
-                        DAY,
-                        -7,
-                        DATEDIFF
+                        @end_date_original,
+                        SYSDATETIME()
+                    ),
+                    23
+                ),
+            all_done =
+                'brought to you by darling data!',
+            support =
+                'for support, head over to github',
+            help =
+                'for local help, use @help = 1',
+            problems =
+                'to debug issues, use @debug = 1;',
+            performance =
+                'if this runs slowly, use to get query plans',
+            version_and_date =
+                N'version: ' + CONVERT(nvarchar(10), @version),
+            thanks =
+                'thanks for using sp_QuickieStore!'
+    
+        UNION ALL
+    
+        SELECT
+            sort =
+                2,
+            period =
+                N'query store data for period ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    ISNULL
+                    (
+                        @start_date_original,
+                        DATEADD
                         (
                             DAY,
-                            '19000101',
-                            SYSDATETIME()
+                            -7,
+                            DATEDIFF
+                            (
+                                DAY,
+                                '19000101',
+                                SYSDATETIME()
+                            )
                         )
-                    )
-                ),
-                23
-            ) +
-            N' through ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
+                    ),
+                    23
+                ) +
+                N' through ' +
+                CONVERT
                 (
-                    @end_date_original,
-                    SYSDATETIME()
+                    nvarchar(10),
+                    ISNULL
+                    (
+                        @end_date_original,
+                        SYSDATETIME()
+                    ),
+                    23
                 ),
-                23
-            ),
-        all_done =
-            'https://www.erikdarling.com/',
-        support =
-            'https://github.com/erikdarlingdata/DarlingData',
-        help =
-            'EXEC sp_QuickieStore @help = 1;',
-        problems =
-            'EXEC sp_QuickieStore @debug = 1;',
-        performance =
-            'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
-        version_and_date =
-            N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
-        thanks =
-            'i hope you find it useful, or whatever'
-) AS x
-ORDER BY
-    x.sort;
+            all_done =
+                'https://www.erikdarling.com/',
+            support =
+                'https://github.com/erikdarlingdata/DarlingData',
+            help =
+                'EXEC sp_QuickieStore @help = 1;',
+            problems =
+                'EXEC sp_QuickieStore @debug = 1;',
+            performance =
+                'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
+            version_and_date =
+                N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
+            thanks =
+                'i hope you find it useful, or whatever'
+    ) AS x
+    ORDER BY
+        x.sort;
+END; /*End hide_help_table <> 1 */
 
 END TRY
 
@@ -8450,6 +8465,8 @@ BEGIN
             @query_type,
         expert_mode =
             @expert_mode,
+        hide_help_table = 
+            @hide_help_table,
         format_output =
             @format_output,
         get_all_databases =
