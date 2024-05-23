@@ -1178,6 +1178,50 @@ BEGIN
 END;
 
 /*
+We also need to capture original values here.
+Doing it inside a loop over multiple databases
+would break the UTC conversion.
+*/
+SELECT
+    @start_date_original =
+        ISNULL
+        (
+            @start_date,
+            DATEADD
+            (
+                DAY,
+                -7,
+                DATEDIFF
+                (
+                    DAY,
+                    '19000101',
+                    SYSUTCDATETIME()
+                )
+            )
+        ),
+    @end_date_original =
+        ISNULL
+        (
+            @end_date,
+            DATEADD
+            (
+                DAY,
+                1,
+                DATEADD
+                (
+                    MINUTE,
+                    0,
+                    DATEDIFF
+                    (
+                        DAY,
+                        '19000101',
+                        SYSUTCDATETIME()
+                    )
+                )
+            )
+        );
+
+/*
 This section is in a cursor whether we
 hit one database, or multiple
 
@@ -1512,43 +1556,6 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @rc = 0,
     @em = @expert_mode,
     @fo = @format_output,
-    @start_date_original =
-        ISNULL
-        (
-            @start_date,
-            DATEADD
-            (
-                DAY,
-                -7,
-                DATEDIFF
-                (
-                    DAY,
-                    '19000101',
-                    SYSUTCDATETIME()
-                )
-            )
-        ),
-    @end_date_original =
-        ISNULL
-        (
-            @end_date,
-            DATEADD
-            (
-                DAY,
-                1,
-                DATEADD
-                (
-                    MINUTE,
-                    0,
-                    DATEDIFF
-                    (
-                        DAY,
-                        '19000101',
-                        SYSUTCDATETIME()
-                    )
-                )
-            )
-        ),
     @utc_minutes_difference =
         DATEDIFF
         (
@@ -1653,7 +1660,7 @@ SELECT
                 (
                     MINUTE,
                     @utc_minutes_difference,
-                    @start_date
+                    @start_date_original
                 )
         END,
     @end_date =
@@ -1682,7 +1689,7 @@ SELECT
                 (
                     MINUTE,
                     @utc_minutes_difference,
-                    @end_date
+                    @end_date_original
                 )
         END;
 
