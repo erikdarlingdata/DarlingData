@@ -2173,12 +2173,12 @@ BEGIN
             SELECT
                 statement_text_checksum,
                 total_compiles = COUNT_BIG(*),
-                total_compile_cpu = SUM(compile_cpu_ms),
-                avg_compile_cpu = AVG(compile_cpu_ms),
-                max_compile_cpu = MAX(compile_cpu_ms),
-                total_compile_duration = SUM(compile_duration_ms),
-                avg_compile_duration = AVG(compile_duration_ms),
-                max_compile_duration = MAX(compile_duration_ms)
+                total_compile_cpu_ms = SUM(compile_cpu_ms),
+                avg_compile_cpu_ms = AVG(compile_cpu_ms),
+                max_compile_cpu_ms = MAX(compile_cpu_ms),
+                total_compile_duration_ms = SUM(compile_duration_ms),
+                avg_compile_duration_ms = AVG(compile_duration_ms),
+                max_compile_duration_ms = MAX(compile_duration_ms)
             FROM #compiles_1
             GROUP BY
                 statement_text_checksum
@@ -2203,12 +2203,12 @@ BEGIN
                         TYPE
                 ),
             c.total_compiles,
-            c.total_compile_cpu,
-            c.avg_compile_cpu,
-            c.max_compile_cpu,
-            c.total_compile_duration,
-            c.avg_compile_duration,
-            c.max_compile_duration
+            c.total_compile_cpu_ms,
+            c.avg_compile_cpu_ms,
+            c.max_compile_cpu_ms,
+            c.total_compile_duration_ms,
+            c.avg_compile_duration_ms,
+            c.max_compile_duration_ms
         FROM cbq AS c
         CROSS APPLY
         (
@@ -2325,12 +2325,12 @@ BEGIN
                 query_hash,
                 total_compiles = COUNT_BIG(*),
                 plan_count = COUNT_BIG(DISTINCT query_plan_hash),
-                total_compile_cpu = SUM(compile_cpu_time_ms),
-                avg_compile_cpu = AVG(compile_cpu_time_ms),
-                max_compile_cpu = MAX(compile_cpu_time_ms),
-                total_compile_duration = SUM(compile_duration_ms),
-                avg_compile_duration = AVG(compile_duration_ms),
-                max_compile_duration = MAX(compile_duration_ms)
+                total_compile_cpu_ms = SUM(compile_cpu_time_ms),
+                avg_compile_cpu_ms = AVG(compile_cpu_time_ms),
+                max_compile_cpu_ms = MAX(compile_cpu_time_ms),
+                total_compile_duration_ms = SUM(compile_duration_ms),
+                avg_compile_duration_ms = AVG(compile_duration_ms),
+                max_compile_duration_ms = MAX(compile_duration_ms)
             FROM #parameterization
             GROUP BY
                 database_name,
@@ -2357,12 +2357,12 @@ BEGIN
                k.is_parameterizable,
                c.total_compiles,
                c.plan_count,
-               c.total_compile_cpu,
-               c.avg_compile_cpu,
-               c.max_compile_cpu,
-               c.total_compile_duration,
-               c.avg_compile_duration,
-               c.max_compile_duration,
+               c.total_compile_cpu_ms,
+               c.avg_compile_cpu_ms,
+               c.max_compile_cpu_ms,
+               c.total_compile_duration_ms,
+               c.avg_compile_duration_ms,
+               c.max_compile_duration_ms,
                k.query_param_type,
                k.is_cached,
                k.is_recompiled,
@@ -2425,12 +2425,12 @@ IF @compile_events = 1
             SELECT
                 statement_text_checksum,
                 total_recompiles = COUNT_BIG(*),
-                total_recompile_cpu = SUM(recompile_cpu_ms),
-                avg_recompile_cpu = AVG(recompile_cpu_ms),
-                max_recompile_cpu = MAX(recompile_cpu_ms),
-                total_recompile_duration = SUM(recompile_duration_ms),
-                avg_recompile_duration = AVG(recompile_duration_ms),
-                max_recompile_duration = MAX(recompile_duration_ms)
+                total_recompile_cpu_ms = SUM(recompile_cpu_ms),
+                avg_recompile_cpu_ms = AVG(recompile_cpu_ms),
+                max_recompile_cpu_ms = MAX(recompile_cpu_ms),
+                total_recompile_duration_ms = SUM(recompile_duration_ms),
+                avg_recompile_duration_ms = AVG(recompile_duration_ms),
+                max_recompile_duration_ms = MAX(recompile_duration_ms)
             FROM #recompiles_1
             GROUP BY
                 statement_text_checksum
@@ -2456,12 +2456,12 @@ IF @compile_events = 1
                         TYPE
                 ),
             c.total_recompiles,
-            c.total_recompile_cpu,
-            c.avg_recompile_cpu,
-            c.max_recompile_cpu,
-            c.total_recompile_duration,
-            c.avg_recompile_duration,
-            c.max_recompile_duration
+            c.total_recompile_cpu_ms,
+            c.avg_recompile_cpu_ms,
+            c.max_recompile_cpu_ms,
+            c.total_recompile_duration_ms,
+            c.avg_recompile_duration_ms,
+            c.max_recompile_duration_ms
         FROM cbq AS c
         CROSS APPLY
         (
