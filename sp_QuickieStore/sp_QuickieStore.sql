@@ -76,6 +76,7 @@ ALTER PROCEDURE
     @ignore_plan_hashes nvarchar(4000) = NULL, /*a list of query plan hashes to ignore*/
     @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
+    @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
     @escape_brackets bit = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
     @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/
     @only_queries_with_hints bit = 0, /*Set this bit to 1 to retrieve only queries with query hints*/
@@ -184,6 +185,7 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'a list of query plan hashes to ignore'
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@query_text_search' THEN 'query text to search for'
+                WHEN N'@query_text_search_not' THEN 'query text to exclude'
                 WHEN N'@escape_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
                 WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'
                 WHEN N'@only_queries_with_hints' THEN 'only return queries with query hints'
@@ -231,6 +233,7 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'a string; comma separated for multiple hashes'
                 WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
+                WHEN N'@query_text_search_not' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@escape_brackets' THEN '0 or 1'
                 WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'
                 WHEN N'@only_queries_with_hints' THEN '0 or 1'
@@ -278,6 +281,7 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'NULL'
                 WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
+                WHEN N'@query_text_search_not' THEN 'NULL'
                 WHEN N'@escape_brackets' THEN '0'
                 WHEN N'@escape_character' THEN '\'
                 WHEN N'@only_queries_with_hints' THEN '0'
@@ -1136,6 +1140,7 @@ DECLARE
     @nc10 nvarchar(2),
     @where_clause nvarchar(MAX),
     @query_text_search_original_value nvarchar(4000),
+    @query_text_search_not_original_value nvarchar(4000),
     @procedure_exists bit,
     @query_store_exists bit,
     @query_store_trouble bit,
@@ -1174,7 +1179,8 @@ AND @escape_brackets = 1
 )
 BEGIN
     SELECT
-         @query_text_search_original_value = @query_text_search;
+         @query_text_search_original_value = @query_text_search,
+         @query_text_search_not_original_value = @query_text_search_not;
 END;
 
 /*
@@ -1417,6 +1423,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             WHEN @get_all_databases = 1 AND @escape_brackets = 1
             THEN @query_text_search_original_value
             ELSE @query_text_search
+         END,
+    @query_text_search_not =
+        CASE
+            WHEN @get_all_databases = 1 AND @escape_brackets = 1
+            THEN @query_text_search_not_original_value
+            ELSE @query_text_search_not
          END,
     @procedure_exists = 0,
     @query_store_exists = 0,
@@ -4070,6 +4082,164 @@ END;
 
     SELECT
         @where_clause += N'AND   EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_text_search AS qst
+           WHERE qst.plan_id = qsrs.plan_id
+       )' + @nc10;
+END;
+
+IF @query_text_search_not IS NOT NULL
+BEGIN
+    IF
+    (
+        LEFT
+        (
+            @query_text_search_not,
+            1
+        ) <> N'%'
+    )
+    BEGIN
+        SELECT
+            @query_text_search_not =
+                N'%' + @query_text_search_not;
+    END;
+
+    IF
+    (
+        LEFT
+        (
+            REVERSE
+            (
+                @query_text_search_not
+            ),
+            1
+        ) <> N'%'
+    )
+    BEGIN
+        SELECT
+            @query_text_search_not =
+                @query_text_search_not + N'%';
+    END;
+
+    /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
+    IF @escape_brackets = 1
+    BEGIN
+        SELECT
+            @query_text_search_not =
+                REPLACE(REPLACE(REPLACE(
+                    @query_text_search_not,
+                N'[', @escape_character + N'['),
+                N']', @escape_character + N']'),
+                N'_', @escape_character + N'_');
+    END;
+
+    SELECT
+        @current_table = 'inserting #query_text_search',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          WHERE qsp.query_id = qsq.query_id
+          AND EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                  WHERE qsqt.query_text_id = qsq.query_text_id
+                  AND   qsqt.query_sql_text LIKE @query_text_search_not
+              )
+      )';
+
+    /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
+    IF @escape_brackets = 1
+    BEGIN
+        SELECT
+            @sql =
+                REPLACE
+                (
+                    @sql,
+                    N'@query_text_search_not',
+                    N'@query_text_search_not ESCAPE ''' + @escape_character + N''''
+                );
+    END;
+
+/*If we're searching by a procedure name, limit the text search to it */
+IF
+(
+    @procedure_name IS NOT NULL
+AND @procedure_exists = 1
+)
+BEGIN
+    SELECT
+        @sql += N'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #procedure_plans AS pp
+          WHERE pp.plan_id = qsp.plan_id
+      )';
+END;
+
+    SELECT
+        @sql += N'
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #query_text_search WITH(TABLOCK)
+    (
+        plan_id
+    )
+    EXEC sys.sp_executesql
+        @sql,
+      N'@query_text_search_not nvarchar(4000)',
+        @query_text_search_not;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    SELECT
+        @where_clause += N'AND   NOT EXISTS
        (
            SELECT
                1/0
@@ -8452,6 +8622,8 @@ BEGIN
             @ignore_sql_handles,
         query_text_search =
             @query_text_search,
+        query_text_search_not =
+            @query_text_search_not,
         escape_brackets =
             @escape_brackets,
         escape_character =
