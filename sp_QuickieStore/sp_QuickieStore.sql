@@ -76,6 +76,7 @@ ALTER PROCEDURE
     @ignore_plan_hashes nvarchar(4000) = NULL, /*a list of query plan hashes to ignore*/
     @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
+    @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
     @escape_brackets bit = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
     @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/
     @only_queries_with_hints bit = 0, /*Set this bit to 1 to retrieve only queries with query hints*/
@@ -86,6 +87,7 @@ ALTER PROCEDURE
     @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
+    @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/ 
     @format_output bit = 1, /*returns numbers formatted with commas*/
     @get_all_databases bit = 0, /*looks for query store enabled databases and returns combined results from all of them*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
@@ -183,6 +185,7 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'a list of query plan hashes to ignore'
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@query_text_search' THEN 'query text to search for'
+                WHEN N'@query_text_search_not' THEN 'query text to exclude'
                 WHEN N'@escape_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
                 WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'
                 WHEN N'@only_queries_with_hints' THEN 'only return queries with query hints'
@@ -193,6 +196,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
+                WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'      
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
@@ -229,6 +233,7 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'a string; comma separated for multiple hashes'
                 WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
+                WHEN N'@query_text_search_not' THEN 'a string; leading and trailing wildcards will be added if missing'
                 WHEN N'@escape_brackets' THEN '0 or 1'
                 WHEN N'@escape_character' THEN 'some escape character, SQL standard is backslash (\)'
                 WHEN N'@only_queries_with_hints' THEN '0 or 1'
@@ -239,6 +244,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'cpu, lock, latch, buffer latch, buffer io, log io, network io, parallelism, memory'
                 WHEN N'@query_type' THEN 'ad hoc, adhoc, proc, procedure, whatever.'
                 WHEN N'@expert_mode' THEN '0 or 1'
+                WHEN N'@hide_help_table' THEN '0 or 1'
                 WHEN N'@format_output' THEN '0 or 1'
                 WHEN N'@get_all_databases' THEN '0 or 1'
                 WHEN N'@workdays' THEN '0 or 1'
@@ -275,6 +281,7 @@ BEGIN
                 WHEN N'@ignore_plan_hashes' THEN 'NULL'
                 WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
+                WHEN N'@query_text_search_not' THEN 'NULL'
                 WHEN N'@escape_brackets' THEN '0'
                 WHEN N'@escape_character' THEN '\'
                 WHEN N'@only_queries_with_hints' THEN '0'
@@ -285,6 +292,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'NULL'
                 WHEN N'@query_type' THEN 'NULL'
                 WHEN N'@expert_mode' THEN '0'
+                WHEN N'@hide_help_table' THEN '0'
                 WHEN N'@format_output' THEN '1'
                 WHEN N'@get_all_databases' THEN '0'
                 WHEN N'@workdays' THEN '0'
@@ -1132,6 +1140,7 @@ DECLARE
     @nc10 nvarchar(2),
     @where_clause nvarchar(MAX),
     @query_text_search_original_value nvarchar(4000),
+    @query_text_search_not_original_value nvarchar(4000),
     @procedure_exists bit,
     @query_store_exists bit,
     @query_store_trouble bit,
@@ -1170,8 +1179,53 @@ AND @escape_brackets = 1
 )
 BEGIN
     SELECT
-         @query_text_search_original_value = @query_text_search;
+         @query_text_search_original_value = @query_text_search,
+         @query_text_search_not_original_value = @query_text_search_not;
 END;
+
+/*
+We also need to capture original values here.
+Doing it inside a loop over multiple databases
+would break the UTC conversion.
+*/
+SELECT
+    @start_date_original =
+        ISNULL
+        (
+            @start_date,
+            DATEADD
+            (
+                DAY,
+                -7,
+                DATEDIFF
+                (
+                    DAY,
+                    '19000101',
+                    SYSUTCDATETIME()
+                )
+            )
+        ),
+    @end_date_original =
+        ISNULL
+        (
+            @end_date,
+            DATEADD
+            (
+                DAY,
+                1,
+                DATEADD
+                (
+                    MINUTE,
+                    0,
+                    DATEDIFF
+                    (
+                        DAY,
+                        '19000101',
+                        SYSUTCDATETIME()
+                    )
+                )
+            )
+        );
 
 /*
 This section is in a cursor whether we
@@ -1370,6 +1424,12 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             THEN @query_text_search_original_value
             ELSE @query_text_search
          END,
+    @query_text_search_not =
+        CASE
+            WHEN @get_all_databases = 1 AND @escape_brackets = 1
+            THEN @query_text_search_not_original_value
+            ELSE @query_text_search_not
+         END,
     @procedure_exists = 0,
     @query_store_exists = 0,
     @query_store_trouble = 0,
@@ -1508,43 +1568,6 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @rc = 0,
     @em = @expert_mode,
     @fo = @format_output,
-    @start_date_original =
-        ISNULL
-        (
-            @start_date,
-            DATEADD
-            (
-                DAY,
-                -7,
-                DATEDIFF
-                (
-                    DAY,
-                    '19000101',
-                    SYSUTCDATETIME()
-                )
-            )
-        ),
-    @end_date_original =
-        ISNULL
-        (
-            @end_date,
-            DATEADD
-            (
-                DAY,
-                1,
-                DATEADD
-                (
-                    MINUTE,
-                    0,
-                    DATEDIFF
-                    (
-                        DAY,
-                        '19000101',
-                        SYSUTCDATETIME()
-                    )
-                )
-            )
-        ),
     @utc_minutes_difference =
         DATEDIFF
         (
@@ -1574,6 +1597,8 @@ SELECT
         ISNULL(@top, 10),
     @expert_mode =
         ISNULL(@expert_mode, 0),
+    @hide_help_table = 
+        ISNULL(@hide_help_table, 0),
     @procedure_schema =
         NULLIF(@procedure_schema, ''),
     @procedure_name =
@@ -1647,7 +1672,7 @@ SELECT
                 (
                     MINUTE,
                     @utc_minutes_difference,
-                    @start_date
+                    @start_date_original
                 )
         END,
     @end_date =
@@ -1676,7 +1701,7 @@ SELECT
                 (
                     MINUTE,
                     @utc_minutes_difference,
-                    @end_date
+                    @end_date_original
                 )
         END;
 
@@ -4057,6 +4082,164 @@ END;
 
     SELECT
         @where_clause += N'AND   EXISTS
+       (
+           SELECT
+               1/0
+           FROM #query_text_search AS qst
+           WHERE qst.plan_id = qsrs.plan_id
+       )' + @nc10;
+END;
+
+IF @query_text_search_not IS NOT NULL
+BEGIN
+    IF
+    (
+        LEFT
+        (
+            @query_text_search_not,
+            1
+        ) <> N'%'
+    )
+    BEGIN
+        SELECT
+            @query_text_search_not =
+                N'%' + @query_text_search_not;
+    END;
+
+    IF
+    (
+        LEFT
+        (
+            REVERSE
+            (
+                @query_text_search_not
+            ),
+            1
+        ) <> N'%'
+    )
+    BEGIN
+        SELECT
+            @query_text_search_not =
+                @query_text_search_not + N'%';
+    END;
+
+    /* If our query texts contains square brackets (common in Entity Framework queries), add a leading escape character to each bracket character */
+    IF @escape_brackets = 1
+    BEGIN
+        SELECT
+            @query_text_search_not =
+                REPLACE(REPLACE(REPLACE(
+                    @query_text_search_not,
+                N'[', @escape_character + N'['),
+                N']', @escape_character + N']'),
+                N'_', @escape_character + N'_');
+    END;
+
+    SELECT
+        @current_table = 'inserting #query_text_search',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          WHERE qsp.query_id = qsq.query_id
+          AND EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                  WHERE qsqt.query_text_id = qsq.query_text_id
+                  AND   qsqt.query_sql_text LIKE @query_text_search_not
+              )
+      )';
+
+    /* If we are escaping bracket character in our query text search, add the ESCAPE clause and character to the LIKE subquery*/
+    IF @escape_brackets = 1
+    BEGIN
+        SELECT
+            @sql =
+                REPLACE
+                (
+                    @sql,
+                    N'@query_text_search_not',
+                    N'@query_text_search_not ESCAPE ''' + @escape_character + N''''
+                );
+    END;
+
+/*If we're searching by a procedure name, limit the text search to it */
+IF
+(
+    @procedure_name IS NOT NULL
+AND @procedure_exists = 1
+)
+BEGIN
+    SELECT
+        @sql += N'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #procedure_plans AS pp
+          WHERE pp.plan_id = qsp.plan_id
+      )';
+END;
+
+    SELECT
+        @sql += N'
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #query_text_search WITH(TABLOCK)
+    (
+        plan_id
+    )
+    EXEC sys.sp_executesql
+        @sql,
+      N'@query_text_search_not nvarchar(4000)',
+        @query_text_search_not;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    SELECT
+        @where_clause += N'AND   NOT EXISTS
        (
            SELECT
                1/0
@@ -8233,123 +8416,132 @@ BEGIN
 
 END; /*End expert mode = 1, format output = 1*/
 
-SELECT
-    x.all_done,
-    x.period,
-    x.support,
-    x.help,
-    x.problems,
-    x.performance,
-    x.version_and_date,
-    x.thanks
-FROM
+/*
+Return help table, unless told not to
+*/
+IF
 (
+    @hide_help_table <> 1
+)
+BEGIN
     SELECT
-        sort =
-            1,
-        period =
-            N'query store data for period ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
+        x.all_done,
+        x.period,
+        x.support,
+        x.help,
+        x.problems,
+        x.performance,
+        x.version_and_date,
+        x.thanks
+    FROM
+    (
+        SELECT
+            sort =
+                1,
+            period =
+                N'query store data for period ' +
+                CONVERT
                 (
-                    @start_date_original,
-                    DATEADD
+                    nvarchar(10),
+                    ISNULL
                     (
-                        DAY,
-                        -7,
-                        DATEDIFF
+                        @start_date_original,
+                        DATEADD
                         (
                             DAY,
-                            '19000101',
-                            SYSDATETIME()
+                            -7,
+                            DATEDIFF
+                            (
+                                DAY,
+                                '19000101',
+                                SYSDATETIME()
+                            )
                         )
-                    )
-                ),
-                23
-            ) +
-            N' through ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
+                    ),
+                    23
+                ) +
+                N' through ' +
+                CONVERT
                 (
-                    @end_date_original,
-                    SYSDATETIME()
-                ),
-                23
-            ),
-        all_done =
-            'brought to you by darling data!',
-        support =
-            'for support, head over to github',
-        help =
-            'for local help, use @help = 1',
-        problems =
-            'to debug issues, use @debug = 1;',
-        performance =
-            'if this runs slowly, use to get query plans',
-        version_and_date =
-            N'version: ' + CONVERT(nvarchar(10), @version),
-        thanks =
-            'thanks for using sp_QuickieStore!'
-
-    UNION ALL
-
-    SELECT
-        sort =
-            2,
-        period =
-            N'query store data for period ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
-                (
-                    @start_date_original,
-                    DATEADD
+                    nvarchar(10),
+                    ISNULL
                     (
-                        DAY,
-                        -7,
-                        DATEDIFF
+                        @end_date_original,
+                        SYSDATETIME()
+                    ),
+                    23
+                ),
+            all_done =
+                'brought to you by darling data!',
+            support =
+                'for support, head over to github',
+            help =
+                'for local help, use @help = 1',
+            problems =
+                'to debug issues, use @debug = 1;',
+            performance =
+                'if this runs slowly, use to get query plans',
+            version_and_date =
+                N'version: ' + CONVERT(nvarchar(10), @version),
+            thanks =
+                'thanks for using sp_QuickieStore!'
+    
+        UNION ALL
+    
+        SELECT
+            sort =
+                2,
+            period =
+                N'query store data for period ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    ISNULL
+                    (
+                        @start_date_original,
+                        DATEADD
                         (
                             DAY,
-                            '19000101',
-                            SYSDATETIME()
+                            -7,
+                            DATEDIFF
+                            (
+                                DAY,
+                                '19000101',
+                                SYSDATETIME()
+                            )
                         )
-                    )
-                ),
-                23
-            ) +
-            N' through ' +
-            CONVERT
-            (
-                nvarchar(10),
-                ISNULL
+                    ),
+                    23
+                ) +
+                N' through ' +
+                CONVERT
                 (
-                    @end_date_original,
-                    SYSDATETIME()
+                    nvarchar(10),
+                    ISNULL
+                    (
+                        @end_date_original,
+                        SYSDATETIME()
+                    ),
+                    23
                 ),
-                23
-            ),
-        all_done =
-            'https://www.erikdarling.com/',
-        support =
-            'https://github.com/erikdarlingdata/DarlingData',
-        help =
-            'EXEC sp_QuickieStore @help = 1;',
-        problems =
-            'EXEC sp_QuickieStore @debug = 1;',
-        performance =
-            'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
-        version_and_date =
-            N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
-        thanks =
-            'i hope you find it useful, or whatever'
-) AS x
-ORDER BY
-    x.sort;
+            all_done =
+                'https://www.erikdarling.com/',
+            support =
+                'https://github.com/erikdarlingdata/DarlingData',
+            help =
+                'EXEC sp_QuickieStore @help = 1;',
+            problems =
+                'EXEC sp_QuickieStore @debug = 1;',
+            performance =
+                'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
+            version_and_date =
+                N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
+            thanks =
+                'i hope you find it useful, or whatever'
+    ) AS x
+    ORDER BY
+        x.sort;
+END; /*End hide_help_table <> 1 */
 
 END TRY
 
@@ -8430,6 +8622,8 @@ BEGIN
             @ignore_sql_handles,
         query_text_search =
             @query_text_search,
+        query_text_search_not =
+            @query_text_search_not,
         escape_brackets =
             @escape_brackets,
         escape_character =
@@ -8450,6 +8644,8 @@ BEGIN
             @query_type,
         expert_mode =
             @expert_mode,
+        hide_help_table = 
+            @hide_help_table,
         format_output =
             @format_output,
         get_all_databases =
