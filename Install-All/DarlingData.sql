@@ -1,4 +1,4 @@
--- Compile Date: 05/24/2024 18:18:45 UTC
+-- Compile Date: 05/24/2024 18:40:20 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -22479,7 +22479,7 @@ BEGIN
                 N'query store data for period ' +
                 CONVERT
                 (
-                    nvarchar(10),
+                    nvarchar(19),
                     ISNULL
                     (
                         @start_date_original,
@@ -22495,18 +22495,18 @@ BEGIN
                             )
                         )
                     ),
-                    23
+                    21
                 ) +
                 N' through ' +
                 CONVERT
                 (
-                    nvarchar(10),
+                    nvarchar(19),
                     ISNULL
                     (
                         @end_date_original,
                         SYSDATETIME()
                     ),
-                    23
+                    21
                 ),
             all_done =
                 'brought to you by darling data!',
@@ -22532,7 +22532,7 @@ BEGIN
                 N'query store data for period ' +
                 CONVERT
                 (
-                    nvarchar(10),
+                    nvarchar(19),
                     ISNULL
                     (
                         @start_date_original,
@@ -22548,18 +22548,18 @@ BEGIN
                             )
                         )
                     ),
-                    23
+                    21
                 ) +
                 N' through ' +
                 CONVERT
                 (
-                    nvarchar(10),
+                    nvarchar(19),
                     ISNULL
                     (
                         @end_date_original,
                         SYSDATETIME()
                     ),
-                    23
+                    21
                 ),
             all_done =
                 'https://www.erikdarling.com/',
