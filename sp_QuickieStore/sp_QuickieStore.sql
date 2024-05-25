@@ -8439,38 +8439,7 @@ BEGIN
             sort =
                 1,
             period =
-                N'query store data for period ' +
-                CONVERT
-                (
-                    nvarchar(19),
-                    ISNULL
-                    (
-                        @start_date_original,
-                        DATEADD
-                        (
-                            DAY,
-                            -7,
-                            DATEDIFF
-                            (
-                                DAY,
-                                '19000101',
-                                SYSDATETIME()
-                            )
-                        )
-                    ),
-                    21
-                ) +
-                N' through ' +
-                CONVERT
-                (
-                    nvarchar(19),
-                    ISNULL
-                    (
-                        @end_date_original,
-                        SYSDATETIME()
-                    ),
-                    21
-                ),
+                'query store data for period',
             all_done =
                 'brought to you by darling data!',
             support =
@@ -8492,7 +8461,6 @@ BEGIN
             sort =
                 2,
             period =
-                N'query store data for period ' +
                 CONVERT
                 (
                     nvarchar(19),
@@ -8513,7 +8481,7 @@ BEGIN
                     ),
                     21
                 ) +
-                N' through ' +
+                N' to ' +
                 CONVERT
                 (
                     nvarchar(19),
