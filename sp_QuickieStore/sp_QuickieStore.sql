@@ -1429,14 +1429,14 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @where_clause = N'',
     @query_text_search =
         CASE
-            WHEN @get_all_databases = 1 
+            WHEN @get_all_databases = 1
             AND  @escape_brackets = 1
             THEN @query_text_search_original_value
             ELSE @query_text_search
          END,
     @query_text_search_not =
         CASE
-            WHEN @get_all_databases = 1 
+            WHEN @get_all_databases = 1
             AND  @escape_brackets = 1
             THEN @query_text_search_not_original_value
             ELSE @query_text_search_not
