@@ -625,6 +625,15 @@ CREATE TABLE
 );
 
 /*
+Hold plan_ids for matching query text (not)
+*/
+CREATE TABLE
+    #query_text_search_not
+(
+    plan_id bigint PRIMARY KEY
+);
+
+/*
 Hold plan_ids for matching wait filter
 */
 CREATE TABLE
@@ -1420,13 +1429,15 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @where_clause = N'',
     @query_text_search =
         CASE
-            WHEN @get_all_databases = 1 AND @escape_brackets = 1
+            WHEN @get_all_databases = 1 
+            AND  @escape_brackets = 1
             THEN @query_text_search_original_value
             ELSE @query_text_search
          END,
     @query_text_search_not =
         CASE
-            WHEN @get_all_databases = 1 AND @escape_brackets = 1
+            WHEN @get_all_databases = 1 
+            AND  @escape_brackets = 1
             THEN @query_text_search_not_original_value
             ELSE @query_text_search_not
          END,
@@ -4136,7 +4147,7 @@ BEGIN
     END;
 
     SELECT
-        @current_table = 'inserting #query_text_search',
+        @current_table = 'inserting #query_text_search_not',
         @sql = @isolation_level;
 
     IF @troubleshoot_performance = 1
@@ -4212,7 +4223,7 @@ END;
     END;
 
     INSERT
-        #query_text_search WITH(TABLOCK)
+        #query_text_search_not WITH(TABLOCK)
     (
         plan_id
     )
@@ -4243,7 +4254,7 @@ END;
        (
            SELECT
                1/0
-           FROM #query_text_search AS qst
+           FROM #query_text_search_not AS qst
            WHERE qst.plan_id = qsrs.plan_id
        )' + @nc10;
 END;
