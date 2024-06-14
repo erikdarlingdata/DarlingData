@@ -1,4 +1,4 @@
-﻿SET ANSI_NULLS ON;    
+SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
@@ -6,7 +6,7 @@ SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
 SET NUMERIC_ROUNDABORT OFF;
 SET IMPLICIT_TRANSACTIONS OFF;
-SET STATISTICS TIME, IO OFF; 
+SET STATISTICS TIME, IO OFF;
 GO
 
 /*
@@ -65,9 +65,9 @@ ALTER PROCEDURE
 WITH RECOMPILE
 AS
 BEGIN
-SET STATISTICS XML OFF;   
+SET STATISTICS XML OFF;
 SET NOCOUNT ON;
-SET XACT_ABORT ON;   
+SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
@@ -159,9 +159,9 @@ BEGIN
     SELECT
         mit_license_yo =
            'i am MIT licensed, so like, do whatever'
-  
+
     UNION ALL
-  
+
     SELECT
         mit_license_yo =
             'see printed messages for full license';
@@ -209,12 +209,12 @@ END; /*End help section*/
     IF @what_to_check NOT IN ('cpu', 'memory', 'all')
     BEGIN
         RAISERROR('@what_to_check was set to %s, setting to all', 0, 1, @what_to_check) WITH NOWAIT;
-        
+
         SELECT
             @what_to_check = 'all';
     END;
-    
-    
+
+
     /*
     Declarations of Variablependence
     */
@@ -328,29 +328,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ELSE 0
             END,
         @waitfor varchar(20) =
-            CONVERT   
-            (   
-                nvarchar(20),    
-                DATEADD   
-                (   
-                    SECOND,    
-                    @sample_seconds,    
-                    '19000101'   
-                 ),    
-                 114   
+            CONVERT
+            (
+                nvarchar(20),
+                DATEADD
+                (
+                    SECOND,
+                    @sample_seconds,
+                    '19000101'
+                 ),
+                 114
             ),
-        @pass tinyint = 
+        @pass tinyint =
             CASE @sample_seconds
-                 WHEN 0 
+                 WHEN 0
                  THEN 1
                  ELSE 0
             END,
-        @prefix sysname = 
-            CASE 
+        @prefix sysname =
+            CASE
                 WHEN @@SERVICENAME = N'MSSQLSERVER'
                 THEN N'SQLServer:'
-                ELSE N'MSSQL$' + 
-                     @@SERVICENAME + 
+                ELSE N'MSSQL$' +
+                     @@SERVICENAME +
                      N':'
             END +
             N'%',
@@ -369,7 +369,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         waiting_tasks_count_n bigint,
         sample_time datetime,
         sorting bigint,
-        waiting_tasks_count AS 
+        waiting_tasks_count AS
             REPLACE
             (
                 CONVERT
@@ -410,7 +410,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
     DECLARE
         @dm_os_performance_counters table
-        
+
     (
         sample_time datetime,
         object_name sysname,
@@ -428,17 +428,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
         wait_duration_ms bigint,
         threadpool_waits sysname
     );
-  
+
     /*Use a GOTO to avoid writing all the code again*/
     DO_OVER:;
-    
+
     /*
     Check to see if the DAC is enabled.
     If it's not, give people some helpful information.
     */
-    IF 
+    IF
     (
-        @what_to_check = 'all' 
+        @what_to_check = 'all'
     AND @pass = 1
     )
     BEGIN
@@ -463,7 +463,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 how_to_use_the_dac =
                     'https://bit.ly/RemoteDAC';
         END;
-      
+
         /*
         See if someone else is using the DAC.
         Return some helpful information if they are.
@@ -542,12 +542,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ),
             hours_cpu_time =
                 (
-                    SELECT            
+                    SELECT
                         CONVERT
                         (
                             decimal(38, 2),
-                            SUM(wg.total_cpu_usage_ms) / 
-                                CASE 
+                            SUM(wg.total_cpu_usage_ms) /
+                                CASE
                                     WHEN
                                         @sample_seconds > 0
                                         THEN 1
@@ -631,10 +631,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     THEN N'Potential Availability Group Issues'
                 END,
             hours_wait_time =
-                CASE 
+                CASE
                     WHEN @sample_seconds > 0
                     THEN dows.wait_time_ms
-                    ELSE 
+                    ELSE
                         CONVERT
                         (
                             decimal(38, 2),
@@ -669,19 +669,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     )
                 ),
             dows.waiting_tasks_count,
-            sample_time = 
+            sample_time =
                 GETDATE(),
             sorting =
                 ROW_NUMBER() OVER (ORDER BY dows.wait_time_ms DESC)
         FROM sys.dm_os_wait_stats AS dows
         WHERE
         (
-          (      
+          (
                   dows.waiting_tasks_count > -1
               AND dows.wait_type <> N'SLEEP_TASK'
           )
-        OR    
-          (       
+        OR
+          (
                  dows.wait_type = N'SLEEP_TASK'
              AND ISNULL(CONVERT(decimal(38, 2), dows.wait_time_ms /
                    NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) > 1000.
@@ -719,7 +719,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      /*Some query performance stuff, spills and spools mostly*/
                      N'ASYNC_NETWORK_IO',
                      N'EXECSYNC',
-                     N'IO_COMPLETION',                
+                     N'IO_COMPLETION',
                      N'SLEEP_TASK',
                      /*Batch Mode*/
                      N'HTBUILD',
@@ -753,7 +753,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 w.hours_wait_time,
                 w.avg_ms_per_wait,
                 w.percent_signal_waits,
-                waiting_tasks_count =                
+                waiting_tasks_count =
                     REPLACE
                     (
                         CONVERT
@@ -774,7 +774,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 w.sorting;
         END;
 
-        IF 
+        IF
         (
             @sample_seconds > 0
         AND @pass = 1
@@ -789,7 +789,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         decimal(38,2),
                         (w2.hours_cpu_time - w.hours_cpu_time) / 1000.
                     ),
-                wait_time_seconds = 
+                wait_time_seconds =
                     CONVERT
                     (
                         decimal(38,2),
@@ -807,7 +807,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         decimal(38,1),
                         (w2.percent_signal_waits + w.percent_signal_waits) / 2
                     ),
-                waiting_tasks_count =                            
+                waiting_tasks_count =
                     REPLACE
                     (
                         CONVERT
@@ -846,7 +846,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         SET @disk_check = N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-         
+
         SELECT
             hours_uptime =
                 (
@@ -936,8 +936,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                              vfs.num_of_bytes_read / 1048576.
                          )
                     ELSE 0
-                END,                
-            total_read_count =  
+                END,
+            total_read_count =
                 vfs.num_of_reads,
             avg_read_stall_ms =
                 CONVERT
@@ -945,8 +945,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     decimal(38, 2),
                     ISNULL
                     (
-                        vfs.io_stall_read_ms / 
-                          (NULLIF(vfs.num_of_reads, 0)), 
+                        vfs.io_stall_read_ms /
+                          (NULLIF(vfs.num_of_reads, 0)),
                         0
                     )
                 ),
@@ -978,14 +978,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     decimal(38, 2),
                     ISNULL
                     (
-                        vfs.io_stall_write_ms / 
-                          (NULLIF(vfs.num_of_writes, 0)), 
+                        vfs.io_stall_write_ms /
+                          (NULLIF(vfs.num_of_writes, 0)),
                         0
                     )
                 ),
             io_stall_read_ms,
             io_stall_write_ms,
-            sample_time = 
+            sample_time =
                 GETDATE()
         FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs
         JOIN ' +
@@ -1002,19 +1002,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
           AND vfs.database_id = f.database_id'
         END +
         N'
-        WHERE 
+        WHERE
         (
              vfs.num_of_reads  > 0
           OR vfs.num_of_writes > 0
         );'
         );
-      
+
         IF @debug = 1
         BEGIN
             PRINT SUBSTRING(@disk_check, 1, 4000);
             PRINT SUBSTRING(@disk_check, 4000, 8000);
         END;
-      
+
         INSERT
             @file_metrics
         (
@@ -1040,7 +1040,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         IF @sample_seconds = 0
         BEGIN
-            WITH 
+            WITH
                 file_metrics AS
             (
                 SELECT
@@ -1085,7 +1085,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             N'.00',
                             N''
                         ),
-                    total_avg_stall_ms = 
+                    total_avg_stall_ms =
                         fm.avg_read_stall_ms +
                         fm.avg_write_stall_ms
                 FROM @file_metrics AS fm
@@ -1106,9 +1106,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 fm.total_read_count,
                 fm.total_write_count
             FROM file_metrics AS fm
-            
+
             UNION ALL
-            
+
             SELECT
                 drive = N'Nothing to see here',
                 database_name = N'By default, only >100 ms latency is reported',
@@ -1129,7 +1129,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FROM file_metrics AS fm
             )
             ORDER BY
-                total_avg_stall_ms DESC; 
+                total_avg_stall_ms DESC;
         END;
 
         IF
@@ -1147,15 +1147,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     fm.database_file_details,
                     fm.file_size_gb,
                     avg_read_stall_ms =
-                        CASE 
+                        CASE
                             WHEN (fm2.total_read_count - fm.total_read_count) = 0
                             THEN 0.00
                             ELSE
                                 CONVERT
                                 (
-                                    decimal(38, 2),                                    
+                                    decimal(38, 2),
                                     (fm2.io_stall_read_ms - fm.io_stall_read_ms) /
-                                    (fm2.total_read_count  - fm.total_read_count) 
+                                    (fm2.total_read_count  - fm.total_read_count)
                                 )
                         END,
                     avg_write_stall_ms =
@@ -1167,10 +1167,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 (
                                     decimal(38, 2),
                                     (fm2.io_stall_write_ms - fm.io_stall_write_ms) /
-                                    (fm2.total_write_count  - fm.total_write_count) 
+                                    (fm2.total_write_count  - fm.total_write_count)
                                 )
                         END,
-                    total_avg_stall = 
+                    total_avg_stall =
                         CASE
                             WHEN (fm2.total_read_count  - fm.total_read_count) +
                                  (fm2.total_write_count - fm.total_write_count) = 0
@@ -1181,21 +1181,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     decimal(38,2),
                                     (
                                         (fm2.io_stall_read_ms  - fm.io_stall_read_ms) +
-                                        (fm2.io_stall_write_ms - fm.io_stall_write_ms) 
-                                    ) /                                
+                                        (fm2.io_stall_write_ms - fm.io_stall_write_ms)
+                                    ) /
                                     (
                                         (fm2.total_read_count  - fm.total_read_count) +
-                                        (fm2.total_write_count - fm.total_write_count) 
-                                    ) 
+                                        (fm2.total_write_count - fm.total_write_count)
+                                    )
                                 )
                         END,
                     total_mb_read =
                         (fm2.total_mb_read - fm.total_mb_read),
-                    total_mb_written = 
-                        (fm2.total_mb_written - fm.total_mb_written),                
-                    total_read_count = 
+                    total_mb_written =
+                        (fm2.total_mb_written - fm.total_mb_written),
+                    total_read_count =
                         (fm2.total_read_count - fm.total_read_count),
-                    total_write_count = 
+                    total_write_count =
                         (fm2.total_write_count - fm.total_write_count),
                     sample_time_o =
                         fm.sample_time,
@@ -1283,7 +1283,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 sample_seconds =
                     DATEDIFF(SECOND, f.sample_time_o, f.sample_time_t)
             FROM f
-            WHERE 
+            WHERE
             (
                  f.total_read_count  > 0
               OR f.total_write_count > 0
@@ -1307,30 +1307,30 @@ OPTION(MAXDOP 1, RECOMPILE);',
             p AS
         (
             SELECT
-                sample_time = 
+                sample_time =
                     CASE
                         WHEN @sample_seconds = 0
-                        THEN 
+                        THEN
                             (
-                                SELECT 
-                                    dosi.sqlserver_start_time 
+                                SELECT
+                                    dosi.sqlserver_start_time
                                 FROM sys.dm_os_sys_info AS dosi
                             )
                         ELSE GETDATE()
                     END,
-                object_name = 
+                object_name =
                     RTRIM(LTRIM(dopc.object_name)),
-                counter_name = 
+                counter_name =
                     RTRIM(LTRIM(dopc.counter_name)),
-                counter_name_clean = 
+                counter_name_clean =
                     REPLACE(RTRIM(LTRIM(dopc.counter_name)),' (ms)', ''),
-                instance_name = 
+                instance_name =
                     RTRIM(LTRIM(dopc.instance_name)),
                 dopc.cntr_value,
                 dopc.cntr_type
             FROM sys.dm_os_performance_counters AS dopc
         )
-        INSERT 
+        INSERT
             @dm_os_performance_counters
         (
             sample_time,
@@ -1347,7 +1347,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             p.counter_name,
             p.counter_name_clean,
             instance_name =
-                CASE 
+                CASE
                     WHEN LEN(p.instance_name) > 0
                     THEN p.instance_name
                     ELSE N'_Total'
@@ -1356,11 +1356,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
             p.cntr_type
         FROM p
         WHERE p.object_name LIKE @prefix
-        AND   p.instance_name NOT IN 
+        AND   p.instance_name NOT IN
         (
             N'internal', N'master', N'model', N'msdb', N'model_msdb', N'model_replicatedmaster', N'mssqlsystemresource'
         )
-        AND   p.counter_name IN 
+        AND   p.counter_name IN
         (
             N'Forwarded Records/sec', N'Table Lock Escalations/sec', N'Page reads/sec', N'Page writes/sec', N'Checkpoint pages/sec', N'Requests completed/sec',
             N'Transactions/sec', N'Lock Requests/sec', N'Lock Wait Time (ms)', N'Lock Waits/sec', N'Number of Deadlocks/sec', N'Log Flushes/sec', N'Page lookups/sec',
@@ -1368,13 +1368,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
             N'Stolen Server Memory (KB)', N'Target Server Memory (KB)', N'Total Server Memory (KB)', N'Lazy writes/sec', N'Readahead pages/sec',
             N'Batch Requests/sec', N'SQL Compilations/sec', N'SQL Re-Compilations/sec', N'Longest Transaction Running Time', N'Log Bytes Flushed/sec',
             N'Lock waits', N'Log buffer waits', N'Log write waits', N'Memory grant queue waits', N'Network IO waits', N'Log Flush Write Time (ms)',
-            N'Non-Page latch waits', N'Page IO latch waits', N'Page latch waits', N'Thread-safe memory objects waits', N'Wait for the worker', 
+            N'Non-Page latch waits', N'Page IO latch waits', N'Page latch waits', N'Thread-safe memory objects waits', N'Wait for the worker',
             N'Active parallel threads', N'Active requests', N'Blocked tasks', N'Query optimizations/sec', N'Queued requests', N'Reduced memory grants/sec'
         );
 
         IF @sample_seconds = 0
         BEGIN
-            WITH 
+            WITH
                 p AS
             (
                 SELECT
@@ -1394,7 +1394,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     dopc.cntr_value,
                     total =
                         FORMAT(dopc.cntr_value, 'N0'),
-                    total_per_second = 
+                    total_per_second =
                         FORMAT(dopc.cntr_value / DATEDIFF(SECOND, dopc.sample_time, GETDATE()), 'N0')
                 FROM @dm_os_performance_counters AS dopc
             )
@@ -1413,13 +1413,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 p.cntr_value DESC;
         END;
 
-        IF 
+        IF
         (
             @sample_seconds > 0
         AND @pass = 1
         )
         BEGIN
-            WITH 
+            WITH
                 p AS
             (
                 SELECT
@@ -1430,18 +1430,18 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         FORMAT(dopc.cntr_value, 'N0'),
                     second_cntr_value =
                         FORMAT(dopc2.cntr_value, 'N0'),
-                    total_difference = 
+                    total_difference =
                         FORMAT((dopc2.cntr_value - dopc.cntr_value), 'N0'),
-                    total_difference_per_second = 
-                        FORMAT((dopc2.cntr_value - dopc.cntr_value) / 
+                    total_difference_per_second =
+                        FORMAT((dopc2.cntr_value - dopc.cntr_value) /
                          DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 'N0'),
-                    sample_seconds = 
+                    sample_seconds =
                         DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
-                    first_sample_time = 
+                    first_sample_time =
                         dopc.sample_time,
-                    second_sample_time = 
+                    second_sample_time =
                         dopc2.sample_time,
-                    total_difference_i = 
+                    total_difference_i =
                         (dopc2.cntr_value - dopc.cntr_value)
                 FROM @dm_os_performance_counters AS dopc
                 JOIN @dm_os_performance_counters AS dopc2
@@ -1575,9 +1575,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                             t.user_objects_dealloc_page_count -
                                             t.internal_objects_dealloc_page_count
                                     FROM sys.dm_db_task_space_usage AS t
-        
+
                                     UNION ALL
-        
+
                                     SELECT
                                         s.session_id,
                                         tempdb_allocations =
@@ -1600,7 +1600,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 FOR XML
                                     PATH('tempdb_query_activity'),
                                     TYPE
-        
+
                             )
                         FOR XML
                             PATH('tempdb'),
@@ -1610,7 +1610,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     END; /*End tempdb check*/
 
     /*Memory info, utilization and usage*/
-    IF 
+    IF
     (
         @what_to_check IN ('all', 'memory')
     AND @pass = 1
@@ -1841,7 +1841,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FROM sys.dm_os_ring_buffers AS dorb
                 WHERE dorb.ring_buffer_type = N'RING_BUFFER_RESOURCE_MONITOR'
             ) AS t
-            WHERE 
+            WHERE
               (
                   t.record.exist('(Record/ResourceMonitor/Notification[. = "RESOURCE_MEMPHYSICAL_LOW"])') = 1
                OR t.record.exist('(Record/ResourceMonitor/Notification[. = "RESOURCE_MEMVIRTUAL_LOW"])') = 1
@@ -1875,48 +1875,48 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SELECT
             low_memory =
                @low_memory;
-            
+
         SELECT
-            @memory_grant_cap = 
+            @memory_grant_cap =
             (
-                SELECT 
+                SELECT
                     group_name =
                         drgwg.name,
-                    max_grant_percent = 
+                    max_grant_percent =
                         drgwg.request_max_memory_grant_percent
                 FROM sys.dm_resource_governor_workload_groups AS drgwg
-                FOR XML 
-                    PATH(''), 
-                    TYPE                 
+                FOR XML
+                    PATH(''),
+                    TYPE
             );
 
         IF @memory_grant_cap IS NULL
         BEGIN
             SELECT
-                @memory_grant_cap = 
+                @memory_grant_cap =
                 (
-                    
+
                     SELECT
                         x.*
-                    FROM 
+                    FROM
                     (
                         SELECT
                             group_name =
                                 N'internal',
                             max_grant_percent =
                                 25
-                        
+
                         UNION ALL
-                        
+
                         SELECT
                             group_name =
                                 N'default',
                             max_grant_percent =
                                 25
                     ) AS x
-                    FOR XML 
-                        PATH(''), 
-                        TYPE  
+                    FOR XML
+                        PATH(''),
+                        TYPE
                 );
         END;
 
@@ -2020,7 +2020,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         SET @mem_sql += N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-      
+
         SELECT
             deqmg.session_id,
             database_name =
@@ -2063,8 +2063,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     deqmg.request_time,
                                     SYSDATETIME()
                                 ),
-                                ''19000101''                           
-                            )                      
+                                ''19000101''
+                            )
                         ELSE
                             DATEADD
                             (
@@ -2184,13 +2184,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
         OPTION(MAXDOP 1, RECOMPILE);
         '
                   );
-      
+
         IF @debug = 1
         BEGIN
             PRINT SUBSTRING(@mem_sql, 1, 4000);
             PRINT SUBSTRING(@mem_sql, 4000, 8000);
         END;
-      
+
         EXEC sys.sp_executesql
             @mem_sql;
     END;
@@ -2198,7 +2198,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /*
     Looking at CPU config and indicators
     */
-    IF 
+    IF
     (
         @what_to_check IN ('all', 'cpu')
     AND @pass = 1
@@ -2347,8 +2347,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             cpu_details_output =
                 @cpu_details_output,
             cpu_utilization_over_threshold =
-                @cpu_utilization;      
-      
+                @cpu_utilization;
+
         /*Thread usage*/
         SELECT
             total_threads =
@@ -2394,7 +2394,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 wg.queued_request_count,
                 wg.blocked_task_count,
                 wg.active_parallel_thread_count
-            FROM sys.dm_resource_governor_workload_groups AS wg      
+            FROM sys.dm_resource_governor_workload_groups AS wg
         ) AS wg
         OUTER APPLY
         (
@@ -2443,7 +2443,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         /*
         Any current threadpool waits?
-        */      
+        */
         INSERT
             @threadpool_waits
         (
@@ -2498,7 +2498,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
             SET @cpu_sql += N'
             SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-          
+
             SELECT
                 der.session_id,
                 database_name =
@@ -2541,8 +2541,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                         der.start_time,
                                         SYSDATETIME()
                                     ),
-                                    ''19000101''                           
-                                )                      
+                                    ''19000101''
+                                )
                             ELSE
                                 DATEADD
                                 (
@@ -2590,7 +2590,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 +
                 CONVERT
                 (
-                    nvarchar(MAX),              
+                    nvarchar(MAX),
                 CASE
                       WHEN @skip_plan_xml = 0
                       THEN N'
@@ -2711,19 +2711,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
             OPTION(MAXDOP 1, RECOMPILE);'
               END
                   );
-          
+
             IF @debug = 1
             BEGIN
                 PRINT SUBSTRING(@cpu_sql, 0, 4000);
                 PRINT SUBSTRING(@cpu_sql, 4000, 8000);
             END;
-          
+
             EXEC sys.sp_executesql
                 @cpu_sql;
         END; /*End not skipping queries*/
     END; /*End CPU checks*/
 
-    IF  
+    IF
     (
         @sample_seconds > 0
     AND @pass = 0
@@ -2770,7 +2770,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         ORDER BY
             x.wait_duration_ms DESC
         OPTION(RECOMPILE);
-       
+
         SELECT
             pattern =
                 'parameters',
@@ -2798,7 +2798,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 @version,
             version_date =
                 @version_date;
-               
+
         SELECT
             pattern =
                 'variables',
@@ -2846,13 +2846,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 @live_plans,
             pass =
                 @pass,
-            [waitfor] = 
+            [waitfor] =
                 @waitfor,
             prefix =
                 @prefix,
             memory_grant_cap =
                 @memory_grant_cap;
-       
+
     END; /*End Debug*/
 END; /*Final End*/
 GO
