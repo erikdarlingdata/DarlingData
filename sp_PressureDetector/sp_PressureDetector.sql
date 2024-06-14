@@ -621,6 +621,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     THEN N'Potential batch mode performance issues'
                     WHEN dows.wait_type = N'HTREINIT'
                     THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTREINIT'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'BTREE_INSERT_FLOW_CONTROL'
+                    THEN N'Optimize For Sequential Key'
+                    WHEN dows.wait_type = N'HADR_SYNC_COMMIT'
+                    THEN N'Potential Availability Group Issues'
+                    WHEN dows.wait_type = N'HADR_GROUP_COMMIT'
+                    THEN N'Potential Availability Group Issues'
                 END,
             hours_wait_time =
                 CASE 
@@ -669,7 +677,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         WHERE
         (
           (      
-                  dows.waiting_tasks_count > 0
+                  dows.waiting_tasks_count > -1
               AND dows.wait_type <> N'SLEEP_TASK'
           )
         OR    
@@ -720,9 +728,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      N'HTREINIT',
                      N'HTREPARTITION',
                      N'PWAIT_QRY_BPMEMORY',
-                     N'BPSORT'
+                     N'BPSORT',
+                     /*Optimize For Sequential Key*/
+                     N'BTREE_INSERT_FLOW_CONTROL',
+                     /*Availability Group*/
+                     N'HADR_SYNC_COMMIT',
+                     N'HADR_GROUP_COMMIT'
                  )
-            OR dows.wait_type LIKE N'LCK%' --Locking
+            /*Locking*/
+            OR dows.wait_type LIKE N'LCK%'
         )
         ORDER BY
             dows.wait_time_ms DESC,
