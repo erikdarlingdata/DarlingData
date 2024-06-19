@@ -354,7 +354,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      N':'
             END +
             N'%',
-        @memory_grant_cap xml
+        @memory_grant_cap xml,
+        @cache_xml xml,
+        @cache_sql nvarchar(MAX) = N'';
 
     DECLARE
         @waits table
@@ -771,7 +773,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     )
             FROM @waits AS w
             ORDER BY
-                w.sorting;
+                w.sorting
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
 
         IF
@@ -831,7 +834,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
               AND w.sample_time < w2.sample_time
               AND (w2.waiting_tasks_count_n - w.waiting_tasks_count_n) > 0
             ORDER BY
-                wait_time_seconds DESC;
+                wait_time_seconds DESC
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
     END;
     /*
@@ -1006,7 +1010,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         (
              vfs.num_of_reads  > 0
           OR vfs.num_of_writes > 0
-        );'
+        )
+        OPTION(MAXDOP 1, RECOMPILE);'
         );
 
         IF @debug = 1
@@ -1129,7 +1134,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FROM file_metrics AS fm
             )
             ORDER BY
-                total_avg_stall_ms DESC;
+                total_avg_stall_ms DESC
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
 
         IF
@@ -1289,8 +1295,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
               OR f.total_write_count > 0
             )
             ORDER BY
-                f.total_avg_stall DESC;
-        END
+                f.total_avg_stall DESC
+            OPTION(MAXDOP 1, RECOMPILE);
+        END;
     END; /*End file stats*/
 
     /*
@@ -1410,7 +1417,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             ORDER BY
                 p.object_name,
                 p.counter_name,
-                p.cntr_value DESC;
+                p.cntr_value DESC
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
 
         IF
@@ -1464,7 +1472,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             ORDER BY
                 p.object_name,
                 p.counter_name,
-                p.total_difference_i DESC;
+                p.total_difference_i DESC
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
     END; /*End Perfmon*/
 
@@ -1793,14 +1802,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
             SELECT
                 @total_physical_memory_gb =
                     CEILING(dosm.total_physical_memory_kb / 1024. / 1024.)
-                FROM sys.dm_os_sys_memory AS dosm;
+                FROM sys.dm_os_sys_memory AS dosm
+                OPTION(MAXDOP 1, RECOMPILE);
         END;
         IF @azure = 1
         BEGIN
             SELECT
                 @total_physical_memory_gb =
                     SUM(osi.committed_target_kb / 1024. / 1024.)
-            FROM sys.dm_os_sys_info osi;
+            FROM sys.dm_os_sys_info osi
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
 
         /*Checking for low memory indicators*/
@@ -1873,9 +1884,136 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
 
         SELECT
-            low_memory =
-               @low_memory;
+            @cache_sql += N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+        
+        SELECT
+            @cache_xml = 
+                x.c
+        FROM
+        (
+            SELECT TOP (20)
+                name = 
+                    CASE
+                        WHEN domcc.name LIKE N''%UserStore%''
+                        THEN N''UserStore''
+                        WHEN domcc.name LIKE N''ObjPerm%''
+                        THEN N''ObjPerm''
+                        ELSE domcc.name
+                    END,
+                pages_gb = 
+                    CONVERT
+                    (
+                        decimal(38, 2), 
+                        SUM
+                        (' +
+                            CASE
+                                @pages_kb 
+                                WHEN 1
+                                THEN N'
+                            domcc.pages_kb'
+                                ELSE N'
+                            domcc.single_pages_kb +
+                            domcc.multi_pages_kb'
+                            END + N'
+                        ) / 1024. / 1024.
+                    ),
+                pages_in_use_gb = 
+                    ISNULL
+                    (
+                        CONVERT
+                        (
+                            decimal(38, 2),
+                            SUM
+                            (' +
+                                CASE
+                                    @pages_kb 
+                                    WHEN 1
+                                    THEN N'
+                                domcc.pages_in_use_kb'
+                                    ELSE N'
+                                domcc.single_pages_in_use_kb +
+                                domcc.multi_pages_in_use_kb'
+                                END + N'
+                            ) / 1024. / 1024.
+                        ),
+                        N''0.00''
+                    ),
+                entries_count = 
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30), 
+                            CONVERT
+                            (
+                                money, 
+                                SUM(domcc.entries_count)
+                            ),
+                            1
+                        ), 
+                        N''.00'', 
+                        N''''
+                    ),
+                entries_in_use_count =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30), 
+                            CONVERT
+                            (
+                                money, 
+                                SUM(domcc.entries_in_use_count)
+                            ),
+                            1
+                        ), 
+                        N''.00'', 
+                        N''''
+                    )
+            FROM sys.dm_os_memory_cache_counters AS domcc
+            WHERE domcc.name NOT IN
+            (
+                N''msdb'',
+                N''model_replicatedmaster'',
+                N''model_msdb'',
+                N''model'',
+                N''master'',
+                N''mssqlsystemresource''
+            )
+            GROUP BY
+                    CASE
+                        WHEN domcc.name LIKE N''%UserStore%''
+                        THEN N''UserStore''
+                        WHEN domcc.name LIKE N''ObjPerm%''
+                        THEN N''ObjPerm''
+                        ELSE domcc.name
+                    END
+            ORDER BY
+                pages_gb DESC
+            FOR XML
+                PATH(''cache''),
+                TYPE
+        ) AS x (c)
+        OPTION(MAXDOP 1, RECOMPILE);
+        '
+        
+        IF @debug = 1
+        BEGIN
+            RAISERROR('%s', 0, 1, @cache_sql) WITH NOWAIT;
+        END;
+        
+        EXEC sys.sp_executesql
+            @cache_sql,
+          N'@cache_xml xml OUTPUT',
+            @cache_xml OUTPUT;
 
+        SELECT
+            low_memory =
+               @low_memory,
+            cache_memory = 
+                @cache_xml;
+            
         SELECT
             @memory_grant_cap =
             (
