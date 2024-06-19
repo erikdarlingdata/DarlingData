@@ -133,8 +133,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.5',
-    @version_date = '20240401';
+    @version = '4.7',
+    @version_date = '20240701';
 
 /*
 Helpful section! For help.
