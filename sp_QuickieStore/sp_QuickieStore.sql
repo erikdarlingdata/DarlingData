@@ -87,7 +87,7 @@ ALTER PROCEDURE
     @wait_filter varchar(20) = NULL, /*wait category to search for; category details are below*/
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
-    @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/ 
+    @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/
     @format_output bit = 1, /*returns numbers formatted with commas*/
     @get_all_databases bit = 0, /*looks for query store enabled databases and returns combined results from all of them*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
@@ -196,7 +196,7 @@ BEGIN
                 WHEN N'@wait_filter' THEN 'wait category to search for; category details are below'
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
-                WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'      
+                WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
@@ -1429,14 +1429,14 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @where_clause = N'',
     @query_text_search =
         CASE
-            WHEN @get_all_databases = 1 
+            WHEN @get_all_databases = 1
             AND  @escape_brackets = 1
             THEN @query_text_search_original_value
             ELSE @query_text_search
          END,
     @query_text_search_not =
         CASE
-            WHEN @get_all_databases = 1 
+            WHEN @get_all_databases = 1
             AND  @escape_brackets = 1
             THEN @query_text_search_not_original_value
             ELSE @query_text_search_not
@@ -1608,7 +1608,7 @@ SELECT
         ISNULL(@top, 10),
     @expert_mode =
         ISNULL(@expert_mode, 0),
-    @hide_help_table = 
+    @hide_help_table =
         ISNULL(@hide_help_table, 0),
     @procedure_schema =
         NULLIF(@procedure_schema, ''),
@@ -2337,9 +2337,9 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @query_store_waits_enabled = 0
     BEGIN
-        IF @debug = 1 
-        BEGIN 
-            RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT; 
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
         END
     END;
 END; /*End wait stats checks*/
@@ -8496,9 +8496,9 @@ BEGIN
                 N'version: ' + CONVERT(nvarchar(10), @version),
             thanks =
                 'thanks for using sp_QuickieStore!'
-    
+
         UNION ALL
-    
+
         SELECT
             sort =
                 2,
@@ -8655,7 +8655,7 @@ BEGIN
             @query_type,
         expert_mode =
             @expert_mode,
-        hide_help_table = 
+        hide_help_table =
             @hide_help_table,
         format_output =
             @format_output,
