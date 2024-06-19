@@ -1886,14 +1886,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SELECT
             @cache_sql += N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-        
+
         SELECT
-            @cache_xml = 
+            @cache_xml =
                 x.c
         FROM
         (
             SELECT TOP (20)
-                name = 
+                name =
                     CASE
                         WHEN domcc.name LIKE N''%UserStore%''
                         THEN N''UserStore''
@@ -1901,14 +1901,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         THEN N''ObjPerm''
                         ELSE domcc.name
                     END,
-                pages_gb = 
+                pages_gb =
                     CONVERT
                     (
-                        decimal(38, 2), 
+                        decimal(38, 2),
                         SUM
                         (' +
                             CASE
-                                @pages_kb 
+                                @pages_kb
                                 WHEN 1
                                 THEN N'
                             domcc.pages_kb'
@@ -1918,7 +1918,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             END + N'
                         ) / 1024. / 1024.
                     ),
-                pages_in_use_gb = 
+                pages_in_use_gb =
                     ISNULL
                     (
                         CONVERT
@@ -1927,7 +1927,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             SUM
                             (' +
                                 CASE
-                                    @pages_kb 
+                                    @pages_kb
                                     WHEN 1
                                     THEN N'
                                 domcc.pages_in_use_kb'
@@ -1939,20 +1939,20 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         ),
                         N''0.00''
                     ),
-                entries_count = 
+                entries_count =
                     REPLACE
                     (
                         CONVERT
                         (
-                            nvarchar(30), 
+                            nvarchar(30),
                             CONVERT
                             (
-                                money, 
+                                money,
                                 SUM(domcc.entries_count)
                             ),
                             1
-                        ), 
-                        N''.00'', 
+                        ),
+                        N''.00'',
                         N''''
                     ),
                 entries_in_use_count =
@@ -1960,15 +1960,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     (
                         CONVERT
                         (
-                            nvarchar(30), 
+                            nvarchar(30),
                             CONVERT
                             (
-                                money, 
+                                money,
                                 SUM(domcc.entries_in_use_count)
                             ),
                             1
-                        ), 
-                        N''.00'', 
+                        ),
+                        N''.00'',
                         N''''
                     )
             FROM sys.dm_os_memory_cache_counters AS domcc
@@ -1997,12 +1997,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
         ) AS x (c)
         OPTION(MAXDOP 1, RECOMPILE);
         '
-        
+
         IF @debug = 1
         BEGIN
             RAISERROR('%s', 0, 1, @cache_sql) WITH NOWAIT;
         END;
-        
+
         EXEC sys.sp_executesql
             @cache_sql,
           N'@cache_xml xml OUTPUT',
@@ -2011,9 +2011,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SELECT
             low_memory =
                @low_memory,
-            cache_memory = 
+            cache_memory =
                 @cache_xml;
-            
+
         SELECT
             @memory_grant_cap =
             (
