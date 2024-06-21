@@ -7010,8 +7010,9 @@ FROM
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
           ON qsqt.query_text_id = qsq.query_text_id
+          AND qsqt.database_id = qsq.database_id
         WHERE qsq.query_id = qsp.query_id
-        AND   qsq.query_id = qsp.query_id
+        AND   qsq.database_id = qsp.database_id
         ORDER BY
             qsq.last_execution_time DESC
     ) AS qsqt
