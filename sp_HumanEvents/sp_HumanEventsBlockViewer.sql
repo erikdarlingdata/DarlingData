@@ -1145,7 +1145,11 @@ BEGIN
         deqs.max_reserved_threads,
         deqs.min_used_threads,
         deqs.max_used_threads,
-        deqs.total_rows
+        deqs.total_rows,
+        max_worker_time_ms = 
+            deqs.max_worker_time / 1000.,
+        max_elapsed_time_ms = 
+            deqs.max_elapsed_time / 1000.
     INTO #dm_exec_query_stats_sh
     FROM sys.dm_exec_query_stats AS deqs
     WHERE EXISTS
@@ -1182,8 +1186,10 @@ BEGIN
         ap.executions_per_second,
         ap.total_worker_time_ms,
         ap.avg_worker_time_ms,
+        ap.max_worker_time_ms,
         ap.total_elapsed_time_ms,
         ap.avg_elapsed_time_ms,
+        ap.max_elapsed_time_ms,
         ap.total_logical_reads_mb,
         ap.total_physical_reads_mb,
         ap.total_logical_writes_mb,
@@ -1225,7 +1231,9 @@ BEGIN
             c.min_used_threads,
             c.max_used_threads,
             c.total_rows,
-            c.query_plan
+            c.query_plan,
+            c.max_worker_time_ms,
+            c.max_elapsed_time_ms
         FROM #available_plans_sh AS ap
         OUTER APPLY
         (
@@ -1959,7 +1967,11 @@ SELECT
     deqs.max_reserved_threads,
     deqs.min_used_threads,
     deqs.max_used_threads,
-    deqs.total_rows
+    deqs.total_rows,
+    max_worker_time_ms = 
+        deqs.max_worker_time / 1000.,
+    max_elapsed_time_ms = 
+        deqs.max_elapsed_time / 1000.
 INTO #dm_exec_query_stats
 FROM sys.dm_exec_query_stats AS deqs
 WHERE EXISTS
@@ -1997,8 +2009,10 @@ SELECT
     ap.executions_per_second,
     ap.total_worker_time_ms,
     ap.avg_worker_time_ms,
+    ap.max_worker_time_ms,
     ap.total_elapsed_time_ms,
     ap.avg_elapsed_time_ms,
+    ap.max_elapsed_time_ms,
     ap.total_logical_reads_mb,
     ap.total_physical_reads_mb,
     ap.total_logical_writes_mb,
@@ -2041,7 +2055,9 @@ FROM
         c.min_used_threads,
         c.max_used_threads,
         c.total_rows,
-        c.query_plan
+        c.query_plan,
+        c.max_worker_time_ms,
+        c.max_elapsed_time_ms
     FROM #available_plans AS ap
     OUTER APPLY
     (
