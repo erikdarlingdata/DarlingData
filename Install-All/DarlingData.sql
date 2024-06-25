@@ -1,4 +1,4 @@
--- Compile Date: 06/19/2024 15:27:16 UTC
+-- Compile Date: 06/25/2024 17:17:31 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -8750,7 +8750,11 @@ BEGIN
         deqs.max_reserved_threads,
         deqs.min_used_threads,
         deqs.max_used_threads,
-        deqs.total_rows
+        deqs.total_rows,
+        max_worker_time_ms =
+            deqs.max_worker_time / 1000.,
+        max_elapsed_time_ms =
+            deqs.max_elapsed_time / 1000.
     INTO #dm_exec_query_stats_sh
     FROM sys.dm_exec_query_stats AS deqs
     WHERE EXISTS
@@ -8787,8 +8791,10 @@ BEGIN
         ap.executions_per_second,
         ap.total_worker_time_ms,
         ap.avg_worker_time_ms,
+        ap.max_worker_time_ms,
         ap.total_elapsed_time_ms,
         ap.avg_elapsed_time_ms,
+        ap.max_elapsed_time_ms,
         ap.total_logical_reads_mb,
         ap.total_physical_reads_mb,
         ap.total_logical_writes_mb,
@@ -8830,7 +8836,9 @@ BEGIN
             c.min_used_threads,
             c.max_used_threads,
             c.total_rows,
-            c.query_plan
+            c.query_plan,
+            c.max_worker_time_ms,
+            c.max_elapsed_time_ms
         FROM #available_plans_sh AS ap
         OUTER APPLY
         (
@@ -9564,7 +9572,11 @@ SELECT
     deqs.max_reserved_threads,
     deqs.min_used_threads,
     deqs.max_used_threads,
-    deqs.total_rows
+    deqs.total_rows,
+    max_worker_time_ms =
+        deqs.max_worker_time / 1000.,
+    max_elapsed_time_ms =
+        deqs.max_elapsed_time / 1000.
 INTO #dm_exec_query_stats
 FROM sys.dm_exec_query_stats AS deqs
 WHERE EXISTS
@@ -9602,8 +9614,10 @@ SELECT
     ap.executions_per_second,
     ap.total_worker_time_ms,
     ap.avg_worker_time_ms,
+    ap.max_worker_time_ms,
     ap.total_elapsed_time_ms,
     ap.avg_elapsed_time_ms,
+    ap.max_elapsed_time_ms,
     ap.total_logical_reads_mb,
     ap.total_physical_reads_mb,
     ap.total_logical_writes_mb,
@@ -9646,7 +9660,9 @@ FROM
         c.min_used_threads,
         c.max_used_threads,
         c.total_rows,
-        c.query_plan
+        c.query_plan,
+        c.max_worker_time_ms,
+        c.max_elapsed_time_ms
     FROM #available_plans AS ap
     OUTER APPLY
     (
@@ -20907,22 +20923,30 @@ FROM
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
         qsrs.total_duration_ms,
+        qsrs.max_duration_ms,
         qsrs.avg_cpu_time_ms,
         qsrs.total_cpu_time_ms,
+        qsrs.max_cpu_time_ms,
         qsrs.avg_logical_io_reads_mb,
         qsrs.total_logical_io_reads_mb,
+        qsrs.max_logical_io_reads_mb,
         qsrs.avg_logical_io_writes_mb,
         qsrs.total_logical_io_writes_mb,
+        qsrs.max_logical_io_writes_mb,
         qsrs.avg_physical_io_reads_mb,
         qsrs.total_physical_io_reads_mb,
+        qsrs.max_physical_io_reads_mb,
         qsrs.avg_clr_time_ms,
         qsrs.total_clr_time_ms,
+        qsrs.max_clr_time_ms,
         qsrs.min_dop,
         qsrs.max_dop,
         qsrs.avg_query_max_used_memory_mb,
         qsrs.total_query_max_used_memory_mb,
+        qsrs.max_query_max_used_memory_mb,
         qsrs.avg_rowcount,
-        qsrs.total_rowcount,'
+        qsrs.total_rowcount,
+        qsrs.max_rowcount,'
         +
             CASE @new
                  WHEN 1
@@ -20930,10 +20954,13 @@ FROM
         N'
         qsrs.avg_num_physical_io_reads_mb,
         qsrs.total_num_physical_io_reads_mb,
+        qsrs.max_num_physical_io_reads_mb,
         qsrs.avg_log_bytes_used_mb,
         qsrs.total_log_bytes_used_mb,
+        qsrs.max_log_bytes_used_mb,
         qsrs.avg_tempdb_space_used_mb,
-        qsrs.total_tempdb_space_used_mb,'
+        qsrs.total_tempdb_space_used_mb,
+        qsrs.max_tempdb_space_used_mb,'
                  ELSE
         N''
             END +
@@ -21100,22 +21127,30 @@ FROM
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
         total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),
+        max_duration_ms = FORMAT(qsrs.max_duration_ms, ''N0''),
         avg_cpu_time_ms = FORMAT(qsrs.avg_cpu_time_ms, ''N0''),
         total_cpu_time_ms = FORMAT(qsrs.total_cpu_time_ms, ''N0''),
+        max_cpu_time_ms = FORMAT(qsrs.max_cpu_time_ms, ''N0''),
         avg_logical_io_reads_mb = FORMAT(qsrs.avg_logical_io_reads_mb, ''N0''),
         total_logical_io_reads_mb = FORMAT(qsrs.total_logical_io_reads_mb, ''N0''),
+        max_logical_io_reads_mb = FORMAT(qsrs.max_logical_io_reads_mb, ''N0''),
         avg_logical_io_writes_mb = FORMAT(qsrs.avg_logical_io_writes_mb, ''N0''),
         total_logical_io_writes_mb = FORMAT(qsrs.total_logical_io_writes_mb, ''N0''),
+        max_logical_io_writes_mb = FORMAT(qsrs.max_logical_io_writes_mb, ''N0''),
         avg_physical_io_reads_mb = FORMAT(qsrs.avg_physical_io_reads_mb, ''N0''),
         total_physical_io_reads_mb = FORMAT(qsrs.total_physical_io_reads_mb, ''N0''),
+        max_physical_io_reads_mb = FORMAT(qsrs.max_physical_io_reads_mb, ''N0''),
         avg_clr_time_ms = FORMAT(qsrs.avg_clr_time_ms, ''N0''),
         total_clr_time_ms = FORMAT(qsrs.total_clr_time_ms, ''N0''),
+        max_clr_time_ms = FORMAT(qsrs.max_clr_time_ms, ''N0''),
         min_dop = FORMAT(qsrs.min_dop, ''N0''),
         max_dop = FORMAT(qsrs.max_dop, ''N0''),
         avg_query_max_used_memory_mb = FORMAT(qsrs.avg_query_max_used_memory_mb, ''N0''),
         total_query_max_used_memory_mb = FORMAT(qsrs.total_query_max_used_memory_mb, ''N0''),
+        max_query_max_used_memory_mb = FORMAT(qsrs.max_query_max_used_memory_mb, ''N0''),
         avg_rowcount = FORMAT(qsrs.avg_rowcount, ''N0''),
-        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),'
+        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),
+        max_rowcount = FORMAT(qsrs.max_rowcount, ''N0''),'
         +
             CASE @new
                  WHEN 1
@@ -21123,10 +21158,13 @@ FROM
         N'
         avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
         total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),
+        max_num_physical_io_reads_mb = FORMAT(qsrs.max_num_physical_io_reads_mb, ''N0''),
         avg_log_bytes_used_mb = FORMAT(qsrs.avg_log_bytes_used_mb, ''N0''),
         total_log_bytes_used_mb = FORMAT(qsrs.total_log_bytes_used_mb, ''N0''),
+        max_log_bytes_used_mb = FORMAT(qsrs.max_log_bytes_used_mb, ''N0''),
         avg_tempdb_space_used_mb = FORMAT(qsrs.avg_tempdb_space_used_mb, ''N0''),
-        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
+        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),
+        max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
             END +
@@ -21199,8 +21237,9 @@ FROM
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
           ON qsqt.query_text_id = qsq.query_text_id
+          AND qsqt.database_id = qsq.database_id
         WHERE qsq.query_id = qsp.query_id
-        AND   qsq.query_id = qsp.query_id
+        AND   qsq.database_id = qsp.database_id
         ORDER BY
             qsq.last_execution_time DESC
     ) AS qsqt
