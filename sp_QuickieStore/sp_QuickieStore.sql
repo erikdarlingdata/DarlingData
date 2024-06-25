@@ -6718,22 +6718,30 @@ FROM
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
         qsrs.total_duration_ms,
+        qsrs.max_duration_ms,
         qsrs.avg_cpu_time_ms,
         qsrs.total_cpu_time_ms,
+        qsrs.max_cpu_time_ms,
         qsrs.avg_logical_io_reads_mb,
         qsrs.total_logical_io_reads_mb,
+        qsrs.max_logical_io_reads_mb,
         qsrs.avg_logical_io_writes_mb,
         qsrs.total_logical_io_writes_mb,
+        qsrs.max_logical_io_writes_mb,
         qsrs.avg_physical_io_reads_mb,
         qsrs.total_physical_io_reads_mb,
+        qsrs.max_physical_io_reads_mb,
         qsrs.avg_clr_time_ms,
         qsrs.total_clr_time_ms,
+        qsrs.max_clr_time_ms,
         qsrs.min_dop,
         qsrs.max_dop,
         qsrs.avg_query_max_used_memory_mb,
         qsrs.total_query_max_used_memory_mb,
+        qsrs.max_query_max_used_memory_mb,
         qsrs.avg_rowcount,
-        qsrs.total_rowcount,'
+        qsrs.total_rowcount,
+        qsrs.max_rowcount,'
         +
             CASE @new
                  WHEN 1
@@ -6741,10 +6749,13 @@ FROM
         N'
         qsrs.avg_num_physical_io_reads_mb,
         qsrs.total_num_physical_io_reads_mb,
+        qsrs.max_num_physical_io_reads_mb,
         qsrs.avg_log_bytes_used_mb,
         qsrs.total_log_bytes_used_mb,
+        qsrs.max_log_bytes_used_mb,
         qsrs.avg_tempdb_space_used_mb,
-        qsrs.total_tempdb_space_used_mb,'
+        qsrs.total_tempdb_space_used_mb,
+        qsrs.max_tempdb_space_used_mb,'
                  ELSE
         N''
             END +
@@ -6911,22 +6922,30 @@ FROM
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
         total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),
+        max_duration_ms = FORMAT(qsrs.max_duration_ms, ''N0''),
         avg_cpu_time_ms = FORMAT(qsrs.avg_cpu_time_ms, ''N0''),
         total_cpu_time_ms = FORMAT(qsrs.total_cpu_time_ms, ''N0''),
+        max_cpu_time_ms = FORMAT(qsrs.max_cpu_time_ms, ''N0''),
         avg_logical_io_reads_mb = FORMAT(qsrs.avg_logical_io_reads_mb, ''N0''),
         total_logical_io_reads_mb = FORMAT(qsrs.total_logical_io_reads_mb, ''N0''),
+        max_logical_io_reads_mb = FORMAT(qsrs.max_logical_io_reads_mb, ''N0''),
         avg_logical_io_writes_mb = FORMAT(qsrs.avg_logical_io_writes_mb, ''N0''),
         total_logical_io_writes_mb = FORMAT(qsrs.total_logical_io_writes_mb, ''N0''),
+        max_logical_io_writes_mb = FORMAT(qsrs.max_logical_io_writes_mb, ''N0''),
         avg_physical_io_reads_mb = FORMAT(qsrs.avg_physical_io_reads_mb, ''N0''),
         total_physical_io_reads_mb = FORMAT(qsrs.total_physical_io_reads_mb, ''N0''),
+        max_physical_io_reads_mb = FORMAT(qsrs.max_physical_io_reads_mb, ''N0''),
         avg_clr_time_ms = FORMAT(qsrs.avg_clr_time_ms, ''N0''),
         total_clr_time_ms = FORMAT(qsrs.total_clr_time_ms, ''N0''),
+        max_clr_time_ms = FORMAT(qsrs.max_clr_time_ms, ''N0''),
         min_dop = FORMAT(qsrs.min_dop, ''N0''),
         max_dop = FORMAT(qsrs.max_dop, ''N0''),
         avg_query_max_used_memory_mb = FORMAT(qsrs.avg_query_max_used_memory_mb, ''N0''),
         total_query_max_used_memory_mb = FORMAT(qsrs.total_query_max_used_memory_mb, ''N0''),
+        max_query_max_used_memory_mb = FORMAT(qsrs.max_query_max_used_memory_mb, ''N0''),
         avg_rowcount = FORMAT(qsrs.avg_rowcount, ''N0''),
-        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),'
+        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),
+        max_rowcount = FORMAT(qsrs.max_rowcount, ''N0''),'
         +
             CASE @new
                  WHEN 1
@@ -6934,10 +6953,13 @@ FROM
         N'
         avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
         total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),
+        max_num_physical_io_reads_mb = FORMAT(qsrs.max_num_physical_io_reads_mb, ''N0''),
         avg_log_bytes_used_mb = FORMAT(qsrs.avg_log_bytes_used_mb, ''N0''),
         total_log_bytes_used_mb = FORMAT(qsrs.total_log_bytes_used_mb, ''N0''),
+        max_log_bytes_used_mb = FORMAT(qsrs.max_log_bytes_used_mb, ''N0''),
         avg_tempdb_space_used_mb = FORMAT(qsrs.avg_tempdb_space_used_mb, ''N0''),
-        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
+        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),
+        max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
             END +
