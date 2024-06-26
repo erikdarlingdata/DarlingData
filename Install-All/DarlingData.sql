@@ -1,4 +1,4 @@
--- Compile Date: 06/25/2024 17:17:31 UTC
+-- Compile Date: 06/26/2024 20:01:31 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -21390,16 +21390,16 @@ ORDER BY ' +
          WHEN 1
          THEN
              CASE @sort_order
-                  WHEN 'cpu' THEN N'CONVERT(money, x.avg_cpu_time_ms)'
-                  WHEN 'logical reads' THEN N'CONVERT(money, x.avg_logical_io_reads_mb)'
-                  WHEN 'physical reads' THEN N'CONVERT(money, x.avg_physical_io_reads_mb)'
-                  WHEN 'writes' THEN N'CONVERT(money, x.avg_logical_io_writes_mb)'
-                  WHEN 'duration' THEN N'CONVERT(money, x.avg_duration_ms)'
-                  WHEN 'memory' THEN N'CONVERT(money, x.avg_query_max_used_memory_mb)'
-                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'CONVERT(money, x.avg_tempdb_space_used_mb)' ELSE N'CONVERT(money, x.avg_cpu_time)' END
-                  WHEN 'executions' THEN N'CONVERT(money, x.count_executions)'
+                  WHEN 'cpu' THEN N'TRY_PARSE(x.avg_cpu_time_ms AS money)'
+                  WHEN 'logical reads' THEN N'TRY_PARSE(x.avg_logical_io_reads_mb AS money)'
+                  WHEN 'physical reads' THEN N'TRY_PARSE(x.avg_physical_io_reads_mb AS money)'
+                  WHEN 'writes' THEN N'TRY_PARSE(x.avg_logical_io_writes_mb AS money)'
+                  WHEN 'duration' THEN N'TRY_PARSE(x.avg_duration_ms AS money)'
+                  WHEN 'memory' THEN N'TRY_PARSE(x.avg_query_max_used_memory_mb AS money)'
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
+                  WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  ELSE N'CONVERT(money, x.avg_cpu_time_ms)'
+                  ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)'
              END
     END
              + N' DESC
