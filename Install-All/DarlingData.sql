@@ -1,4 +1,4 @@
--- Compile Date: 06/26/2024 20:10:04 UTC
+-- Compile Date: 06/28/2024 19:44:07 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11902,7 +11902,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
           (
                  dows.wait_type = N'SLEEP_TASK'
              AND ISNULL(CONVERT(decimal(38, 2), dows.wait_time_ms /
-                   NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) > 1000.
+                   NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) >=
+                     CASE WHEN @sample_seconds > 0 THEN 0. ELSE 1000. END
           )
         )
         AND
@@ -13205,6 +13206,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         THEN N''ObjPerm''
                         ELSE domcc.name
                     END
+            HAVING
+                SUM
+                (' +
+                    CASE
+                        @pages_kb
+                        WHEN 1
+                        THEN N'
+                    domcc.pages_in_use_kb'
+                        ELSE N'
+                    domcc.single_pages_in_use_kb +
+                    domcc.multi_pages_in_use_kb'
+                    END + N'
+                ) / 1024. / 1024. > 0.5
             ORDER BY
                 pages_gb DESC
             FOR XML
@@ -13223,6 +13237,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
             @cache_sql,
           N'@cache_xml xml OUTPUT',
             @cache_xml OUTPUT;
+
+        IF @cache_xml IS NULL
+        BEGIN
+            SELECT
+                @cache_xml =
+                (
+                    SELECT
+                        N'No significant caches detected'
+                    FOR XML
+                        PATH(N'cache'),
+                        TYPE
+                );
+        END;
 
         SELECT
             low_memory =

@@ -686,8 +686,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
           (
                  dows.wait_type = N'SLEEP_TASK'
              AND ISNULL(CONVERT(decimal(38, 2), dows.wait_time_ms /
-                   NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) >= 
-                     CASE WHEN @sample_seconds > 0 THEN 0. ELSE 1000. END 
+                   NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) >=
+                     CASE WHEN @sample_seconds > 0 THEN 0. ELSE 1000. END
           )
         )
         AND
@@ -1994,7 +1994,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 SUM
                 (' +
                     CASE
-                        @pages_kb 
+                        @pages_kb
                         WHEN 1
                         THEN N'
                     domcc.pages_in_use_kb'
@@ -2034,7 +2034,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         TYPE
                 );
         END;
-        
+
         SELECT
             low_memory =
                @low_memory,
