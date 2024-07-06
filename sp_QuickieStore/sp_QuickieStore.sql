@@ -1168,7 +1168,7 @@ DECLARE
     @start_date_original datetimeoffset(7),
     @end_date_original datetimeoffset(7),
     @utc_minutes_difference bigint,
-    @utc_minutes_original bigint,
+    @utc_offset_string nvarchar(6),
     @df integer,
     @work_start_utc time(0),
     @work_end_utc time(0);
@@ -1586,13 +1586,18 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             SYSDATETIME(),
             SYSUTCDATETIME()
         ),
-    @utc_minutes_original =
-        DATEDIFF
-        (
-            MINUTE,
-            SYSUTCDATETIME(),
-            SYSDATETIME()
-        ),
+    /*
+	There is no direct way to get the user's timezone in a
+	format compatible with sys.time_zone_info.
+
+	We also cannot directly get their UTC offset,
+	so we need this hack to get it instead.
+
+	This is to make our datetimeoffsets have the
+	correct offset in cases where the user didn't
+	give us their timezone.
+    */
+    @utc_offset_string = RIGHT(SYSDATETIMEOFFSET(), 6),
     @df = @@DATEFIRST,
     @work_start_utc = @work_start,
     @work_end_utc = @work_end;
@@ -6234,11 +6239,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.first_execution_time
+                    SWITCHOFFSET
+		    (
+                        qsrs.first_execution_time,
+			@utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -6249,11 +6253,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.last_execution_time
+                    SWITCHOFFSET
+		    (
+                        qsrs.last_execution_time,
+			@utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -6462,11 +6465,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.first_execution_time
+                    SWITCHOFFSET
+		    (
+                        qsrs.first_execution_time,
+			@utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -6477,11 +6479,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.last_execution_time
+                    SWITCHOFFSET
+		    (
+                        qsrs.last_execution_time,
+			@utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -6688,11 +6689,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.first_execution_time
+                    SWITCHOFFSET
+		    (
+                        qsrs.first_execution_time,
+			@utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -6703,11 +6703,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.last_execution_time
+                    SWITCHOFFSET
+		    (
+                        qsrs.last_execution_time,
+			@utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -6892,11 +6891,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.first_execution_time
+                    SWITCHOFFSET
+		    (
+                        qsrs.first_execution_time,
+			@utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -6907,11 +6905,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.last_execution_time
+                    SWITCHOFFSET
+		    (
+                        qsrs.last_execution_time,
+			@utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -7212,9 +7209,9 @@ OPTION(RECOMPILE);'
 
     EXEC sys.sp_executesql
         @sql,
-      N'@utc_minutes_original bigint,
+      N'@utc_offset_string nvarchar(6),
         @timezone sysname',
-        @utc_minutes_original,
+        @utc_offset_string,
         @timezone;
 END; /*End runtime stats main query*/
 ELSE
@@ -7267,12 +7264,11 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
-                                (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qspf.create_time
-                                )
+				SWITCHOFFSET
+                            	(
+				   qspf.create_time,
+			    	   @utc_offset_string
+                    		)
                             WHEN @timezone IS NOT NULL
                             THEN qspf.create_time AT TIME ZONE @timezone
                         END,
@@ -7282,12 +7278,11 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
-                                (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qspf.last_updated_time
-                                )
+				SWITCHOFFSET
+                            	(
+				   qspf.last_updated_time,
+			    	   @utc_offset_string
+                    		)
                             WHEN @timezone IS NOT NULL
                             THEN qspf.last_updated_time AT TIME ZONE @timezone
                         END,
@@ -7395,11 +7390,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.initial_compile_start_time
+                                    qsq.initial_compile_start_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.initial_compile_start_time AT TIME ZONE @timezone
@@ -7410,11 +7404,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.last_compile_start_time
+                                    qsq.last_compile_start_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.last_compile_start_time AT TIME ZONE @timezone
@@ -7425,11 +7418,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.last_execution_time
+                                    qsq.last_execution_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.last_execution_time AT TIME ZONE @timezone
@@ -7858,11 +7850,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qspf.create_time
+                                    qsq.create_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qspf.create_time AT TIME ZONE @timezone
@@ -7873,11 +7864,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qspf.last_updated_time
+                                    qspf.last_updated_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qspf.last_updated_time AT TIME ZONE @timezone
@@ -7986,11 +7976,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.initial_compile_start_time
+                                    qsq.initial_compile_start_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.initial_compile_start_time AT TIME ZONE @timezone
@@ -8001,11 +7990,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.last_compile_start_time
+                                    qsq.last_compile_start_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.last_compile_start_time AT TIME ZONE @timezone
@@ -8016,11 +8004,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.last_execution_time
+                                    qsq.last_execution_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.last_execution_time AT TIME ZONE @timezone
@@ -8774,14 +8761,14 @@ BEGIN
            @timezone,
        utc_minutes_difference =
            @utc_minutes_difference,
-       utc_minutes_original =
-           @utc_minutes_original,
-        df =
-            @df,
-        work_start_utc =
-            @work_start_utc,
-        work_end_utc =
-            @work_end_utc;
+       utc_offset_string =
+           @utc_offset_string,
+       df =
+           @df,
+       work_start_utc =
+           @work_start_utc,
+       work_end_utc =
+           @work_end_utc;
 
     IF EXISTS
        (
