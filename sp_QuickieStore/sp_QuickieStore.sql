@@ -7852,7 +7852,7 @@ BEGIN
                             THEN
                                 SWITCHOFFSET
                                 (
-                                    qsq.create_time,
+                                    qspf.create_time,
                                     @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
