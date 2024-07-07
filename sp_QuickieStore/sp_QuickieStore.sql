@@ -506,7 +506,7 @@ BEGIN
         #plan_ids_with_query_hashes
     (
         plan_id bigint PRIMARY KEY WITH (IGNORE_DUP_KEY = ON),
-        PlanHashesPerQueryHash INT NOT NULL
+        plan_hash_count_for_query_hash INT NOT NULL
     );
 END;
 
@@ -4394,12 +4394,12 @@ BEGIN
         @sql += N'
     SELECT TOP (@top)
         QueryHashesWithIds.plan_id,
-        PlanHashesPerQueryHash
+        plan_hash_count_for_query_hash
     FROM 
     (
        SELECT
            qsq.query_hash,
-           COUNT(DISTINCT qsp.query_plan_hash) AS PlanHashesPerQueryHash
+           COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
        FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
        JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
           ON qsq.query_id = qsp.query_id
@@ -4427,7 +4427,7 @@ BEGIN
     ) AS QueryHashesWithIds
     ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
     ORDER BY
-        QueryHashesWithCounts.PlanHashesPerQueryHash DESC
+        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
@@ -4440,7 +4440,7 @@ BEGIN
         #plan_ids_with_query_hashes WITH(TABLOCK)
     (
         plan_id,
-        PlanHashesPerQueryHash
+        plan_hash_count_for_query_hash
     )
     EXEC sys.sp_executesql
         @sql,
@@ -4593,7 +4593,7 @@ BEGIN
         hashes.plan_id
     FROM #plan_ids_with_query_hashes AS hashes
     ORDER BY
-        hashes.PlanHashesPerQueryHash DESC
+        hashes.plan_hash_count_for_query_hash DESC
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 END
 ELSE
@@ -4802,7 +4802,7 @@ CASE @sort_order
      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
      WHEN 'executions' THEN N'qsrs.count_executions'
      WHEN 'recent' THEN N'qsrs.last_execution_time'
-     WHEN 'plan hashes' THEN N'hashes.PlanHashesPerQueryHash'
+     WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
      ELSE N'qsrs.avg_cpu_time'
 END + N' DESC
 ) AS qsrs
@@ -6492,7 +6492,7 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            WHEN 'plan hashes' THEN N'hashes.PlanHashesPerQueryHash'
+            WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -6722,7 +6722,7 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            WHEN 'plan hashes' THEN N'hashes.PlanHashesPerQueryHash'
+            WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -6926,7 +6926,7 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            WHEN 'plan hashes' THEN N'hashes.PlanHashesPerQueryHash'
+            WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
@@ -7131,10 +7131,15 @@ FROM
              WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
-             WHEN 'plan hashes' THEN N'hashes.PlanHashesPerQueryHash'
+             WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
              ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
+	+ CASE WHEN @sort_order = 'plan hashes'
+	       THEN N'
+	  , hashes.plan_hash_count_for_query_hash'
+	       ELSE N''
+	       END
             )
         );
     END; /*End expert mode = 0, format output = 1*/
@@ -7341,7 +7346,7 @@ ORDER BY ' +
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  WHEN 'plan hashes' THEN N'hashes.PlanHashesPerQueryHash'
+                  WHEN 'plan hashes' THEN N'x.plan_hash_count_for_query_hash'
                   ELSE N'x.avg_cpu_time_ms'
              END
          WHEN 1
@@ -7356,7 +7361,7 @@ ORDER BY ' +
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  WHEN 'plan hashes' THEN N'hashes.PlanHashesPerQueryHash'
+                  WHEN 'plan hashes' THEN N'x.plan_hash_count_for_query_hash'
                   ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)'
              END
     END
