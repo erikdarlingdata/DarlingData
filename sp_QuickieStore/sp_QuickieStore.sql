@@ -4409,7 +4409,7 @@ BEGIN
        ' + @where_clause
          + N'
        GROUP
-           BY qsrs.plan_id 
+           BY qsq.query_hash 
     ) AS QueryHashesWithCounts
     JOIN
     (
@@ -7148,7 +7148,8 @@ FROM
     (
         nvarchar(MAX),
         N'
-    FROM #query_store_runtime_stats AS qsrs'
+        FROM #query_store_runtime_stats AS qsrs'
+    )
     IF @sort_order = 'plan hashes'
     BEGIN
         SELECT
@@ -7158,7 +7159,11 @@ FROM
     END;
 
 SELECT
-    @sql += N'
+    @sql +=
+    CONVERT
+    (
+        NVARCHAR(MAX),
+        N'
     CROSS APPLY
     (
         SELECT
