@@ -9131,6 +9131,29 @@ BEGIN
        (
            SELECT
                1/0
+           FROM #plan_ids_with_query_hashes AS hashes
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#plan_ids_with_query_hashes',
+            hashes.*
+        FROM #plan_ids_with_query_hashes AS hashes
+        ORDER BY
+            hashes.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#plan_ids_with_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
            FROM #include_plan_hashes AS iph
        )
     BEGIN
