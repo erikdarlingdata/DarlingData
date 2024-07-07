@@ -6496,6 +6496,11 @@ FROM
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
+	+ CASE WHEN @sort_order = 'plan hashes'
+	       THEN N'
+	  , hashes.plan_hash_count_for_query_hash'
+	       ELSE N''
+	       END
             )
         );
     END; /*End expert mode 1, format output 0 columns*/
@@ -6726,6 +6731,11 @@ FROM
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
+	+ CASE WHEN @sort_order = 'plan hashes'
+	       THEN N'
+	  , hashes.plan_hash_count_for_query_hash'
+	       ELSE N''
+	       END
             )
         );
     END; /*End expert mode = 1, format output = 1*/
@@ -6930,6 +6940,11 @@ FROM
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
+	+ CASE WHEN @sort_order = 'plan hashes'
+	       THEN N'
+	  , hashes.plan_hash_count_for_query_hash'
+	       ELSE N''
+	       END
             )
         );
     END; /*End expert mode = 0, format output = 0*/
