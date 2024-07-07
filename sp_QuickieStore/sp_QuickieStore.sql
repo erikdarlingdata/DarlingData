@@ -4413,7 +4413,7 @@ BEGIN
     ) AS QueryHashesWithCounts
     JOIN
     (
-       SELECT
+       SELECT DISTINCT
            qsq.query_hash,
            qsp.plan_id
        FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
