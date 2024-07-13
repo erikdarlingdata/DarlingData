@@ -212,7 +212,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
-                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent, plan hashes'
+                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent, plan count by hashes'
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
@@ -496,19 +496,22 @@ CREATE TABLE
         ) PERSISTED NOT NULL PRIMARY KEY
 );
 
-IF @sort_order = 'plan hashes'
-BEGIN
-    /*
-    Holds plan_id with the count of the number of query hashes they have.
-    Only uses for when we're sorting by plan hashes per query has.
-    */
-    CREATE TABLE
-        #plan_ids_with_query_hashes
-    (
-        plan_id bigint PRIMARY KEY WITH (IGNORE_DUP_KEY = ON),
-        plan_hash_count_for_query_hash INT NOT NULL
-    );
-END;
+
+/*
+Holds plan_id with the count of the number of query hashes they have.
+Only used when we're sorting by how many plan hashes each
+query hash has.
+
+We still have to declare this table even when it's not used,
+because the debug output breaks if we don't.
+*/
+CREATE TABLE
+    #plan_ids_with_query_hashes
+(
+    plan_id bigint,
+    query_hash binary(8),
+    plan_hash_count_for_query_hash INT NOT NULL
+);
 
 /*
 Hold plan hashes for plans we want
@@ -2163,7 +2166,7 @@ IF @sort_order NOT IN
        'tempdb',
        'executions',
        'recent',
-       'plan hashes'
+       'plan count by hashes'
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
@@ -4374,7 +4377,7 @@ END;
 /*
 Populate sort-helping tables, if needed
 */
-IF @sort_order = 'plan hashes'
+IF @sort_order = 'plan count by hashes'
 BEGIN
     SELECT
         @current_table = 'inserting #plan_ids_with_query_hashes',
@@ -4393,8 +4396,9 @@ BEGIN
     SELECT
         @sql += N'
     SELECT TOP (@top)
-        QueryHashesWithIds.plan_id,
-        plan_hash_count_for_query_hash
+        QueryHashesWithIds.plan_id,	
+	QueryHashesWithCounts.query_hash,
+        QueryHashesWithCounts.plan_hash_count_for_query_hash
     FROM 
     (
        SELECT
@@ -4413,7 +4417,7 @@ BEGIN
     ) AS QueryHashesWithCounts
     JOIN
     (
-       SELECT DISTINCT
+       SELECT
            qsq.query_hash,
            qsp.plan_id
        FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
@@ -4427,7 +4431,7 @@ BEGIN
     ) AS QueryHashesWithIds
     ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
     ORDER BY
-        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC
+        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
@@ -4440,6 +4444,7 @@ BEGIN
         #plan_ids_with_query_hashes WITH(TABLOCK)
     (
         plan_id,
+	query_hash,
         plan_hash_count_for_query_hash
     )
     EXEC sys.sp_executesql
@@ -4585,15 +4590,30 @@ BEGIN
     SET STATISTICS XML ON;
 END;
 
-IF @sort_order = 'plan hashes'
+IF @sort_order = 'plan count by hashes'
 BEGIN
     SELECT
         @sql += N'
-    SELECT TOP (@top)
-        hashes.plan_id
-    FROM #plan_ids_with_query_hashes AS hashes
-    ORDER BY
-        hashes.plan_hash_count_for_query_hash DESC
+    SELECT
+	qsrs.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    ON qsq.query_id = qsp.query_id
+    JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    ON qsp.plan_id = qsrs.plan_id
+    WHERE 1 = 1
+    ' + @where_clause
+      + N'
+    AND qsq.query_hash IN
+    (
+	SELECT TOP (@top)
+	    hashes.query_hash
+	FROM #plan_ids_with_query_hashes AS hashes
+	ORDER BY
+	    hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash DESC
+    )
+    GROUP
+        BY qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 END
 ELSE
@@ -4777,7 +4797,7 @@ CROSS APPLY
     SELECT TOP (@queries_top)
         qsrs.*
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs'
-    IF @sort_order = 'plan hashes'
+    IF @sort_order = 'plan count by hashes'
     BEGIN
         SELECT
             @sql += N'
@@ -4802,7 +4822,7 @@ CASE @sort_order
      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
      WHEN 'executions' THEN N'qsrs.count_executions'
      WHEN 'recent' THEN N'qsrs.last_execution_time'
-     WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
+     WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
      ELSE N'qsrs.avg_cpu_time'
 END + N' DESC
 ) AS qsrs
@@ -6492,13 +6512,21 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
+            WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
-	+ CASE WHEN @sort_order = 'plan hashes'
+	/*
+	   Bolt the extra columns on, because we need them to be in scope for sorting.
+	   Has the side-effect of making them visible in the final output,
+	   because our SELECT is just x.*.
+
+	   But, really, is having this column visible in the output a bad thing?
+	   Probably not.
+	*/
+	+ CASE WHEN @sort_order = 'plan count by hashes'
 	       THEN N'
-	  , hashes.plan_hash_count_for_query_hash'
+	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       ELSE N''
 	       END
             )
@@ -6727,13 +6755,21 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
+            WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
-	+ CASE WHEN @sort_order = 'plan hashes'
+	/*
+	   Bolt the extra columns on, because we need them to be in scope for sorting.
+	   Has the side-effect of making them visible in the final output,
+	   because our SELECT is just x.*.
+
+	   But, really, is having this column visible in the output a bad thing?
+	   Probably not.
+	*/
+	+ CASE WHEN @sort_order = 'plan count by hashes'
 	       THEN N'
-	  , hashes.plan_hash_count_for_query_hash'
+	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       ELSE N''
 	       END
             )
@@ -6936,13 +6972,21 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
+            WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
             ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
-	+ CASE WHEN @sort_order = 'plan hashes'
+	/*
+	   Bolt the extra columns on, because we need them to be in scope for sorting.
+	   Has the side-effect of making them visible in the final output,
+	   because our SELECT is just x.*.
+
+	   But, really, is having this column visible in the output a bad thing?
+	   Probably not.
+	*/
+	+ CASE WHEN @sort_order = 'plan count by hashes'
 	       THEN N'
-	  , hashes.plan_hash_count_for_query_hash'
+	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       ELSE N''
 	       END
             )
@@ -7146,13 +7190,21 @@ FROM
              WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
-             WHEN 'plan hashes' THEN N'hashes.plan_hash_count_for_query_hash'
+             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
              ELSE N'qsrs.avg_cpu_time_ms'
         END + N' DESC
             )'
-	+ CASE WHEN @sort_order = 'plan hashes'
+	/*
+	   Bolt the extra columns on, because we need them to be in scope for sorting.
+	   Has the side-effect of making them visible in the final output,
+	   because our SELECT is just x.*.
+
+	   But, really, is having this column visible in the output a bad thing?
+	   Probably not.
+	*/
+	+ CASE WHEN @sort_order = 'plan count by hashes'
 	       THEN N'
-	  , hashes.plan_hash_count_for_query_hash'
+	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       ELSE N''
 	       END
             )
@@ -7170,7 +7222,7 @@ FROM
         N'
         FROM #query_store_runtime_stats AS qsrs'
     )
-    IF @sort_order = 'plan hashes'
+    IF @sort_order = 'plan count by hashes'
     BEGIN
         SELECT
             @sql += N'
@@ -7361,7 +7413,7 @@ ORDER BY ' +
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  WHEN 'plan hashes' THEN N'x.plan_hash_count_for_query_hash'
+                  WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash'
                   ELSE N'x.avg_cpu_time_ms'
              END
          WHEN 1
@@ -7376,7 +7428,7 @@ ORDER BY ' +
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  WHEN 'plan hashes' THEN N'x.plan_hash_count_for_query_hash'
+                  WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash'
                   ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)'
              END
     END
