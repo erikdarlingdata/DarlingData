@@ -6521,7 +6521,7 @@ FROM
 	   Has the side-effect of making them visible in the final output,
 	   because our SELECT is just x.*.
 
-	   But, really, is having this column visible in the output a bad thing?
+	   But, really, is having the columns visible in the output a bad thing?
 	   Probably not.
 	*/
 	+ CASE WHEN @sort_order = 'plan count by hashes'
@@ -6764,7 +6764,7 @@ FROM
 	   Has the side-effect of making them visible in the final output,
 	   because our SELECT is just x.*.
 
-	   But, really, is having this column visible in the output a bad thing?
+	   But, really, is having the columns visible in the output a bad thing?
 	   Probably not.
 	*/
 	+ CASE WHEN @sort_order = 'plan count by hashes'
@@ -6981,7 +6981,7 @@ FROM
 	   Has the side-effect of making them visible in the final output,
 	   because our SELECT is just x.*.
 
-	   But, really, is having this column visible in the output a bad thing?
+	   But, really, is having the columns visible in the output a bad thing?
 	   Probably not.
 	*/
 	+ CASE WHEN @sort_order = 'plan count by hashes'
@@ -7199,7 +7199,7 @@ FROM
 	   Has the side-effect of making them visible in the final output,
 	   because our SELECT is just x.*.
 
-	   But, really, is having this column visible in the output a bad thing?
+	   But, really, is having the columns visible in the output a bad thing?
 	   Probably not.
 	*/
 	+ CASE WHEN @sort_order = 'plan count by hashes'
