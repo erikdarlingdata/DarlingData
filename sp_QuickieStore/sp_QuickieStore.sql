@@ -4394,8 +4394,13 @@ BEGIN
     END;
     
     SELECT
+    /*
+	The lack of @top is deliberate.
+	You get so many results per hash from this query that
+	adding in @top cuts off most of your results.
+    */
         @sql += N'
-    SELECT TOP (@top)
+    SELECT
         QueryHashesWithIds.plan_id,	
 	QueryHashesWithCounts.query_hash,
         QueryHashesWithCounts.plan_hash_count_for_query_hash
@@ -4432,7 +4437,7 @@ BEGIN
     ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
     ORDER BY
         QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash
-    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+    OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -4601,17 +4606,18 @@ BEGIN
     ON qsq.query_id = qsp.query_id
     JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     ON qsp.plan_id = qsrs.plan_id
+    JOIN
+    (
+	SELECT
+	    hashes.query_hash,
+	    DENSE_RANK() OVER (ORDER BY hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash DESC) AS ranking
+	FROM #plan_ids_with_query_hashes AS hashes
+    ) AS ranked_hashes
+    ON qsq.query_hash = ranked_hashes.query_hash
     WHERE 1 = 1
     ' + @where_clause
       + N'
-    AND qsq.query_hash IN
-    (
-	SELECT TOP (@top)
-	    hashes.query_hash
-	FROM #plan_ids_with_query_hashes AS hashes
-	ORDER BY
-	    hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash DESC
-    )
+    AND ranked_hashes.ranking <= @TOP
     GROUP
         BY qsrs.plan_id
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
