@@ -6257,6 +6257,8 @@ BEGIN
     TRUNCATE TABLE
         #wait_filter;
     TRUNCATE TABLE
+        #plan_ids_with_query_hashes;
+    TRUNCATE TABLE
         #only_queries_with_hints;
     TRUNCATE TABLE
         #only_queries_with_feedback;
