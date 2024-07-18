@@ -6083,6 +6083,8 @@ BEGIN
     TRUNCATE TABLE
         #query_text_search;
     TRUNCATE TABLE
+        #query_text_search_not;
+    TRUNCATE TABLE
         #dm_exec_query_stats;
     TRUNCATE TABLE
         #query_types;
