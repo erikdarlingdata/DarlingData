@@ -6704,7 +6704,7 @@ FROM
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
-            ELSE N'qsrs.avg_cpu_time_ms'
+	    ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
 	/*
@@ -6721,7 +6721,7 @@ FROM
 	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       WHEN @sort_order_is_a_wait = 1
 	       THEN N'
-	       , waits.total_query_wait_time_ms'
+	       , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
 	       ELSE N''
 	       END
             )
@@ -6951,7 +6951,7 @@ FROM
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
-            ELSE N'qsrs.avg_cpu_time_ms'
+	    ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
 	/*
@@ -6968,7 +6968,7 @@ FROM
 	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       WHEN @sort_order_is_a_wait = 1
 	       THEN N'
-	       , waits.total_query_wait_time_ms'
+	       , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
 	       ELSE N''
 	       END
             )
@@ -7172,7 +7172,7 @@ FROM
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
-            ELSE N'qsrs.avg_cpu_time_ms'
+            ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
 	/*
@@ -7189,7 +7189,7 @@ FROM
 	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       WHEN @sort_order_is_a_wait = 1
 	       THEN N'
-	       , waits.total_query_wait_time_ms'
+	       , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
 	       ELSE N''
 	       END
             )
@@ -7394,7 +7394,7 @@ FROM
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
              WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
-             ELSE N'qsrs.avg_cpu_time_ms'
+             ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
 	/*
@@ -7411,7 +7411,7 @@ FROM
 	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       WHEN @sort_order_is_a_wait = 1
 	       THEN N'
-	       , waits.total_query_wait_time_ms'
+	       , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
 	       ELSE N''
 	       END
             )
