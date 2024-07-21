@@ -9420,7 +9420,7 @@ BEGIN
        (
            SELECT
                1/0
-           FROM #plan_ids_with_query_hashes AS hashes
+           FROM #plan_ids_with_total_waits AS waits
        )
     BEGIN
         SELECT
@@ -9429,7 +9429,7 @@ BEGIN
             waits.*
         FROM #plan_ids_with_total_waits AS waits
         ORDER BY
-            hashes.plan_id
+            waits.plan_id
         OPTION(RECOMPILE);
     END;
     ELSE
