@@ -212,7 +212,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
-                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits'
+                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits'
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
@@ -528,7 +528,7 @@ isn't in our normal output.
 CREATE TABLE
     #plan_ids_with_total_waits
 (
-    plan_id bigint NOT NULL,
+    plan_id bigint NOT NULL PRIMARY KEY,
     total_query_wait_time_ms bigint NOT NULL
 );
 
@@ -2201,7 +2201,8 @@ IF @sort_order NOT IN
        'network io waits',
        'parallel waits',
        'parallelism waits',
-       'memory waits'
+       'memory waits',
+       'total waits'
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
@@ -2211,7 +2212,7 @@ BEGIN
 END;
 
 /*
-Checks if the sort order is for waits.
+Checks if the sort order is for a wait.
 Cuts out a lot of repetition.
 */
 IF @sort_order IN
@@ -2230,7 +2231,8 @@ IF @sort_order IN
        'network io waits',
        'parallel waits',
        'parallelism waits',
-       'memory waits'
+       'memory waits',
+       'total waits'
    )
 BEGIN
 
@@ -4549,7 +4551,87 @@ BEGIN
             @current_table;
     END; 
 END;
-IF @sort_order_is_a_wait = 1
+IF @sort_order = 'total waits'
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_with_total_waits',
+        @sql = @isolation_level;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        SET STATISTICS XML ON;
+    END;
+    
+    SELECT
+        @sql += N'
+    SELECT TOP (@top)
+        qsrs.plan_id,
+	SUM(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+    ON qsrs.plan_id = qsws.plan_id
+    WHERE 1 = 1 
+    ' + @where_clause
+      + N'
+    GROUP
+        BY qsrs.plan_id
+    ORDER BY
+        SUM(qsws.total_query_wait_time_ms) DESC
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+    
+    INSERT
+        #plan_ids_with_total_waits WITH(TABLOCK)
+    (
+        plan_id,
+	total_query_wait_time_ms
+    )
+    EXEC sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END; 
+END;
+/*
+    'total waits' is special. It's a sum, not a max, so
+    we cover is above rather than here. 
+*/
+IF @sort_order_is_a_wait = 1 AND @sort_order <> 'total waits'
 BEGIN
     SELECT
         @current_table = 'inserting #plan_ids_with_total_waits',
@@ -7628,7 +7710,7 @@ ORDER BY ' +
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash'
-                  ELSE N'x.avg_cpu_time_ms'
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time' END
              END
          WHEN 1
          THEN
@@ -7643,7 +7725,7 @@ ORDER BY ' +
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash'
-                  ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)'
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
              END
     END
              + N' DESC
@@ -9065,6 +9147,8 @@ BEGIN
             @database_name,
         sort_order =
             @sort_order,
+	sort_order_is_a_wait =
+	    @sort_order_is_a_wait,
         [top] =
             @top,
         start_date =
