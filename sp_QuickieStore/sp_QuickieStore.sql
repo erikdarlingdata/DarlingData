@@ -6799,11 +6799,9 @@ FROM
 	   I find it's helpful.
 	*/
 	+ CASE WHEN @sort_order = 'plan count by hashes'
-	       THEN N'
-	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+	       THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       WHEN @sort_order_is_a_wait = 1
-	       THEN N'
-	       , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+	       THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
 	       ELSE N''
 	       END
             )
@@ -7043,14 +7041,13 @@ FROM
 	   because our SELECT is just x.*.
 
 	   But, really, is having the columns visible in the output a bad thing?
-	   I find it's helpful.
+	   I find it's helpful, but it does mean that we have to format them
+	   when applicable.
 	*/
 	+ CASE WHEN @sort_order = 'plan count by hashes'
-	       THEN N'
-	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+	       THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
 	       WHEN @sort_order_is_a_wait = 1
-	       THEN N'
-	       , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+	       THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
 	       ELSE N''
 	       END
             )
@@ -7267,11 +7264,9 @@ FROM
 	   I find it's helpful.
 	*/
 	+ CASE WHEN @sort_order = 'plan count by hashes'
-	       THEN N'
-	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+	       THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
 	       WHEN @sort_order_is_a_wait = 1
-	       THEN N'
-	       , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+	       THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
 	       ELSE N''
 	       END
             )
@@ -7486,14 +7481,13 @@ FROM
 	   because our SELECT is just x.*.
 
 	   But, really, is having the columns visible in the output a bad thing?
-	   I find it's helpful.
+	   I find it's helpful, but it does mean that we have to format them
+	   when applicable.
 	*/
 	+ CASE WHEN @sort_order = 'plan count by hashes'
-	       THEN N'
-	  , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+	       THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
 	       WHEN @sort_order_is_a_wait = 1
-	       THEN N'
-	       , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+	       THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
 	       ELSE N''
 	       END
             )
@@ -7712,6 +7706,10 @@ ORDER BY ' +
                   WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash'
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time' END
              END
+	 /*
+	     The ORDER BY is on the same level as the topmost SELECT, which is just SELECT x.*.
+	     This means that to sort formatted output, we have to un-format it.
+	 */
          WHEN 1
          THEN
              CASE @sort_order
@@ -7724,7 +7722,7 @@ ORDER BY ' +
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash'
+                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC, x.query_hash'
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
              END
     END
