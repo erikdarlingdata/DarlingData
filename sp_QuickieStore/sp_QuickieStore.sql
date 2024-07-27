@@ -4463,49 +4463,56 @@ BEGIN
     
     SELECT
     /*
-	The lack of @top is deliberate.
-	You get so many results per hash from this query that
-	adding in @top cuts off most of your results.
+	This sort order is useless if we don't show the
+	ties, so only DENSE_RANK() makes sense to use.
+	This is why this is not SELECT TOP.
     */
         @sql += N'
     SELECT
-        QueryHashesWithIds.plan_id,	
-	QueryHashesWithCounts.query_hash,
-        QueryHashesWithCounts.plan_hash_count_for_query_hash
-    FROM 
+        ranked_plans.plan_id,	
+	ranked_plans.query_hash,
+        ranked_plans.plan_hash_count_for_query_hash
+    FROM
     (
-       SELECT
-           qsq.query_hash,
-           COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
-       FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-       JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-          ON qsq.query_id = qsp.query_id
-       JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-         ON qsp.plan_id = qsrs.plan_id
-       WHERE 1 = 1
-       ' + @where_clause
-         + N'
-       GROUP
-           BY qsq.query_hash 
-    ) AS QueryHashesWithCounts
-    JOIN
-    (
-       SELECT
-           qsq.query_hash,
-           qsp.plan_id
-       FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-       JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-          ON qsq.query_id = qsp.query_id
-       JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-         ON qsp.plan_id = qsrs.plan_id
-        WHERE 1 = 1
-       ' + @where_clause
-         + N'
-    ) AS QueryHashesWithIds
-    ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
-    ORDER BY
-        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash
-    OPTION(RECOMPILE);' + @nc10;
+	SELECT
+	    QueryHashesWithIds.plan_id,	
+	    QueryHashesWithCounts.query_hash,
+	    QueryHashesWithCounts.plan_hash_count_for_query_hash,
+	    DENSE_RANK() OVER (ORDER BY QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash DESC) AS ranking
+	FROM 
+	(
+	   SELECT
+	       qsq.query_hash,
+	       COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
+	   FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+	   JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+	      ON qsq.query_id = qsp.query_id
+	   JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+	     ON qsp.plan_id = qsrs.plan_id
+	   WHERE 1 = 1
+	   ' + @where_clause
+	     + N'
+	   GROUP
+	       BY qsq.query_hash 
+	) AS QueryHashesWithCounts
+	JOIN
+	(
+	   SELECT
+	       qsq.query_hash,
+	       qsp.plan_id
+	   FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+	   JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+	      ON qsq.query_id = qsp.query_id
+	   JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+	     ON qsp.plan_id = qsrs.plan_id
+	    WHERE 1 = 1
+	   ' + @where_clause
+	     + N'
+	) AS QueryHashesWithIds
+	ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
+    ) AS ranked_plans
+    WHERE ranked_plans.ranking <= @TOP
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
     BEGIN
@@ -4847,28 +4854,10 @@ IF @sort_order = 'plan count by hashes'
 BEGIN
     SELECT
         @sql += N'
-    SELECT
-	qsrs.plan_id
-    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-    JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-    ON qsq.query_id = qsp.query_id
-    JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-    ON qsp.plan_id = qsrs.plan_id
-    JOIN
-    (
-	SELECT
-	    hashes.query_hash,
-	    DENSE_RANK() OVER (ORDER BY hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash DESC) AS ranking
-	FROM #plan_ids_with_query_hashes AS hashes
-    ) AS ranked_hashes
-    ON qsq.query_hash = ranked_hashes.query_hash
-    WHERE 1 = 1
-    ' + @where_clause
-      + N'
-    AND ranked_hashes.ranking <= @TOP
-    GROUP
-        BY qsrs.plan_id
-    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+    SELECT DISTINCT
+        plan_id
+    FROM #plan_ids_with_query_hashes
+    OPTION(RECOMPILE);' + @nc10;
 END
 ELSE IF @sort_order_is_a_wait = 1
 BEGIN
