@@ -499,13 +499,19 @@ CREATE TABLE
 /*
 The following two tables are for adding extra columns
 on to our output. We need these for sorting by anything
-that isn't in query_store_runtime_stats.
+that isn't in #query_store_runtime_stats.
 
 We still have to declare these tables even when they're
 not used because the debug output breaks if we don't.
 
-They are database dependent, so remember to truncate
-if @GetAllDatabases = 1.
+They are database dependent but not truncated at
+the end of each loop, so we need a database_id
+column.
+
+We do not truncate these because we need them to still
+be in scope and fully populated when we return our
+final results from #query_store_runtime_stats, which
+is done after the point where we would truncate.
 */
 
 /*
@@ -516,6 +522,7 @@ query hash has.
 CREATE TABLE
     #plan_ids_with_query_hashes
 (
+    database_id int NOT NULL,
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
     plan_hash_count_for_query_hash INT NOT NULL
@@ -528,8 +535,10 @@ isn't in our normal output.
 CREATE TABLE
     #plan_ids_with_total_waits
 (
-    plan_id bigint NOT NULL PRIMARY KEY,
-    total_query_wait_time_ms bigint NOT NULL
+    database_id int NOT NULL,
+    plan_id bigint NOT NULL,
+    total_query_wait_time_ms bigint NOT NULL,
+    PRIMARY KEY (database_id, plan_id)
 );
 
 /*
@@ -4469,6 +4478,7 @@ BEGIN
     */
         @sql += N'
     SELECT
+        @database_id,
         ranked_plans.plan_id,	
 	ranked_plans.query_hash,
         ranked_plans.plan_hash_count_for_query_hash
@@ -4523,6 +4533,7 @@ BEGIN
     INSERT
         #plan_ids_with_query_hashes WITH(TABLOCK)
     (
+        database_id,
         plan_id,
 	query_hash,
         plan_hash_count_for_query_hash
@@ -4577,6 +4588,7 @@ BEGIN
     SELECT
         @sql += N'
     SELECT TOP (@top)
+        @database_id,
         qsrs.plan_id,
 	SUM(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
@@ -4600,6 +4612,7 @@ BEGIN
     INSERT
         #plan_ids_with_total_waits WITH(TABLOCK)
     (
+        database_id,
         plan_id,
 	total_query_wait_time_ms
     )
@@ -4657,6 +4670,7 @@ BEGIN
     SELECT
         @sql += N'
     SELECT TOP (@top)
+        @database_id,
         qsrs.plan_id,
 	MAX(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
@@ -4698,7 +4712,8 @@ BEGIN
     INSERT
         #plan_ids_with_total_waits WITH(TABLOCK)
     (
-        plan_id,
+        database_id,
+	plan_id,
 	total_query_wait_time_ms
     )
     EXEC sys.sp_executesql
@@ -6508,10 +6523,6 @@ BEGIN
         #query_types;
     TRUNCATE TABLE
         #wait_filter;
-    TRUNCATE TABLE
-        #plan_ids_with_query_hashes;
-    TRUNCATE TABLE
-        #plan_ids_with_total_waits;
     TRUNCATE TABLE
         #only_queries_with_hints;
     TRUNCATE TABLE
