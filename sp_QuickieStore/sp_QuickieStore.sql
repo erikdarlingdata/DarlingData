@@ -7516,7 +7516,7 @@ FROM
             @sql += N'
             JOIN #plan_ids_with_query_hashes AS hashes
             ON qsrs.plan_id = hashes.plan_id
-            AND hashes.database_id = @database_id'
+            AND qsrs.database_id = hashes.database_id'
     END;
     IF @sort_order_is_a_wait = 1
     BEGIN
@@ -7524,7 +7524,7 @@ FROM
             @sql += N'
             JOIN #plan_ids_with_total_waits AS waits
             ON qsrs.plan_id = waits.plan_id
-            AND waits.database_id = @database_id'	    
+            AND qsrs.database_id = waits.database_id'	    
     END;
 
 SELECT
