@@ -4473,9 +4473,9 @@ BEGIN
     
     SELECT
     /*
-	This sort order is useless if we don't show the
-	ties, so only DENSE_RANK() makes sense to use.
-	This is why this is not SELECT TOP.
+        This sort order is useless if we don't show the
+        ties, so only DENSE_RANK() makes sense to use.
+        This is why this is not SELECT TOP.
     */
         @sql += N'
     SELECT
@@ -4485,42 +4485,42 @@ BEGIN
         ranked_plans.plan_hash_count_for_query_hash
     FROM
     (
-	SELECT
-	    QueryHashesWithIds.plan_id,	
-	    QueryHashesWithCounts.query_hash,
-	    QueryHashesWithCounts.plan_hash_count_for_query_hash,
-	    DENSE_RANK() OVER (ORDER BY QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash DESC) AS ranking
-	FROM 
-	(
-	   SELECT
-	       qsq.query_hash,
-	       COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
-	   FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-	   JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-	      ON qsq.query_id = qsp.query_id
-	   JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-	     ON qsp.plan_id = qsrs.plan_id
-	   WHERE 1 = 1
-	   ' + @where_clause
-	     + N'
-	   GROUP
-	       BY qsq.query_hash 
-	) AS QueryHashesWithCounts
-	JOIN
-	(
-	   SELECT DISTINCT
-	       qsq.query_hash,
-	       qsp.plan_id
-	   FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-	   JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-	      ON qsq.query_id = qsp.query_id
-	   JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-	     ON qsp.plan_id = qsrs.plan_id
-	    WHERE 1 = 1
-	   ' + @where_clause
-	     + N'
-	) AS QueryHashesWithIds
-	ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
+        SELECT
+            QueryHashesWithIds.plan_id,        
+            QueryHashesWithCounts.query_hash,
+            QueryHashesWithCounts.plan_hash_count_for_query_hash,
+            DENSE_RANK() OVER (ORDER BY QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash DESC) AS ranking
+        FROM 
+        (
+           SELECT
+               qsq.query_hash,
+               COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
+           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              ON qsq.query_id = qsp.query_id
+           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+             ON qsp.plan_id = qsrs.plan_id
+           WHERE 1 = 1
+           ' + @where_clause
+             + N'
+           GROUP
+               BY qsq.query_hash 
+        ) AS QueryHashesWithCounts
+        JOIN
+        (
+           SELECT DISTINCT
+               qsq.query_hash,
+               qsp.plan_id
+           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              ON qsq.query_id = qsp.query_id
+           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+             ON qsp.plan_id = qsrs.plan_id
+            WHERE 1 = 1
+           ' + @where_clause
+             + N'
+        ) AS QueryHashesWithIds
+        ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
     ) AS ranked_plans
     WHERE ranked_plans.ranking <= @TOP
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
@@ -4536,7 +4536,7 @@ BEGIN
     (
         database_id,
         plan_id,
-	query_hash,
+        query_hash,
         plan_hash_count_for_query_hash
     )
     EXEC sys.sp_executesql
@@ -4591,7 +4591,7 @@ BEGIN
     SELECT TOP (@top)
         @database_id,
         qsrs.plan_id,
-	SUM(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+        SUM(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
     ON qsrs.plan_id = qsws.plan_id
@@ -4615,7 +4615,7 @@ BEGIN
     (
         database_id,
         plan_id,
-	total_query_wait_time_ms
+        total_query_wait_time_ms
     )
     EXEC sys.sp_executesql
         @sql,
@@ -4673,28 +4673,28 @@ BEGIN
     SELECT TOP (@top)
         @database_id,
         qsrs.plan_id,
-	MAX(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+        MAX(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
     ON qsrs.plan_id = qsws.plan_id
     WHERE 1 = 1 
     AND qsws.wait_category = '  +
     CASE @sort_order
-	 WHEN 'cpu waits' THEN N'1'
-	 WHEN 'lock waits' THEN N'3'
-	 WHEN 'locks waits' THEN N'3'
-	 WHEN 'latch waits' THEN N'4'
-	 WHEN 'latches waits' THEN N'4'
-	 WHEN 'buffer latch waits' THEN N'5'
-	 WHEN 'buffer latches waits' THEN N'5'
-	 WHEN 'buffer io waits' THEN N'6'
-	 WHEN 'log waits' THEN N'14'
-	 WHEN 'log io waits' THEN N'14'
-	 WHEN 'network waits' THEN N'15'
-	 WHEN 'network io waits' THEN N'15'
-	 WHEN 'parallel waits' THEN N'16'
-	 WHEN 'parallelism waits' THEN N'16'
-	 WHEN 'memory waits' THEN N'17'
+         WHEN 'cpu waits' THEN N'1'
+         WHEN 'lock waits' THEN N'3'
+         WHEN 'locks waits' THEN N'3'
+         WHEN 'latch waits' THEN N'4'
+         WHEN 'latches waits' THEN N'4'
+         WHEN 'buffer latch waits' THEN N'5'
+         WHEN 'buffer latches waits' THEN N'5'
+         WHEN 'buffer io waits' THEN N'6'
+         WHEN 'log waits' THEN N'14'
+         WHEN 'log io waits' THEN N'14'
+         WHEN 'network waits' THEN N'15'
+         WHEN 'network io waits' THEN N'15'
+         WHEN 'parallel waits' THEN N'16'
+         WHEN 'parallelism waits' THEN N'16'
+         WHEN 'memory waits' THEN N'17'
     END
       + @where_clause
       + N'
@@ -4714,8 +4714,8 @@ BEGIN
         #plan_ids_with_total_waits WITH(TABLOCK)
     (
         database_id,
-	plan_id,
-	total_query_wait_time_ms
+        plan_id,
+        total_query_wait_time_ms
     )
     EXEC sys.sp_executesql
         @sql,
@@ -5073,15 +5073,15 @@ CROSS APPLY
             @sql += N'
             JOIN #plan_ids_with_query_hashes AS hashes
             ON qsrs.plan_id = hashes.plan_id
-	    AND hashes.database_id = @database_id'
+            AND hashes.database_id = @database_id'
     END;
     IF @sort_order_is_a_wait = 1
     BEGIN
         SELECT
             @sql += N'
-	    JOIN #plan_ids_with_total_waits AS waits
+            JOIN #plan_ids_with_total_waits AS waits
             ON qsrs.plan_id = waits.plan_id
-	    AND waits.database_id = @database_id'
+            AND waits.database_id = @database_id'
     END;    
 
 SELECT
@@ -6792,24 +6792,24 @@ FROM
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
-	    ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
+            ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
-	/*
-	   Bolt any special sorting columns on, because we need them to
-	   be in scope for sorting.
-	   Has the side-effect of making them visible in the final output,
-	   because our SELECT is just x.*.
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
 
-	   But, really, is having the columns visible in the output a bad thing?
-	   I find it's helpful.
-	*/
-	+ CASE WHEN @sort_order = 'plan count by hashes'
-	       THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
-	       WHEN @sort_order_is_a_wait = 1
-	       THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
-	       ELSE N''
-	       END
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode 1, format output 0 columns*/
@@ -7037,25 +7037,25 @@ FROM
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
-	    ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
+            ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
-	/*
-	   Bolt any special sorting columns on, because we need them to
-	   be in scope for sorting.
-	   Has the side-effect of making them visible in the final output,
-	   because our SELECT is just x.*.
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
 
-	   But, really, is having the columns visible in the output a bad thing?
-	   I find it's helpful, but it does mean that we have to format them
-	   when applicable.
-	*/
-	+ CASE WHEN @sort_order = 'plan count by hashes'
-	       THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
-	       WHEN @sort_order_is_a_wait = 1
-	       THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
-	       ELSE N''
-	       END
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful, but it does mean that we have to format them
+           when applicable.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode = 1, format output = 1*/
@@ -7260,21 +7260,21 @@ FROM
             ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
-	/*
-	   Bolt any special sorting columns on, because we need them to
-	   be in scope for sorting.
-	   Has the side-effect of making them visible in the final output,
-	   because our SELECT is just x.*.
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
 
-	   But, really, is having the columns visible in the output a bad thing?
-	   I find it's helpful.
-	*/
-	+ CASE WHEN @sort_order = 'plan count by hashes'
-	       THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
-	       WHEN @sort_order_is_a_wait = 1
-	       THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
-	       ELSE N''
-	       END
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode = 0, format output = 0*/
@@ -7480,22 +7480,22 @@ FROM
              ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
-	/*
-	   Bolt any special sorting columns on, because we need them to
-	   be in scope for sorting.
-	   Has the side-effect of making them visible in the final output,
-	   because our SELECT is just x.*.
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
 
-	   But, really, is having the columns visible in the output a bad thing?
-	   I find it's helpful, but it does mean that we have to format them
-	   when applicable.
-	*/
-	+ CASE WHEN @sort_order = 'plan count by hashes'
-	       THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
-	       WHEN @sort_order_is_a_wait = 1
-	       THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
-	       ELSE N''
-	       END
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful, but it does mean that we have to format them
+           when applicable.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode = 0, format output = 1*/
@@ -7525,7 +7525,7 @@ FROM
             @sql += N'
             JOIN #plan_ids_with_total_waits AS waits
             ON qsrs.plan_id = waits.plan_id
-            AND qsrs.database_id = waits.database_id'	    
+            AND qsrs.database_id = waits.database_id'
     END;
 
 SELECT
@@ -7714,10 +7714,10 @@ ORDER BY ' +
                   WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash'
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time' END
              END
-	 /*
-	     The ORDER BY is on the same level as the topmost SELECT, which is just SELECT x.*.
-	     This means that to sort formatted output, we have to un-format it.
-	 */
+         /*
+             The ORDER BY is on the same level as the topmost SELECT, which is just SELECT x.*.
+             This means that to sort formatted output, we have to un-format it.
+         */
          WHEN 1
          THEN
              CASE @sort_order
@@ -9153,8 +9153,8 @@ BEGIN
             @database_name,
         sort_order =
             @sort_order,
-	sort_order_is_a_wait =
-	    @sort_order_is_a_wait,
+        sort_order_is_a_wait =
+            @sort_order_is_a_wait,
         [top] =
             @top,
         start_date =
