@@ -5071,14 +5071,16 @@ CROSS APPLY
         SELECT
             @sql += N'
             JOIN #plan_ids_with_query_hashes AS hashes
-            ON qsrs.plan_id = hashes.plan_id'
+            ON qsrs.plan_id = hashes.plan_id
+	    AND hashes.database_id = @database_id'
     END;
     IF @sort_order_is_a_wait = 1
     BEGIN
         SELECT
             @sql += N'
 	    JOIN #plan_ids_with_total_waits AS waits
-            ON qsrs.plan_id = waits.plan_id'
+            ON qsrs.plan_id = waits.plan_id
+	    AND waits.database_id = @database_id'
     END;    
 
 SELECT
@@ -7513,14 +7515,16 @@ FROM
         SELECT
             @sql += N'
             JOIN #plan_ids_with_query_hashes AS hashes
-            ON qsrs.plan_id = hashes.plan_id'
+            ON qsrs.plan_id = hashes.plan_id
+            AND hashes.database_id = @database_id'
     END;
     IF @sort_order_is_a_wait = 1
     BEGIN
         SELECT
             @sql += N'
             JOIN #plan_ids_with_total_waits AS waits
-            ON qsrs.plan_id = waits.plan_id'
+            ON qsrs.plan_id = waits.plan_id
+            AND waits.database_id = @database_id'	    
     END;
 
 SELECT
