@@ -4872,15 +4872,18 @@ BEGIN
     SELECT DISTINCT
         plan_id
     FROM #plan_ids_with_query_hashes
+    WHERE database_id = @database_id
     OPTION(RECOMPILE);' + @nc10;
 END
 ELSE IF @sort_order_is_a_wait = 1
 BEGIN
     SELECT
         @sql += N'
-    SELECT
+    SELECT DISTINCT
         plan_id
-    FROM #plan_ids_with_total_waits' + @nc10; 
+    FROM #plan_ids_with_total_waits
+    WHERE database_id = @database_id
+    OPTION(RECOMPILE);' + @nc10;
 END
 ELSE
 BEGIN
