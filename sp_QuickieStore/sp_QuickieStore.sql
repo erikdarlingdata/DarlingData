@@ -525,7 +525,8 @@ CREATE TABLE
     database_id int NOT NULL,
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
-    plan_hash_count_for_query_hash INT NOT NULL
+    plan_hash_count_for_query_hash INT NOT NULL,
+    PRIMARY KEY (database_id, plan_id, query_hash)
 );
 
 /*
@@ -4479,8 +4480,8 @@ BEGIN
         @sql += N'
     SELECT
         @database_id,
-        ranked_plans.plan_id,	
-	ranked_plans.query_hash,
+        ranked_plans.plan_id,
+        ranked_plans.query_hash,
         ranked_plans.plan_hash_count_for_query_hash
     FROM
     (
@@ -4507,7 +4508,7 @@ BEGIN
 	) AS QueryHashesWithCounts
 	JOIN
 	(
-	   SELECT
+	   SELECT DISTINCT
 	       qsq.query_hash,
 	       qsp.plan_id
 	   FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
