@@ -4450,10 +4450,110 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 END;
 
 /*
+This section screens out index create and alter statements because who cares
+*/
+
+SELECT
+    @current_table = 'inserting #maintenance_plans',
+    @sql = @isolation_level;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    EXEC sys.sp_executesql
+        @troubleshoot_insert,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    SET STATISTICS XML ON;
+END;
+
+SELECT
+    @sql += N'
+SELECT DISTINCT
+   qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE NOT EXISTS
+      (
+          SELECT
+             1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+            ON qsqt.query_text_id = qsq.query_text_id
+          WHERE qsq.query_id = qsp.query_id
+          AND   qsqt.query_sql_text NOT LIKE N''ALTER INDEX%''
+          AND   qsqt.query_sql_text NOT LIKE N''ALTER TABLE%''
+          AND   qsqt.query_sql_text NOT LIKE N''CREATE%INDEX%''
+          AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
+          AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
+          AND   qsqt.query_sql_text NOT LIKE N''SELECT StatMan%''
+          AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
+          AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #maintenance_plans WITH(TABLOCK)
+(
+    plan_id
+)
+EXEC sys.sp_executesql
+    @sql;
+
+IF @troubleshoot_performance = 1
+BEGIN
+    SET STATISTICS XML OFF;
+
+    EXEC sys.sp_executesql
+        @troubleshoot_update,
+      N'@current_table nvarchar(100)',
+        @current_table;
+
+    EXEC sys.sp_executesql
+        @troubleshoot_info,
+      N'@sql nvarchar(max),
+        @current_table nvarchar(100)',
+        @sql,
+        @current_table;
+END;
+
+SELECT
+    @where_clause += N'AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #maintenance_plans AS mp
+          WHERE mp.plan_id = qsrs.plan_id
+      )' + @nc10;
+
+/*
+Tidy up the where clause a bit
+*/
+SELECT
+    @where_clause =
+        SUBSTRING
+        (
+            @where_clause,
+            1,
+            LEN(@where_clause) - 1
+        );
+
+/*
 Populate sort-helping tables, if needed.
 
-Again, these exist just to put in scope
+In theory, these exist just to put in scope
 columns that wouldn't normally be in scope.
+However, they're also  quite helpful for the next
+temp table, #distinct_plans.
+
+Note that this block must come after #maintenance_plans
+because that edits @where_clause and we want to use
+that here.
 */
 IF @sort_order = 'plan count by hashes'
 BEGIN
@@ -4749,100 +4849,6 @@ BEGIN
     END; 
 END;
 /*End populating sort-helping tables*/
-
-/*
-This section screens out index create and alter statements because who cares
-*/
-
-SELECT
-    @current_table = 'inserting #maintenance_plans',
-    @sql = @isolation_level;
-
-IF @troubleshoot_performance = 1
-BEGIN
-    EXEC sys.sp_executesql
-        @troubleshoot_insert,
-      N'@current_table nvarchar(100)',
-        @current_table;
-
-    SET STATISTICS XML ON;
-END;
-
-SELECT
-    @sql += N'
-SELECT DISTINCT
-   qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE NOT EXISTS
-      (
-          SELECT
-             1/0
-          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-            ON qsqt.query_text_id = qsq.query_text_id
-          WHERE qsq.query_id = qsp.query_id
-          AND   qsqt.query_sql_text NOT LIKE N''ALTER INDEX%''
-          AND   qsqt.query_sql_text NOT LIKE N''ALTER TABLE%''
-          AND   qsqt.query_sql_text NOT LIKE N''CREATE%INDEX%''
-          AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''SELECT StatMan%''
-          AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
-          AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
-      )
-OPTION(RECOMPILE);' + @nc10;
-
-IF @debug = 1
-BEGIN
-    PRINT LEN(@sql);
-    PRINT @sql;
-END;
-
-INSERT
-    #maintenance_plans WITH(TABLOCK)
-(
-    plan_id
-)
-EXEC sys.sp_executesql
-    @sql;
-
-IF @troubleshoot_performance = 1
-BEGIN
-    SET STATISTICS XML OFF;
-
-    EXEC sys.sp_executesql
-        @troubleshoot_update,
-      N'@current_table nvarchar(100)',
-        @current_table;
-
-    EXEC sys.sp_executesql
-        @troubleshoot_info,
-      N'@sql nvarchar(max),
-        @current_table nvarchar(100)',
-        @sql,
-        @current_table;
-END;
-
-SELECT
-    @where_clause += N'AND   NOT EXISTS
-      (
-          SELECT
-              1/0
-          FROM #maintenance_plans AS mp
-          WHERE mp.plan_id = qsrs.plan_id
-      )' + @nc10;
-
-/*
-Tidy up the where clause a bit
-*/
-SELECT
-    @where_clause =
-        SUBSTRING
-        (
-            @where_clause,
-            1,
-            LEN(@where_clause) - 1
-        );
 
 /*
 This gets the plan_ids we care about.
