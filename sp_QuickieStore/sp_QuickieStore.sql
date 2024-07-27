@@ -4636,7 +4636,7 @@ BEGIN
 END;
 /*
     'total waits' is special. It's a sum, not a max, so
-    we cover is above rather than here. 
+    we cover it above rather than here. 
 */
 IF @sort_order_is_a_wait = 1 AND @sort_order <> 'total waits'
 BEGIN
