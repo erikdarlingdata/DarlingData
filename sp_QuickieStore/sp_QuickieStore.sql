@@ -212,7 +212,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
-                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent'
+                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits'
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
@@ -494,6 +494,52 @@ CREATE TABLE
             query_hash_s,
             1
         ) PERSISTED NOT NULL PRIMARY KEY
+);
+
+/*
+The following two tables are for adding extra columns
+on to our output. We need these for sorting by anything
+that isn't in #query_store_runtime_stats.
+
+We still have to declare these tables even when they're
+not used because the debug output breaks if we don't.
+
+They are database dependent but not truncated at
+the end of each loop, so we need a database_id
+column.
+
+We do not truncate these because we need them to still
+be in scope and fully populated when we return our
+final results from #query_store_runtime_stats, which
+is done after the point where we would truncate.
+*/
+
+/*
+Holds plan_id with the count of the number of query hashes they have.
+Only used when we're sorting by how many plan hashes each
+query hash has.
+*/
+CREATE TABLE
+    #plan_ids_with_query_hashes
+(
+    database_id int NOT NULL,
+    plan_id bigint NOT NULL,
+    query_hash binary(8) NOT NULL,
+    plan_hash_count_for_query_hash INT NOT NULL,
+    PRIMARY KEY (database_id, plan_id, query_hash)
+);
+
+/*
+Largely just exists because total_query_wait_time_ms
+isn't in our normal output.
+*/
+CREATE TABLE
+    #plan_ids_with_total_waits
+(
+    database_id int NOT NULL,
+    plan_id bigint NOT NULL,
+    total_query_wait_time_ms bigint NOT NULL,
+    PRIMARY KEY (database_id, plan_id)
 );
 
 /*
@@ -1171,7 +1217,8 @@ DECLARE
     @utc_offset_string nvarchar(6),
     @df integer,
     @work_start_utc time(0),
-    @work_end_utc time(0);
+    @work_end_utc time(0),
+    @sort_order_is_a_wait bit;
 
 /*
 In cases where we are escaping @query_text_search and
@@ -2153,7 +2200,24 @@ IF @sort_order NOT IN
        'memory',
        'tempdb',
        'executions',
-       'recent'
+       'recent',
+       'plan count by hashes',
+       'cpu waits',
+       'lock waits',
+       'locks waits',
+       'latch waits',
+       'latches waits',
+       'buffer latch waits',
+       'buffer latches waits',
+       'buffer io waits',
+       'log waits',
+       'log io waits',
+       'network waits',
+       'network io waits',
+       'parallel waits',
+       'parallelism waits',
+       'memory waits',
+       'total waits'
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
@@ -2163,11 +2227,40 @@ BEGIN
 END;
 
 /*
+Checks if the sort order is for a wait.
+Cuts out a lot of repetition.
+*/
+IF @sort_order IN
+   (
+       'cpu waits',
+       'lock waits',
+       'locks waits',
+       'latch waits',
+       'latches waits',
+       'buffer latch waits',
+       'buffer latches waits',
+       'buffer io waits',
+       'log waits',
+       'log io waits',
+       'network waits',
+       'network io waits',
+       'parallel waits',
+       'parallelism waits',
+       'memory waits',
+       'total waits'
+   )
+BEGIN
+
+   SELECT
+       @sort_order_is_a_wait = 1;
+END;
+
+/*
 These columns are only available in 2017+
 */
 IF
 (
-    @sort_order = 'tempdb'
+    (@sort_order = 'tempdb' OR @sort_order_is_a_wait = 1)
 AND @new = 0
 )
 BEGIN
@@ -4361,7 +4454,6 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
        )' + @nc10;
 END;
 
-
 /*
 This section screens out index create and alter statements because who cares
 */
@@ -4457,7 +4549,319 @@ SELECT
         );
 
 /*
-This gets the plan_ids we care about
+Populate sort-helping tables, if needed.
+
+In theory, these exist just to put in scope
+columns that wouldn't normally be in scope.
+However, they're also  quite helpful for the next
+temp table, #distinct_plans.
+
+Note that this block must come after #maintenance_plans
+because that edits @where_clause and we want to use
+that here.
+*/
+IF @sort_order = 'plan count by hashes'
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_with_query_hashes',
+        @sql = @isolation_level;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        SET STATISTICS XML ON;
+    END;
+    
+    SELECT
+    /*
+        This sort order is useless if we don't show the
+        ties, so only DENSE_RANK() makes sense to use.
+        This is why this is not SELECT TOP.
+    */
+        @sql += N'
+    SELECT
+        @database_id,
+        ranked_plans.plan_id,
+        ranked_plans.query_hash,
+        ranked_plans.plan_hash_count_for_query_hash
+    FROM
+    (
+        SELECT
+            QueryHashesWithIds.plan_id,        
+            QueryHashesWithCounts.query_hash,
+            QueryHashesWithCounts.plan_hash_count_for_query_hash,
+            DENSE_RANK() OVER (ORDER BY QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash DESC) AS ranking
+        FROM 
+        (
+           SELECT
+               qsq.query_hash,
+               COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
+           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              ON qsq.query_id = qsp.query_id
+           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+             ON qsp.plan_id = qsrs.plan_id
+           WHERE 1 = 1
+           ' + @where_clause
+             + N'
+           GROUP
+               BY qsq.query_hash 
+        ) AS QueryHashesWithCounts
+        JOIN
+        (
+           SELECT DISTINCT
+               qsq.query_hash,
+               qsp.plan_id
+           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              ON qsq.query_id = qsp.query_id
+           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+             ON qsp.plan_id = qsrs.plan_id
+            WHERE 1 = 1
+           ' + @where_clause
+             + N'
+        ) AS QueryHashesWithIds
+        ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
+    ) AS ranked_plans
+    WHERE ranked_plans.ranking <= @TOP
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+    
+    INSERT
+        #plan_ids_with_query_hashes WITH(TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_hash,
+        plan_hash_count_for_query_hash
+    )
+    EXEC sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END; 
+END;
+IF @sort_order = 'total waits'
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_with_total_waits',
+        @sql = @isolation_level;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        SET STATISTICS XML ON;
+    END;
+    
+    SELECT
+        @sql += N'
+    SELECT TOP (@top)
+        @database_id,
+        qsrs.plan_id,
+        SUM(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+    ON qsrs.plan_id = qsws.plan_id
+    WHERE 1 = 1 
+    ' + @where_clause
+      + N'
+    GROUP
+        BY qsrs.plan_id
+    ORDER BY
+        SUM(qsws.total_query_wait_time_ms) DESC
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+    
+    INSERT
+        #plan_ids_with_total_waits WITH(TABLOCK)
+    (
+        database_id,
+        plan_id,
+        total_query_wait_time_ms
+    )
+    EXEC sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END; 
+END;
+/*
+    'total waits' is special. It's a sum, not a max, so
+    we cover it above rather than here. 
+*/
+IF @sort_order_is_a_wait = 1 AND @sort_order <> 'total waits'
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_with_total_waits',
+        @sql = @isolation_level;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        SET STATISTICS XML ON;
+    END;
+    
+    SELECT
+        @sql += N'
+    SELECT TOP (@top)
+        @database_id,
+        qsrs.plan_id,
+        MAX(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+    ON qsrs.plan_id = qsws.plan_id
+    WHERE 1 = 1 
+    AND qsws.wait_category = '  +
+    CASE @sort_order
+         WHEN 'cpu waits' THEN N'1'
+         WHEN 'lock waits' THEN N'3'
+         WHEN 'locks waits' THEN N'3'
+         WHEN 'latch waits' THEN N'4'
+         WHEN 'latches waits' THEN N'4'
+         WHEN 'buffer latch waits' THEN N'5'
+         WHEN 'buffer latches waits' THEN N'5'
+         WHEN 'buffer io waits' THEN N'6'
+         WHEN 'log waits' THEN N'14'
+         WHEN 'log io waits' THEN N'14'
+         WHEN 'network waits' THEN N'15'
+         WHEN 'network io waits' THEN N'15'
+         WHEN 'parallel waits' THEN N'16'
+         WHEN 'parallelism waits' THEN N'16'
+         WHEN 'memory waits' THEN N'17'
+    END
+      + @where_clause
+      + N'
+    GROUP
+        BY qsrs.plan_id
+    ORDER BY
+        MAX(qsws.total_query_wait_time_ms) DESC
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+    
+    INSERT
+        #plan_ids_with_total_waits WITH(TABLOCK)
+    (
+        database_id,
+        plan_id,
+        total_query_wait_time_ms
+    )
+    EXEC sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END; 
+END;
+/*End populating sort-helping tables*/
+
+/*
+This gets the plan_ids we care about.
+
+We unfortunately need an ELSE IF chain here
+because the final branch contains defaults
+that we only want to hit if we did not hit
+any others.
 */
 SELECT
     @current_table = 'inserting #distinct_plans',
@@ -4473,32 +4877,55 @@ BEGIN
     SET STATISTICS XML ON;
 END;
 
-SELECT
-    @sql += N'
-SELECT TOP (@top)
-    qsrs.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-WHERE 1 = 1
-' + @where_clause
-  + N'
-GROUP
-    BY qsrs.plan_id
-ORDER BY
-    MAX(' +
-CASE @sort_order
-     WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
-     WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
-     WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads'
-     WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
-     WHEN 'duration' THEN N'qsrs.avg_duration'
-     WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
-     WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
-     WHEN 'executions' THEN N'qsrs.count_executions'
-     WHEN 'recent' THEN N'qsrs.last_execution_time'
-     ELSE N'qsrs.avg_cpu_time'
-END +
-N') DESC
-OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+IF @sort_order = 'plan count by hashes'
+BEGIN
+    SELECT
+        @sql += N'
+    SELECT DISTINCT
+        plan_id
+    FROM #plan_ids_with_query_hashes
+    WHERE database_id = @database_id
+    OPTION(RECOMPILE);' + @nc10;
+END
+ELSE IF @sort_order_is_a_wait = 1
+BEGIN
+    SELECT
+        @sql += N'
+    SELECT DISTINCT
+        plan_id
+    FROM #plan_ids_with_total_waits
+    WHERE database_id = @database_id
+    OPTION(RECOMPILE);' + @nc10;
+END
+ELSE
+BEGIN
+    SELECT
+        @sql += N'
+    SELECT TOP (@top)
+        qsrs.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    WHERE 1 = 1
+    ' + @where_clause
+      + N'
+    GROUP
+        BY qsrs.plan_id
+    ORDER BY
+        MAX(' +
+    CASE @sort_order
+         WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
+         WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
+         WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads'
+         WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
+         WHEN 'duration' THEN N'qsrs.avg_duration'
+         WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
+         WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
+         WHEN 'executions' THEN N'qsrs.count_executions'
+         WHEN 'recent' THEN N'qsrs.last_execution_time'
+         ELSE N'qsrs.avg_cpu_time'
+    END +
+    N') DESC
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+END;
 
 IF @debug = 1
 BEGIN
@@ -4650,7 +5077,26 @@ CROSS APPLY
 (
     SELECT TOP (@queries_top)
         qsrs.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs'
+    IF @sort_order = 'plan count by hashes'
+    BEGIN
+        SELECT
+            @sql += N'
+            JOIN #plan_ids_with_query_hashes AS hashes
+            ON qsrs.plan_id = hashes.plan_id
+            AND hashes.database_id = @database_id'
+    END;
+    IF @sort_order_is_a_wait = 1
+    BEGIN
+        SELECT
+            @sql += N'
+            JOIN #plan_ids_with_total_waits AS waits
+            ON qsrs.plan_id = waits.plan_id
+            AND waits.database_id = @database_id'
+    END;    
+
+SELECT
+    @sql += N'
     WHERE qsrs.plan_id = dp.plan_id
     AND   1 = 1
     ' + @where_clause
@@ -4666,7 +5112,8 @@ CASE @sort_order
      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
      WHEN 'executions' THEN N'qsrs.count_executions'
      WHEN 'recent' THEN N'qsrs.last_execution_time'
-     ELSE N'qsrs.avg_cpu_time'
+     WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
 END + N' DESC
 ) AS qsrs
 GROUP BY
@@ -6355,9 +6802,25 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            ELSE N'qsrs.avg_cpu_time_ms'
+            WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+            ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
+
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode 1, format output 0 columns*/
@@ -6582,9 +7045,26 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            ELSE N'qsrs.avg_cpu_time_ms'
+            WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+            ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
+
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful, but it does mean that we have to format them
+           when applicable.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode = 1, format output = 1*/
@@ -6783,9 +7263,25 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            ELSE N'qsrs.avg_cpu_time_ms'
+            WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+            ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
+
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode = 0, format output = 0*/
@@ -6985,9 +7481,26 @@ FROM
              WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
-             ELSE N'qsrs.avg_cpu_time_ms'
+             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+             ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
+
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful, but it does mean that we have to format them
+           when applicable.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode = 0, format output = 1*/
@@ -7001,7 +7514,31 @@ FROM
     (
         nvarchar(MAX),
         N'
-    FROM #query_store_runtime_stats AS qsrs
+        FROM #query_store_runtime_stats AS qsrs'
+    )
+    IF @sort_order = 'plan count by hashes'
+    BEGIN
+        SELECT
+            @sql += N'
+            JOIN #plan_ids_with_query_hashes AS hashes
+            ON qsrs.plan_id = hashes.plan_id
+            AND qsrs.database_id = hashes.database_id'
+    END;
+    IF @sort_order_is_a_wait = 1
+    BEGIN
+        SELECT
+            @sql += N'
+            JOIN #plan_ids_with_total_waits AS waits
+            ON qsrs.plan_id = waits.plan_id
+            AND qsrs.database_id = waits.database_id'
+    END;
+
+SELECT
+    @sql +=
+    CONVERT
+    (
+        NVARCHAR(MAX),
+        N'
     CROSS APPLY
     (
         SELECT
@@ -7179,8 +7716,13 @@ ORDER BY ' +
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  ELSE N'x.avg_cpu_time_ms'
+                  WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash'
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time' END
              END
+         /*
+             The ORDER BY is on the same level as the topmost SELECT, which is just SELECT x.*.
+             This means that to sort formatted output, we have to un-format it.
+         */
          WHEN 1
          THEN
              CASE @sort_order
@@ -7193,7 +7735,8 @@ ORDER BY ' +
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)'
+                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC, x.query_hash'
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
              END
     END
              + N' DESC
@@ -8605,6 +9148,8 @@ BEGIN
             @database_name,
         sort_order =
             @sort_order,
+        sort_order_is_a_wait =
+            @sort_order_is_a_wait,
         [top] =
             @top,
         start_date =
@@ -8931,6 +9476,52 @@ BEGIN
         SELECT
             result =
                 '#include_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #plan_ids_with_query_hashes AS hashes
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#plan_ids_with_query_hashes',
+            hashes.*
+        FROM #plan_ids_with_query_hashes AS hashes
+        ORDER BY
+            hashes.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#plan_ids_with_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #plan_ids_with_total_waits AS waits
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#plan_ids_with_total_waits',
+            waits.*
+        FROM #plan_ids_with_total_waits AS waits
+        ORDER BY
+            waits.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#plan_ids_with_total_waits is empty';
     END;
 
     IF EXISTS
