@@ -2271,8 +2271,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     ) / 2
                                 ) + 1
                             )
-                       FROM sys.dm_exec_requests AS der
-                       WHERE der.session_id = deqmg.session_id
                             FOR XML
                                 PATH(''''),
                                 TYPE
@@ -2283,7 +2281,25 @@ OPTION(MAXDOP 1, RECOMPILE);',
               CASE
                   WHEN @skip_plan_xml = 0
                   THEN N'
-            deqp.query_plan,' +
+            query_plan =
+                 CASE
+                     WHEN TRY_CAST(deqp.query_plan AS xml) IS NOT NULL
+                     THEN TRY_CAST(deqp.query_plan AS xml)
+                     WHEN TRY_CAST(deqp.query_plan AS xml) IS NULL
+                     THEN
+                         (
+                             SELECT
+                                 [processing-instruction(query_plan)] =
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                     NCHAR(13) + NCHAR(10) +
+                                     REPLACE(deqp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                     NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                             FOR XML PATH(N''''),
+                                     TYPE
+                         )
+                 END,' +
                   CASE
                       WHEN @live_plans = 1
                       THEN N'
@@ -2325,6 +2341,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 END + N'
             deqmg.plan_handle
         FROM sys.dm_exec_query_memory_grants AS deqmg
+        LEFT JOIN sys.dm_exec_requests AS der
+          ON der.session_id = deqmg.session_id
         OUTER APPLY
         (
             SELECT TOP (1)
@@ -2333,7 +2351,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
             WHERE dowt.session_id = deqmg.session_id
             ORDER BY dowt.wait_duration_ms DESC
         ) AS waits
-        OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
+        OUTER APPLY sys.dm_exec_text_query_plan
+        (
+            deqmg.plan_handle, 
+            der.statement_start_offset, 
+            der.statement_end_offset
+        ) AS deqp
         OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest' +
             CASE
                 WHEN @live_plans = 1
@@ -2759,7 +2782,25 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 CASE
                       WHEN @skip_plan_xml = 0
                       THEN N'
-                deqp.query_plan,' +
+                query_plan =
+                     CASE
+                         WHEN TRY_CAST(deqp.query_plan AS xml) IS NOT NULL
+                         THEN TRY_CAST(deqp.query_plan AS xml)
+                         WHEN TRY_CAST(deqp.query_plan AS xml) IS NULL
+                         THEN
+                             (
+                                 SELECT
+                                     [processing-instruction(query_plan)] =
+                                         N''-- '' + NCHAR(13) + NCHAR(10) +
+                                         N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                         N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                         NCHAR(13) + NCHAR(10) +
+                                         REPLACE(deqp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                                 FOR XML PATH(N''''),
+                                         TYPE
+                             )
+                     END,' +
                           CASE
                               WHEN @live_plans = 1
                               THEN
@@ -2781,9 +2822,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     (
                         (
                             CASE der.statement_end_offset
-                                WHEN -1
-                                THEN DATALENGTH(dest.text)
-                                ELSE der.statement_end_offset
+                                 WHEN -1
+                                 THEN DATALENGTH(dest.text)
+                                 ELSE der.statement_end_offset
                             END
                             - der.statement_start_offset
                         ) / 2
@@ -2853,7 +2894,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       N'
             FROM sys.dm_exec_requests AS der
             OUTER APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
-            OUTER APPLY sys.dm_exec_query_plan(der.plan_handle) AS deqp' +
+            OUTER APPLY sys.dm_exec_text_query_plan
+            (
+                der.plan_handle, 
+                der.statement_start_offset, 
+                der.statement_end_offset
+            ) AS deqp' +
                 CASE
                     WHEN @live_plans = 1
                     THEN N'
