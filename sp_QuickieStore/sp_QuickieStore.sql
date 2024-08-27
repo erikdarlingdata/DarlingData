@@ -6631,9 +6631,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS XML)
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS xml)
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
                  THEN
                      (
                          SELECT
@@ -6870,9 +6870,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS XML)
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS xml)
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
                  THEN
                      (
                          SELECT
@@ -7114,9 +7114,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS XML)
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS xml)
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
                  THEN
                      (
                          SELECT
@@ -7332,9 +7332,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS XML)
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS xml)
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
                  THEN
                      (
                          SELECT
