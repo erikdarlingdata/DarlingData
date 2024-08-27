@@ -110,7 +110,7 @@ WITH e1 (n) AS
      e2 (n) AS
 (
     SELECT
-        1 
+        1
     FROM e1 AS a
     CROSS JOIN e1 AS b
 ),

@@ -2353,8 +2353,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         ) AS waits
         OUTER APPLY sys.dm_exec_text_query_plan
         (
-            deqmg.plan_handle, 
-            der.statement_start_offset, 
+            deqmg.plan_handle,
+            der.statement_start_offset,
             der.statement_end_offset
         ) AS deqp
         OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest' +
@@ -2896,8 +2896,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             OUTER APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
             OUTER APPLY sys.dm_exec_text_query_plan
             (
-                der.plan_handle, 
-                der.statement_start_offset, 
+                der.plan_handle,
+                der.statement_start_offset,
                 der.statement_end_offset
             ) AS deqp' +
                 CASE
