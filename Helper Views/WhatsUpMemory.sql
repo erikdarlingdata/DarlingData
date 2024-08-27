@@ -81,7 +81,7 @@ FROM sys.dm_os_buffer_descriptors AS obd
 INNER HASH JOIN
 (
     SELECT
-        schema_name = 
+        schema_name =
             s.name,
         object_name =
             o.name,
@@ -106,7 +106,7 @@ INNER HASH JOIN
     UNION ALL
 
     SELECT
-        schema_name = 
+        schema_name =
             s.name,
         object_name =
             o.name,
@@ -131,7 +131,7 @@ INNER HASH JOIN
     UNION ALL
 
     SELECT
-        schema_name = 
+        schema_name =
             s.name,
         object_name =
             o.name,
@@ -158,5 +158,5 @@ GROUP BY
     x.schema_name,
     x.object_name,
     x.index_name
-ORDER BY 
+ORDER BY
     COUNT_BIG(*) DESC;
