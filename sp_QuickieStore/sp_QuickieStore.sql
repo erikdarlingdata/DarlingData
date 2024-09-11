@@ -2139,7 +2139,7 @@ BEGIN
         SELECT
             @current_table = 'getting procedure object ids for wildcard',
             @sql = @isolation_level;
-    
+
         SELECT @sql += N'
 SELECT
     p.object_id
@@ -2170,12 +2170,12 @@ AND   p.name LIKE @procedure_name;' + @nc10;
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
@@ -2194,19 +2194,19 @@ AND   p.name LIKE @procedure_name;' + @nc10;
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             SET STATISTICS XML ON;
         END;
-    
+
         SELECT
             @sql += N'
 SELECT
-    @procedure_exists = 
+    @procedure_exists =
         MAX(x.procedure_exists)
     FROM
     (
         SELECT
-            procedure_exists = 
+            procedure_exists =
                 CASE
                     WHEN EXISTS
                          (
@@ -2243,12 +2243,12 @@ OPTION(RECOMPILE);' + @nc10;
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
@@ -2270,7 +2270,7 @@ OPTION(RECOMPILE);' + @nc10;
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             SET STATISTICS XML ON;
         END;
 
@@ -2296,23 +2296,23 @@ OPTION(RECOMPILE);' + @nc10;
             PRINT LEN(@sql);
             PRINT @sql;
         END;
-        
+
         EXEC sys.sp_executesql
             @sql,
           N'@procedure_exists bit OUTPUT,
             @procedure_name_quoted sysname',
             @procedure_exists OUTPUT,
             @procedure_name_quoted;
-        
+
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
@@ -2869,7 +2869,7 @@ SELECT DISTINCT
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
    ON qsq.query_id = qsp.query_id
-WHERE ' 
+WHERE '
 
 IF CHARINDEX(N'%', @procedure_name) = 0
 BEGIN
@@ -2881,7 +2881,7 @@ IF CHARINDEX(N'%', @procedure_name) > 0
 BEGIN
     SELECT
         @sql += N'EXISTS
-(        
+(
      SELECT
          1/0
     FROM #procedure_object_ids AS poi
