@@ -221,7 +221,7 @@ BEGIN
                 WHEN N'@duration_ms' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@execution_type_desc' THEN 'regular, aborted, exception'
                 WHEN N'@procedure_schema' THEN 'a valid schema in your database'
-                WHEN N'@procedure_name' THEN 'a valid programmable object in your database'
+                WHEN N'@procedure_name' THEN 'a valid programmable object in your database, can use wildcards'
                 WHEN N'@include_plan_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN N'@include_query_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN N'@include_query_hashes' THEN 'a string; comma separated for multiple hashes'
@@ -434,6 +434,16 @@ CREATE TABLE
 (
     plan_id bigint PRIMARY KEY
 );
+
+/*
+Hold plan_ids for procedures we're searching
+*/
+CREATE TABLE
+    #procedure_object_ids
+(
+    [object_id] bigint PRIMARY KEY
+);
+
 
 /*
 Hold plan_ids for ad hoc or procedures we're searching for
@@ -1184,7 +1194,7 @@ DECLARE
     @product_version int,
     @database_id int,
     @database_name_quoted sysname,
-    @procedure_name_quoted sysname,
+    @procedure_name_quoted nvarchar(1024),
     @collation sysname,
     @new bit,
     @sql nvarchar(MAX),
@@ -1430,18 +1440,18 @@ SELECT
     @database_name_quoted =
         QUOTENAME(@database_name),
     @procedure_name_quoted =
-         QUOTENAME(@database_name) +
-         N'.' +
-         QUOTENAME
-         (
-             ISNULL
-             (
-                 @procedure_schema,
-                 N'dbo'
-             )
-         ) +
-         N'.' +
-         QUOTENAME(@procedure_name),
+        QUOTENAME(@database_name) +
+        N'.' +
+        QUOTENAME
+        (
+            ISNULL
+            (
+                @procedure_schema,
+                N'dbo'
+            )
+        ) +
+        N'.' +
+        QUOTENAME(@procedure_name),
     @collation =
         CONVERT
         (
@@ -1808,7 +1818,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -1822,7 +1839,14 @@ AND @engine NOT IN (5, 8)
 )
 BEGIN
     RAISERROR('Not all Azure offerings are supported, please try avoiding memes', 11, 1) WITH NOWAIT;
-    RETURN;
+    IF @debug = 1
+    BEGIN
+        GOTO DEBUG
+    END;
+    ELSE
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /*
@@ -1842,7 +1866,14 @@ IF
 )
 BEGIN
     RAISERROR('Azure databases in compatibility levels under 130 are not supported', 11, 1) WITH NOWAIT;
-    RETURN;
+    IF @debug = 1
+    BEGIN
+        GOTO DEBUG
+    END;
+    ELSE
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /*
@@ -1924,7 +1955,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -2076,6 +2114,12 @@ If you specified a procedure name, we need to figure out if there are any plans 
 */
 IF @procedure_name IS NOT NULL
 BEGIN
+
+    IF @procedure_schema IS NULL
+    BEGIN
+        SELECT
+            @procedure_schema = N'dbo'
+    END;
     SELECT
         @current_table = 'checking procedure existence',
         @sql = @isolation_level;
@@ -2090,8 +2134,148 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
-    SELECT
-        @sql += N'
+    IF CHARINDEX(N'%', @procedure_name) > 0
+    BEGIN
+        SELECT
+            @current_table = 'getting procedure object ids for wildcard',
+            @sql = @isolation_level;
+    
+        SELECT @sql += N'
+SELECT
+    p.object_id
+FROM ' + @database_name_quoted + N'.sys.procedures AS p
+JOIN ' + @database_name_quoted + N'.sys.schemas AS s
+  ON p.schema_id = s.schema_id
+WHERE s.name = @procedure_schema
+AND   p.name LIKE @procedure_name;' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        INSERT
+            #procedure_object_ids WITH(TABLOCK)
+        (
+            [object_id]
+        )
+        EXEC sys.sp_executesql
+            @sql,
+          N'@procedure_schema sysname,
+            @procedure_name sysname',
+            @procedure_schema,
+            @procedure_name;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+        
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+        
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+
+        SELECT
+            @current_table = 'checking wildcard procedure existence',
+            @sql = @isolation_level;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+        
+            SET STATISTICS XML ON;
+        END;
+    
+        SELECT
+            @sql += N'
+SELECT
+    @procedure_exists = 
+        MAX(x.procedure_exists)
+    FROM
+    (
+        SELECT
+            procedure_exists = 
+                CASE
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                             WHERE EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #procedure_object_ids AS p
+                                 WHERE qsq.[object_id] = p.[object_id]
+                             )
+                         )
+                    THEN 1
+                    ELSE 0
+                END
+    ) AS x
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXEC sys.sp_executesql
+            @sql,
+          N'@procedure_exists bit OUTPUT,
+            @procedure_name_quoted sysname',
+            @procedure_exists OUTPUT,
+            @procedure_name_quoted;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+        
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+        
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+    END; /*End procedure object id check*/
+
+    IF CHARINDEX(N'%', @procedure_name) = 0
+    BEGIN
+        SELECT
+            @current_table = 'checking single procedure existence',
+            @sql = @isolation_level;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+        
+            SET STATISTICS XML ON;
+        END;
+
+        SELECT
+            @sql += N'
 SELECT
     @procedure_exists =
         CASE
@@ -2107,34 +2291,35 @@ SELECT
         END
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1
-    BEGIN
-        PRINT LEN(@sql);
-        PRINT @sql;
-    END;
-
-    EXEC sys.sp_executesql
-        @sql,
-      N'@procedure_exists bit OUTPUT,
-        @procedure_name_quoted sysname',
-        @procedure_exists OUTPUT,
-        @procedure_name_quoted;
-
-    IF @troubleshoot_performance = 1
-    BEGIN
-        SET STATISTICS XML OFF;
-
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+        
         EXEC sys.sp_executesql
-            @troubleshoot_update,
-          N'@current_table nvarchar(100)',
-            @current_table;
-
-        EXEC sys.sp_executesql
-            @troubleshoot_info,
-          N'@sql nvarchar(max),
-            @current_table nvarchar(100)',
             @sql,
-            @current_table;
+          N'@procedure_exists bit OUTPUT,
+            @procedure_name_quoted sysname',
+            @procedure_exists OUTPUT,
+            @procedure_name_quoted;
+        
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+        
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+        
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
     END;
 
     IF
@@ -2166,7 +2351,14 @@ Check that you spelled everything correctly and you''re in the right database',
 
         IF @get_all_databases = 0
         BEGIN
-            RETURN;
+            IF @debug = 1
+            BEGIN
+                GOTO DEBUG
+            END;
+            ELSE
+            BEGIN
+                RETURN;
+            END;
         END;
     END;
 END; /*End procedure existence checking*/
@@ -2309,7 +2501,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -2326,7 +2525,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -2360,7 +2566,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -2454,7 +2667,14 @@ BEGIN
        )
        BEGIN
            RAISERROR('The time zone you chose (%s) is not valid. Please check sys.time_zone_info for a valid list.', 10, 1, @timezone) WITH NOWAIT;
-           RETURN;
+           IF @debug = 1
+           BEGIN
+               GOTO DEBUG
+           END;
+           ELSE
+           BEGIN
+               RETURN;
+           END;
        END;
 END;
 
@@ -2649,7 +2869,28 @@ SELECT DISTINCT
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
    ON qsq.query_id = qsp.query_id
-WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+WHERE ' 
+
+IF CHARINDEX(N'%', @procedure_name) = 0
+BEGIN
+    SELECT
+        @sql += N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)'
+END;
+
+IF CHARINDEX(N'%', @procedure_name) > 0
+BEGIN
+    SELECT
+        @sql += N'EXISTS
+(        
+     SELECT
+         1/0
+    FROM #procedure_object_ids AS poi
+    WHERE poi.[object_id] = qsq.[object_id]
+)'
+END;
+
+    SELECT
+        @sql += N'
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -6528,26 +6769,40 @@ IF @get_all_databases = 1
 BEGIN
     TRUNCATE TABLE
         #distinct_plans;
+
     TRUNCATE TABLE
         #procedure_plans;
+
+    TRUNCATE TABLE
+        #procedure_object_ids;
+
     TRUNCATE TABLE
         #maintenance_plans;
+
     TRUNCATE TABLE
         #query_text_search;
+
     TRUNCATE TABLE
         #query_text_search_not;
+
     TRUNCATE TABLE
         #dm_exec_query_stats;
+
     TRUNCATE TABLE
         #query_types;
+
     TRUNCATE TABLE
         #wait_filter;
+
     TRUNCATE TABLE
         #only_queries_with_hints;
+
     TRUNCATE TABLE
         #only_queries_with_feedback;
+
     TRUNCATE TABLE
         #only_queries_with_variants;
+
     TRUNCATE TABLE
         #forced_plans_failures;
 END;
@@ -9139,6 +9394,7 @@ END CATCH;
 /*
 Debug elements!
 */
+DEBUG:
 IF @debug = 1
 BEGIN
     SELECT
@@ -9384,6 +9640,29 @@ BEGIN
         SELECT
             result =
                 '#procedure_plans is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #procedure_object_ids AS poi
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#procedure_object_ids',
+            poi.*
+        FROM #procedure_object_ids AS poi
+        ORDER BY
+            poi.[object_id]
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#procedure_object_ids is empty';
     END;
 
     IF EXISTS
