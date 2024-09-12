@@ -2024,17 +2024,10 @@ SELECT
     query_capture_mode_desc,
     size_based_cleanup_mode_desc
 FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
-WHERE
-(
-     dqso.desired_state <> 4
-  OR dqso.readonly_reason <> 8
-)
-AND
-(
-      dqso.desired_state = 1
-   OR dqso.actual_state IN (1, 3)
-   OR dqso.desired_state <> dqso.actual_state
-)
+WHERE dqso.desired_state <> 4
+AND   dqso.readonly_reason <> 8
+AND   dqso.desired_state <> dqso.actual_state
+AND   dqso.actual_state IN (0, 3)
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -2087,27 +2080,6 @@ BEGIN
         @current_table;
 END;
 
-IF @query_store_trouble = 1
-BEGIN
-    SELECT
-        query_store_trouble =
-             'Query Store may be in a disagreeable state',
-        database_name =
-            DB_NAME(qst.database_id),
-        qst.desired_state_desc,
-        qst.actual_state_desc,
-        qst.readonly_reason,
-        qst.current_storage_size_mb,
-        qst.flush_interval_seconds,
-        qst.interval_length_minutes,
-        qst.max_storage_size_mb,
-        qst.stale_query_threshold_days,
-        qst.max_plans_per_query,
-        qst.query_capture_mode_desc,
-        qst.size_based_cleanup_mode_desc
-    FROM #query_store_trouble AS qst
-    OPTION(RECOMPILE);
-END;
 
 /*
 If you specified a procedure name, we need to figure out if there are any plans for it available
@@ -4998,7 +4970,8 @@ END;
     'total waits' is special. It's a sum, not a max, so
     we cover it above rather than here.
 */
-IF @sort_order_is_a_wait = 1 AND @sort_order <> 'total waits'
+IF  @sort_order_is_a_wait = 1 
+AND @sort_order <> 'total waits'
 BEGIN
     SELECT
         @current_table = 'inserting #plan_ids_with_total_waits',
@@ -9236,6 +9209,28 @@ BEGIN
     END;
 
 END; /*End expert mode = 1, format output = 1*/
+
+IF @query_store_trouble = 1
+BEGIN
+    SELECT
+        query_store_trouble =
+             'Query Store may be in a disagreeable state',
+        database_name =
+            DB_NAME(qst.database_id),
+        qst.desired_state_desc,
+        qst.actual_state_desc,
+        qst.readonly_reason,
+        qst.current_storage_size_mb,
+        qst.flush_interval_seconds,
+        qst.interval_length_minutes,
+        qst.max_storage_size_mb,
+        qst.stale_query_threshold_days,
+        qst.max_plans_per_query,
+        qst.query_capture_mode_desc,
+        qst.size_based_cleanup_mode_desc
+    FROM #query_store_trouble AS qst
+    OPTION(RECOMPILE);
+END;
 
 /*
 Return help table, unless told not to
