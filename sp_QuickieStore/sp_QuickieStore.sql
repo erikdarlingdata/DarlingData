@@ -4807,15 +4807,22 @@ BEGIN
             QueryHashesWithIds.plan_id,
             QueryHashesWithCounts.query_hash,
             QueryHashesWithCounts.plan_hash_count_for_query_hash,
-            DENSE_RANK() OVER (ORDER BY QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash DESC) AS ranking
+            ranking = 
+                DENSE_RANK() OVER 
+                (
+                    ORDER BY 
+                        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, 
+                        QueryHashesWithCounts.query_hash DESC
+                )
         FROM
         (
            SELECT
                qsq.query_hash,
-               COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
+               plan_hash_count_for_query_hash = 
+                   COUNT(DISTINCT qsp.query_plan_hash)
            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
+             ON qsq.query_id = qsp.query_id
            JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
              ON qsp.plan_id = qsrs.plan_id
            WHERE 1 = 1
@@ -4831,16 +4838,16 @@ BEGIN
                qsp.plan_id
            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
+             ON qsq.query_id = qsp.query_id
            JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
              ON qsp.plan_id = qsrs.plan_id
             WHERE 1 = 1
            ' + @where_clause
              + N'
         ) AS QueryHashesWithIds
-        ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
+          ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
     ) AS ranked_plans
-    WHERE ranked_plans.ranking <= @TOP
+    WHERE ranked_plans.ranking <= @top
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
@@ -4888,6 +4895,7 @@ BEGIN
             @current_table;
     END;
 END;
+
 IF @sort_order = 'total waits'
 BEGIN
     SELECT
@@ -4909,10 +4917,11 @@ BEGIN
     SELECT TOP (@top)
         @database_id,
         qsrs.plan_id,
-        SUM(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+        total_query_wait_time_ms =
+            SUM(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-    ON qsrs.plan_id = qsws.plan_id
+      ON qsrs.plan_id = qsws.plan_id
     WHERE 1 = 1
     ' + @where_clause
       + N'
@@ -4992,10 +5001,11 @@ BEGIN
     SELECT TOP (@top)
         @database_id,
         qsrs.plan_id,
-        MAX(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+        total_query_wait_time_ms =
+            MAX(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-    ON qsrs.plan_id = qsws.plan_id
+      ON qsrs.plan_id = qsws.plan_id
     WHERE 1 = 1
     AND qsws.wait_category = '  +
     CASE @sort_order
@@ -5623,8 +5633,8 @@ CROSS APPLY
         qsq.*
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = qsp.query_id
-    ORDER
-        BY qsq.last_execution_time DESC
+    ORDER BY 
+        qsq.last_execution_time DESC
 ) AS qsq
 WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
@@ -6017,8 +6027,11 @@ SELECT
     dqso.size_based_cleanup_mode_desc,'
     +
     CASE
-        WHEN (@product_version = 13
-              AND @azure = 0)
+        WHEN 
+        (     
+              @product_version = 13
+          AND @azure = 0
+        )
         THEN N'
     NULL'
         ELSE N'
