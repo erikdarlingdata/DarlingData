@@ -1,4 +1,4 @@
--- Compile Date: 06/14/2024 19:29:20 UTC
+-- Compile Date: 09/11/2024 15:52:17 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -66,8 +66,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.5',
-        @version_date = '20240401';
+        @version = '1.9',
+        @version_date = '20240901';
 
     IF @help = 1
     BEGIN
@@ -398,20 +398,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_os_wait_stats AS dows
         WHERE dows.wait_type IN
         (
-            N'BROKER_EVENTHANDLER', N'BROKER_RECEIVE_WAITFOR', N'BROKER_TASK_STOP', N'BROKER_TO_FLUSH', N'BROKER_TRANSMITTER', N'CHECKPOINT_QUEUE', N'CHKPT',
-            N'CLR_AUTO_EVENT', N'CLR_MANUAL_EVENT', N'CLR_SEMAPHORE', N'DBMIRROR_DBM_EVENT', N'DBMIRROR_EVENTS_QUEUE', N'DBMIRROR_WORKER_QUEUE', N'DBMIRRORING_CMD',
-            N'DIRTY_PAGE_POLL', N'DISPATCHER_QUEUE_SEMAPHORE', N'FSAGENT', N'FT_IFTS_SCHEDULER_IDLE_WAIT', N'FT_IFTSHC_MUTEX', N'HADR_CLUSAPI_CALL',
-            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION', N'HADR_LOGCAPTURE_WAIT', N'HADR_NOTIFICATION_DEQUEUE', N'HADR_TIMER_TASK', N'HADR_WORK_QUEUE',
-            N'KSOURCE_WAKEUP', N'LAZYWRITER_SLEEP', N'LOGMGR_QUEUE', N'MEMORY_ALLOCATION_EXT', N'ONDEMAND_TASK_QUEUE', N'PARALLEL_REDO_DRAIN_WORKER',
-            N'PARALLEL_REDO_LOG_CACHE', N'PARALLEL_REDO_TRAN_LIST', N'PARALLEL_REDO_WORKER_SYNC', N'PARALLEL_REDO_WORKER_WAIT_WORK', N'PREEMPTIVE_OS_FLUSHFILEBUFFERS',
+            N'ASYNC_NETWORK_IO', N'AZURE_IMDS_VERSIONS', N'BROKER_EVENTHANDLER', N'BROKER_RECEIVE_WAITFOR',
+            N'BROKER_TASK_STOP', N'BROKER_TO_FLUSH', N'BROKER_TRANSMITTER', N'CHECKPOINT_QUEUE',
+            N'CHKPT', N'CLR_AUTO_EVENT', N'CLR_MANUAL_EVENT', N'CLR_SEMAPHORE',
+            N'DBMIRROR_DBM_EVENT', N'DBMIRROR_DBM_MUTEX', N'DBMIRROR_EVENTS_QUEUE', N'DBMIRROR_SEND',
+            N'DBMIRROR_WORKER_QUEUE', N'DBMIRRORING_CMD', N'DIRTY_PAGE_POLL', N'DISPATCHER_QUEUE_SEMAPHORE',
+            N'FSAGENT', N'FT_IFTS_SCHEDULER_IDLE_WAIT', N'FT_IFTSHC_MUTEX', N'HADR_CLUSAPI_CALL',
+            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION', N'HADR_LOGCAPTURE_WAIT', N'HADR_NOTIFICATION_DEQUEUE', N'HADR_TIMER_TASK',
+            N'HADR_WORK_QUEUE', N'KSOURCE_WAKEUP', N'LAZYWRITER_SLEEP', N'LOGMGR_QUEUE',
+            N'MEMORY_ALLOCATION_EXT', N'ONDEMAND_TASK_QUEUE', N'PARALLEL_REDO_DRAIN_WORKER', N'PARALLEL_REDO_LOG_CACHE',
+            N'PARALLEL_REDO_TRAN_LIST', N'PARALLEL_REDO_WORKER_SYNC', N'PARALLEL_REDO_WORKER_WAIT_WORK', N'PREEMPTIVE_OS_FLUSHFILEBUFFERS',
             N'PREEMPTIVE_XE_GETTARGETSTATE', N'PVS_PREALLOCATE', N'PWAIT_ALL_COMPONENTS_INITIALIZED', N'PWAIT_DIRECTLOGCONSUMER_GETNEXT',
-            N'PWAIT_EXTENSIBILITY_CLEANUP_TASK', N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP', N'QDS_ASYNC_QUEUE', N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
-            N'QDS_SHUTDOWN_QUEUE', N'REDO_THREAD_PENDING_WORK', N'REQUEST_FOR_DEADLOCK_SEARCH', N'RESOURCE_QUEUE', N'SERVER_IDLE_CHECK', N'SLEEP_DBSTARTUP',
-            N'SLEEP_DCOMSTARTUP', N'SLEEP_MASTERDBREADY', N'SLEEP_MASTERMDREADY', N'SLEEP_MASTERUPGRADED', N'SLEEP_MSDBSTARTUP', N'SLEEP_SYSTEMTASK', N'SLEEP_TEMPDBSTARTUP',
-            N'SNI_HTTP_ACCEPT', N'SOS_WORK_DISPATCHER', N'SP_SERVER_DIAGNOSTICS_SLEEP', N'SQLTRACE_BUFFER_FLUSH',  N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
-            N'SQLTRACE_WAIT_ENTRIES', N'UCS_SESSION_REGISTRATION', N'VDI_CLIENT_OTHER', N'WAIT_FOR_RESULTS', N'WAITFOR', N'WAITFOR_TASKSHUTDOWN', N'WAIT_XTP_RECOVERY',
-            N'WAIT_XTP_HOST_WAIT', N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', N'WAIT_XTP_CKPT_CLOSE', N'XE_DISPATCHER_JOIN', N'XE_DISPATCHER_WAIT', N'XE_TIMER_EVENT',
-            N'AZURE_IMDS_VERSIONS', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF', N'DBMIRROR_DBM_MUTEX', N'DBMIRROR_SEND', N'ASYNC_NETWORK_IO'
+            N'PWAIT_EXTENSIBILITY_CLEANUP_TASK', N'QDS_ASYNC_QUEUE', N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP', N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
+            N'QDS_SHUTDOWN_QUEUE', N'REDO_THREAD_PENDING_WORK', N'REQUEST_FOR_DEADLOCK_SEARCH', N'RESOURCE_QUEUE',
+            N'SERVER_IDLE_CHECK', N'SLEEP_DBSTARTUP', N'SLEEP_DCOMSTARTUP', N'SLEEP_MASTERDBREADY',
+            N'SLEEP_MASTERMDREADY', N'SLEEP_MASTERUPGRADED', N'SLEEP_MSDBSTARTUP', N'SLEEP_SYSTEMTASK',
+            N'SLEEP_TEMPDBSTARTUP', N'SNI_HTTP_ACCEPT', N'SOS_WORK_DISPATCHER', N'SP_SERVER_DIAGNOSTICS_SLEEP',
+            N'SQLTRACE_BUFFER_FLUSH', N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP', N'SQLTRACE_WAIT_ENTRIES', N'UCS_SESSION_REGISTRATION',
+            N'VDI_CLIENT_OTHER', N'WAIT_FOR_RESULTS', N'WAIT_XTP_CKPT_CLOSE', N'WAIT_XTP_HOST_WAIT',
+            N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', N'WAIT_XTP_RECOVERY', N'WAITFOR', N'WAITFOR_TASKSHUTDOWN',
+            N'XE_DISPATCHER_JOIN', N'XE_DISPATCHER_WAIT', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF',
+            N'XE_TIMER_EVENT'
         )
         OPTION(RECOMPILE);
     END; /*End waits ignore*/
@@ -2960,8 +2967,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.5',
-    @version_date = '20240401';
+    @version = '5.9',
+    @version_date = '20240901';
 
 IF @help = 1
 BEGIN
@@ -7687,8 +7694,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '3.5',
-    @version_date = '20240401';
+    @version = '3.9',
+    @version_date = '20240901';
 
 IF @help = 1
 BEGIN
@@ -8750,7 +8757,11 @@ BEGIN
         deqs.max_reserved_threads,
         deqs.min_used_threads,
         deqs.max_used_threads,
-        deqs.total_rows
+        deqs.total_rows,
+        max_worker_time_ms =
+            deqs.max_worker_time / 1000.,
+        max_elapsed_time_ms =
+            deqs.max_elapsed_time / 1000.
     INTO #dm_exec_query_stats_sh
     FROM sys.dm_exec_query_stats AS deqs
     WHERE EXISTS
@@ -8787,8 +8798,10 @@ BEGIN
         ap.executions_per_second,
         ap.total_worker_time_ms,
         ap.avg_worker_time_ms,
+        ap.max_worker_time_ms,
         ap.total_elapsed_time_ms,
         ap.avg_elapsed_time_ms,
+        ap.max_elapsed_time_ms,
         ap.total_logical_reads_mb,
         ap.total_physical_reads_mb,
         ap.total_logical_writes_mb,
@@ -8830,7 +8843,9 @@ BEGIN
             c.min_used_threads,
             c.max_used_threads,
             c.total_rows,
-            c.query_plan
+            c.query_plan,
+            c.max_worker_time_ms,
+            c.max_elapsed_time_ms
         FROM #available_plans_sh AS ap
         OUTER APPLY
         (
@@ -9564,7 +9579,11 @@ SELECT
     deqs.max_reserved_threads,
     deqs.min_used_threads,
     deqs.max_used_threads,
-    deqs.total_rows
+    deqs.total_rows,
+    max_worker_time_ms =
+        deqs.max_worker_time / 1000.,
+    max_elapsed_time_ms =
+        deqs.max_elapsed_time / 1000.
 INTO #dm_exec_query_stats
 FROM sys.dm_exec_query_stats AS deqs
 WHERE EXISTS
@@ -9602,8 +9621,10 @@ SELECT
     ap.executions_per_second,
     ap.total_worker_time_ms,
     ap.avg_worker_time_ms,
+    ap.max_worker_time_ms,
     ap.total_elapsed_time_ms,
     ap.avg_elapsed_time_ms,
+    ap.max_elapsed_time_ms,
     ap.total_logical_reads_mb,
     ap.total_physical_reads_mb,
     ap.total_logical_writes_mb,
@@ -9646,7 +9667,9 @@ FROM
         c.min_used_threads,
         c.max_used_threads,
         c.total_rows,
-        c.query_plan
+        c.query_plan,
+        c.max_worker_time_ms,
+        c.max_elapsed_time_ms
     FROM #available_plans AS ap
     OUTER APPLY
     (
@@ -10510,20 +10533,20 @@ SET STATISTICS TIME, IO OFF;
 GO
 
 /*
-██╗      ██████╗  ██████╗                        
-██║     ██╔═══██╗██╔════╝                        
-██║     ██║   ██║██║  ███╗                       
-██║     ██║   ██║██║   ██║                       
-███████╗╚██████╔╝╚██████╔╝                       
-╚══════╝ ╚═════╝  ╚═════╝                        
-                                                 
+██╗      ██████╗  ██████╗
+██║     ██╔═══██╗██╔════╝
+██║     ██║   ██║██║  ███╗
+██║     ██║   ██║██║   ██║
+███████╗╚██████╔╝╚██████╔╝
+╚══════╝ ╚═════╝  ╚═════╝
+
 ██╗  ██╗██╗   ██╗███╗   ██╗████████╗███████╗██████╗
 ██║  ██║██║   ██║████╗  ██║╚══██╔══╝██╔════╝██╔══██╗
 ███████║██║   ██║██╔██╗ ██║   ██║   █████╗  ██████╔╝
 ██╔══██║██║   ██║██║╚██╗██║   ██║   ██╔══╝  ██╔══██╗
 ██║  ██║╚██████╔╝██║ ╚████║   ██║   ███████╗██║  ██║
 ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
-  
+
 Copyright 2024 Darling Data, LLC
 https://www.erikdarling.com/
 
@@ -10542,10 +10565,10 @@ EXEC sp_LogHunter;
 
 */
 
-IF OBJECT_ID('dbo.sp_LogHunter') IS NULL  
-   BEGIN  
-       EXEC ('CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');  
-   END;  
+IF OBJECT_ID('dbo.sp_LogHunter') IS NULL
+   BEGIN
+       EXEC ('CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');
+   END;
 GO
 
 ALTER PROCEDURE
@@ -10565,15 +10588,15 @@ ALTER PROCEDURE
 )
 WITH RECOMPILE
 AS
-SET STATISTICS XML OFF;  
+SET STATISTICS XML OFF;
 SET NOCOUNT ON;
-SET XACT_ABORT ON;  
+SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
     SELECT
-        @version = '1.5',
-        @version_date = '20240401';
+        @version = '1.9',
+        @version_date = '20240901';
 
     IF @help = 1
     BEGIN
@@ -10583,7 +10606,7 @@ BEGIN
         SELECT  'you can use me to look through your error logs for bad stuff' UNION ALL
         SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_LogHunter' UNION ALL
         SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
-  
+
         SELECT
             parameter_name =
                 ap.name,
@@ -10638,38 +10661,38 @@ BEGIN
           AND ap.user_type_id = t.user_type_id
         WHERE o.name = N'sp_LogHunter'
         OPTION(RECOMPILE);
-  
+
         SELECT
             mit_license_yo = 'i am MIT licensed, so like, do whatever'
-    
+
         UNION ALL
-    
+
         SELECT
             mit_license_yo = 'see printed messages for full license';
-    
+
         RAISERROR('
     MIT License
-  
+
     Copyright 2024 Darling Data, LLC
-  
+
     https://www.erikdarling.com/
-  
+
     Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
     to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
     sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
     following conditions:
-  
+
     The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-  
+
     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
     MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
     FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
     WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ', 0, 1) WITH NOWAIT;
-  
+
         RETURN;
     END;
-   
+
     /*Check if we have sa permissisions*/
     IF
     (
@@ -10715,7 +10738,7 @@ BEGIN
        RAISERROR(N'%i is not not a valid language_id in sys.messages.', 11, 1, @language_id) WITH NOWAIT;
        RETURN;
     END;
-  
+
     /*Fix days back a little bit*/
     IF @days_back = 0
     BEGIN
@@ -10728,7 +10751,7 @@ BEGIN
         SELECT
             @days_back *= -1;
     END;
-  
+
     IF  @start_date IS NOT NULL
     AND @end_date   IS NOT NULL
     AND @days_back  IS NOT NULL
@@ -10777,7 +10800,7 @@ BEGIN
         @t_searches int = 0 /*total number of searches to run*/,
         @l_count int = 1 /*loop count*/,
         @stopper bit = 0 /*stop loop execution safety*/;
-  
+
     /*temp tables for holding temporary things*/
     CREATE TABLE
         #error_log
@@ -10786,7 +10809,7 @@ BEGIN
         process_info nvarchar(100),
         text nvarchar(4000)
     );
- 
+
     CREATE TABLE
         #enum
     (
@@ -10857,7 +10880,7 @@ BEGIN
         AND   e.archive > 0
         OPTION(RECOMPILE);
     END;
-  
+
     /*filter out log files we won't use, if @start_date and @end_date are set*/
     IF  @start_date IS NOT NULL
     AND @end_date IS NOT NULL
@@ -10966,7 +10989,7 @@ BEGIN
                 N'"' + CONVERT(nvarchar(30), @end_date) + N'"'
     ) AS c
     WHERE @custom_message_only = 0
-    OPTION(RECOMPILE); 
+    OPTION(RECOMPILE);
 
     /*deal with a custom search string here*/
     INSERT
@@ -10999,7 +11022,7 @@ BEGIN
     BEGIN
         SELECT table_name = '#search', s.* FROM #search AS s;
     END;
-  
+
     /*Set the min and max logs we're getting for the loop*/
     SELECT
         @l_log = MIN(e.archive),
@@ -11016,7 +11039,7 @@ BEGIN
     END;
 
     IF @debug = 1 BEGIN RAISERROR('Declaring cursor', 0, 1) WITH NOWAIT; END;
- 
+
     /*start the loops*/
     WHILE @l_log <= @h_log
     BEGIN
@@ -11031,17 +11054,17 @@ BEGIN
         SELECT
             command
         FROM #search;
-      
+
         IF @debug = 1 BEGIN RAISERROR('Opening cursor', 0, 1) WITH NOWAIT; END;
-       
+
         OPEN c;
-      
+
         FETCH FIRST
         FROM c
         INTO @c;
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
-        WHILE @@FETCH_STATUS = 0 AND @stopper = 0         
+        WHILE @@FETCH_STATUS = 0 AND @stopper = 0
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Entering cursor', 0, 1) WITH NOWAIT; END;
             /*Replace the canary value with the log number we're working in*/
@@ -11058,9 +11081,9 @@ BEGIN
             BEGIN
                 RAISERROR('log %i of %i', 0, 1, @l_log, @h_log) WITH NOWAIT;
                 RAISERROR('search %i of %i', 0, 1, @l_count, @t_searches) WITH NOWAIT;
-                RAISERROR('@c: %s', 0, 1, @c) WITH NOWAIT;       
+                RAISERROR('@c: %s', 0, 1, @c) WITH NOWAIT;
             END;
-         
+
             IF @debug = 1 BEGIN RAISERROR('Inserting to error log', 0, 1) WITH NOWAIT; END;
             BEGIN
                 BEGIN TRY
@@ -11085,10 +11108,10 @@ BEGIN
                     VALUES
                     (
                         @c
-                    );         
+                    );
                 END CATCH;
             END;
-         
+
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;
             /*Get the next search command*/
             FETCH NEXT
@@ -11100,7 +11123,7 @@ BEGIN
                 @l_count += 1;
 
         END;
-         
+
         IF @debug = 1 BEGIN RAISERROR('Getting next log', 0, 1) WITH NOWAIT; END;
         /*Increment the log numbers*/
         SELECT
@@ -11112,18 +11135,18 @@ BEGIN
 
         IF @debug = 1
         BEGIN
-            RAISERROR('log %i of %i', 0, 1, @l_log, @h_log) WITH NOWAIT;   
+            RAISERROR('log %i of %i', 0, 1, @l_log, @h_log) WITH NOWAIT;
         END;
 
         /*Stop the loop if this is NULL*/
         IF @l_log IS NULL
         BEGIN
-            IF @debug = 1 BEGIN RAISERROR('Breaking', 0, 1) WITH NOWAIT; END;        
+            IF @debug = 1 BEGIN RAISERROR('Breaking', 0, 1) WITH NOWAIT; END;
             SET @stopper = 1;
             BREAK;
-        END;             
+        END;
         IF @debug = 1 BEGIN RAISERROR('Ended WHILE loop', 0, 1) WITH NOWAIT; END;
- 
+
         /*Close out the cursor*/
         CLOSE c;
         DEALLOCATE c;
@@ -11155,6 +11178,7 @@ BEGIN
     OR    el.text LIKE N'The client was unable to reuse a session with%'
     OR    el.text LIKE N'SSPI%'
     OR    el.text LIKE N'%Severity: 1[0-8]%'
+    OR    el.text LIKE N'Login succeeded for user%'
     OR    el.text IN
           (
               N'The Database Mirroring endpoint is in disabled or stopped state.',
@@ -11179,7 +11203,7 @@ BEGIN
             1/0
         FROM #errors AS e
     )
-    BEGIN     
+    BEGIN
         SELECT
             table_name =
                 '#errors',
@@ -11264,8 +11288,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.5',
-    @version_date = '20240401';
+    @version = '4.9',
+    @version_date = '20240901';
 
 
 IF @help = 1
@@ -11547,7 +11571,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      N':'
             END +
             N'%',
-        @memory_grant_cap xml
+        @memory_grant_cap xml,
+        @cache_xml xml,
+        @cache_sql nvarchar(MAX) = N'';
 
     DECLARE
         @waits table
@@ -11877,7 +11903,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
           (
                  dows.wait_type = N'SLEEP_TASK'
              AND ISNULL(CONVERT(decimal(38, 2), dows.wait_time_ms /
-                   NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) > 1000.
+                   NULLIF(1.* dows.waiting_tasks_count, 0.)), 0.) >=
+                     CASE WHEN @sample_seconds > 0 THEN 0. ELSE 1000. END
           )
         )
         AND
@@ -11964,7 +11991,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     )
             FROM @waits AS w
             ORDER BY
-                w.sorting;
+                w.sorting
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
 
         IF
@@ -12024,7 +12052,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
               AND w.sample_time < w2.sample_time
               AND (w2.waiting_tasks_count_n - w.waiting_tasks_count_n) > 0
             ORDER BY
-                wait_time_seconds DESC;
+                wait_time_seconds DESC
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
     END;
     /*
@@ -12199,7 +12228,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         (
              vfs.num_of_reads  > 0
           OR vfs.num_of_writes > 0
-        );'
+        )
+        OPTION(MAXDOP 1, RECOMPILE);'
         );
 
         IF @debug = 1
@@ -12322,7 +12352,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FROM file_metrics AS fm
             )
             ORDER BY
-                total_avg_stall_ms DESC;
+                total_avg_stall_ms DESC
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
 
         IF
@@ -12482,8 +12513,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
               OR f.total_write_count > 0
             )
             ORDER BY
-                f.total_avg_stall DESC;
-        END
+                f.total_avg_stall DESC
+            OPTION(MAXDOP 1, RECOMPILE);
+        END;
     END; /*End file stats*/
 
     /*
@@ -12603,7 +12635,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             ORDER BY
                 p.object_name,
                 p.counter_name,
-                p.cntr_value DESC;
+                p.cntr_value DESC
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
 
         IF
@@ -12657,7 +12690,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             ORDER BY
                 p.object_name,
                 p.counter_name,
-                p.total_difference_i DESC;
+                p.total_difference_i DESC
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
     END; /*End Perfmon*/
 
@@ -12986,14 +13020,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
             SELECT
                 @total_physical_memory_gb =
                     CEILING(dosm.total_physical_memory_kb / 1024. / 1024.)
-                FROM sys.dm_os_sys_memory AS dosm;
+                FROM sys.dm_os_sys_memory AS dosm
+                OPTION(MAXDOP 1, RECOMPILE);
         END;
         IF @azure = 1
         BEGIN
             SELECT
                 @total_physical_memory_gb =
                     SUM(osi.committed_target_kb / 1024. / 1024.)
-            FROM sys.dm_os_sys_info osi;
+            FROM sys.dm_os_sys_info osi
+            OPTION(MAXDOP 1, RECOMPILE);
         END;
 
         /*Checking for low memory indicators*/
@@ -13066,8 +13102,161 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
 
         SELECT
+            @cache_sql += N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+        SELECT
+            @cache_xml =
+                x.c
+        FROM
+        (
+            SELECT TOP (20)
+                name =
+                    CASE
+                        WHEN domcc.name LIKE N''%UserStore%''
+                        THEN N''UserStore''
+                        WHEN domcc.name LIKE N''ObjPerm%''
+                        THEN N''ObjPerm''
+                        ELSE domcc.name
+                    END,
+                pages_gb =
+                    CONVERT
+                    (
+                        decimal(38, 2),
+                        SUM
+                        (' +
+                            CASE
+                                @pages_kb
+                                WHEN 1
+                                THEN N'
+                            domcc.pages_kb'
+                                ELSE N'
+                            domcc.single_pages_kb +
+                            domcc.multi_pages_kb'
+                            END + N'
+                        ) / 1024. / 1024.
+                    ),
+                pages_in_use_gb =
+                    ISNULL
+                    (
+                        CONVERT
+                        (
+                            decimal(38, 2),
+                            SUM
+                            (' +
+                                CASE
+                                    @pages_kb
+                                    WHEN 1
+                                    THEN N'
+                                domcc.pages_in_use_kb'
+                                    ELSE N'
+                                domcc.single_pages_in_use_kb +
+                                domcc.multi_pages_in_use_kb'
+                                END + N'
+                            ) / 1024. / 1024.
+                        ),
+                        N''0.00''
+                    ),
+                entries_count =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                SUM(domcc.entries_count)
+                            ),
+                            1
+                        ),
+                        N''.00'',
+                        N''''
+                    ),
+                entries_in_use_count =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                SUM(domcc.entries_in_use_count)
+                            ),
+                            1
+                        ),
+                        N''.00'',
+                        N''''
+                    )
+            FROM sys.dm_os_memory_cache_counters AS domcc
+            WHERE domcc.name NOT IN
+            (
+                N''msdb'',
+                N''model_replicatedmaster'',
+                N''model_msdb'',
+                N''model'',
+                N''master'',
+                N''mssqlsystemresource''
+            )
+            GROUP BY
+                    CASE
+                        WHEN domcc.name LIKE N''%UserStore%''
+                        THEN N''UserStore''
+                        WHEN domcc.name LIKE N''ObjPerm%''
+                        THEN N''ObjPerm''
+                        ELSE domcc.name
+                    END
+            HAVING
+                SUM
+                (' +
+                    CASE
+                        @pages_kb
+                        WHEN 1
+                        THEN N'
+                    domcc.pages_in_use_kb'
+                        ELSE N'
+                    domcc.single_pages_in_use_kb +
+                    domcc.multi_pages_in_use_kb'
+                    END + N'
+                ) / 1024. / 1024. > 0.5
+            ORDER BY
+                pages_gb DESC
+            FOR XML
+                PATH(''cache''),
+                TYPE
+        ) AS x (c)
+        OPTION(MAXDOP 1, RECOMPILE);
+        '
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('%s', 0, 1, @cache_sql) WITH NOWAIT;
+        END;
+
+        EXEC sys.sp_executesql
+            @cache_sql,
+          N'@cache_xml xml OUTPUT',
+            @cache_xml OUTPUT;
+
+        IF @cache_xml IS NULL
+        BEGIN
+            SELECT
+                @cache_xml =
+                (
+                    SELECT
+                        N'No significant caches detected'
+                    FOR XML
+                        PATH(N'cache'),
+                        TYPE
+                );
+        END;
+
+        SELECT
             low_memory =
-               @low_memory;
+               @low_memory,
+            cache_memory =
+                @cache_xml;
 
         SELECT
             @memory_grant_cap =
@@ -13299,8 +13488,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     ) / 2
                                 ) + 1
                             )
-                       FROM sys.dm_exec_requests AS der
-                       WHERE der.session_id = deqmg.session_id
                             FOR XML
                                 PATH(''''),
                                 TYPE
@@ -13311,7 +13498,25 @@ OPTION(MAXDOP 1, RECOMPILE);',
               CASE
                   WHEN @skip_plan_xml = 0
                   THEN N'
-            deqp.query_plan,' +
+            query_plan =
+                 CASE
+                     WHEN TRY_CAST(deqp.query_plan AS xml) IS NOT NULL
+                     THEN TRY_CAST(deqp.query_plan AS xml)
+                     WHEN TRY_CAST(deqp.query_plan AS xml) IS NULL
+                     THEN
+                         (
+                             SELECT
+                                 [processing-instruction(query_plan)] =
+                                     N''-- '' + NCHAR(13) + NCHAR(10) +
+                                     N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                     N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                     NCHAR(13) + NCHAR(10) +
+                                     REPLACE(deqp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                     NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                             FOR XML PATH(N''''),
+                                     TYPE
+                         )
+                 END,' +
                   CASE
                       WHEN @live_plans = 1
                       THEN N'
@@ -13353,6 +13558,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 END + N'
             deqmg.plan_handle
         FROM sys.dm_exec_query_memory_grants AS deqmg
+        LEFT JOIN sys.dm_exec_requests AS der
+          ON der.session_id = deqmg.session_id
         OUTER APPLY
         (
             SELECT TOP (1)
@@ -13361,7 +13568,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
             WHERE dowt.session_id = deqmg.session_id
             ORDER BY dowt.wait_duration_ms DESC
         ) AS waits
-        OUTER APPLY sys.dm_exec_query_plan(deqmg.plan_handle) AS deqp
+        OUTER APPLY sys.dm_exec_text_query_plan
+        (
+            deqmg.plan_handle,
+            der.statement_start_offset,
+            der.statement_end_offset
+        ) AS deqp
         OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest' +
             CASE
                 WHEN @live_plans = 1
@@ -13787,7 +13999,25 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 CASE
                       WHEN @skip_plan_xml = 0
                       THEN N'
-                deqp.query_plan,' +
+                query_plan =
+                     CASE
+                         WHEN TRY_CAST(deqp.query_plan AS xml) IS NOT NULL
+                         THEN TRY_CAST(deqp.query_plan AS xml)
+                         WHEN TRY_CAST(deqp.query_plan AS xml) IS NULL
+                         THEN
+                             (
+                                 SELECT
+                                     [processing-instruction(query_plan)] =
+                                         N''-- '' + NCHAR(13) + NCHAR(10) +
+                                         N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                         N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                         NCHAR(13) + NCHAR(10) +
+                                         REPLACE(deqp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
+                                         NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                                 FOR XML PATH(N''''),
+                                         TYPE
+                             )
+                     END,' +
                           CASE
                               WHEN @live_plans = 1
                               THEN
@@ -13809,9 +14039,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     (
                         (
                             CASE der.statement_end_offset
-                                WHEN -1
-                                THEN DATALENGTH(dest.text)
-                                ELSE der.statement_end_offset
+                                 WHEN -1
+                                 THEN DATALENGTH(dest.text)
+                                 ELSE der.statement_end_offset
                             END
                             - der.statement_start_offset
                         ) / 2
@@ -13881,7 +14111,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       N'
             FROM sys.dm_exec_requests AS der
             OUTER APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
-            OUTER APPLY sys.dm_exec_query_plan(der.plan_handle) AS deqp' +
+            OUTER APPLY sys.dm_exec_text_query_plan
+            (
+                der.plan_handle,
+                der.statement_start_offset,
+                der.statement_end_offset
+            ) AS deqp' +
                 CASE
                     WHEN @live_plans = 1
                     THEN N'
@@ -14184,8 +14419,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.5',
-    @version_date = '20240401';
+    @version = '4.9',
+    @version_date = '20240901';
 
 /*
 Helpful section! For help.
@@ -14263,7 +14498,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
-                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent'
+                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits'
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
@@ -14272,7 +14507,7 @@ BEGIN
                 WHEN N'@duration_ms' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@execution_type_desc' THEN 'regular, aborted, exception'
                 WHEN N'@procedure_schema' THEN 'a valid schema in your database'
-                WHEN N'@procedure_name' THEN 'a valid programmable object in your database'
+                WHEN N'@procedure_name' THEN 'a valid programmable object in your database, can use wildcards'
                 WHEN N'@include_plan_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN N'@include_query_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN N'@include_query_hashes' THEN 'a string; comma separated for multiple hashes'
@@ -14487,6 +14722,16 @@ CREATE TABLE
 );
 
 /*
+Hold plan_ids for procedures we're searching
+*/
+CREATE TABLE
+    #procedure_object_ids
+(
+    [object_id] bigint PRIMARY KEY
+);
+
+
+/*
 Hold plan_ids for ad hoc or procedures we're searching for
 */
 CREATE TABLE
@@ -14545,6 +14790,52 @@ CREATE TABLE
             query_hash_s,
             1
         ) PERSISTED NOT NULL PRIMARY KEY
+);
+
+/*
+The following two tables are for adding extra columns
+on to our output. We need these for sorting by anything
+that isn't in #query_store_runtime_stats.
+
+We still have to declare these tables even when they're
+not used because the debug output breaks if we don't.
+
+They are database dependent but not truncated at
+the end of each loop, so we need a database_id
+column.
+
+We do not truncate these because we need them to still
+be in scope and fully populated when we return our
+final results from #query_store_runtime_stats, which
+is done after the point where we would truncate.
+*/
+
+/*
+Holds plan_id with the count of the number of query hashes they have.
+Only used when we're sorting by how many plan hashes each
+query hash has.
+*/
+CREATE TABLE
+    #plan_ids_with_query_hashes
+(
+    database_id int NOT NULL,
+    plan_id bigint NOT NULL,
+    query_hash binary(8) NOT NULL,
+    plan_hash_count_for_query_hash INT NOT NULL,
+    PRIMARY KEY (database_id, plan_id, query_hash)
+);
+
+/*
+Largely just exists because total_query_wait_time_ms
+isn't in our normal output.
+*/
+CREATE TABLE
+    #plan_ids_with_total_waits
+(
+    database_id int NOT NULL,
+    plan_id bigint NOT NULL,
+    total_query_wait_time_ms bigint NOT NULL,
+    PRIMARY KEY (database_id, plan_id)
 );
 
 /*
@@ -15189,7 +15480,7 @@ DECLARE
     @product_version int,
     @database_id int,
     @database_name_quoted sysname,
-    @procedure_name_quoted sysname,
+    @procedure_name_quoted nvarchar(1024),
     @collation sysname,
     @new bit,
     @sql nvarchar(MAX),
@@ -15219,10 +15510,11 @@ DECLARE
     @start_date_original datetimeoffset(7),
     @end_date_original datetimeoffset(7),
     @utc_minutes_difference bigint,
-    @utc_minutes_original bigint,
+    @utc_offset_string nvarchar(6),
     @df integer,
     @work_start_utc time(0),
-    @work_end_utc time(0);
+    @work_end_utc time(0),
+    @sort_order_is_a_wait bit;
 
 /*
 In cases where we are escaping @query_text_search and
@@ -15434,18 +15726,18 @@ SELECT
     @database_name_quoted =
         QUOTENAME(@database_name),
     @procedure_name_quoted =
-         QUOTENAME(@database_name) +
-         N'.' +
-         QUOTENAME
-         (
-             ISNULL
-             (
-                 @procedure_schema,
-                 N'dbo'
-             )
-         ) +
-         N'.' +
-         QUOTENAME(@procedure_name),
+        QUOTENAME(@database_name) +
+        N'.' +
+        QUOTENAME
+        (
+            ISNULL
+            (
+                @procedure_schema,
+                N'dbo'
+            )
+        ) +
+        N'.' +
+        QUOTENAME(@procedure_name),
     @collation =
         CONVERT
         (
@@ -15637,13 +15929,18 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             SYSDATETIME(),
             SYSUTCDATETIME()
         ),
-    @utc_minutes_original =
-        DATEDIFF
-        (
-            MINUTE,
-            SYSUTCDATETIME(),
-            SYSDATETIME()
-        ),
+    /*
+    There is no direct way to get the user's timezone in a
+    format compatible with sys.time_zone_info.
+
+    We also cannot directly get their UTC offset,
+    so we need this hack to get it instead.
+
+    This is to make our datetimeoffsets have the
+    correct offset in cases where the user didn't
+    give us their timezone.
+    */
+    @utc_offset_string = RIGHT(SYSDATETIMEOFFSET(), 6),
     @df = @@DATEFIRST,
     @work_start_utc = @work_start,
     @work_end_utc = @work_end;
@@ -15807,7 +16104,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -15821,7 +16125,14 @@ AND @engine NOT IN (5, 8)
 )
 BEGIN
     RAISERROR('Not all Azure offerings are supported, please try avoiding memes', 11, 1) WITH NOWAIT;
-    RETURN;
+    IF @debug = 1
+    BEGIN
+        GOTO DEBUG
+    END;
+    ELSE
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /*
@@ -15841,7 +16152,14 @@ IF
 )
 BEGIN
     RAISERROR('Azure databases in compatibility levels under 130 are not supported', 11, 1) WITH NOWAIT;
-    RETURN;
+    IF @debug = 1
+    BEGIN
+        GOTO DEBUG
+    END;
+    ELSE
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /*
@@ -15923,7 +16241,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -16075,6 +16400,12 @@ If you specified a procedure name, we need to figure out if there are any plans 
 */
 IF @procedure_name IS NOT NULL
 BEGIN
+
+    IF @procedure_schema IS NULL
+    BEGIN
+        SELECT
+            @procedure_schema = N'dbo'
+    END;
     SELECT
         @current_table = 'checking procedure existence',
         @sql = @isolation_level;
@@ -16089,8 +16420,148 @@ BEGIN
         SET STATISTICS XML ON;
     END;
 
-    SELECT
-        @sql += N'
+    IF CHARINDEX(N'%', @procedure_name) > 0
+    BEGIN
+        SELECT
+            @current_table = 'getting procedure object ids for wildcard',
+            @sql = @isolation_level;
+
+        SELECT @sql += N'
+SELECT
+    p.object_id
+FROM ' + @database_name_quoted + N'.sys.procedures AS p
+JOIN ' + @database_name_quoted + N'.sys.schemas AS s
+  ON p.schema_id = s.schema_id
+WHERE s.name = @procedure_schema
+AND   p.name LIKE @procedure_name;' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        INSERT
+            #procedure_object_ids WITH(TABLOCK)
+        (
+            [object_id]
+        )
+        EXEC sys.sp_executesql
+            @sql,
+          N'@procedure_schema sysname,
+            @procedure_name sysname',
+            @procedure_schema,
+            @procedure_name;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+
+        SELECT
+            @current_table = 'checking wildcard procedure existence',
+            @sql = @isolation_level;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+        END;
+
+        SELECT
+            @sql += N'
+SELECT
+    @procedure_exists =
+        MAX(x.procedure_exists)
+    FROM
+    (
+        SELECT
+            procedure_exists =
+                CASE
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                             WHERE EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM #procedure_object_ids AS p
+                                 WHERE qsq.[object_id] = p.[object_id]
+                             )
+                         )
+                    THEN 1
+                    ELSE 0
+                END
+    ) AS x
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXEC sys.sp_executesql
+            @sql,
+          N'@procedure_exists bit OUTPUT,
+            @procedure_name_quoted sysname',
+            @procedure_exists OUTPUT,
+            @procedure_name_quoted;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+    END; /*End procedure object id check*/
+
+    IF CHARINDEX(N'%', @procedure_name) = 0
+    BEGIN
+        SELECT
+            @current_table = 'checking single procedure existence',
+            @sql = @isolation_level;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXEC sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+        END;
+
+        SELECT
+            @sql += N'
 SELECT
     @procedure_exists =
         CASE
@@ -16106,34 +16577,35 @@ SELECT
         END
 OPTION(RECOMPILE);' + @nc10;
 
-    IF @debug = 1
-    BEGIN
-        PRINT LEN(@sql);
-        PRINT @sql;
-    END;
-
-    EXEC sys.sp_executesql
-        @sql,
-      N'@procedure_exists bit OUTPUT,
-        @procedure_name_quoted sysname',
-        @procedure_exists OUTPUT,
-        @procedure_name_quoted;
-
-    IF @troubleshoot_performance = 1
-    BEGIN
-        SET STATISTICS XML OFF;
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
 
         EXEC sys.sp_executesql
-            @troubleshoot_update,
-          N'@current_table nvarchar(100)',
-            @current_table;
-
-        EXEC sys.sp_executesql
-            @troubleshoot_info,
-          N'@sql nvarchar(max),
-            @current_table nvarchar(100)',
             @sql,
-            @current_table;
+          N'@procedure_exists bit OUTPUT,
+            @procedure_name_quoted sysname',
+            @procedure_exists OUTPUT,
+            @procedure_name_quoted;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXEC sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
     END;
 
     IF
@@ -16165,7 +16637,14 @@ Check that you spelled everything correctly and you''re in the right database',
 
         IF @get_all_databases = 0
         BEGIN
-            RETURN;
+            IF @debug = 1
+            BEGIN
+                GOTO DEBUG
+            END;
+            ELSE
+            BEGIN
+                RETURN;
+            END;
         END;
     END;
 END; /*End procedure existence checking*/
@@ -16199,7 +16678,24 @@ IF @sort_order NOT IN
        'memory',
        'tempdb',
        'executions',
-       'recent'
+       'recent',
+       'plan count by hashes',
+       'cpu waits',
+       'lock waits',
+       'locks waits',
+       'latch waits',
+       'latches waits',
+       'buffer latch waits',
+       'buffer latches waits',
+       'buffer io waits',
+       'log waits',
+       'log io waits',
+       'network waits',
+       'network io waits',
+       'parallel waits',
+       'parallelism waits',
+       'memory waits',
+       'total waits'
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
@@ -16209,11 +16705,40 @@ BEGIN
 END;
 
 /*
+Checks if the sort order is for a wait.
+Cuts out a lot of repetition.
+*/
+IF @sort_order IN
+   (
+       'cpu waits',
+       'lock waits',
+       'locks waits',
+       'latch waits',
+       'latches waits',
+       'buffer latch waits',
+       'buffer latches waits',
+       'buffer io waits',
+       'log waits',
+       'log io waits',
+       'network waits',
+       'network io waits',
+       'parallel waits',
+       'parallelism waits',
+       'memory waits',
+       'total waits'
+   )
+BEGIN
+
+   SELECT
+       @sort_order_is_a_wait = 1;
+END;
+
+/*
 These columns are only available in 2017+
 */
 IF
 (
-    @sort_order = 'tempdb'
+    (@sort_order = 'tempdb' OR @sort_order_is_a_wait = 1)
 AND @new = 0
 )
 BEGIN
@@ -16262,7 +16787,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -16279,7 +16811,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -16313,7 +16852,14 @@ BEGIN
 
     IF @get_all_databases = 0
     BEGIN
-        RETURN;
+        IF @debug = 1
+        BEGIN
+            GOTO DEBUG
+        END;
+        ELSE
+        BEGIN
+            RETURN;
+        END;
     END;
 END;
 
@@ -16407,7 +16953,14 @@ BEGIN
        )
        BEGIN
            RAISERROR('The time zone you chose (%s) is not valid. Please check sys.time_zone_info for a valid list.', 10, 1, @timezone) WITH NOWAIT;
-           RETURN;
+           IF @debug = 1
+           BEGIN
+               GOTO DEBUG
+           END;
+           ELSE
+           BEGIN
+               RETURN;
+           END;
        END;
 END;
 
@@ -16602,7 +17155,28 @@ SELECT DISTINCT
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
    ON qsq.query_id = qsp.query_id
-WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+WHERE '
+
+IF CHARINDEX(N'%', @procedure_name) = 0
+BEGIN
+    SELECT
+        @sql += N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)'
+END;
+
+IF CHARINDEX(N'%', @procedure_name) > 0
+BEGIN
+    SELECT
+        @sql += N'EXISTS
+(
+     SELECT
+         1/0
+    FROM #procedure_object_ids AS poi
+    WHERE poi.[object_id] = qsq.[object_id]
+)'
+END;
+
+    SELECT
+        @sql += N'
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -18407,7 +18981,6 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
        )' + @nc10;
 END;
 
-
 /*
 This section screens out index create and alter statements because who cares
 */
@@ -18503,7 +19076,319 @@ SELECT
         );
 
 /*
-This gets the plan_ids we care about
+Populate sort-helping tables, if needed.
+
+In theory, these exist just to put in scope
+columns that wouldn't normally be in scope.
+However, they're also  quite helpful for the next
+temp table, #distinct_plans.
+
+Note that this block must come after #maintenance_plans
+because that edits @where_clause and we want to use
+that here.
+*/
+IF @sort_order = 'plan count by hashes'
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_with_query_hashes',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+    /*
+        This sort order is useless if we don't show the
+        ties, so only DENSE_RANK() makes sense to use.
+        This is why this is not SELECT TOP.
+    */
+        @sql += N'
+    SELECT
+        @database_id,
+        ranked_plans.plan_id,
+        ranked_plans.query_hash,
+        ranked_plans.plan_hash_count_for_query_hash
+    FROM
+    (
+        SELECT
+            QueryHashesWithIds.plan_id,
+            QueryHashesWithCounts.query_hash,
+            QueryHashesWithCounts.plan_hash_count_for_query_hash,
+            DENSE_RANK() OVER (ORDER BY QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash DESC) AS ranking
+        FROM
+        (
+           SELECT
+               qsq.query_hash,
+               COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
+           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              ON qsq.query_id = qsp.query_id
+           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+             ON qsp.plan_id = qsrs.plan_id
+           WHERE 1 = 1
+           ' + @where_clause
+             + N'
+           GROUP
+               BY qsq.query_hash
+        ) AS QueryHashesWithCounts
+        JOIN
+        (
+           SELECT DISTINCT
+               qsq.query_hash,
+               qsp.plan_id
+           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+           JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              ON qsq.query_id = qsp.query_id
+           JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+             ON qsp.plan_id = qsrs.plan_id
+            WHERE 1 = 1
+           ' + @where_clause
+             + N'
+        ) AS QueryHashesWithIds
+        ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
+    ) AS ranked_plans
+    WHERE ranked_plans.ranking <= @TOP
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #plan_ids_with_query_hashes WITH(TABLOCK)
+    (
+        database_id,
+        plan_id,
+        query_hash,
+        plan_hash_count_for_query_hash
+    )
+    EXEC sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+END;
+IF @sort_order = 'total waits'
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_with_total_waits',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    SELECT TOP (@top)
+        @database_id,
+        qsrs.plan_id,
+        SUM(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+    ON qsrs.plan_id = qsws.plan_id
+    WHERE 1 = 1
+    ' + @where_clause
+      + N'
+    GROUP
+        BY qsrs.plan_id
+    ORDER BY
+        SUM(qsws.total_query_wait_time_ms) DESC
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #plan_ids_with_total_waits WITH(TABLOCK)
+    (
+        database_id,
+        plan_id,
+        total_query_wait_time_ms
+    )
+    EXEC sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+END;
+/*
+    'total waits' is special. It's a sum, not a max, so
+    we cover it above rather than here.
+*/
+IF @sort_order_is_a_wait = 1 AND @sort_order <> 'total waits'
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_with_total_waits',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXEC sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    SELECT TOP (@top)
+        @database_id,
+        qsrs.plan_id,
+        MAX(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+    ON qsrs.plan_id = qsws.plan_id
+    WHERE 1 = 1
+    AND qsws.wait_category = '  +
+    CASE @sort_order
+         WHEN 'cpu waits' THEN N'1'
+         WHEN 'lock waits' THEN N'3'
+         WHEN 'locks waits' THEN N'3'
+         WHEN 'latch waits' THEN N'4'
+         WHEN 'latches waits' THEN N'4'
+         WHEN 'buffer latch waits' THEN N'5'
+         WHEN 'buffer latches waits' THEN N'5'
+         WHEN 'buffer io waits' THEN N'6'
+         WHEN 'log waits' THEN N'14'
+         WHEN 'log io waits' THEN N'14'
+         WHEN 'network waits' THEN N'15'
+         WHEN 'network io waits' THEN N'15'
+         WHEN 'parallel waits' THEN N'16'
+         WHEN 'parallelism waits' THEN N'16'
+         WHEN 'memory waits' THEN N'17'
+    END
+      + @where_clause
+      + N'
+    GROUP
+        BY qsrs.plan_id
+    ORDER BY
+        MAX(qsws.total_query_wait_time_ms) DESC
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #plan_ids_with_total_waits WITH(TABLOCK)
+    (
+        database_id,
+        plan_id,
+        total_query_wait_time_ms
+    )
+    EXEC sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXEC sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+END;
+/*End populating sort-helping tables*/
+
+/*
+This gets the plan_ids we care about.
+
+We unfortunately need an ELSE IF chain here
+because the final branch contains defaults
+that we only want to hit if we did not hit
+any others.
 */
 SELECT
     @current_table = 'inserting #distinct_plans',
@@ -18519,32 +19404,55 @@ BEGIN
     SET STATISTICS XML ON;
 END;
 
-SELECT
-    @sql += N'
-SELECT TOP (@top)
-    qsrs.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-WHERE 1 = 1
-' + @where_clause
-  + N'
-GROUP
-    BY qsrs.plan_id
-ORDER BY
-    MAX(' +
-CASE @sort_order
-     WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
-     WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
-     WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads'
-     WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
-     WHEN 'duration' THEN N'qsrs.avg_duration'
-     WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
-     WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
-     WHEN 'executions' THEN N'qsrs.count_executions'
-     WHEN 'recent' THEN N'qsrs.last_execution_time'
-     ELSE N'qsrs.avg_cpu_time'
-END +
-N') DESC
-OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+IF @sort_order = 'plan count by hashes'
+BEGIN
+    SELECT
+        @sql += N'
+    SELECT DISTINCT
+        plan_id
+    FROM #plan_ids_with_query_hashes
+    WHERE database_id = @database_id
+    OPTION(RECOMPILE);' + @nc10;
+END
+ELSE IF @sort_order_is_a_wait = 1
+BEGIN
+    SELECT
+        @sql += N'
+    SELECT DISTINCT
+        plan_id
+    FROM #plan_ids_with_total_waits
+    WHERE database_id = @database_id
+    OPTION(RECOMPILE);' + @nc10;
+END
+ELSE
+BEGIN
+    SELECT
+        @sql += N'
+    SELECT TOP (@top)
+        qsrs.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    WHERE 1 = 1
+    ' + @where_clause
+      + N'
+    GROUP
+        BY qsrs.plan_id
+    ORDER BY
+        MAX(' +
+    CASE @sort_order
+         WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
+         WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
+         WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads'
+         WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
+         WHEN 'duration' THEN N'qsrs.avg_duration'
+         WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
+         WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
+         WHEN 'executions' THEN N'qsrs.count_executions'
+         WHEN 'recent' THEN N'qsrs.last_execution_time'
+         ELSE N'qsrs.avg_cpu_time'
+    END +
+    N') DESC
+    OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
+END;
 
 IF @debug = 1
 BEGIN
@@ -18696,7 +19604,26 @@ CROSS APPLY
 (
     SELECT TOP (@queries_top)
         qsrs.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs'
+    IF @sort_order = 'plan count by hashes'
+    BEGIN
+        SELECT
+            @sql += N'
+            JOIN #plan_ids_with_query_hashes AS hashes
+            ON qsrs.plan_id = hashes.plan_id
+            AND hashes.database_id = @database_id'
+    END;
+    IF @sort_order_is_a_wait = 1
+    BEGIN
+        SELECT
+            @sql += N'
+            JOIN #plan_ids_with_total_waits AS waits
+            ON qsrs.plan_id = waits.plan_id
+            AND waits.database_id = @database_id'
+    END;
+
+SELECT
+    @sql += N'
     WHERE qsrs.plan_id = dp.plan_id
     AND   1 = 1
     ' + @where_clause
@@ -18712,7 +19639,8 @@ CASE @sort_order
      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
      WHEN 'executions' THEN N'qsrs.count_executions'
      WHEN 'recent' THEN N'qsrs.last_execution_time'
-     ELSE N'qsrs.avg_cpu_time'
+     WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
 END + N' DESC
 ) AS qsrs
 GROUP BY
@@ -20127,24 +21055,40 @@ IF @get_all_databases = 1
 BEGIN
     TRUNCATE TABLE
         #distinct_plans;
+
     TRUNCATE TABLE
         #procedure_plans;
+
+    TRUNCATE TABLE
+        #procedure_object_ids;
+
     TRUNCATE TABLE
         #maintenance_plans;
+
     TRUNCATE TABLE
         #query_text_search;
+
+    TRUNCATE TABLE
+        #query_text_search_not;
+
     TRUNCATE TABLE
         #dm_exec_query_stats;
+
     TRUNCATE TABLE
         #query_types;
+
     TRUNCATE TABLE
         #wait_filter;
+
     TRUNCATE TABLE
         #only_queries_with_hints;
+
     TRUNCATE TABLE
         #only_queries_with_feedback;
+
     TRUNCATE TABLE
         #only_queries_with_variants;
+
     TRUNCATE TABLE
         #forced_plans_failures;
 END;
@@ -20228,9 +21172,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS XML)
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS xml)
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
                  THEN
                      (
                          SELECT
@@ -20285,11 +21229,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.first_execution_time
+                    SWITCHOFFSET
+            (
+                        qsrs.first_execution_time,
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -20300,11 +21243,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.last_execution_time
+                    SWITCHOFFSET
+            (
+                        qsrs.last_execution_time,
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -20401,9 +21343,25 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            ELSE N'qsrs.avg_cpu_time_ms'
+            WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+            ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
+
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode 1, format output 0 columns*/
@@ -20453,9 +21411,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS XML)
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS xml)
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
                  THEN
                      (
                          SELECT
@@ -20513,11 +21471,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.first_execution_time
+                    SWITCHOFFSET
+            (
+                        qsrs.first_execution_time,
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -20528,11 +21485,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.last_execution_time
+                    SWITCHOFFSET
+            (
+                        qsrs.last_execution_time,
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -20630,9 +21586,26 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            ELSE N'qsrs.avg_cpu_time_ms'
+            WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+            ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
+
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful, but it does mean that we have to format them
+           when applicable.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode = 1, format output = 1*/
@@ -20682,9 +21655,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS XML)
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS xml)
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
                  THEN
                      (
                          SELECT
@@ -20739,11 +21712,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.first_execution_time
+                    SWITCHOFFSET
+            (
+                        qsrs.first_execution_time,
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -20754,11 +21726,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.last_execution_time
+                    SWITCHOFFSET
+            (
+                        qsrs.last_execution_time,
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -20769,22 +21740,30 @@ FROM
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
         qsrs.total_duration_ms,
+        qsrs.max_duration_ms,
         qsrs.avg_cpu_time_ms,
         qsrs.total_cpu_time_ms,
+        qsrs.max_cpu_time_ms,
         qsrs.avg_logical_io_reads_mb,
         qsrs.total_logical_io_reads_mb,
+        qsrs.max_logical_io_reads_mb,
         qsrs.avg_logical_io_writes_mb,
         qsrs.total_logical_io_writes_mb,
+        qsrs.max_logical_io_writes_mb,
         qsrs.avg_physical_io_reads_mb,
         qsrs.total_physical_io_reads_mb,
+        qsrs.max_physical_io_reads_mb,
         qsrs.avg_clr_time_ms,
         qsrs.total_clr_time_ms,
+        qsrs.max_clr_time_ms,
         qsrs.min_dop,
         qsrs.max_dop,
         qsrs.avg_query_max_used_memory_mb,
         qsrs.total_query_max_used_memory_mb,
+        qsrs.max_query_max_used_memory_mb,
         qsrs.avg_rowcount,
-        qsrs.total_rowcount,'
+        qsrs.total_rowcount,
+        qsrs.max_rowcount,'
         +
             CASE @new
                  WHEN 1
@@ -20792,10 +21771,13 @@ FROM
         N'
         qsrs.avg_num_physical_io_reads_mb,
         qsrs.total_num_physical_io_reads_mb,
+        qsrs.max_num_physical_io_reads_mb,
         qsrs.avg_log_bytes_used_mb,
         qsrs.total_log_bytes_used_mb,
+        qsrs.max_log_bytes_used_mb,
         qsrs.avg_tempdb_space_used_mb,
-        qsrs.total_tempdb_space_used_mb,'
+        qsrs.total_tempdb_space_used_mb,
+        qsrs.max_tempdb_space_used_mb,'
                  ELSE
         N''
             END +
@@ -20822,9 +21804,25 @@ FROM
             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
             WHEN 'executions' THEN N'qsrs.count_executions'
             WHEN 'recent' THEN N'qsrs.last_execution_time'
-            ELSE N'qsrs.avg_cpu_time_ms'
+            WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+            ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
+
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , hashes.plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , waits.total_query_wait_time_ms AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode = 0, format output = 0*/
@@ -20875,9 +21873,9 @@ FROM
         qsqt.query_sql_text,
         query_plan =
              CASE
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS XML)
-                 WHEN TRY_CAST(qsp.query_plan AS XML) IS NULL
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+                 THEN TRY_CAST(qsp.query_plan AS xml)
+                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
                  THEN
                      (
                          SELECT
@@ -20932,11 +21930,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.first_execution_time
+                    SWITCHOFFSET
+            (
+                        qsrs.first_execution_time,
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -20947,11 +21944,10 @@ FROM
             CASE
                 WHEN @timezone IS NULL
                 THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        @utc_minutes_original,
-                        qsrs.last_execution_time
+                    SWITCHOFFSET
+            (
+                        qsrs.last_execution_time,
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -20962,22 +21958,30 @@ FROM
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
         total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),
+        max_duration_ms = FORMAT(qsrs.max_duration_ms, ''N0''),
         avg_cpu_time_ms = FORMAT(qsrs.avg_cpu_time_ms, ''N0''),
         total_cpu_time_ms = FORMAT(qsrs.total_cpu_time_ms, ''N0''),
+        max_cpu_time_ms = FORMAT(qsrs.max_cpu_time_ms, ''N0''),
         avg_logical_io_reads_mb = FORMAT(qsrs.avg_logical_io_reads_mb, ''N0''),
         total_logical_io_reads_mb = FORMAT(qsrs.total_logical_io_reads_mb, ''N0''),
+        max_logical_io_reads_mb = FORMAT(qsrs.max_logical_io_reads_mb, ''N0''),
         avg_logical_io_writes_mb = FORMAT(qsrs.avg_logical_io_writes_mb, ''N0''),
         total_logical_io_writes_mb = FORMAT(qsrs.total_logical_io_writes_mb, ''N0''),
+        max_logical_io_writes_mb = FORMAT(qsrs.max_logical_io_writes_mb, ''N0''),
         avg_physical_io_reads_mb = FORMAT(qsrs.avg_physical_io_reads_mb, ''N0''),
         total_physical_io_reads_mb = FORMAT(qsrs.total_physical_io_reads_mb, ''N0''),
+        max_physical_io_reads_mb = FORMAT(qsrs.max_physical_io_reads_mb, ''N0''),
         avg_clr_time_ms = FORMAT(qsrs.avg_clr_time_ms, ''N0''),
         total_clr_time_ms = FORMAT(qsrs.total_clr_time_ms, ''N0''),
+        max_clr_time_ms = FORMAT(qsrs.max_clr_time_ms, ''N0''),
         min_dop = FORMAT(qsrs.min_dop, ''N0''),
         max_dop = FORMAT(qsrs.max_dop, ''N0''),
         avg_query_max_used_memory_mb = FORMAT(qsrs.avg_query_max_used_memory_mb, ''N0''),
         total_query_max_used_memory_mb = FORMAT(qsrs.total_query_max_used_memory_mb, ''N0''),
+        max_query_max_used_memory_mb = FORMAT(qsrs.max_query_max_used_memory_mb, ''N0''),
         avg_rowcount = FORMAT(qsrs.avg_rowcount, ''N0''),
-        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),'
+        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),
+        max_rowcount = FORMAT(qsrs.max_rowcount, ''N0''),'
         +
             CASE @new
                  WHEN 1
@@ -20985,10 +21989,13 @@ FROM
         N'
         avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
         total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),
+        max_num_physical_io_reads_mb = FORMAT(qsrs.max_num_physical_io_reads_mb, ''N0''),
         avg_log_bytes_used_mb = FORMAT(qsrs.avg_log_bytes_used_mb, ''N0''),
         total_log_bytes_used_mb = FORMAT(qsrs.total_log_bytes_used_mb, ''N0''),
+        max_log_bytes_used_mb = FORMAT(qsrs.max_log_bytes_used_mb, ''N0''),
         avg_tempdb_space_used_mb = FORMAT(qsrs.avg_tempdb_space_used_mb, ''N0''),
-        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
+        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),
+        max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
             END +
@@ -21015,9 +22022,26 @@ FROM
              WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
-             ELSE N'qsrs.avg_cpu_time_ms'
+             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+             ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END + N' DESC
             )'
+        /*
+           Bolt any special sorting columns on, because we need them to
+           be in scope for sorting.
+           Has the side-effect of making them visible in the final output,
+           because our SELECT is just x.*.
+
+           But, really, is having the columns visible in the output a bad thing?
+           I find it's helpful, but it does mean that we have to format them
+           when applicable.
+        */
+        + CASE WHEN @sort_order = 'plan count by hashes'
+               THEN N' , FORMAT(hashes.plan_hash_count_for_query_hash, ''N0'') AS plan_hash_count_for_query_hash, hashes.query_hash'
+               WHEN @sort_order_is_a_wait = 1
+               THEN N' , FORMAT(waits.total_query_wait_time_ms, ''N0'') AS total_wait_time_from_sort_order_ms'
+               ELSE N''
+               END
             )
         );
     END; /*End expert mode = 0, format output = 1*/
@@ -21031,7 +22055,31 @@ FROM
     (
         nvarchar(MAX),
         N'
-    FROM #query_store_runtime_stats AS qsrs
+        FROM #query_store_runtime_stats AS qsrs'
+    )
+    IF @sort_order = 'plan count by hashes'
+    BEGIN
+        SELECT
+            @sql += N'
+            JOIN #plan_ids_with_query_hashes AS hashes
+            ON qsrs.plan_id = hashes.plan_id
+            AND qsrs.database_id = hashes.database_id'
+    END;
+    IF @sort_order_is_a_wait = 1
+    BEGIN
+        SELECT
+            @sql += N'
+            JOIN #plan_ids_with_total_waits AS waits
+            ON qsrs.plan_id = waits.plan_id
+            AND qsrs.database_id = waits.database_id'
+    END;
+
+SELECT
+    @sql +=
+    CONVERT
+    (
+        NVARCHAR(MAX),
+        N'
     CROSS APPLY
     (
         SELECT
@@ -21061,8 +22109,9 @@ FROM
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
           ON qsqt.query_text_id = qsq.query_text_id
+          AND qsqt.database_id = qsq.database_id
         WHERE qsq.query_id = qsp.query_id
-        AND   qsq.query_id = qsp.query_id
+        AND   qsq.database_id = qsp.database_id
         ORDER BY
             qsq.last_execution_time DESC
     ) AS qsqt
@@ -21208,21 +22257,27 @@ ORDER BY ' +
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  ELSE N'x.avg_cpu_time_ms'
+                  WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash'
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time' END
              END
+         /*
+             The ORDER BY is on the same level as the topmost SELECT, which is just SELECT x.*.
+             This means that to sort formatted output, we have to un-format it.
+         */
          WHEN 1
          THEN
              CASE @sort_order
-                  WHEN 'cpu' THEN N'CONVERT(money, x.avg_cpu_time_ms)'
-                  WHEN 'logical reads' THEN N'CONVERT(money, x.avg_logical_io_reads_mb)'
-                  WHEN 'physical reads' THEN N'CONVERT(money, x.avg_physical_io_reads_mb)'
-                  WHEN 'writes' THEN N'CONVERT(money, x.avg_logical_io_writes_mb)'
-                  WHEN 'duration' THEN N'CONVERT(money, x.avg_duration_ms)'
-                  WHEN 'memory' THEN N'CONVERT(money, x.avg_query_max_used_memory_mb)'
-                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'CONVERT(money, x.avg_tempdb_space_used_mb)' ELSE N'CONVERT(money, x.avg_cpu_time)' END
-                  WHEN 'executions' THEN N'CONVERT(money, x.count_executions)'
+                  WHEN 'cpu' THEN N'TRY_PARSE(x.avg_cpu_time_ms AS money)'
+                  WHEN 'logical reads' THEN N'TRY_PARSE(x.avg_logical_io_reads_mb AS money)'
+                  WHEN 'physical reads' THEN N'TRY_PARSE(x.avg_physical_io_reads_mb AS money)'
+                  WHEN 'writes' THEN N'TRY_PARSE(x.avg_logical_io_writes_mb AS money)'
+                  WHEN 'duration' THEN N'TRY_PARSE(x.avg_duration_ms AS money)'
+                  WHEN 'memory' THEN N'TRY_PARSE(x.avg_query_max_used_memory_mb AS money)'
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
+                  WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  ELSE N'CONVERT(money, x.avg_cpu_time_ms)'
+                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC, x.query_hash'
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
              END
     END
              + N' DESC
@@ -21240,9 +22295,9 @@ OPTION(RECOMPILE);'
 
     EXEC sys.sp_executesql
         @sql,
-      N'@utc_minutes_original bigint,
+      N'@utc_offset_string nvarchar(6),
         @timezone sysname',
-        @utc_minutes_original,
+        @utc_offset_string,
         @timezone;
 END; /*End runtime stats main query*/
 ELSE
@@ -21295,12 +22350,11 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qspf.create_time
-                                )
+                   qspf.create_time,
+                       @utc_offset_string
+                            )
                             WHEN @timezone IS NOT NULL
                             THEN qspf.create_time AT TIME ZONE @timezone
                         END,
@@ -21310,12 +22364,11 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qspf.last_updated_time
-                                )
+                   qspf.last_updated_time,
+                       @utc_offset_string
+                            )
                             WHEN @timezone IS NOT NULL
                             THEN qspf.last_updated_time AT TIME ZONE @timezone
                         END,
@@ -21423,11 +22476,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.initial_compile_start_time
+                                    qsq.initial_compile_start_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.initial_compile_start_time AT TIME ZONE @timezone
@@ -21438,11 +22490,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.last_compile_start_time
+                                    qsq.last_compile_start_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.last_compile_start_time AT TIME ZONE @timezone
@@ -21453,11 +22504,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.last_execution_time
+                                    qsq.last_execution_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.last_execution_time AT TIME ZONE @timezone
@@ -21886,11 +22936,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qspf.create_time
+                                    qspf.create_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qspf.create_time AT TIME ZONE @timezone
@@ -21901,11 +22950,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qspf.last_updated_time
+                                    qspf.last_updated_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qspf.last_updated_time AT TIME ZONE @timezone
@@ -22014,11 +23062,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.initial_compile_start_time
+                                    qsq.initial_compile_start_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.initial_compile_start_time AT TIME ZONE @timezone
@@ -22029,11 +23076,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.last_compile_start_time
+                                    qsq.last_compile_start_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.last_compile_start_time AT TIME ZONE @timezone
@@ -22044,11 +23090,10 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-                                DATEADD
+                                SWITCHOFFSET
                                 (
-                                    MINUTE,
-                                    @utc_minutes_original,
-                                    qsq.last_execution_time
+                                    qsq.last_execution_time,
+                                    @utc_offset_string
                                 )
                             WHEN @timezone IS NOT NULL
                             THEN qsq.last_execution_time AT TIME ZONE @timezone
@@ -22635,6 +23680,7 @@ END CATCH;
 /*
 Debug elements!
 */
+DEBUG:
 IF @debug = 1
 BEGIN
     SELECT
@@ -22644,6 +23690,8 @@ BEGIN
             @database_name,
         sort_order =
             @sort_order,
+        sort_order_is_a_wait =
+            @sort_order_is_a_wait,
         [top] =
             @top,
         start_date =
@@ -22802,14 +23850,14 @@ BEGIN
            @timezone,
        utc_minutes_difference =
            @utc_minutes_difference,
-       utc_minutes_original =
-           @utc_minutes_original,
-        df =
-            @df,
-        work_start_utc =
-            @work_start_utc,
-        work_end_utc =
-            @work_end_utc;
+       utc_offset_string =
+           @utc_offset_string,
+       df =
+           @df,
+       work_start_utc =
+           @work_start_utc,
+       work_end_utc =
+           @work_end_utc;
 
     IF EXISTS
        (
@@ -22878,6 +23926,29 @@ BEGIN
         SELECT
             result =
                 '#procedure_plans is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #procedure_object_ids AS poi
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#procedure_object_ids',
+            poi.*
+        FROM #procedure_object_ids AS poi
+        ORDER BY
+            poi.[object_id]
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#procedure_object_ids is empty';
     END;
 
     IF EXISTS
@@ -22970,6 +24041,52 @@ BEGIN
         SELECT
             result =
                 '#include_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #plan_ids_with_query_hashes AS hashes
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#plan_ids_with_query_hashes',
+            hashes.*
+        FROM #plan_ids_with_query_hashes AS hashes
+        ORDER BY
+            hashes.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#plan_ids_with_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #plan_ids_with_total_waits AS waits
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#plan_ids_with_total_waits',
+            waits.*
+        FROM #plan_ids_with_total_waits AS waits
+        ORDER BY
+            waits.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#plan_ids_with_total_waits is empty';
     END;
 
     IF EXISTS
