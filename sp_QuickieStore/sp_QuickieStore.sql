@@ -1644,15 +1644,15 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             SYSUTCDATETIME()
         ),
     /*
-	There is no direct way to get the user's timezone in a
-	format compatible with sys.time_zone_info.
+    There is no direct way to get the user's timezone in a
+    format compatible with sys.time_zone_info.
 
-	We also cannot directly get their UTC offset,
-	so we need this hack to get it instead.
+    We also cannot directly get their UTC offset,
+    so we need this hack to get it instead.
 
-	This is to make our datetimeoffsets have the
-	correct offset in cases where the user didn't
-	give us their timezone.
+    This is to make our datetimeoffsets have the
+    correct offset in cases where the user didn't
+    give us their timezone.
     */
     @utc_offset_string = RIGHT(SYSDATETIMEOFFSET(), 6),
     @df = @@DATEFIRST,
@@ -2139,7 +2139,7 @@ BEGIN
         SELECT
             @current_table = 'getting procedure object ids for wildcard',
             @sql = @isolation_level;
-    
+
         SELECT @sql += N'
 SELECT
     p.object_id
@@ -2170,12 +2170,12 @@ AND   p.name LIKE @procedure_name;' + @nc10;
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
@@ -2194,19 +2194,19 @@ AND   p.name LIKE @procedure_name;' + @nc10;
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             SET STATISTICS XML ON;
         END;
-    
+
         SELECT
             @sql += N'
 SELECT
-    @procedure_exists = 
+    @procedure_exists =
         MAX(x.procedure_exists)
     FROM
     (
         SELECT
-            procedure_exists = 
+            procedure_exists =
                 CASE
                     WHEN EXISTS
                          (
@@ -2243,12 +2243,12 @@ OPTION(RECOMPILE);' + @nc10;
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
@@ -2270,7 +2270,7 @@ OPTION(RECOMPILE);' + @nc10;
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             SET STATISTICS XML ON;
         END;
 
@@ -2296,23 +2296,23 @@ OPTION(RECOMPILE);' + @nc10;
             PRINT LEN(@sql);
             PRINT @sql;
         END;
-        
+
         EXEC sys.sp_executesql
             @sql,
           N'@procedure_exists bit OUTPUT,
             @procedure_name_quoted sysname',
             @procedure_exists OUTPUT,
             @procedure_name_quoted;
-        
+
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
-        
+
             EXEC sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
@@ -2869,7 +2869,7 @@ SELECT DISTINCT
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
    ON qsq.query_id = qsp.query_id
-WHERE ' 
+WHERE '
 
 IF CHARINDEX(N'%', @procedure_name) = 0
 BEGIN
@@ -2881,7 +2881,7 @@ IF CHARINDEX(N'%', @procedure_name) > 0
 BEGIN
     SELECT
         @sql += N'EXISTS
-(        
+(
      SELECT
          1/0
     FROM #procedure_object_ids AS poi
@@ -4806,17 +4806,17 @@ BEGIN
     SELECT
         @current_table = 'inserting #plan_ids_with_query_hashes',
         @sql = @isolation_level;
-    
+
     IF @troubleshoot_performance = 1
     BEGIN
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
     END;
-    
+
     SELECT
     /*
         This sort order is useless if we don't show the
@@ -4832,11 +4832,11 @@ BEGIN
     FROM
     (
         SELECT
-            QueryHashesWithIds.plan_id,        
+            QueryHashesWithIds.plan_id,
             QueryHashesWithCounts.query_hash,
             QueryHashesWithCounts.plan_hash_count_for_query_hash,
             DENSE_RANK() OVER (ORDER BY QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash DESC) AS ranking
-        FROM 
+        FROM
         (
            SELECT
                qsq.query_hash,
@@ -4850,7 +4850,7 @@ BEGIN
            ' + @where_clause
              + N'
            GROUP
-               BY qsq.query_hash 
+               BY qsq.query_hash
         ) AS QueryHashesWithCounts
         JOIN
         (
@@ -4876,7 +4876,7 @@ BEGIN
         PRINT LEN(@sql);
         PRINT @sql;
     END;
-    
+
     INSERT
         #plan_ids_with_query_hashes WITH(TABLOCK)
     (
@@ -4898,40 +4898,40 @@ BEGIN
         @queries_top,
         @work_start_utc,
         @work_end_utc;
-    
+
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-    END; 
+    END;
 END;
 IF @sort_order = 'total waits'
 BEGIN
     SELECT
         @current_table = 'inserting #plan_ids_with_total_waits',
         @sql = @isolation_level;
-    
+
     IF @troubleshoot_performance = 1
     BEGIN
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
     END;
-    
+
     SELECT
         @sql += N'
     SELECT TOP (@top)
@@ -4941,7 +4941,7 @@ BEGIN
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
     ON qsrs.plan_id = qsws.plan_id
-    WHERE 1 = 1 
+    WHERE 1 = 1
     ' + @where_clause
       + N'
     GROUP
@@ -4955,7 +4955,7 @@ BEGIN
         PRINT LEN(@sql);
         PRINT @sql;
     END;
-    
+
     INSERT
         #plan_ids_with_total_waits WITH(TABLOCK)
     (
@@ -4976,44 +4976,44 @@ BEGIN
         @queries_top,
         @work_start_utc,
         @work_end_utc;
-    
+
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-    END; 
+    END;
 END;
 /*
     'total waits' is special. It's a sum, not a max, so
-    we cover it above rather than here. 
+    we cover it above rather than here.
 */
 IF @sort_order_is_a_wait = 1 AND @sort_order <> 'total waits'
 BEGIN
     SELECT
         @current_table = 'inserting #plan_ids_with_total_waits',
         @sql = @isolation_level;
-    
+
     IF @troubleshoot_performance = 1
     BEGIN
         EXEC sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
     END;
-    
+
     SELECT
         @sql += N'
     SELECT TOP (@top)
@@ -5023,7 +5023,7 @@ BEGIN
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
     ON qsrs.plan_id = qsws.plan_id
-    WHERE 1 = 1 
+    WHERE 1 = 1
     AND qsws.wait_category = '  +
     CASE @sort_order
          WHEN 'cpu waits' THEN N'1'
@@ -5055,7 +5055,7 @@ BEGIN
         PRINT LEN(@sql);
         PRINT @sql;
     END;
-    
+
     INSERT
         #plan_ids_with_total_waits WITH(TABLOCK)
     (
@@ -5076,23 +5076,23 @@ BEGIN
         @queries_top,
         @work_start_utc,
         @work_end_utc;
-    
+
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-    END; 
+    END;
 END;
 /*End populating sort-helping tables*/
 
@@ -5334,7 +5334,7 @@ CROSS APPLY
             JOIN #plan_ids_with_total_waits AS waits
             ON qsrs.plan_id = waits.plan_id
             AND waits.database_id = @database_id'
-    END;    
+    END;
 
 SELECT
     @sql += N'
@@ -6944,9 +6944,9 @@ FROM
                 WHEN @timezone IS NULL
                 THEN
                     SWITCHOFFSET
-		    (
+            (
                         qsrs.first_execution_time,
-			@utc_offset_string
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -6958,9 +6958,9 @@ FROM
                 WHEN @timezone IS NULL
                 THEN
                     SWITCHOFFSET
-		    (
+            (
                         qsrs.last_execution_time,
-			@utc_offset_string
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -7186,9 +7186,9 @@ FROM
                 WHEN @timezone IS NULL
                 THEN
                     SWITCHOFFSET
-		    (
+            (
                         qsrs.first_execution_time,
-			@utc_offset_string
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -7200,9 +7200,9 @@ FROM
                 WHEN @timezone IS NULL
                 THEN
                     SWITCHOFFSET
-		    (
+            (
                         qsrs.last_execution_time,
-			@utc_offset_string
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -7427,9 +7427,9 @@ FROM
                 WHEN @timezone IS NULL
                 THEN
                     SWITCHOFFSET
-		    (
+            (
                         qsrs.first_execution_time,
-			@utc_offset_string
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -7441,9 +7441,9 @@ FROM
                 WHEN @timezone IS NULL
                 THEN
                     SWITCHOFFSET
-		    (
+            (
                         qsrs.last_execution_time,
-			@utc_offset_string
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -7645,9 +7645,9 @@ FROM
                 WHEN @timezone IS NULL
                 THEN
                     SWITCHOFFSET
-		    (
+            (
                         qsrs.first_execution_time,
-			@utc_offset_string
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.first_execution_time AT TIME ZONE @timezone
@@ -7659,9 +7659,9 @@ FROM
                 WHEN @timezone IS NULL
                 THEN
                     SWITCHOFFSET
-		    (
+            (
                         qsrs.last_execution_time,
-			@utc_offset_string
+            @utc_offset_string
                     )
                 WHEN @timezone IS NOT NULL
                 THEN qsrs.last_execution_time AT TIME ZONE @timezone
@@ -8064,11 +8064,11 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-				SWITCHOFFSET
-                            	(
-				   qspf.create_time,
-			    	   @utc_offset_string
-                    		)
+                SWITCHOFFSET
+                                (
+                   qspf.create_time,
+                       @utc_offset_string
+                            )
                             WHEN @timezone IS NOT NULL
                             THEN qspf.create_time AT TIME ZONE @timezone
                         END,
@@ -8078,11 +8078,11 @@ BEGIN
                         CASE
                             WHEN @timezone IS NULL
                             THEN
-				SWITCHOFFSET
-                            	(
-				   qspf.last_updated_time,
-			    	   @utc_offset_string
-                    		)
+                SWITCHOFFSET
+                                (
+                   qspf.last_updated_time,
+                       @utc_offset_string
+                            )
                             WHEN @timezone IS NOT NULL
                             THEN qspf.last_updated_time AT TIME ZONE @timezone
                         END,
