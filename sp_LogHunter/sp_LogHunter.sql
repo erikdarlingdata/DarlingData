@@ -631,6 +631,8 @@ BEGIN
     IF @debug = 1 BEGIN RAISERROR('Ended cursor', 0, 1) WITH NOWAIT; END;
 
     /*get rid of some messages we don't care about*/
+    IF @debug = 1 BEGIN RAISERROR('Delete dumb messages', 0, 1) WITH NOWAIT; END;
+    
     DELETE
         el WITH(TABLOCKX)
     FROM #error_log AS el
@@ -662,6 +664,31 @@ BEGIN
               N'The Service Broker endpoint is in disabled or stopped state.'
           )
     OPTION(RECOMPILE);
+
+    /*get rid of duplicate messages we don't care about*/
+    IF @debug = 1 BEGIN RAISERROR('Delete dupe messages', 0, 1) WITH NOWAIT; END;
+    
+    WITH
+        d AS
+    (
+        SELECT
+            el.*,
+            n = 
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        el.log_date,
+                        el.process_info,
+                        el.text
+                    ORDER BY
+                        el.log_date
+                )
+        FROM #error_log AS el
+    )
+    DELETE
+        d
+    FROM d AS d WITH (TABLOCK)
+    WHERE d.n > 1;
 
     /*Return the search results*/
     SELECT
