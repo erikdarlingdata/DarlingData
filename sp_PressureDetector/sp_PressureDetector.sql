@@ -677,9 +677,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
             sample_time =
                 GETDATE(),
             sorting =
-                ROW_NUMBER() OVER 
+                ROW_NUMBER() OVER
                 (
-                    ORDER BY 
+                    ORDER BY
                         dows.wait_time_ms DESC
                 )
         FROM sys.dm_os_wait_stats AS dows
@@ -2019,7 +2019,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         ) AS x (c)
         OPTION(MAXDOP 1, RECOMPILE);
         ';
-        
+
         IF @debug = 1
         BEGIN
             RAISERROR('%s', 0, 1, @cache_sql) WITH NOWAIT;
@@ -2357,7 +2357,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 dowt.*
             FROM sys.dm_os_waiting_tasks AS dowt
             WHERE dowt.session_id = deqmg.session_id
-            ORDER BY 
+            ORDER BY
                 dowt.wait_duration_ms DESC
         ) AS waits
         OUTER APPLY sys.dm_exec_text_query_plan
