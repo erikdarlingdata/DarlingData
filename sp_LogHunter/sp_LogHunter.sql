@@ -632,7 +632,7 @@ BEGIN
 
     /*get rid of some messages we don't care about*/
     IF @debug = 1 BEGIN RAISERROR('Delete dumb messages', 0, 1) WITH NOWAIT; END;
-    
+
     DELETE
         el WITH(TABLOCKX)
     FROM #error_log AS el
@@ -667,13 +667,13 @@ BEGIN
 
     /*get rid of duplicate messages we don't care about*/
     IF @debug = 1 BEGIN RAISERROR('Delete dupe messages', 0, 1) WITH NOWAIT; END;
-    
+
     WITH
         d AS
     (
         SELECT
             el.*,
-            n = 
+            n =
                 ROW_NUMBER() OVER
                 (
                     PARTITION BY
