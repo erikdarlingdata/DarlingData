@@ -1146,9 +1146,9 @@ BEGIN
         deqs.min_used_threads,
         deqs.max_used_threads,
         deqs.total_rows,
-        max_worker_time_ms = 
+        max_worker_time_ms =
             deqs.max_worker_time / 1000.,
-        max_elapsed_time_ms = 
+        max_elapsed_time_ms =
             deqs.max_elapsed_time / 1000.
     INTO #dm_exec_query_stats_sh
     FROM sys.dm_exec_query_stats AS deqs
@@ -1968,9 +1968,9 @@ SELECT
     deqs.min_used_threads,
     deqs.max_used_threads,
     deqs.total_rows,
-    max_worker_time_ms = 
+    max_worker_time_ms =
         deqs.max_worker_time / 1000.,
-    max_elapsed_time_ms = 
+    max_elapsed_time_ms =
         deqs.max_elapsed_time / 1000.
 INTO #dm_exec_query_stats
 FROM sys.dm_exec_query_stats AS deqs
