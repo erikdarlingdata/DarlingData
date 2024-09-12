@@ -2024,17 +2024,10 @@ SELECT
     query_capture_mode_desc,
     size_based_cleanup_mode_desc
 FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
-WHERE
-(
-     dqso.desired_state <> 4
-  OR dqso.readonly_reason <> 8
-)
-AND
-(
-      dqso.desired_state = 1
-   OR dqso.actual_state IN (1, 3)
-   OR dqso.desired_state <> dqso.actual_state
-)
+WHERE dqso.desired_state <> 4
+AND   dqso.readonly_reason <> 8
+AND   dqso.desired_state <> dqso.actual_state
+AND   dqso.actual_state IN (0, 3)
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -2087,27 +2080,6 @@ BEGIN
         @current_table;
 END;
 
-IF @query_store_trouble = 1
-BEGIN
-    SELECT
-        query_store_trouble =
-             'Query Store may be in a disagreeable state',
-        database_name =
-            DB_NAME(qst.database_id),
-        qst.desired_state_desc,
-        qst.actual_state_desc,
-        qst.readonly_reason,
-        qst.current_storage_size_mb,
-        qst.flush_interval_seconds,
-        qst.interval_length_minutes,
-        qst.max_storage_size_mb,
-        qst.stale_query_threshold_days,
-        qst.max_plans_per_query,
-        qst.query_capture_mode_desc,
-        qst.size_based_cleanup_mode_desc
-    FROM #query_store_trouble AS qst
-    OPTION(RECOMPILE);
-END;
 
 /*
 If you specified a procedure name, we need to figure out if there are any plans for it available
@@ -4835,15 +4807,22 @@ BEGIN
             QueryHashesWithIds.plan_id,
             QueryHashesWithCounts.query_hash,
             QueryHashesWithCounts.plan_hash_count_for_query_hash,
-            DENSE_RANK() OVER (ORDER BY QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash DESC) AS ranking
+            ranking = 
+                DENSE_RANK() OVER 
+                (
+                    ORDER BY 
+                        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, 
+                        QueryHashesWithCounts.query_hash DESC
+                )
         FROM
         (
            SELECT
                qsq.query_hash,
-               COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
+               plan_hash_count_for_query_hash = 
+                   COUNT(DISTINCT qsp.query_plan_hash)
            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
+             ON qsq.query_id = qsp.query_id
            JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
              ON qsp.plan_id = qsrs.plan_id
            WHERE 1 = 1
@@ -4859,16 +4838,16 @@ BEGIN
                qsp.plan_id
            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
+             ON qsq.query_id = qsp.query_id
            JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
              ON qsp.plan_id = qsrs.plan_id
             WHERE 1 = 1
            ' + @where_clause
              + N'
         ) AS QueryHashesWithIds
-        ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
+          ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
     ) AS ranked_plans
-    WHERE ranked_plans.ranking <= @TOP
+    WHERE ranked_plans.ranking <= @top
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
@@ -4916,6 +4895,7 @@ BEGIN
             @current_table;
     END;
 END;
+
 IF @sort_order = 'total waits'
 BEGIN
     SELECT
@@ -4937,10 +4917,11 @@ BEGIN
     SELECT TOP (@top)
         @database_id,
         qsrs.plan_id,
-        SUM(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+        total_query_wait_time_ms =
+            SUM(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-    ON qsrs.plan_id = qsws.plan_id
+      ON qsrs.plan_id = qsws.plan_id
     WHERE 1 = 1
     ' + @where_clause
       + N'
@@ -4998,7 +4979,8 @@ END;
     'total waits' is special. It's a sum, not a max, so
     we cover it above rather than here.
 */
-IF @sort_order_is_a_wait = 1 AND @sort_order <> 'total waits'
+IF  @sort_order_is_a_wait = 1 
+AND @sort_order <> 'total waits'
 BEGIN
     SELECT
         @current_table = 'inserting #plan_ids_with_total_waits',
@@ -5019,10 +5001,11 @@ BEGIN
     SELECT TOP (@top)
         @database_id,
         qsrs.plan_id,
-        MAX(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+        total_query_wait_time_ms =
+            MAX(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-    ON qsrs.plan_id = qsws.plan_id
+      ON qsrs.plan_id = qsws.plan_id
     WHERE 1 = 1
     AND qsws.wait_category = '  +
     CASE @sort_order
@@ -5650,8 +5633,8 @@ CROSS APPLY
         qsq.*
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = qsp.query_id
-    ORDER
-        BY qsq.last_execution_time DESC
+    ORDER BY 
+        qsq.last_execution_time DESC
 ) AS qsq
 WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
@@ -6044,8 +6027,11 @@ SELECT
     dqso.size_based_cleanup_mode_desc,'
     +
     CASE
-        WHEN (@product_version = 13
-              AND @azure = 0)
+        WHEN 
+        (     
+              @product_version = 13
+          AND @azure = 0
+        )
         THEN N'
     NULL'
         ELSE N'
@@ -9236,6 +9222,28 @@ BEGIN
     END;
 
 END; /*End expert mode = 1, format output = 1*/
+
+IF @query_store_trouble = 1
+BEGIN
+    SELECT
+        query_store_trouble =
+             'Query Store may be in a disagreeable state',
+        database_name =
+            DB_NAME(qst.database_id),
+        qst.desired_state_desc,
+        qst.actual_state_desc,
+        qst.readonly_reason,
+        qst.current_storage_size_mb,
+        qst.flush_interval_seconds,
+        qst.interval_length_minutes,
+        qst.max_storage_size_mb,
+        qst.stale_query_threshold_days,
+        qst.max_plans_per_query,
+        qst.query_capture_mode_desc,
+        qst.size_based_cleanup_mode_desc
+    FROM #query_store_trouble AS qst
+    OPTION(RECOMPILE);
+END;
 
 /*
 Return help table, unless told not to
