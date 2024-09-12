@@ -4807,18 +4807,18 @@ BEGIN
             QueryHashesWithIds.plan_id,
             QueryHashesWithCounts.query_hash,
             QueryHashesWithCounts.plan_hash_count_for_query_hash,
-            ranking = 
-                DENSE_RANK() OVER 
+            ranking =
+                DENSE_RANK() OVER
                 (
-                    ORDER BY 
-                        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, 
+                    ORDER BY
+                        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC,
                         QueryHashesWithCounts.query_hash DESC
                 )
         FROM
         (
            SELECT
                qsq.query_hash,
-               plan_hash_count_for_query_hash = 
+               plan_hash_count_for_query_hash =
                    COUNT(DISTINCT qsp.query_plan_hash)
            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -4979,7 +4979,7 @@ END;
     'total waits' is special. It's a sum, not a max, so
     we cover it above rather than here.
 */
-IF  @sort_order_is_a_wait = 1 
+IF  @sort_order_is_a_wait = 1
 AND @sort_order <> 'total waits'
 BEGIN
     SELECT
@@ -5633,7 +5633,7 @@ CROSS APPLY
         qsq.*
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = qsp.query_id
-    ORDER BY 
+    ORDER BY
         qsq.last_execution_time DESC
 ) AS qsq
 WHERE qsp.database_id = @database_id
@@ -6027,8 +6027,8 @@ SELECT
     dqso.size_based_cleanup_mode_desc,'
     +
     CASE
-        WHEN 
-        (     
+        WHEN
+        (
               @product_version = 13
           AND @azure = 0
         )
