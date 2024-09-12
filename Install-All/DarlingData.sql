@@ -1,4 +1,4 @@
--- Compile Date: 09/11/2024 15:52:17 UTC
+-- Compile Date: 09/12/2024 13:30:11 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11563,14 +11563,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                  ELSE 0
             END,
         @prefix sysname =
-            CASE
-                WHEN @@SERVICENAME = N'MSSQLSERVER'
-                THEN N'SQLServer:'
-                ELSE N'MSSQL$' +
-                     @@SERVICENAME +
-                     N':'
-            END +
-            N'%',
+        (
+            SELECT TOP (1)
+                SUBSTRING
+                (
+                    dopc.object_name,
+                    1,
+                    CHARINDEX(N':', dopc.object_name)
+                )
+            FROM sys.dm_os_performance_counters AS dopc
+        ) +
+        N'%',
         @memory_grant_cap xml,
         @cache_xml xml,
         @cache_sql nvarchar(MAX) = N'';
@@ -11891,7 +11894,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
             sample_time =
                 GETDATE(),
             sorting =
-                ROW_NUMBER() OVER (ORDER BY dows.wait_time_ms DESC)
+                ROW_NUMBER() OVER
+                (
+                    ORDER BY
+                        dows.wait_time_ms DESC
+                )
         FROM sys.dm_os_wait_stats AS dows
         WHERE
         (
@@ -11990,6 +11997,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         N''
                     )
             FROM @waits AS w
+            WHERE w.waiting_tasks_count_n > 0
             ORDER BY
                 w.sorting
             OPTION(MAXDOP 1, RECOMPILE);
@@ -13219,7 +13227,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     domcc.single_pages_in_use_kb +
                     domcc.multi_pages_in_use_kb'
                     END + N'
-                ) / 1024. / 1024. > 0.5
+                ) / 1024. / 1024. > 0
             ORDER BY
                 pages_gb DESC
             FOR XML
@@ -13227,7 +13235,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 TYPE
         ) AS x (c)
         OPTION(MAXDOP 1, RECOMPILE);
-        '
+        ';
 
         IF @debug = 1
         BEGIN
@@ -13566,7 +13574,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 dowt.*
             FROM sys.dm_os_waiting_tasks AS dowt
             WHERE dowt.session_id = deqmg.session_id
-            ORDER BY dowt.wait_duration_ms DESC
+            ORDER BY
+                dowt.wait_duration_ms DESC
         ) AS waits
         OUTER APPLY sys.dm_exec_text_query_plan
         (
@@ -13710,12 +13719,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         )
                     ),
                 sqlserver_cpu_utilization =
-                    t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int'),
+                    t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','integer'),
                 other_process_cpu_utilization =
-                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int')
-                     - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','int')),
+                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','integer')
+                     - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','integer')),
                 total_cpu_utilization =
-                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int'))
+                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'integer'))
             FROM sys.dm_os_sys_info AS osi
             CROSS JOIN
             (
@@ -13779,13 +13788,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
             current_workers =
                 SUM(dos.current_workers_count),
             total_active_request_count =
-                SUM(wg.active_request_count),
+                MAX(wg.active_request_count),
             total_queued_request_count =
-                SUM(wg.queued_request_count),
+                MAX(wg.queued_request_count),
             total_blocked_task_count =
-                SUM(wg.blocked_task_count),
+                MAX(wg.blocked_task_count),
             total_active_parallel_thread_count =
-                SUM(wg.active_parallel_thread_count),
+                MAX(wg.active_parallel_thread_count),
             avg_runnable_tasks_count =
                 AVG(dos.runnable_tasks_count),
             high_runnable_percent =
@@ -13807,7 +13816,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 high_runnable_percent =
                     '' +
                     RTRIM(y.runnable_pct) +
-                    '% of your queries are waiting to get on a CPU.'
+                    '% of ' +
+                    RTRIM(y.total) +
+                    ' queries are waiting to get on a CPU.'
             FROM
             (
                 SELECT
@@ -13840,7 +13851,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ) AS x
             ) AS y
             WHERE y.runnable_pct >= 10
-            AND   y.total >= 10
+            AND   y.total >= 4
         ) AS r
         WHERE dos.status = N'VISIBLE ONLINE'
         OPTION(MAXDOP 1, RECOMPILE);
