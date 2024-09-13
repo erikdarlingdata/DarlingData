@@ -522,7 +522,7 @@ BEGIN
     BEGIN
         DECLARE
             @cs CURSOR;
-        
+
         SET
             @cs =
         CURSOR
