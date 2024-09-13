@@ -521,7 +521,10 @@ BEGIN
     WHILE @l_log <= @h_log
     BEGIN
         DECLARE
-            c
+            @cs CURSOR;
+        
+        SET
+            @cs =
         CURSOR
             LOCAL
             SCROLL
@@ -534,10 +537,10 @@ BEGIN
 
         IF @debug = 1 BEGIN RAISERROR('Opening cursor', 0, 1) WITH NOWAIT; END;
 
-        OPEN c;
+        OPEN @cs;
 
         FETCH FIRST
-        FROM c
+        FROM @cs
         INTO @c;
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
@@ -592,7 +595,7 @@ BEGIN
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;
             /*Get the next search command*/
             FETCH NEXT
-            FROM c
+            FROM @cs
             INTO @c;
 
             /*Increment our loop counter*/
@@ -623,10 +626,6 @@ BEGIN
             BREAK;
         END;
         IF @debug = 1 BEGIN RAISERROR('Ended WHILE loop', 0, 1) WITH NOWAIT; END;
-
-        /*Close out the cursor*/
-        CLOSE c;
-        DEALLOCATE c;
     END;
     IF @debug = 1 BEGIN RAISERROR('Ended cursor', 0, 1) WITH NOWAIT; END;
 
