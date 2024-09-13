@@ -1377,7 +1377,10 @@ BEGIN
 END;
 
 DECLARE
-    database_cursor CURSOR
+    @database_cursor CURSOR;
+
+SET
+    @database_cursor = CURSOR
     LOCAL
     SCROLL
     DYNAMIC
@@ -1387,10 +1390,10 @@ SELECT
     d.database_name
 FROM #databases AS d;
 
-OPEN database_cursor;
+OPEN @database_cursor;
 
 FETCH FIRST
-FROM database_cursor
+FROM @database_cursor
 INTO @database_name;
 
 WHILE @@FETCH_STATUS = 0
@@ -2305,7 +2308,7 @@ Check that you spelled everything correctly and you''re in the right database
 We will skip this database and continue',
                        10, 1, @procedure_name, @database_name) WITH NOWAIT;
         FETCH NEXT
-        FROM database_cursor
+        FROM @database_cursor
         INTO @database_name;
 
         CONTINUE;
@@ -6794,12 +6797,9 @@ BEGIN
 END;
 
 FETCH NEXT
-FROM database_cursor
+FROM @database_cursor
 INTO @database_name;
 END;
-
-CLOSE database_cursor;
-DEALLOCATE database_cursor;
 
 /*
 This is where we start returning results
