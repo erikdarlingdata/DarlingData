@@ -1,4 +1,4 @@
--- Compile Date: 09/13/2024 19:27:29 UTC
+-- Compile Date: 09/15/2024 03:01:33 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -67,7 +67,7 @@ BEGIN
 
     SELECT
         @version = '1.9',
-        @version_date = '20240901';
+        @version_date = '20240915';
 
     IF @help = 1
     BEGIN
@@ -2968,7 +2968,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
     @version = '5.9',
-    @version_date = '20240901';
+    @version_date = '20240915';
 
 IF @help = 1
 BEGIN
@@ -7716,7 +7716,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
     @version = '3.9',
-    @version_date = '20240901';
+    @version_date = '20240915';
 
 IF @help = 1
 BEGIN
@@ -10617,7 +10617,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 BEGIN
     SELECT
         @version = '1.9',
-        @version_date = '20240901';
+        @version_date = '20240915';
 
     IF @help = 1
     BEGIN
@@ -11336,7 +11336,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
     @version = '4.9',
-    @version_date = '20240901';
+    @version_date = '20240915';
 
 
 IF @help = 1
@@ -14478,7 +14478,7 @@ These are for your outputs.
 */
 SELECT
     @version = '4.9',
-    @version_date = '20240901';
+    @version_date = '20240915';
 
 /*
 Helpful section! For help.
