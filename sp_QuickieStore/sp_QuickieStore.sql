@@ -134,7 +134,7 @@ These are for your outputs.
 */
 SELECT
     @version = '4.9',
-    @version_date = '20240901';
+    @version_date = '20240915';
 
 /*
 Helpful section! For help.
