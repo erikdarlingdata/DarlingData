@@ -1,4 +1,4 @@
--- Compile Date: 09/15/2024 03:01:33 UTC
+-- Compile Date: 09/25/2024 23:29:48 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11848,6 +11848,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     THEN N'Query scheduling'
                     WHEN dows.wait_type = N'THREADPOOL'
                     THEN N'Potential worker thread exhaustion'
+                    WHEN dows.wait_type = N'RESOURCE_GOVERNOR_IDLE'
+                    THEN N'Potential CPU cap waits'
                     WHEN dows.wait_type = N'CMEMTHREAD'
                     THEN N'Tasks waiting on memory objects'
                     WHEN dows.wait_type = N'PAGELATCH_EX'
@@ -11898,6 +11900,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     THEN N'Potential Availability Group Issues'
                     WHEN dows.wait_type = N'HADR_GROUP_COMMIT'
                     THEN N'Potential Availability Group Issues'
+                    WHEN dows.wait_type = N'WAIT_ON_SYNC_STATISTICS_REFRESH'
+                    THEN N'Waiting on sync stats updates (compilation)'
                 END,
             hours_wait_time =
                 CASE
@@ -11981,6 +11985,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      /*CPU*/
                      N'SOS_SCHEDULER_YIELD',
                      N'THREADPOOL',
+                     N'RESOURCE_GOVERNOR_IDLE',
                      /*tempdb (potentially)*/
                      N'PAGELATCH_EX',
                      N'PAGELATCH_SH',
@@ -12007,7 +12012,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      N'BTREE_INSERT_FLOW_CONTROL',
                      /*Availability Group*/
                      N'HADR_SYNC_COMMIT',
-                     N'HADR_GROUP_COMMIT'
+                     N'HADR_GROUP_COMMIT',
+                     /*Stats/Compilation*/
+                     N'WAIT_ON_SYNC_STATISTICS_REFRESH'
                  )
             /*Locking*/
             OR dows.wait_type LIKE N'LCK%'
