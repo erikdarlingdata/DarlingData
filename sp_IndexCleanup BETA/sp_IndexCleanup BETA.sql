@@ -326,7 +326,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRIMARY KEY CLUSTERED(database_id, object_id, index_id, partition_id)
     );
 
-    CREATE TABLE 
+    CREATE TABLE
         #index_analysis
     (
         database_id integer NOT NULL,
@@ -344,7 +344,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRIMARY KEY CLUSTERED (table_name, index_name)
     );
 
-    CREATE TABLE 
+    CREATE TABLE
         #index_cleanup_report
     (
         database_name sysname NOT NULL,
@@ -1133,7 +1133,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N'DROP'
                 WHEN superseded_by IS NOT NULL
                 AND  missing_columns IS NULL
-                THEN N'MERGE INTO ' + 
+                THEN N'MERGE INTO ' +
                      superseded_by
                 WHEN superseded_by IS NOT NULL
                 AND  missing_columns IS NOT NULL
