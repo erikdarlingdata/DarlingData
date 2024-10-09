@@ -4706,7 +4706,7 @@ WHERE NOT EXISTS
           AND   qsqt.query_sql_text NOT LIKE N''CREATE%INDEX%''
           AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
           AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''SELECT StatMan%''
+          AND   qsqt.query_sql_text NOT LIKE N''%SELECT StatMan%''
           AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
           AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
       )
@@ -5436,7 +5436,9 @@ SELECT
                         (qsp_plans.plan_id)
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
                 WHERE qsp_plans.query_id = qsp.query_id
-                FOR XML PATH(''''), TYPE
+                FOR XML 
+                    PATH(''''), 
+                    TYPE
             ).value(''./text()[1]'', ''varchar(max)''),
             1,
             2,
@@ -6885,8 +6887,9 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''),
-                                 TYPE
+                         FOR XML 
+                             PATH(N''''),
+                             TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -7124,8 +7127,9 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''),
-                                 TYPE
+                         FOR XML 
+                             PATH(N''''),
+                             TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -7368,8 +7372,9 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''),
-                                 TYPE
+                         FOR XML 
+                             PATH(N''''),
+                             TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -7586,8 +7591,9 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''),
-                                 TYPE
+                         FOR XML 
+                             PATH(N''''),
+                             TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -7873,7 +7879,9 @@ SELECT
                            qsws.wait_category_desc
                        ORDER BY
                            SUM(qsws.avg_query_wait_time_ms) DESC
-                       FOR XML PATH(''''), TYPE
+                       FOR XML 
+                           PATH(''''), 
+                           TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
                     1,
                     2,
@@ -7925,7 +7933,9 @@ SELECT
                            qsws.wait_category_desc
                        ORDER BY
                            SUM(qsws.avg_query_wait_time_ms) DESC
-                       FOR XML PATH(''''), TYPE
+                       FOR XML 
+                           PATH(''''), 
+                           TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
                     1,
                     2,
