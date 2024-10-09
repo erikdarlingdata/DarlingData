@@ -5436,8 +5436,8 @@ SELECT
                         (qsp_plans.plan_id)
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
                 WHERE qsp_plans.query_id = qsp.query_id
-                FOR XML 
-                    PATH(''''), 
+                FOR XML
+                    PATH(''''),
                     TYPE
             ).value(''./text()[1]'', ''varchar(max)''),
             1,
@@ -6887,7 +6887,7 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML 
+                         FOR XML
                              PATH(N''''),
                              TYPE
                      )
@@ -7127,7 +7127,7 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML 
+                         FOR XML
                              PATH(N''''),
                              TYPE
                      )
@@ -7372,7 +7372,7 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML 
+                         FOR XML
                              PATH(N''''),
                              TYPE
                      )
@@ -7591,7 +7591,7 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML 
+                         FOR XML
                              PATH(N''''),
                              TYPE
                      )
@@ -7879,8 +7879,8 @@ SELECT
                            qsws.wait_category_desc
                        ORDER BY
                            SUM(qsws.avg_query_wait_time_ms) DESC
-                       FOR XML 
-                           PATH(''''), 
+                       FOR XML
+                           PATH(''''),
                            TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
                     1,
@@ -7933,8 +7933,8 @@ SELECT
                            qsws.wait_category_desc
                        ORDER BY
                            SUM(qsws.avg_query_wait_time_ms) DESC
-                       FOR XML 
-                           PATH(''''), 
+                       FOR XML
+                           PATH(''''),
                            TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
                     1,
