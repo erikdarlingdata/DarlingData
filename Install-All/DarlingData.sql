@@ -1,4 +1,4 @@
--- Compile Date: 10/09/2024 13:47:46 UTC
+-- Compile Date: 10/09/2024 15:45:38 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -10708,6 +10708,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @full_object_name nvarchar(768) = NULL,
         @final_script nvarchar(MAX) = '',
         /*cursor variables*/
+        @c_database_id integer,
+        @c_schema_name sysname,
         @c_table_name sysname,
         @c_index_name sysname,
         @c_is_unique bit,
@@ -10819,6 +10821,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         database_id integer NOT NULL,
         object_id integer NOT NULL,
         index_id integer NOT NULL,
+        schema_name sysname NOT NULL,
         table_name sysname NOT NULL,
         index_name sysname NULL,
         column_name sysname NOT NULL,
@@ -10867,7 +10870,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRIMARY KEY CLUSTERED(database_id, object_id, index_id, partition_id)
     );
 
-    CREATE TABLE #index_analysis
+    CREATE TABLE
+        #index_analysis
     (
         database_id integer NOT NULL,
         schema_name sysname NOT NULL,
@@ -10884,7 +10888,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRIMARY KEY CLUSTERED (table_name, index_name)
     );
 
-    CREATE TABLE #index_cleanup_report
+    CREATE TABLE
+        #index_cleanup_report
     (
         database_name sysname NOT NULL,
         table_name sysname NOT NULL,
@@ -11070,6 +11075,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         database_id = @database_id,
         t.object_id,
         i.index_id,
+        schema_name = s.name,
         table_name = t.name,
         index_name = i.name,
         column_name = c.name,
@@ -11196,6 +11202,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         database_id,
         object_id,
         index_id,
+        schema_name,
         table_name,
         index_name,
         column_name,
@@ -11405,6 +11412,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WITH
         (TABLOCK)
     (
+        database_id,
+        schema_name,
         table_name,
         index_name,
         is_unique,
@@ -11413,6 +11422,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition
     )
     SELECT
+        @database_id,
+        id1.schema_name,
         id1.table_name,
         id1.index_name,
         id1.is_unique,
@@ -11466,6 +11477,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id1.filter_definition
     FROM #index_details id1
     GROUP BY
+        id1.schema_name,
         id1.table_name,
         id1.index_name,
         id1.is_unique,
@@ -11493,6 +11505,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         READ_ONLY
     FOR
     SELECT DISTINCT
+        ia.database_id,
+        ia.schema_name,
         ia.table_name,
         ia.index_name,
         ia.is_unique,
@@ -11507,6 +11521,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FETCH NEXT
     FROM @index_cursor
     INTO
+        @c_database_id,
+        @c_schema_name,
         @c_table_name,
         @c_index_name,
         @c_is_unique,
@@ -11518,13 +11534,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             IndexColumns AS
         (
             SELECT
+                id.database_id,
+                id.schema_name,
                 id.table_name,
                 id.index_name,
                 id.column_name,
                 id.is_included_column,
                 id.key_ordinal
             FROM #index_details id
-            WHERE id.table_name = @c_table_name
+            WHERE id.database_id = @c_database_id
+            AND   id.schema_name = @c_schema_name
+            AND   id.table_name = @c_table_name
         ),
             CurrentIndexColumns AS
         (
@@ -11631,12 +11651,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   ''
                 )
         FROM #index_analysis ia
-        WHERE ia.table_name = @c_table_name
+        WHERE ia.database_id = @c_database_id
+        AND   ia.schema_name = @c_schema_name
+        AND   ia.table_name = @c_table_name
         AND   ia.index_name <> @c_index_name;
 
         FETCH NEXT
         FROM @index_cursor
         INTO
+            @c_database_id,
+            @c_schema_name,
             @c_table_name,
             @c_index_name,
             @c_is_unique,
@@ -11653,7 +11677,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N'DROP'
                 WHEN superseded_by IS NOT NULL
                 AND  missing_columns IS NULL
-                THEN N'MERGE INTO ' + superseded_by
+                THEN N'MERGE INTO ' +
+                     superseded_by
                 WHEN superseded_by IS NOT NULL
                 AND  missing_columns IS NOT NULL
                 THEN N'MERGE INTO ' +
