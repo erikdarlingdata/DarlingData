@@ -1,4 +1,4 @@
--- Compile Date: 10/09/2024 16:00:26 UTC
+-- Compile Date: 10/09/2024 17:47:45 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -12054,7 +12054,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         f.script,
         sort_order =
             CASE action
-                WHEN N'MERGE INTO%' THEN 2
+                WHEN N'MERGE INTO' THEN 2
                 WHEN N'DROP' THEN 3
                 ELSE 999
             END
@@ -12100,7 +12100,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE f.action IN
           (
               N'DROP',
-              N'MERGE INTO%'
+              N'MERGE INTO'
           )
     ORDER BY
         f.table_name,
