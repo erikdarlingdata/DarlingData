@@ -341,7 +341,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by sysname NULL,
         missing_columns nvarchar(MAX) NULL,
         action nvarchar(MAX) NULL,
-        PRIMARY KEY CLUSTERED (table_name, index_name)
+        INDEX c CLUSTERED 
+            (database_id, schema_name, table_name, index_name)
     );
 
     CREATE TABLE 
