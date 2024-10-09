@@ -1,4 +1,4 @@
--- Compile Date: 10/09/2024 17:47:45 UTC
+-- Compile Date: 10/09/2024 21:16:04 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -11490,9 +11490,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#partition_stats',
+            table_name = '#index_analysis',
             *
-        FROM #partition_stats AS ps;
+        FROM #index_analysis AS ia;
     END;
 
     /*Analyze indexes*/
