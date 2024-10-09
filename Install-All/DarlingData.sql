@@ -1,4 +1,4 @@
--- Compile Date: 10/09/2024 15:45:38 UTC
+-- Compile Date: 10/09/2024 16:00:26 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -10885,7 +10885,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by sysname NULL,
         missing_columns nvarchar(MAX) NULL,
         action nvarchar(MAX) NULL,
-        PRIMARY KEY CLUSTERED (table_name, index_name)
+        INDEX c CLUSTERED
+            (database_id, schema_name, table_name, index_name)
     );
 
     CREATE TABLE
