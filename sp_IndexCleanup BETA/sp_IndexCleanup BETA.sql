@@ -946,9 +946,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#partition_stats',
+            table_name = '#index_analysis',
             *
-        FROM #partition_stats AS ps;
+        FROM #index_analysis AS ia;
     END;
 
     /*Analyze indexes*/
