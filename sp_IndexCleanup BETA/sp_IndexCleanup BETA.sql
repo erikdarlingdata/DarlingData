@@ -1510,7 +1510,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         f.script,
         sort_order =
             CASE action
-                WHEN N'MERGE INTO%' THEN 2
+                WHEN N'MERGE INTO' THEN 2
                 WHEN N'DROP' THEN 3
                 ELSE 999
             END
@@ -1556,7 +1556,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE f.action IN
           (
               N'DROP',
-              N'MERGE INTO%'
+              N'MERGE INTO'
           )
     ORDER BY
         f.table_name,
