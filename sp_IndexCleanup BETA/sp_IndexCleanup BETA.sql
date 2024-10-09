@@ -1133,7 +1133,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N'DROP'
                 WHEN superseded_by IS NOT NULL
                 AND  missing_columns IS NULL
-                THEN N'MERGE INTO ' + superseded_by
+                THEN N'MERGE INTO ' + 
+                     superseded_by
                 WHEN superseded_by IS NOT NULL
                 AND  missing_columns IS NOT NULL
                 THEN N'MERGE INTO ' +
