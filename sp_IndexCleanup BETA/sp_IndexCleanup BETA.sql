@@ -19,10 +19,10 @@ SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;
 GO
 
-IF OBJECT_ID('dbo.sp_IndexCleanup', 'P') IS NULL  
-BEGIN  
-    EXECUTE ('CREATE PROCEDURE dbo.sp_IndexCleanup AS RETURN 138;');  
-END;  
+IF OBJECT_ID('dbo.sp_IndexCleanup', 'P') IS NULL
+BEGIN
+    EXECUTE ('CREATE PROCEDURE dbo.sp_IndexCleanup AS RETURN 138;');
+END;
 GO
 
 ALTER PROCEDURE
@@ -67,7 +67,7 @@ It needs lots of love and testing in real environments with real indexes to fix 
  -------------------------------------------------------------------------------------------
  -------------------------------------------------------------------------------------------
  -------------------------------------------------------------------------------------------
- 
+
  ';
 
 
@@ -87,8 +87,8 @@ It needs lots of love and testing in real environments with real indexes to fix 
             help = N'you are currently using a beta version, and the advice should not be followed'
           UNION ALL
         SELECT
-            help = N'without careful analysis and consideration. it may be harmful.'   
-           
+            help = N'without careful analysis and consideration. it may be harmful.'
+
 
         /*
         Parameters
@@ -172,7 +172,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @helper integer = 0,
         @sql_len integer,
         @sql_debug nvarchar(MAX) = N'';
-   
+
     /*
     Initial checks for object validity
     */
@@ -197,17 +197,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.databases AS d
         WHERE d.name = @database_name;
     END;
-   
+
     IF  @schema_name IS NULL
     AND @table_name IS NOT NULL
     BEGIN
         SELECT
             @schema_name = N'dbo';
     END;
-   
+
     IF  @schema_name IS NOT NULL
     AND @table_name IS NOT NULL
-    BEGIN   
+    BEGIN
         SELECT
             @full_object_name =
                 QUOTENAME(@database_name) +
@@ -215,7 +215,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 QUOTENAME(@schema_name) +
                 N'.' +
                 QUOTENAME(@table_name);
-       
+
         SELECT
             @object_id =
                 OBJECT_ID(@full_object_name);
@@ -268,7 +268,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_compression_success_count bigint NULL,
         PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
     );
-   
+
     CREATE TABLE
         #index_details
     (
@@ -300,7 +300,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_update datetime NULL,
         PRIMARY KEY CLUSTERED(database_id, object_id, index_id, column_name)
     );
-       
+
     CREATE TABLE
         #partition_stats
     (
@@ -394,11 +394,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /*
     Start insert queries
-    */   
+    */
     SELECT
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
-   
+
     SELECT
         @sql += N'
     SELECT
@@ -461,7 +461,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         PRINT @sql;
     END;
-   
+
     INSERT
         #operational_stats
     WITH
@@ -507,7 +507,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @object_id integer',
         @database_id,
         @object_id;
-   
+
     IF @debug = 1
     BEGIN
         SELECT
@@ -519,7 +519,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SELECT
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
-   
+
     SELECT
         @sql += N'
     SELECT
@@ -554,7 +554,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              1/0
                          FROM ' + QUOTENAME(@database_name) + N'.sys.foreign_key_columns AS f
                          WHERE f.parent_column_id = c.column_id
-                         AND   f.parent_object_id = c.object_id   
+                         AND   f.parent_object_id = c.object_id
                      )
                 THEN 1
                 ELSE 0
@@ -619,7 +619,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   i.type = 2
     AND   i.is_disabled = 0
     AND   i.is_hypothetical = 0';
-   
+
     IF @object_id IS NOT NULL
     BEGIN
         SELECT @sql += N'
@@ -638,12 +638,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND   so.type = ''TF''
     )
     OPTION(RECOMPILE);';
-   
+
     IF @debug = 1
     BEGIN
         PRINT @sql;
     END;
-   
+
     INSERT
         #index_details
     WITH
@@ -682,7 +682,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @object_id integer',
         @database_id,
         @object_id;
-   
+
     IF @debug = 1
     BEGIN
         SELECT
@@ -694,7 +694,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SELECT
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
-   
+
     SELECT
         @sql += N'
     SELECT
@@ -721,7 +721,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         pc.partition_columns
     FROM
     (
-        SELECT   
+        SELECT
             ps.object_id,
             ps.index_id,
             schema_name = s.name,
@@ -749,13 +749,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           ON p.partition_id = ps.partition_id
         WHERE t.type <> ''TF''
         AND   i.type = 2';
-   
+
     IF @object_id IS NOT NULL
     BEGIN
         SELECT @sql += N'
         AND   t.object_id = @object_id';
     END;
-   
+
     SELECT
         @sql += N'
         GROUP BY
@@ -815,12 +815,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 )
     ) AS pc
     OPTION(RECOMPILE);';
-   
+
     IF @debug = 1
     BEGIN
         PRINT @sql;
     END;
-   
+
     INSERT
         #partition_stats WITH(TABLOCK)
     (
@@ -847,7 +847,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @object_id integer',
         @database_id,
         @object_id;
-   
+
     IF @debug = 1
     BEGIN
         SELECT
@@ -937,11 +937,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             *
         FROM #partition_stats AS ps;
     END;
-   
+
     /*Analyze indexes*/
     DECLARE
         @index_cursor CURSOR;
-   
+
     SET @index_cursor = CURSOR
         LOCAL
         STATIC
@@ -957,9 +957,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         ia.table_name,
         ia.index_name;
-   
+
     OPEN @index_cursor;
-   
+
     FETCH NEXT
     FROM @index_cursor
     INTO
@@ -967,7 +967,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @c_index_name,
         @c_is_unique,
         @c_filter_definition;
-   
+
     WHILE @@FETCH_STATUS = 0
     BEGIN
         WITH
@@ -1013,7 +1013,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             FROM OtherIndexColumns oic
                             WHERE oic.column_name = cic.column_name
                             AND   oic.is_included_column = cic.is_included_column
-                            AND 
+                            AND
                             (
                                  oic.key_ordinal = cic.key_ordinal
                               OR oic.is_included_column = 1
@@ -1042,12 +1042,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 1/0
                             FROM OtherIndexColumns oic
                             WHERE oic.column_name = cic.column_name
-                            AND 
+                            AND
                             (
                                 oic.is_included_column = cic.is_included_column
                              OR oic.is_included_column = 0
                             )
-                            AND 
+                            AND
                             (
                                 oic.key_ordinal = cic.key_ordinal
                              OR oic.is_included_column = 1
@@ -1089,7 +1089,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_analysis ia
         WHERE ia.table_name = @c_table_name
         AND   ia.index_name <> @c_index_name;
-   
+
         FETCH NEXT
         FROM @index_cursor
         INTO
@@ -1098,7 +1098,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @c_is_unique,
             @c_filter_definition;
     END;
-       
+
     /*Determine actions*/
     UPDATE
         #index_analysis
@@ -1367,7 +1367,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      NULLIF
                      (
                          DATEADD
-                         (  
+                         (
                              SECOND,
                              -1,
                              CASE
@@ -1490,9 +1490,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #final_index_actions AS f
     WHERE f.action <> N'KEEP'
-   
+
     UNION ALL
-   
+
     SELECT
         r.database_name,
         r.table_name,
@@ -1515,7 +1515,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         index_name,
         sort_order;
-   
+
     SELECT
         @final_script += f.script + NCHAR(13) + NCHAR(10)
     FROM #final_index_actions AS f
@@ -1523,7 +1523,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         f.table_name,
         f.index_name;
-   
+
     SELECT
         @final_script += f.script + NCHAR(13) + NCHAR(10)
     FROM #final_index_actions AS f
@@ -1535,7 +1535,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         f.table_name,
         f.index_name;
-   
+
     SELECT
         @final_script +=
             N'ALTER INDEX ' +
@@ -1571,7 +1571,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 @sql_debug =
                     SUBSTRING(@final_script, @helper + 1, 2000) + NCHAR(13) + NCHAR(10);
-           
+
             PRINT @sql_debug;
             SET @helper += 2000;
         END;
