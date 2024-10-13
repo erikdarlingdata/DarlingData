@@ -5097,10 +5097,10 @@ BEGIN
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
     END;
-    
+
     SELECT
     /*
     This sort order is useless if we don't show the
@@ -5200,7 +5200,7 @@ BEGIN
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
@@ -5221,10 +5221,10 @@ BEGIN
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
     END;
-    
+
     SELECT
         @sql += N'
     SELECT TOP (@top)
@@ -5319,12 +5319,12 @@ OR
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
@@ -5349,10 +5349,10 @@ BEGIN
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
     END;
-    
+
     SELECT
         @sql += N'
     SELECT TOP (@top)
@@ -5466,12 +5466,12 @@ BEGIN
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
@@ -5504,7 +5504,7 @@ BEGIN
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
     END;
 
@@ -5573,12 +5573,12 @@ BEGIN
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
@@ -5601,7 +5601,7 @@ BEGIN
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
     END;
 
@@ -5671,12 +5671,12 @@ BEGIN
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
@@ -5695,7 +5695,7 @@ BEGIN
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         SET STATISTICS XML ON;
     END;
 
@@ -5712,7 +5712,7 @@ BEGIN
     must repeat some of the tricks
     we used for #plan_ids_with_query_hashes.
     */
-    SELECT      
+    SELECT  
         @sql += N'
     SELECT
         @database_id,
@@ -5856,12 +5856,12 @@ BEGIN
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
-    
+
         EXEC sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
@@ -6154,7 +6154,7 @@ CROSS APPLY
         regression mode, even if we are looking
         at a wait. The tables here are only for
         sorting. In regression mode, we sort
-        by columns found in #regression_changes.        
+        by columns found in #regression_changes.
         */
         SELECT
             @sql += N'
