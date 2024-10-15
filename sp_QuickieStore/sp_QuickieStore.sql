@@ -5256,19 +5256,12 @@ OR
       END
       + N'
     GROUP
-        BY qsrs.plan_id
-        '
-        + CASE WHEN @regression_mode = 1
-            THEN N' ,
+        BY qsrs.plan_id,
         CASE
             WHEN qsrs.last_execution_time >= @start_date AND qsrs.last_execution_time < @end_date
             THEN ''No''
             ELSE ''Yes''
         END
-        '
-           ELSE N''
-           END
-    + N'
     ORDER BY
         SUM(qsws.total_query_wait_time_ms) DESC
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
@@ -5403,19 +5396,12 @@ BEGIN
          END
       + N'
     GROUP
-        BY qsrs.plan_id
-        '
-        + CASE WHEN @regression_mode = 1
-            THEN N' ,
+        BY qsrs.plan_id,
         CASE
             WHEN qsrs.last_execution_time >= @start_date AND qsrs.last_execution_time < @end_date
             THEN ''No''
             ELSE ''Yes''
         END
-        '
-           ELSE N''
-           END
-    + N'
     ORDER BY
         MAX(qsws.total_query_wait_time_ms) DESC
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
@@ -6399,8 +6385,8 @@ CROSS APPLY
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     WHERE qsp.plan_id = qsrs.plan_id
     AND   qsp.is_online_index_plan = 0
-    ORDER
-        BY qsp.last_execution_time DESC
+    ORDER BY
+        qsp.last_execution_time DESC
 ) AS qsp
 WHERE qsrs.database_id = @database_id
 OPTION(RECOMPILE, OPTIMIZE FOR (@plans_top = 9223372036854775807));' + @nc10;
@@ -6522,8 +6508,8 @@ CROSS APPLY
         qsq.*
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = qsp.query_id
-    ORDER
-        BY qsq.last_execution_time DESC
+    ORDER BY
+        qsq.last_execution_time DESC
 ) AS qsq
 WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
@@ -8892,8 +8878,8 @@ SELECT
         FROM #query_store_query AS qsq
         WHERE qsq.query_id = qsp.query_id
         AND   qsq.database_id = qsp.database_id
-        ORDER
-            BY qsq.last_execution_time DESC
+        ORDER BY
+            qsq.last_execution_time DESC
     ) AS qsq'
     );
 
