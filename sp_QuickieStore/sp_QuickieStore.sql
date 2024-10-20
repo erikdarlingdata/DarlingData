@@ -198,7 +198,7 @@ BEGIN
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
-                WHEN N'@get_all_databases' THEN 'looks for query store enabled databases and returns combined results from all of them'
+                WHEN N'@get_all_databases' THEN 'looks for query store enabled user databases and returns combined results from all of them'
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
                 WHEN N'@work_start' THEN 'use this to set a specific start of your work days'
                 WHEN N'@work_end' THEN 'use this to set a specific end of your work days'
@@ -259,7 +259,7 @@ BEGIN
         defaults =
             CASE
                 ap.name
-                WHEN N'@database_name' THEN 'NULL; current non-system database name if NULL'
+                WHEN N'@database_name' THEN 'NULL; current database name if NULL'
                 WHEN N'@sort_order' THEN 'cpu'
                 WHEN N'@top' THEN '10'
                 WHEN N'@start_date' THEN 'the last seven days'
