@@ -148,8 +148,7 @@ EXEC dbo.sp_QuickieStore
 
 /*Check for regressions.
 Specifically, this checks for queries that are did more logical reads last week than this week.
-The default dates are helpful here. The default @start_date and @end_date specify last week for us and @regression_baseline_end_date defaults to being one week
-after @regression_baseline_start_date.
+The default dates are helpful here. The default @start_date and @end_date specify last week for us and @regression_baseline_end_date defaults to being one week after @regression_baseline_start_date.
 However, we need to specify @regression_baseline_start_date so that sp_QuickieStore knows to check for regressions.
 Searches by query hash, so you will won't be caught out by identical queries with different query ids.
 */
@@ -188,7 +187,7 @@ To get percentage changes instead, specify @regression_comparator = 'relative'.
 The default is @regression_comparator = 'absolute'.
 
 To see the difference, run `sp_QuickieStore` twice.
-To reduce save space on your screen, we will specify @hide_help_table = 1 to hide the table that at the bottom of the normal output.
+To save space on your screen, we will specify @hide_help_table = 1 to hide the table that at the bottom of the normal output.
 */
 DECLARE @TwoWeekAgo datetimeoffset(7) = DATEADD(WEEK, -2, SYSDATETIMEOFFSET());
 
