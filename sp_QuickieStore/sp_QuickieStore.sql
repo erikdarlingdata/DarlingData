@@ -89,7 +89,7 @@ ALTER PROCEDURE
     @expert_mode bit = 0, /*returns additional columns and results*/
     @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/
     @format_output bit = 1, /*returns numbers formatted with commas*/
-    @get_all_databases bit = 0, /*looks for query store enabled databases and returns combined results from all of them*/
+    @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
     @work_start time(0) = '9am', /*Use this to set a specific start of your work days*/
     @work_end time(0) = '5pm', /*Use this to set a specific end of your work days*/
@@ -9013,8 +9013,13 @@ SELECT
                    x.query_hash_from_regression_checking,
                    x.from_regression_baseline_time_period'
              WHEN @regression_mode = 1
-             AND @regression_direction IN ('regressed', 'worse', 'magnitude', 'absolute')
+             AND @regression_direction IN ('regressed', 'worse')
              THEN 'x.change_in_average_for_query_hash_since_regression_time_period DESC,
+                   x.query_hash_from_regression_checking,
+                   x.from_regression_baseline_time_period'
+             WHEN @regression_mode = 1
+             AND @regression_direction IN ('magnitude', 'absolute')
+             THEN 'ABS(x.change_in_average_for_query_hash_since_regression_time_period) DESC,
                    x.query_hash_from_regression_checking,
                    x.from_regression_baseline_time_period'
              ELSE
@@ -9043,8 +9048,13 @@ SELECT
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
                   WHEN @regression_mode = 1
-                  AND @regression_direction IN ('regressed', 'worse', 'magnitude', 'absolute')
+                  AND @regression_direction IN ('regressed', 'worse')
                   THEN 'TRY_PARSE(replace(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) DESC,
+                        x.query_hash_from_regression_checking,
+                        x.from_regression_baseline_time_period'
+                  WHEN @regression_mode = 1
+                  AND @regression_direction IN ('magnitude', 'absolute')
+                  THEN 'ABS(TRY_PARSE(replace(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money)) DESC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
              ELSE
