@@ -146,6 +146,81 @@ EXEC dbo.sp_QuickieStore
     @include_sql_handles = 
         '0x0900F46AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000,0x0200000AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000';
 
+/*Check for regressions.
+Specifically, this checks for queries that are did more logical reads last week than this week.
+The default dates are helpful here. The default @start_date and @end_date specify last week for us and @regression_baseline_end_date defaults to being one week
+after @regression_baseline_start_date.
+However, we need to specify @regression_baseline_start_date so that sp_QuickieStore knows to check for regressions.
+Searches by query hash, so you will won't be caught out by identical queries with different query ids.
+*/
+DECLARE @TwoWeekAgo datetimeoffset(7) = DATEADD(WEEK, -2, SYSDATETIMEOFFSET());
+
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @sort_order = 'logical reads',
+    @regression_baseline_start_date = @TwoWeekAgo;
+
+/*Check for improved queries.
+I deleted some indexes yesterday.
+Let's see what's doing less writes today.
+Since we're checking for improvements rather than regressions, we use @regression_direction = 'improved'.
+This is a good chance to point out that the @end_date parameters do comparisons with < rather than <=.
+The @start_data parameters, of course, use >=.
+*/
+DECLARE @StartOfYesterday datetimeoffset(7) = CONVERT(date, DATEADD(DAY, -1, SYSDATETIMEOFFSET())),
+        @StartOfToday datetimeoffset(7) = CONVERT(date, SYSDATETIMEOFFSET()),
+        @StartOfTomorrow datetimeoffset(7) = CONVERT(date, DATEADD(DAY, 1, SYSDATETIMEOFFSET()));
+
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @sort_order = 'writes',
+    @regression_direction = 'improved',
+    @regression_baseline_start_date = @StartOfYesterday,
+    @regression_baseline_end_date = @StartOfToday,
+    @start_date = @StartOfToday,
+    @end_date = @StartOfTomorrow;
+
+/*Check for percentage changes in performance.
+By default, our @regression parameters have us check for changes in the raw numbers.
+It's just plain subtraction: new minus old.
+This means that a query that used to read hardly anything from disk but now reads triple that is indistinguishable from the noise in a query that reads lots.
+To get percentage changes instead, specify @regression_comparator = 'relative'.
+The default is @regression_comparator = 'absolute'.
+
+To see the difference, run `sp_QuickieStore` twice.
+To reduce save space on your screen, we will specify @hide_help_table = 1 to hide the table that at the bottom of the normal output.
+*/
+DECLARE @TwoWeekAgo datetimeoffset(7) = DATEADD(WEEK, -2, SYSDATETIMEOFFSET());
+
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @sort_order = 'physical reads',
+    @hide_help_table = 1,
+    @regression_comparator = 'relative',
+    @regression_baseline_start_date = @TwoWeekAgo;
+
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @sort_order = 'physical reads',
+    @hide_help_table = 1,
+    @regression_comparator = 'absolute',
+    @regression_baseline_start_date = @TwoWeekAgo;
+
+/*Check for changes in modulus.
+What if you're looking for sheer size of changes, rather than the direction of the change?
+For example, you might care about a 30 second reduction in duration just as much as a 30 second increase.
+Use @regression_direction = 'absolute'.
+And while we're at it, let's check all user databases with @get_all_databases = 1.
+*/
+DECLARE @TwoWeekAgo datetimeoffset(7) = DATEADD(WEEK, -2, SYSDATETIMEOFFSET());
+
+EXEC dbo.sp_QuickieStore
+    @get_all_databases = 1,
+    @sort_order = 'duration',
+    @regression_direction = 'absolute',
+    @regression_baseline_start_date = @TwoWeekAgo;
+
+
 /*Troubleshoot performance*/
 EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
