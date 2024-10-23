@@ -6006,65 +6006,65 @@ SELECT
     @sql += N'
 SELECT
     @database_id,
-    MAX(qsrs.runtime_stats_id),
-    qsrs.plan_id,
-    MAX(qsrs.runtime_stats_interval_id),
-    MAX(qsrs.execution_type_desc),
-    MIN(qsrs.first_execution_time),
-    MAX(qsrs.last_execution_time),
-    SUM(qsrs.count_executions),
-    AVG((qsrs.avg_duration / 1000.)),
-    MAX((qsrs.last_duration / 1000.)),
-    MIN((qsrs.min_duration / 1000.)),
-    MAX((qsrs.max_duration / 1000.)),
-    AVG((qsrs.avg_cpu_time / 1000.)),
-    MAX((qsrs.last_cpu_time / 1000.)),
-    MIN((qsrs.min_cpu_time / 1000.)),
-    MAX((qsrs.max_cpu_time / 1000.)),
-    AVG(((qsrs.avg_logical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs.last_logical_io_reads * 8.) / 1024.)),
-    MIN(((qsrs.min_logical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs.max_logical_io_reads * 8.) / 1024.)),
-    AVG(((qsrs.avg_logical_io_writes * 8.) / 1024.)),
-    MAX(((qsrs.last_logical_io_writes * 8.) / 1024.)),
-    MIN(((qsrs.min_logical_io_writes * 8.) / 1024.)),
-    MAX(((qsrs.max_logical_io_writes * 8.) / 1024.)),
-    AVG(((qsrs.avg_physical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs.last_physical_io_reads * 8.) / 1024.)),
-    MIN(((qsrs.min_physical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs.max_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs.avg_clr_time / 1000.)),
-    MAX((qsrs.last_clr_time / 1000.)),
-    MIN((qsrs.min_clr_time / 1000.)),
-    MAX((qsrs.max_clr_time / 1000.)),
-    MAX(qsrs.last_dop),
-    MIN(qsrs.min_dop),
-    MAX(qsrs.max_dop),
-    AVG(((qsrs.avg_query_max_used_memory * 8.) / 1024.)),
-    MAX(((qsrs.last_query_max_used_memory * 8.) / 1024.)),
-    MIN(((qsrs.min_query_max_used_memory * 8.) / 1024.)),
-    MAX(((qsrs.max_query_max_used_memory * 8.) / 1024.)),
-    AVG(qsrs.avg_rowcount),
-    MAX(qsrs.last_rowcount),
-    MIN(qsrs.min_rowcount),
-    MAX(qsrs.max_rowcount),';
+    MAX(qsrs_with_lasts.runtime_stats_id),
+    qsrs_with_lasts.plan_id,
+    MAX(qsrs_with_lasts.runtime_stats_interval_id),
+    MAX(qsrs_with_lasts.execution_type_desc),
+    MIN(qsrs_with_lasts.first_execution_time),
+    MAX(qsrs_with_lasts.partitioned_last_execution_time),
+    SUM(qsrs_with_lasts.count_executions),
+    AVG((qsrs_with_lasts.avg_duration / 1000.)),
+    MAX((qsrs_with_lasts.partitioned_last_duration / 1000.)),
+    MIN((qsrs_with_lasts.min_duration / 1000.)),
+    MAX((qsrs_with_lasts.max_duration / 1000.)),
+    AVG((qsrs_with_lasts.avg_cpu_time / 1000.)),
+    MAX((qsrs_with_lasts.partitioned_last_cpu_time / 1000.)),
+    MIN((qsrs_with_lasts.min_cpu_time / 1000.)),
+    MAX((qsrs_with_lasts.max_cpu_time / 1000.)),
+    AVG(((qsrs_with_lasts.avg_logical_io_reads * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.partitioned_last_logical_io_reads * 8.) / 1024.)),
+    MIN(((qsrs_with_lasts.min_logical_io_reads * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.max_logical_io_reads * 8.) / 1024.)),
+    AVG(((qsrs_with_lasts.avg_logical_io_writes * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.partitioned_last_logical_io_writes * 8.) / 1024.)),
+    MIN(((qsrs_with_lasts.min_logical_io_writes * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.max_logical_io_writes * 8.) / 1024.)),
+    AVG(((qsrs_with_lasts.avg_physical_io_reads * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.partitioned_last_physical_io_reads * 8.) / 1024.)),
+    MIN(((qsrs_with_lasts.min_physical_io_reads * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.max_physical_io_reads * 8.) / 1024.)),
+    AVG((qsrs_with_lasts.avg_clr_time / 1000.)),
+    MAX((qsrs_with_lasts.partitioned_last_clr_time / 1000.)),
+    MIN((qsrs_with_lasts.min_clr_time / 1000.)),
+    MAX((qsrs_with_lasts.max_clr_time / 1000.)),
+    MAX(qsrs_with_lasts.partitioned_last_dop),
+    MIN(qsrs_with_lasts.min_dop),
+    MAX(qsrs_with_lasts.max_dop),
+    AVG(((qsrs_with_lasts.avg_query_max_used_memory * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.partitioned_last_query_max_used_memory * 8.) / 1024.)),
+    MIN(((qsrs_with_lasts.min_query_max_used_memory * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.max_query_max_used_memory * 8.) / 1024.)),
+    AVG(qsrs_with_lasts.avg_rowcount),
+    MAX(qsrs_with_lasts.partitioned_last_rowcount),
+    MIN(qsrs_with_lasts.min_rowcount),
+    MAX(qsrs_with_lasts.max_rowcount),';
 
 IF @new = 1
     BEGIN
         SELECT
             @sql += N'
-    AVG(((qsrs.avg_num_physical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs.last_num_physical_io_reads * 8.) / 1024.)),
-    MIN(((qsrs.min_num_physical_io_reads * 8.) / 1024.)),
-    MAX(((qsrs.max_num_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs.avg_log_bytes_used / 100000000.)),
-    MAX((qsrs.last_log_bytes_used / 100000000.)),
-    MIN((qsrs.min_log_bytes_used / 100000000.)),
-    MAX((qsrs.max_log_bytes_used / 100000000.)),
-    AVG(((qsrs.avg_tempdb_space_used * 8) / 1024.)),
-    MAX(((qsrs.last_tempdb_space_used * 8) / 1024.)),
-    MIN(((qsrs.min_tempdb_space_used * 8) / 1024.)),
-    MAX(((qsrs.max_tempdb_space_used * 8) / 1024.)),';
+    AVG(((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.)),
+    MIN(((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.)),
+    MAX(((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.)),
+    AVG((qsrs_with_lasts.avg_log_bytes_used / 100000000.)),
+    MAX((qsrs_with_lasts.partitioned_last_log_bytes_used / 100000000.)),
+    MIN((qsrs_with_lasts.min_log_bytes_used / 100000000.)),
+    MAX((qsrs_with_lasts.max_log_bytes_used / 100000000.)),
+    AVG(((qsrs_with_lasts.avg_tempdb_space_used * 8) / 1024.)),
+    MAX(((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8) / 1024.)),
+    MIN(((qsrs_with_lasts.min_tempdb_space_used * 8) / 1024.)),
+    MAX(((qsrs_with_lasts.max_tempdb_space_used * 8) / 1024.)),';
     END;
 
 IF @new = 0
@@ -6096,7 +6096,7 @@ BEGIN
    SELECT
        @sql +=  N'   
    CASE
-       WHEN qsrs.last_execution_time >= @start_date AND qsrs.last_execution_time < @end_date
+       WHEN qsrs_with_lasts.last_execution_time >= @start_date AND qsrs_with_lasts.last_execution_time < @end_date
        THEN ''No''
        ELSE ''Yes''
    END,';
@@ -6111,91 +6111,249 @@ END;
 SELECT
     @sql += N'
     context_settings = NULL
-FROM #distinct_plans AS dp
-CROSS APPLY
+FROM 
 (
-    SELECT TOP (@queries_top)
-        qsrs.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs'
-    IF @regression_mode = 1
-    BEGIN
-        SELECT
-            @sql += N'
-            JOIN #regression_changes AS regression
-            ON qsrs.plan_id = regression.plan_id
-            AND regression.database_id = @database_id' 
-    END
-    ELSE IF @sort_order = 'plan count by hashes'
-    BEGIN
-        SELECT
-            @sql += N'
-            JOIN #plan_ids_with_query_hashes AS hashes
-            ON qsrs.plan_id = hashes.plan_id
-            AND hashes.database_id = @database_id'
-    END
-    ELSE IF @sort_order_is_a_wait = 1
-    BEGIN
+    SELECT
+        qsrs.*,
         /*
-        Note that we do not need this join in
-        regression mode, even if we are looking
-        at a wait. The tables here are only for
-        sorting. In regression mode, we sort
-        by columns found in #regression_changes.
+        We need this here to make sure that PARTITION BY runs before GROUP BY but after CROSS APPLY.
+        If it were after GROUP BY, then we would be dealing with already aggregated data.
+        If it were inside the CROSS APPLY, then we would be dealing with windows of size one.
+        Both are very wrong, so we need this.
         */
+        partitioned_last_execution_time =
+                                          LAST_VALUE(qsrs.last_execution_time) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_duration =
+                                          LAST_VALUE(qsrs.last_duration) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_cpu_time =
+                                          LAST_VALUE(qsrs.last_cpu_time) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_logical_io_reads =
+                                          LAST_VALUE(qsrs.last_logical_io_reads) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_logical_io_writes =
+                                          LAST_VALUE(qsrs.last_logical_io_writes) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_physical_io_reads =
+                                          LAST_VALUE(qsrs.last_physical_io_reads) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_clr_time =
+                                          LAST_VALUE(qsrs.last_clr_time) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_dop =
+                                          LAST_VALUE(qsrs.last_dop) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_query_max_used_memory =
+                                          LAST_VALUE(qsrs.last_query_max_used_memory) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_rowcount =
+                                          LAST_VALUE(qsrs.last_rowcount) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),';
+IF @new = 1
+    BEGIN
         SELECT
             @sql += N'
-            JOIN #plan_ids_with_total_waits AS waits
-            ON qsrs.plan_id = waits.plan_id
-            AND waits.database_id = @database_id'
-    END;
+        partitioned_last_num_physical_io_reads =
+                                          LAST_VALUE(qsrs.last_num_physical_io_reads) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_log_bytes_used =
+                                          LAST_VALUE(qsrs.last_log_bytes_used) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          ),
+        partitioned_last_tempdb_space_used =
+                                          LAST_VALUE(qsrs.last_tempdb_space_used) OVER
+                                          (
+                                              PARTITION BY
+                                                  qsrs.plan_id,
+                                                  qsrs.execution_type
+                                              ORDER BY
+                                                  qsrs.runtime_stats_interval_id DESC
+                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                          )';
+    END
+IF @new = 0
+   BEGIN
+       SELECT
+           @sql += N'
+       NULL'
+   END
 
 SELECT
     @sql += N'
-    WHERE qsrs.plan_id = dp.plan_id
-    AND   1 = 1
-    '
-    + CASE WHEN @regression_mode = 1
-      THEN N' AND ( 1 = 1
-      ' + @regression_where_clause
-      + N' )
-OR
-      ( 1 = 1
-      '
-      + @where_clause
-      + N' ) '
-      ELSE @where_clause
-      END
-  + N'
-    ORDER BY ' +
-CASE @regression_mode
-WHEN 1 THEN
-    /* As seen when populating #regression_changes. */
-    CASE @regression_direction
-       WHEN 'regressed' THEN N'regression.change_since_regression_time_period'
-       WHEN 'worse' THEN N'regression.change_since_regression_time_period'
-       WHEN 'improved' THEN N'regression.change_since_regression_time_period * -1.0'
-       WHEN 'better' THEN N'regression.change_since_regression_time_period * -1.0'
-       WHEN 'magnitude' THEN N'ABS(regression.change_since_regression_time_period)'
-       WHEN 'absolute' THEN N'ABS(regression.change_since_regression_time_period)'
-    END
-    ELSE
-    CASE @sort_order
-         WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
-         WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
-         WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads'
-         WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
-         WHEN 'duration' THEN N'qsrs.avg_duration'
-         WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
-         WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
-         WHEN 'executions' THEN N'qsrs.count_executions'
-         WHEN 'recent' THEN N'qsrs.last_execution_time'
-         WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
-         ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
-    END
-END + N' DESC
-) AS qsrs
+    FROM #distinct_plans AS dp
+    CROSS APPLY
+    (
+        SELECT TOP (@queries_top)
+            qsrs.*'
+
+    SELECT
+        @sql += N'
+        FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs'
+        IF @regression_mode = 1
+        BEGIN
+            SELECT
+                @sql += N'
+                JOIN #regression_changes AS regression
+                ON qsrs.plan_id = regression.plan_id
+                AND regression.database_id = @database_id' 
+        END
+        ELSE IF @sort_order = 'plan count by hashes'
+        BEGIN
+            SELECT
+                @sql += N'
+                JOIN #plan_ids_with_query_hashes AS hashes
+                ON qsrs.plan_id = hashes.plan_id
+                AND hashes.database_id = @database_id'
+        END
+        ELSE IF @sort_order_is_a_wait = 1
+        BEGIN
+            /*
+            Note that we do not need this join in
+            regression mode, even if we are looking
+            at a wait. The tables here are only for
+            sorting. In regression mode, we sort
+            by columns found in #regression_changes.
+            */
+            SELECT
+                @sql += N'
+                JOIN #plan_ids_with_total_waits AS waits
+                ON qsrs.plan_id = waits.plan_id
+                AND waits.database_id = @database_id'
+        END;
+
+    SELECT
+        @sql += N'
+        WHERE qsrs.plan_id = dp.plan_id
+        AND   1 = 1
+        '
+        + CASE WHEN @regression_mode = 1
+          THEN N' AND ( 1 = 1
+          ' + @regression_where_clause
+          + N' )
+    OR
+          ( 1 = 1
+          '
+          + @where_clause
+          + N' ) '
+          ELSE @where_clause
+          END
+      + N'
+        ORDER BY ' +
+    CASE @regression_mode
+    WHEN 1 THEN
+        /* As seen when populating #regression_changes. */
+        CASE @regression_direction
+           WHEN 'regressed' THEN N'regression.change_since_regression_time_period'
+           WHEN 'worse' THEN N'regression.change_since_regression_time_period'
+           WHEN 'improved' THEN N'regression.change_since_regression_time_period * -1.0'
+           WHEN 'better' THEN N'regression.change_since_regression_time_period * -1.0'
+           WHEN 'magnitude' THEN N'ABS(regression.change_since_regression_time_period)'
+           WHEN 'absolute' THEN N'ABS(regression.change_since_regression_time_period)'
+        END
+        ELSE
+        CASE @sort_order
+             WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
+             WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
+             WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads'
+             WHEN 'writes' THEN N'qsrs.avg_logical_io_writes'
+             WHEN 'duration' THEN N'qsrs.avg_duration'
+             WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
+             WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
+             WHEN 'executions' THEN N'qsrs.count_executions'
+             WHEN 'recent' THEN N'qsrs.last_execution_time'
+             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+             ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
+        END
+    END + N' DESC
+    ) AS qsrs
+) as qsrs_with_lasts
 GROUP BY
-    qsrs.plan_id ' +
+    qsrs_with_lasts.plan_id ' +
 /*
 In regression mode, we do not mind seeing the
 same plan_id twice. We need the below to make
@@ -6205,7 +6363,7 @@ distinct.
 CASE @regression_mode
    WHEN 1 THEN  N' ,
    CASE
-       WHEN qsrs.last_execution_time >= @start_date AND qsrs.last_execution_time < @end_date
+       WHEN qsrs_with_lasts.last_execution_time >= @start_date AND qsrs_with_lasts.last_execution_time < @end_date
        THEN ''No''
        ELSE ''Yes''
    END'
@@ -6710,37 +6868,102 @@ INSERT
     max_used_threads
 )
 SELECT
-    deqs.statement_sql_handle,
-    MAX(deqs.total_grant_kb) / 1024.,
-    MAX(deqs.last_grant_kb) / 1024.,
-    MAX(deqs.min_grant_kb) / 1024.,
-    MAX(deqs.max_grant_kb) / 1024.,
-    MAX(deqs.total_used_grant_kb) / 1024.,
-    MAX(deqs.last_used_grant_kb) / 1024.,
-    MAX(deqs.min_used_grant_kb) / 1024.,
-    MAX(deqs.max_used_grant_kb) / 1024.,
-    MAX(deqs.total_ideal_grant_kb) / 1024.,
-    MAX(deqs.last_ideal_grant_kb) / 1024.,
-    MAX(deqs.min_ideal_grant_kb) / 1024.,
-    MAX(deqs.max_ideal_grant_kb) / 1024.,
-    MAX(deqs.total_reserved_threads),
-    MAX(deqs.last_reserved_threads),
-    MAX(deqs.min_reserved_threads),
-    MAX(deqs.max_reserved_threads),
-    MAX(deqs.total_used_threads),
-    MAX(deqs.last_used_threads),
-    MAX(deqs.min_used_threads),
-    MAX(deqs.max_used_threads)
-FROM sys.dm_exec_query_stats AS deqs
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM #query_store_query_text AS qsqt
-          WHERE qsqt.statement_sql_handle = deqs.statement_sql_handle
-      )
+    deqs_with_lasts.statement_sql_handle,
+    MAX(deqs_with_lasts.total_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.partitioned_last_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.min_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.max_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.total_used_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.partitioned_last_used_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.min_used_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.max_used_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.total_ideal_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.partitioned_last_ideal_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.min_ideal_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.max_ideal_grant_kb) / 1024.,
+    MAX(deqs_with_lasts.total_reserved_threads),
+    MAX(deqs_with_lasts.partitioned_last_reserved_threads),
+    MAX(deqs_with_lasts.min_reserved_threads),
+    MAX(deqs_with_lasts.max_reserved_threads),
+    MAX(deqs_with_lasts.total_used_threads),
+    MAX(deqs_with_lasts.partitioned_last_used_threads),
+    MAX(deqs_with_lasts.min_used_threads),
+    MAX(deqs_with_lasts.max_used_threads)
+FROM
+(
+    SELECT
+        deqs.statement_sql_handle,
+        deqs.total_grant_kb,
+        deqs.min_grant_kb,
+        deqs.max_grant_kb,
+        deqs.total_used_grant_kb,
+        deqs.min_used_grant_kb,
+        deqs.max_used_grant_kb,
+        deqs.total_ideal_grant_kb,
+        deqs.min_ideal_grant_kb,
+        deqs.max_ideal_grant_kb,
+        deqs.total_reserved_threads,
+        deqs.min_reserved_threads,
+        deqs.max_reserved_threads,
+        deqs.total_used_threads,
+        deqs.min_used_threads,
+        deqs.max_used_threads,
+        partitioned_last_grant_kb =
+                                   LAST_VALUE(deqs.last_grant_kb) OVER
+                                   (
+                                       PARTITION BY
+                                           deqs.sql_handle
+                                       ORDER BY
+                                           deqs.last_execution_time DESC
+                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                   ),
+        partitioned_last_used_grant_kb =
+                                   LAST_VALUE(deqs.last_used_grant_kb) OVER
+                                   (
+                                       PARTITION BY
+                                           deqs.sql_handle
+                                       ORDER BY
+                                           deqs.last_execution_time DESC
+                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                   ),
+        partitioned_last_ideal_grant_kb =
+                                   LAST_VALUE(deqs.last_ideal_grant_kb) OVER
+                                   (
+                                       PARTITION BY
+                                           deqs.sql_handle
+                                       ORDER BY
+                                           deqs.last_execution_time DESC
+                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                   ),
+       partitioned_last_reserved_threads =
+                                   LAST_VALUE(deqs.last_reserved_threads) OVER
+                                   (
+                                       PARTITION BY
+                                           deqs.sql_handle
+                                       ORDER BY
+                                           deqs.last_execution_time DESC
+                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                   ),
+       partitioned_last_used_threads =
+                                   LAST_VALUE(deqs.last_used_threads) OVER
+                                   (
+                                       PARTITION BY
+                                           deqs.sql_handle
+                                       ORDER BY
+                                           deqs.last_execution_time DESC
+                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                   )
+    FROM sys.dm_exec_query_stats AS deqs
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #query_store_query_text AS qsqt
+              WHERE qsqt.statement_sql_handle = deqs.statement_sql_handle
+          )
+) AS deqs_with_lasts
 GROUP BY
-    deqs.statement_sql_handle
+    deqs_with_lasts.statement_sql_handle
 OPTION(RECOMPILE);
 
 SELECT
@@ -6998,37 +7221,59 @@ BEGIN
         @sql += N'
 SELECT
     @database_id,
-    qsws.plan_id,
-    qsws.wait_category_desc,
+    qsws_with_lasts.plan_id,
+    qsws_with_lasts.wait_category_desc,
     total_query_wait_time_ms =
-        SUM(qsws.total_query_wait_time_ms),
+        SUM(qsws_with_lasts.total_query_wait_time_ms),
     avg_query_wait_time_ms =
-        SUM(qsws.avg_query_wait_time_ms),
+        SUM(qsws_with_lasts.avg_query_wait_time_ms),
     last_query_wait_time_ms =
-        SUM(qsws.last_query_wait_time_ms),
+        MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
     min_query_wait_time_ms =
-        SUM(qsws.min_query_wait_time_ms),
+        SUM(qsws_with_lasts.min_query_wait_time_ms),
     max_query_wait_time_ms =
-        SUM(qsws.max_query_wait_time_ms)
-FROM #query_store_runtime_stats AS qsrs
-CROSS APPLY
+        SUM(qsws_with_lasts.max_query_wait_time_ms)
+FROM
 (
-    SELECT TOP (5)
-        qsws.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-    WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
-    AND   qsws.plan_id = qsrs.plan_id
-    AND   qsws.wait_category > 0
-    AND   qsws.min_query_wait_time_ms > 0
-    ORDER BY
-        qsws.avg_query_wait_time_ms DESC
-) AS qsws
-WHERE qsrs.database_id = @database_id
+    SELECT
+        qsws.*,
+        /*
+        We need this here to make sure that PARTITION BY runs before GROUP BY but after CROSS APPLY.
+        If it were after GROUP BY, then we would be dealing with already aggregated data.
+        If it were inside the CROSS APPLY, then we would be dealing with windows of size one.
+        Both are very wrong, so we need this.
+        */
+        partitioned_last_query_wait_time_ms =
+                                             LAST_VALUE(qsws.last_query_wait_time_ms) OVER
+                                             (
+                                                 PARTITION BY
+                                                     qsws.plan_id,
+                                                     qsws.execution_type,
+                                                     qsws.wait_category_desc
+                                                 ORDER BY
+                                                     qsws.runtime_stats_interval_id DESC
+                                                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                                             )
+    FROM #query_store_runtime_stats AS qsrs
+    CROSS APPLY
+    (
+        SELECT TOP (5)
+            qsws.*
+        FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+        WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
+        AND   qsws.plan_id = qsrs.plan_id
+        AND   qsws.wait_category > 0
+        AND   qsws.min_query_wait_time_ms > 0
+        ORDER BY
+            qsws.avg_query_wait_time_ms DESC
+    ) AS qsws
+    WHERE qsrs.database_id = @database_id
+) AS qsws_with_lasts
 GROUP BY
-    qsws.plan_id,
-    qsws.wait_category_desc
+    qsws_with_lasts.plan_id,
+    qsws_with_lasts.wait_category_desc
 HAVING
-    SUM(qsws.min_query_wait_time_ms) > 0.
+    SUM(qsws_with_lasts.min_query_wait_time_ms) > 0.
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
