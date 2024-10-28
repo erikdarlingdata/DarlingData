@@ -86,17 +86,41 @@ EXEC dbo.sp_QuickieStore
     @top = 10,
     @duration_ms = 10000;
 
-/*Search for queries with a specific execution type*/
+
+/*Search for queries with a specific execution type
+When we do not provide this parameter, we grab all types.
+This example grabs "aborted" queries, which are queries cancelled by the client.
+This is a great way to find timeouts.
+*/
 EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
     @top = 10,
     @execution_type_desc = 'aborted';
 
+/*Search for queries that errored
+As above, but for "exception" queries.
+This grabs queries that were cancelled by throwing exceptions.
+It's no substitute for proper error monitoring, but it can be a good early warning.
+*/
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @top = 10,
+    @execution_type_desc = 'exception';
+
+/*Search for queries that finished normally
+As above, but for "regular" queries.
+This grabs queries that were not cancelled.
+*/
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @top = 10,
+    @execution_type_desc = 'regular';
+
+
 /*Search for a specific stored procedure*/
 EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
     @procedure_name = 'top_percent_sniffer';   
-
 
 /*Search for specific query text*/
 EXEC dbo.sp_QuickieStore
