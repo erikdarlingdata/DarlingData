@@ -521,8 +521,8 @@ DECLARE
 IF
 (
     @v < 11
-    OR 
-    (    
+    OR
+    (
           @v = 11
       AND @mv < 7001
     )
@@ -1602,7 +1602,7 @@ SET @session_filter_parameterization +=
 /* This section sets up the event session definition */
 RAISERROR(N'Setting up the event session', 0, 1) WITH NOWAIT;
 SET @session_sql +=
-        CASE 
+        CASE
             WHEN LOWER(@event_type) LIKE N'%lock%'
             THEN N'
       ADD EVENT sqlserver.blocked_process_report
@@ -1625,7 +1625,7 @@ SET @session_sql +=
         (SET collect_statement = 1
          ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
          WHERE ( ' + @session_filter_statement_completed + N' ))'
-                   + CASE 
+                   + CASE
                          WHEN @skip_plans = 0
                          THEN N',
       ADD EVENT sqlserver.query_post_execution_showplan
@@ -1649,7 +1649,7 @@ SET @session_sql +=
          ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
          WHERE ( ' + @session_filter_waits + N' ))'
             WHEN LOWER(@event_type) LIKE N'%recomp%'
-            THEN CASE 
+            THEN CASE
                      WHEN @compile_events = 1
                      THEN N'
       ADD EVENT sqlserver.sql_statement_post_compile
@@ -1664,7 +1664,7 @@ SET @session_sql +=
                  END
             WHEN (LOWER(@event_type) LIKE N'%comp%'
             AND   LOWER(@event_type) NOT LIKE N'%re%')
-            THEN CASE 
+            THEN CASE
                      WHEN @compile_events = 1
                      THEN N'
       ADD EVENT sqlserver.sql_statement_post_compile
@@ -1681,7 +1681,7 @@ SET @session_sql +=
          ACTION(sqlserver.database_name)
          WHERE ( ' + @session_filter_recompile + N' ))'
                  END
-                + CASE 
+                + CASE
                       WHEN @parameterization_events = 1
                       THEN N',
       ADD EVENT sqlserver.query_parameterization_data
@@ -1846,9 +1846,9 @@ BEGIN
     BEGIN
         WITH
             XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
-        UPDATE 
+        UPDATE
             q1
-        SET 
+        SET
             showplan_xml.modify('insert attribute StatementId {"1"}
                                  into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
         FROM #queries AS q1
@@ -1869,7 +1869,7 @@ BEGIN
         /* Add attribute StatementText to query plan if it is missing (all versions) */
         WITH
             XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
-        UPDATE 
+        UPDATE
             q1
         SET showplan_xml.modify('insert attribute StatementText {sql:column("q2.statement_text")}
                                  into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
@@ -2749,7 +2749,7 @@ BEGIN
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
 
-    ALTER TABLE 
+    ALTER TABLE
         #blocked
     ADD blocking_desc AS
             ISNULL
@@ -2844,7 +2844,7 @@ BEGIN
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
 
-    ALTER TABLE 
+    ALTER TABLE
         #blocking
     ADD blocking_desc AS
             ISNULL
@@ -2921,7 +2921,7 @@ BEGIN
           ON  bg.monitor_loop = h.monitor_loop
           AND bg.blocking_desc = h.blocked_desc
     )
-    UPDATE 
+    UPDATE
         #blocked
     SET
         blocking_level = h.level,
@@ -2933,7 +2933,7 @@ BEGIN
       AND h.blocked_desc = b.blocked_desc
     OPTION(RECOMPILE);
 
-    UPDATE 
+    UPDATE
         #blocking
     SET
         blocking_level = bd.blocking_level,
@@ -3595,7 +3595,7 @@ BEGIN
         END;
 
         /*Update this column for when we see if we need to create views.*/
-        UPDATE 
+        UPDATE
             hew
         SET
             hew.event_type_short =
@@ -3712,9 +3712,9 @@ BEGIN
                 @table_sql;
 
             RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @event_type_check) WITH NOWAIT;
-            UPDATE 
+            UPDATE
                 #human_events_worker
-            SET 
+            SET
                 is_table_created = 1
             WHERE id = @min_id
             AND   is_table_created = 0;
@@ -3809,14 +3809,14 @@ BEGIN
         WHERE @compile_events = 0;
 
         RAISERROR(N'Updating #view_check with output database (%s) and schema (%s)', 0, 1, @output_database_name, @output_schema_name) WITH NOWAIT;
-        UPDATE 
+        UPDATE
             #view_check
         SET
             output_database = @output_database_name,
             output_schema = @output_schema_name;
 
         RAISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT;
-        UPDATE 
+        UPDATE
             vc
         SET
             vc.output_table = hew.output_table
@@ -3826,7 +3826,7 @@ BEGIN
           AND hew.is_table_created = 1
           AND hew.is_view_created = 0;
 
-        UPDATE 
+        UPDATE
             vc
         SET
             vc.output_table = hew.output_table + N'_parameterization'
@@ -3962,7 +3962,7 @@ BEGIN
             SET @spe = N'.sys.sp_executesql ';
         END;
 
-        UPDATE 
+        UPDATE
             #human_events_worker
         SET
             is_view_created = 1;
@@ -4058,13 +4058,13 @@ CASE
     THEN N'        ''Not Available < 2014'', ' + @nc10
     ELSE N'        wait_resource = c.value(''(data[@name="wait_resource"]/value/text())[1]'', ''nvarchar(256)''), ' + @nc10
 END
-) + CONVERT(nvarchar(MAX), N'        query_plan_hash_signed = 
+) + CONVERT(nvarchar(MAX), N'        query_plan_hash_signed =
                 CONVERT
                 (
                     binary(8),
                     c.value(''(action[@name="query_plan_hash_signed"]/value/text())[1]'', ''bigint'')
                 ),
-        query_hash_signed = 
+        query_hash_signed =
             CONVERT
             (
                 binary(8),
@@ -4164,7 +4164,7 @@ FROM
 
         SELECT
             server_name = @@SERVERNAME,
-            event_time = 
+            event_time =
                 DATEADD
                 (
                     MINUTE,
@@ -4541,7 +4541,7 @@ ORDER BY
                 @date_filter;
 
             /*Update the worker table's last checked, and conditionally, updated dates*/
-            UPDATE 
+            UPDATE
                 hew
             SET
                 hew.last_checked =
