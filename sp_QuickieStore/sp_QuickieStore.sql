@@ -6074,9 +6074,9 @@ SELECT
     MAX(qsrs_with_lasts.max_rowcount),';
 
 IF @new = 1
-    BEGIN
-        SELECT
-            @sql += N'
+BEGIN
+    SELECT
+        @sql += N'
     AVG(((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.)),
@@ -6089,12 +6089,12 @@ IF @new = 1
     MAX(((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8) / 1024.)),
     MIN(((qsrs_with_lasts.min_tempdb_space_used * 8) / 1024.)),
     MAX(((qsrs_with_lasts.max_tempdb_space_used * 8) / 1024.)),';
-    END;
+END;
 
 IF @new = 0
-    BEGIN
-        SELECT
-            @sql += N'
+BEGIN
+    SELECT
+        @sql += N'
     NULL,
     NULL,
     NULL,
@@ -6107,7 +6107,7 @@ IF @new = 0
     NULL,
     NULL,
     NULL,';
-    END;
+END;
 
 /*
 In regression mode, we do not mind seeing the
@@ -6119,17 +6119,17 @@ IF @regression_mode = 1
 BEGIN
    SELECT
        @sql +=  N'   
-   CASE
-       WHEN qsrs_with_lasts.last_execution_time >= @start_date AND qsrs_with_lasts.last_execution_time < @end_date
-       THEN ''No''
-       ELSE ''Yes''
-   END,';
+    CASE
+        WHEN qsrs_with_lasts.last_execution_time >= @start_date AND qsrs_with_lasts.last_execution_time < @end_date
+        THEN ''No''
+        ELSE ''Yes''
+    END,';
 END
 ELSE
 BEGIN
    SELECT
        @sql +=  N'   
-   NULL,';
+    NULL,';
 END;
 
 SELECT
@@ -6146,146 +6146,148 @@ FROM
         Both are very wrong, so we need this.
         */
         partitioned_last_execution_time =
-                                          LAST_VALUE(qsrs.last_execution_time) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_execution_time) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_duration =
-                                          LAST_VALUE(qsrs.last_duration) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_duration) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_cpu_time =
-                                          LAST_VALUE(qsrs.last_cpu_time) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_cpu_time) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_logical_io_reads =
-                                          LAST_VALUE(qsrs.last_logical_io_reads) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_logical_io_reads) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_logical_io_writes =
-                                          LAST_VALUE(qsrs.last_logical_io_writes) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_logical_io_writes) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_physical_io_reads =
-                                          LAST_VALUE(qsrs.last_physical_io_reads) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_physical_io_reads) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_clr_time =
-                                          LAST_VALUE(qsrs.last_clr_time) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_clr_time) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_dop =
-                                          LAST_VALUE(qsrs.last_dop) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_dop) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_query_max_used_memory =
-                                          LAST_VALUE(qsrs.last_query_max_used_memory) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_query_max_used_memory) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_rowcount =
-                                          LAST_VALUE(qsrs.last_rowcount) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),';
+            LAST_VALUE(qsrs.last_rowcount) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),';
+
 IF @new = 1
-    BEGIN
-        SELECT
-            @sql += N'
+BEGIN
+    SELECT
+        @sql += N'
         partitioned_last_num_physical_io_reads =
-                                          LAST_VALUE(qsrs.last_num_physical_io_reads) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_num_physical_io_reads) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_log_bytes_used =
-                                          LAST_VALUE(qsrs.last_log_bytes_used) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          ),
+            LAST_VALUE(qsrs.last_log_bytes_used) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_tempdb_space_used =
-                                          LAST_VALUE(qsrs.last_tempdb_space_used) OVER
-                                          (
-                                              PARTITION BY
-                                                  qsrs.plan_id,
-                                                  qsrs.execution_type
-                                              ORDER BY
-                                                  qsrs.runtime_stats_interval_id DESC
-                                              ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                          )';
-    END
+            LAST_VALUE(qsrs.last_tempdb_space_used) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            )';
+END
+
 IF @new = 0
-   BEGIN
-       SELECT
-           @sql += N'
-       NULL'
-   END
+BEGIN
+    SELECT
+        @sql += N'
+        not_used = NULL'
+END
 
 SELECT
     @sql += N'
@@ -6302,17 +6304,17 @@ SELECT
         BEGIN
             SELECT
                 @sql += N'
-                JOIN #regression_changes AS regression
-                ON qsrs.plan_id = regression.plan_id
-                AND regression.database_id = @database_id' 
+        JOIN #regression_changes AS regression
+          ON qsrs.plan_id = regression.plan_id
+         AND regression.database_id = @database_id' 
         END
         ELSE IF @sort_order = 'plan count by hashes'
         BEGIN
             SELECT
                 @sql += N'
-                JOIN #plan_ids_with_query_hashes AS hashes
-                ON qsrs.plan_id = hashes.plan_id
-                AND hashes.database_id = @database_id'
+        JOIN #plan_ids_with_query_hashes AS hashes
+          ON qsrs.plan_id = hashes.plan_id
+         AND hashes.database_id = @database_id'
         END
         ELSE IF @sort_order_is_a_wait = 1
         BEGIN
@@ -6325,9 +6327,9 @@ SELECT
             */
             SELECT
                 @sql += N'
-                JOIN #plan_ids_with_total_waits AS waits
-                ON qsrs.plan_id = waits.plan_id
-                AND waits.database_id = @database_id'
+        JOIN #plan_ids_with_total_waits AS waits
+          ON qsrs.plan_id = waits.plan_id
+         AND waits.database_id = @database_id'
         END;
 
     SELECT
@@ -6347,7 +6349,8 @@ SELECT
           ELSE @where_clause
           END
       + N'
-        ORDER BY ' +
+    ORDER BY 
+        ' +
     CASE @regression_mode
     WHEN 1 THEN
         /* As seen when populating #regression_changes. */
@@ -6375,7 +6378,7 @@ SELECT
         END
     END + N' DESC
     ) AS qsrs
-) as qsrs_with_lasts
+) AS qsrs_with_lasts
 GROUP BY
     qsrs_with_lasts.plan_id ' +
 /*
@@ -6399,7 +6402,24 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 IF @debug = 1
 BEGIN
     PRINT LEN(@sql);
-    PRINT @sql;
+    
+    IF LEN(@sql) > 7999
+    BEGIN
+        SELECT
+            query = 
+            (
+                SELECT 
+                    [processing-instruction(_)] = 
+                        @sql
+                FOR XML 
+                    PATH(''),
+                    TYPE
+            );
+    END;
+    ELSE
+    BEGIN
+        PRINT @sql;
+    END;
 END;
 
 INSERT
