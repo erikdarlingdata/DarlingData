@@ -1,16 +1,16 @@
-﻿/*
+/*
 ███████╗██╗  ██╗ █████╗ ███╗   ███╗██████╗ ██╗     ███████╗
 ██╔════╝╚██╗██╔╝██╔══██╗████╗ ████║██╔══██╗██║     ██╔════╝
-█████╗   ╚███╔╝ ███████║██╔████╔██║██████╔╝██║     █████╗  
-██╔══╝   ██╔██╗ ██╔══██║██║╚██╔╝██║██╔═══╝ ██║     ██╔══╝  
+█████╗   ╚███╔╝ ███████║██╔████╔██║██████╔╝██║     █████╗
+██╔══╝   ██╔██╗ ██╔══██║██║╚██╔╝██║██╔═══╝ ██║     ██╔══╝
 ███████╗██╔╝ ██╗██║  ██║██║ ╚═╝ ██║██║     ███████╗███████╗
 ╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝
-                                                           
- ██████╗ █████╗ ██╗     ██╗     ███████╗                   
-██╔════╝██╔══██╗██║     ██║     ██╔════╝                   
-██║     ███████║██║     ██║     ███████╗                   
-██║     ██╔══██║██║     ██║     ╚════██║                   
-╚██████╗██║  ██║███████╗███████╗███████║                   
+
+ ██████╗ █████╗ ██╗     ██╗     ███████╗
+██╔════╝██╔══██╗██║     ██║     ██╔════╝
+██║     ███████║██║     ██║     ███████╗
+██║     ██╔══██║██║     ██║     ╚════██║
+╚██████╗██║  ██║███████╗███████╗███████║
  ╚═════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝
 
 Copyright 2024 Darling Data, LLC
@@ -44,7 +44,7 @@ EXEC dbo.sp_QuickieStore
 EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
     @top = 10,
-    @include_query_ids = '13977, 13978';    
+    @include_query_ids = '13977, 13978';
 
 
 /*Search for specific plan_ids*/
@@ -55,12 +55,12 @@ EXEC dbo.sp_QuickieStore
     @start_date = '20210320',
     @include_plan_ids = '1896, 1897';
 
-    
+
 /*Ignore for specific query_ids*/
 EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
     @top = 10,
-    @ignore_query_ids = '13977, 13978';    
+    @ignore_query_ids = '13977, 13978';
 
 
 /*Ignore for specific plan_ids*/
@@ -69,7 +69,7 @@ EXEC dbo.sp_QuickieStore
     @sort_order = 'memory',
     @top = 10,
     @start_date = '20210320',
-    @ignore_plan_ids = '1896, 1897'; 
+    @ignore_plan_ids = '1896, 1897';
 
 
 /*Search for queries within a date range*/
@@ -78,7 +78,7 @@ EXEC dbo.sp_QuickieStore
     @sort_order = 'memory',
     @top = 10,
     @start_date = '20210320',
-    @end_date = '20210321';              
+    @end_date = '20210321';
 
 /*Filter out weekends and anything outside of your choice of hours.*/
 EXEC dbo.sp_QuickieStore
@@ -260,7 +260,7 @@ EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
     @sort_order = 'memory',
     @top = 10,
-    @expert_mode = 1;              
+    @expert_mode = 1;
 
 
 /*Use format output to add commas to larger numbers
@@ -304,12 +304,12 @@ EXEC dbo.sp_QuickieStore
 EXEC dbo.sp_QuickieStore
     @include_plan_hashes = '0x6B84B820B8B38564,0x6B84B999D7B38564';
 
-/*Search by SQL Handles 
+/*Search by SQL Handles
 Do you need to find if one Query Store is tracking the same query that is present in another database's Query Store? If so, use the statement_sql_handle to do that.
 This helps with scenarios where you have multiple production databases which have the same schema and you want to compare performance across Query Stores.
 */
 EXEC dbo.sp_QuickieStore
-    @include_sql_handles = 
+    @include_sql_handles =
         '0x0900F46AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000,0x0200000AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000';
 
 /*Search, but ignoring some query hashes*/
@@ -322,7 +322,7 @@ EXEC dbo.sp_QuickieStore
 
 /*Search, but ignoring some SQL Handles*/
 EXEC dbo.sp_QuickieStore
-    @ignore_sql_handles = 
+    @ignore_sql_handles =
         '0x0900F46AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000,0x0200000AC89E66DF744C8A0AD4FD3D3306B90000000000000000000000000000000000000000000000000000';
 
 /*What query hashes have the most plans?
@@ -410,8 +410,8 @@ EXEC dbo.sp_QuickieStore
 DECLARE @version_output varchar(30),
         @version_date_output datetime;
 
-EXEC sp_QuickieStore 
-    @version = @version_output OUTPUT, 
+EXEC sp_QuickieStore
+    @version = @version_output OUTPUT,
     @version_date = @version_date_output OUTPUT;
 
 SELECT
