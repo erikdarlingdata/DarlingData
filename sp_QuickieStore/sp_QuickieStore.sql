@@ -5213,7 +5213,7 @@ BEGIN
         @work_end_utc,
         @regression_baseline_start_date,
         @regression_baseline_end_date;
- 
+
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
@@ -5263,7 +5263,7 @@ BEGIN
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
       ON qsrs.plan_id = qsws.plan_id
-    WHERE 1 = 1 
+    WHERE 1 = 1
     '
    + CASE WHEN @regression_mode = 1
       THEN N' AND ( 1 = 1
@@ -5346,11 +5346,11 @@ OR
             @current_table nvarchar(100)',
             @sql,
             @current_table;
-    END; 
+    END;
 END;
 /*
 'total waits' is special. It's a sum, not a max, so
-we cover it above rather than here. 
+we cover it above rather than here.
 */
 
 IF  @sort_order_is_a_wait = 1
@@ -5722,7 +5722,7 @@ BEGIN
     must repeat some of the tricks
     we used for #plan_ids_with_query_hashes.
     */
-    SELECT  
+    SELECT
         @sql += N'
     SELECT
         @database_id,
@@ -5764,7 +5764,7 @@ BEGIN
         (
             SELECT
                 current_stats.query_hash,
-                change_since_regression_time_period = 
+                change_since_regression_time_period =
                 '
                 + CASE @regression_comparator
                       WHEN 'relative' THEN N'((current_stats.current_metric_average / NULLIF(baseline.regression_metric_average, 0.0)) - 1.0)'
@@ -5782,7 +5782,7 @@ BEGIN
             will give change_since_regression_time_period values that
             are smaller than metrics that are worse.
             In other words, ORDER BY change_since_regression_time_period DESC
-            gives us the regressed queries first. 
+            gives us the regressed queries first.
             This is true regardless of @regression_comparator.
             To make @regression_direction behave as intended, we
             need to account for this. We could use dynamic SQL,
@@ -5828,7 +5828,7 @@ BEGIN
             '
             + @where_clause
          + N'
-            ) 
+            )
     ) AS plans_for_hashes
     ON hashes_with_changes.query_hash = plans_for_hashes.query_hash
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
@@ -6118,7 +6118,7 @@ distinct.
 IF @regression_mode = 1
 BEGIN
    SELECT
-       @sql +=  N'   
+       @sql +=  N'
    CASE
        WHEN qsrs_with_lasts.last_execution_time >= @start_date AND qsrs_with_lasts.last_execution_time < @end_date
        THEN ''No''
@@ -6128,14 +6128,14 @@ END
 ELSE
 BEGIN
    SELECT
-       @sql +=  N'   
+       @sql +=  N'
    NULL,';
 END;
 
 SELECT
     @sql += N'
     context_settings = NULL
-FROM 
+FROM
 (
     SELECT
         qsrs.*,
@@ -6304,7 +6304,7 @@ SELECT
                 @sql += N'
                 JOIN #regression_changes AS regression
                 ON qsrs.plan_id = regression.plan_id
-                AND regression.database_id = @database_id' 
+                AND regression.database_id = @database_id'
         END
         ELSE IF @sort_order = 'plan count by hashes'
         BEGIN
