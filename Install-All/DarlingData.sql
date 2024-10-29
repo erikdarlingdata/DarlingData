@@ -1,4 +1,4 @@
--- Compile Date: 09/11/2024 15:52:17 UTC
+-- Compile Date: 10/09/2024 21:16:04 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -67,7 +67,7 @@ BEGIN
 
     SELECT
         @version = '1.9',
-        @version_date = '20240901';
+        @version_date = '20240915';
 
     IF @help = 1
     BEGIN
@@ -2945,7 +2945,7 @@ ALTER PROCEDURE
     @object_name sysname = N'',
     @object_schema sysname = N'dbo',
     @requested_memory_mb integer = 0,
-    @seconds_sample integer = 10,
+    @seconds_sample tinyint = 10,
     @gimme_danger bit = 0,
     @keep_alive bit = 0,
     @custom_name nvarchar(256) = N'',
@@ -2968,7 +2968,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
     @version = '5.9',
-    @version_date = '20240901';
+    @version_date = '20240915';
 
 IF @help = 1
 BEGIN
@@ -3065,7 +3065,7 @@ BEGIN
                WHEN N'@object_name' THEN N'a stringy thing'
                WHEN N'@object_schema' THEN N'a stringy thing'
                WHEN N'@requested_memory_mb' THEN N'an integer'
-               WHEN N'@seconds_sample' THEN N'an integer'
+               WHEN N'@seconds_sample' THEN N'a tiny integer'
                WHEN N'@gimme_danger' THEN N'1 or 0'
                WHEN N'@debug' THEN N'1 or 0'
                WHEN N'@keep_alive' THEN N'1 or 0'
@@ -3216,7 +3216,6 @@ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVE
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ', 0, 1) WITH NOWAIT;
-
     RETURN;
 END;
 
@@ -3402,8 +3401,11 @@ DECLARE
 IF
 (
     @v < 11
-      OR (@v = 11
-           AND @mv < 7001)
+    OR
+    (
+          @v = 11
+      AND @mv < 7001
+    )
 )
     BEGIN
         RAISERROR(N'This darn thing doesn''t seem to work on versions older than 2012 SP4.', 11, 1) WITH NOWAIT;
@@ -3422,8 +3424,8 @@ IF NOT EXISTS
              OR xo.capabilities & 1 = 0)
     AND   (xp.capabilities IS NULL
              OR xp.capabilities & 1 = 0)
-    AND xo.object_type = N'action'
-    AND xo.name = N'query_hash_signed'
+    AND   xo.object_type = N'action'
+    AND   xo.name = N'query_hash_signed'
 )
     BEGIN
         RAISERROR(N'This server hasn''t been patched up to a supported version that has the query_hash_signed action.', 11, 1) WITH NOWAIT;
@@ -3446,8 +3448,8 @@ BEGIN
     LEFT JOIN sys.dm_xe_sessions AS dxe
       ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents%'
-    AND   (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR     dxe.create_time IS NULL);
+    AND  (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+    OR    dxe.create_time IS NULL);
 END;
 
 IF @azure = 1
@@ -3465,8 +3467,8 @@ BEGIN
     LEFT JOIN sys.dm_xe_database_sessions AS dxe
       ON dxe.name = ses.name
     WHERE ses.name LIKE N'HumanEvents%'
-    AND   (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
-    OR     dxe.create_time IS NULL);
+    AND  (dxe.create_time < DATEADD(MINUTE, -1, SYSDATETIME())
+    OR    dxe.create_time IS NULL);
 END;
 
 IF EXISTS
@@ -3479,31 +3481,35 @@ BEGIN
     RAISERROR(N'Found old sessions, dropping those.', 0, 1) WITH NOWAIT;
 
     DECLARE
-        drop_cursor CURSOR
-        LOCAL STATIC FOR
+        @drop_cursor CURSOR;
 
+    SET
+        @drop_cursor =
+        CURSOR
+        LOCAL
+        SCROLL
+        DYNAMIC
+        READ_ONLY
+    FOR
     SELECT
         drop_command
     FROM #drop_commands;
 
-    OPEN drop_cursor;
+    OPEN @drop_cursor;
 
     FETCH NEXT
-    FROM drop_cursor
+    FROM @drop_cursor
     INTO @drop_old_sql;
 
     WHILE @@FETCH_STATUS = 0
     BEGIN
         PRINT @drop_old_sql;
-        EXEC(@drop_old_sql);
+        EXEC (@drop_old_sql);
 
         FETCH NEXT
-        FROM drop_cursor
+        FROM @drop_cursor
         INTO @drop_old_sql;
     END;
-
-    CLOSE drop_cursor;
-    DEALLOCATE drop_cursor;
 END;
 
 RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT;
@@ -3582,47 +3588,47 @@ CREATE EVENT SESSION ' +
     CASE
         WHEN @azure = 0
         THEN N'
-    ON SERVER '
+ON SERVER '
         ELSE N'
-    ON DATABASE '
+ON DATABASE '
     END;
 
 /* STOP. DROP. SHUT'EM DOWN OPEN UP SHOP. */
 SET @start_sql =
     N'ALTER EVENT SESSION ' +
     @session_name +
-    N' ON ' +
+N' ON ' +
     CASE
         WHEN @azure = 1
         THEN 'DATABASE'
         ELSE 'SERVER'
     END +
-    ' STATE = START;' +
-    @nc10;
+' STATE = START;' +
+@nc10;
 
 SET @stop_sql  =
     N'ALTER EVENT SESSION ' +
     @session_name +
-    N' ON ' +
+N' ON ' +
     CASE
         WHEN @azure = 1
         THEN N'DATABASE'
         ELSE N'SERVER'
     END +
-    N' STATE = STOP;' +
-    @nc10;
+N' STATE = STOP;' +
+@nc10;
 
 SET @drop_sql  =
     N'DROP EVENT SESSION '  +
     @session_name +
-    N' ON ' +
+N' ON ' +
     CASE
         WHEN @azure = 1
         THEN N'DATABASE'
         ELSE N'SERVER'
     END +
-    N';' +
-    @nc10;
+N';' +
+@nc10;
 
 
 /*Some sessions can use all general filters*/
@@ -3806,7 +3812,7 @@ they're valid waits by checking them against what's available.
 */
 IF @wait_type <> N'ALL'
 BEGIN
-RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT;
+    RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT;
 
     /* There's no THREADPOOL in XE map values, it gets registered as SOS_WORKER */
     SET @wait_type =
@@ -3847,7 +3853,6 @@ RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT;
         RAISERROR(N'Waidaminnithataintawait', 11, 1) WITH NOWAIT;
         RETURN;
     END;
-
 END;
 
 
@@ -4087,18 +4092,6 @@ We need to do some seconds math here, because WAITFOR is very stupid
 RAISERROR(N'Wait For It! Wait For it!', 0, 1) WITH NOWAIT;
 IF @seconds_sample > 0
 BEGIN
-    /* I really don't want this running for more than 10 minutes right now. */
-    IF
-    (
-            @seconds_sample > 600
-        AND @gimme_danger = 0
-    )
-    BEGIN
-        RAISERROR(N'Yeah nah not more than 10 minutes', 10, 1) WITH NOWAIT;
-        RAISERROR(N'(unless you set @gimme_danger = 1)', 10, 1) WITH NOWAIT;
-        RETURN;
-    END;
-
     SELECT
         @waitfor =
             CONVERT
@@ -4193,13 +4186,13 @@ END;
 IF @session_id <> N''
 BEGIN
     IF LOWER(@session_id) NOT LIKE N'%sample%'
-        BEGIN
-            SET @session_id_filter += N'     AND sqlserver.session_id = ' + CONVERT(nvarchar(11), @session_id) + @nc10;
-        END;
+    BEGIN
+        SET @session_id_filter += N'     AND sqlserver.session_id = ' + CONVERT(nvarchar(11), @session_id) + @nc10;
+    END;
     IF LOWER(@session_id) LIKE N'%sample%'
-        BEGIN
-            SET @session_id_filter += N'     AND package0.divides_by_uint64(sqlserver.session_id, ' + CONVERT(nvarchar(11), @sample_divisor) + N') ' + @nc10;
-        END;
+    BEGIN
+        SET @session_id_filter += N'     AND package0.divides_by_uint64(sqlserver.session_id, ' + CONVERT(nvarchar(11), @sample_divisor) + N') ' + @nc10;
+    END;
 END;
 
 IF @username <> N''
@@ -4232,7 +4225,7 @@ END;
 IF LOWER(@event_type) LIKE N'%wait%'
 BEGIN
     INSERT
-        #wait
+        #wait WITH(TABLOCK)
     (
         wait_type
     )
@@ -4296,14 +4289,14 @@ BEGIN
             (N'LOGBUFFER'),
             (N'WRITELOG')
     ) AS x (wait_type)
-    WHERE @wait_type = N'all'
+    WHERE @wait_type = N'ALL'
 
     UNION ALL
 
     SELECT
         uw.wait_type
     FROM #user_waits AS uw
-    WHERE @wait_type <> N'all';
+    WHERE @wait_type <> N'ALL';
 
     /* This section creates a dynamic WHERE clause based on wait types
        The problem is that wait type IDs change frequently, which sucks. */
@@ -4489,12 +4482,13 @@ SET @session_filter_parameterization +=
 /* This section sets up the event session definition */
 RAISERROR(N'Setting up the event session', 0, 1) WITH NOWAIT;
 SET @session_sql +=
-        CASE WHEN LOWER(@event_type) LIKE N'%lock%'
-             THEN N'
+        CASE
+            WHEN LOWER(@event_type) LIKE N'%lock%'
+            THEN N'
       ADD EVENT sqlserver.blocked_process_report
         (WHERE ( ' + @session_filter_blocking + N' ))'
-             WHEN LOWER(@event_type) LIKE N'%quer%'
-             THEN N'
+            WHEN LOWER(@event_type) LIKE N'%quer%'
+            THEN N'
       ADD EVENT sqlserver.module_end
         (SET collect_statement = 1
          ACTION (sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
@@ -4511,50 +4505,53 @@ SET @session_sql +=
         (SET collect_statement = 1
          ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
          WHERE ( ' + @session_filter_statement_completed + N' ))'
-                   + CASE WHEN @skip_plans = 0
-                          THEN N',
+                   + CASE
+                         WHEN @skip_plans = 0
+                         THEN N',
       ADD EVENT sqlserver.query_post_execution_showplan
         (
          ACTION(sqlserver.database_name, sqlserver.sql_text, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
          WHERE ( ' + @session_filter_query_plans + N' ))'
-                          ELSE N''
-                    END
-             WHEN LOWER(@event_type) LIKE N'%wait%'
-                    AND @v > 11
-             THEN N'
+                         ELSE N''
+                     END
+            WHEN LOWER(@event_type) LIKE N'%wait%'
+            AND  @v > 11
+            THEN N'
       ADD EVENT sqlos.wait_completed
         (SET collect_wait_resource = 1
          ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
          WHERE ( ' + @session_filter_waits + N' ))'
-             WHEN LOWER(@event_type) LIKE N'%wait%'
-                    AND @v = 11
-             THEN N'
+            WHEN LOWER(@event_type) LIKE N'%wait%'
+            AND  @v = 11
+            THEN N'
       ADD EVENT sqlos.wait_info
         (
          ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
          WHERE ( ' + @session_filter_waits + N' ))'
-             WHEN LOWER(@event_type) LIKE N'%recomp%'
-             THEN CASE WHEN @compile_events = 1
-                       THEN N'
+            WHEN LOWER(@event_type) LIKE N'%recomp%'
+            THEN CASE
+                     WHEN @compile_events = 1
+                     THEN N'
       ADD EVENT sqlserver.sql_statement_post_compile
         (SET collect_object_name = 1, collect_statement = 1
          ACTION(sqlserver.database_name)
          WHERE ( ' + @session_filter + N' ))'
-                       ELSE N'
+                     ELSE N'
       ADD EVENT sqlserver.sql_statement_recompile
         (SET collect_object_name = 1, collect_statement = 1
          ACTION(sqlserver.database_name)
          WHERE ( ' + @session_filter_recompile + N' ))'
                  END
-             WHEN (LOWER(@event_type) LIKE N'%comp%'
-                     AND LOWER(@event_type) NOT LIKE N'%re%')
-             THEN CASE WHEN @compile_events = 1
-                       THEN N'
+            WHEN (LOWER(@event_type) LIKE N'%comp%'
+            AND   LOWER(@event_type) NOT LIKE N'%re%')
+            THEN CASE
+                     WHEN @compile_events = 1
+                     THEN N'
       ADD EVENT sqlserver.sql_statement_post_compile
         (SET collect_object_name = 1, collect_statement = 1
          ACTION(sqlserver.database_name)
          WHERE ( ' + @session_filter + N' ))'
-                       ELSE N'
+                     ELSE N'
       ADD EVENT sqlserver.uncached_sql_batch_statistics
         (
          ACTION(sqlserver.database_name)
@@ -4563,23 +4560,23 @@ SET @session_sql +=
         (SET collect_object_name = 1, collect_statement = 1
          ACTION(sqlserver.database_name)
          WHERE ( ' + @session_filter_recompile + N' ))'
-                  END
-                + CASE WHEN @parameterization_events = 1
-                       THEN N',
+                 END
+                + CASE
+                      WHEN @parameterization_events = 1
+                      THEN N',
       ADD EVENT sqlserver.query_parameterization_data
         (
          ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.sql_text)
          WHERE ( ' + @session_filter_parameterization + N' ))'
-                       ELSE N''
-                  END
+                      ELSE N''
+                 END
             ELSE N'i have no idea what i''m doing.'
         END;
 /* End event session definition */
 
 
 /* This creates the event session */
-SET @session_sql +=
-        @session_with;
+SET @session_sql += @session_with;
 
 IF @debug = 1 BEGIN RAISERROR(@session_sql, 0, 1) WITH NOWAIT; END;
 EXEC (@session_sql);
@@ -4681,8 +4678,8 @@ BEGIN
                     oa.c.value('@timestamp', 'datetime2')
                 ),
             event_type = oa.c.value('@name', 'nvarchar(256)'),
-            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),
-            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
             sql_text = oa.c.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(MAX)'),
             statement = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),
             showplan_xml = CASE WHEN @skip_plans = 0 THEN oa.c.query('(data[@name="showplan_xml"]/value/*)[1]') ELSE N'<skip>Skipped Plans</skip>' END,
@@ -4694,7 +4691,7 @@ BEGIN
             spills_mb = (oa.c.value('(data[@name="spills"]/value/text())[1]', 'bigint') * 8) / 1024.,
             row_count = oa.c.value('(data[@name="row_count"]/value/text())[1]', 'bigint'),
             estimated_rows = oa.c.value('(data[@name="estimated_rows"]/value/text())[1]', 'bigint'),
-            dop = oa.c.value('(data[@name="dop"]/value/text())[1]', 'int'),
+            dop = oa.c.value('(data[@name="dop"]/value/text())[1]', 'integer'),
             serial_ideal_memory_mb = oa.c.value('(data[@name="serial_ideal_memory_kb"]/value/text())[1]', 'bigint') / 1024.,
             requested_memory_mb = oa.c.value('(data[@name="requested_memory_kb"]/value/text())[1]', 'bigint') / 1024.,
             used_memory_mb = oa.c.value('(data[@name="used_memory_kb"]/value/text())[1]', 'bigint') / 1024.,
@@ -4729,9 +4726,11 @@ BEGIN
     BEGIN
         WITH
             XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
-        UPDATE q1
-            SET showplan_xml.modify('insert attribute StatementId {"1"}
-                                     into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
+        UPDATE
+            q1
+        SET
+            showplan_xml.modify('insert attribute StatementId {"1"}
+                                 into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
         FROM #queries AS q1
         CROSS APPLY
         (
@@ -4750,9 +4749,10 @@ BEGIN
         /* Add attribute StatementText to query plan if it is missing (all versions) */
         WITH
             XMLNAMESPACES(DEFAULT 'http://schemas.microsoft.com/sqlserver/2004/07/showplan')
-        UPDATE q1
-            SET showplan_xml.modify('insert attribute StatementText {sql:column("q2.statement_text")}
-                                     into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
+        UPDATE
+            q1
+        SET showplan_xml.modify('insert attribute StatementText {sql:column("q2.statement_text")}
+                                 into (/ShowPlanXML/BatchSequence/Batch/Statements/StmtSimple)[1]')
         FROM #queries AS q1
         CROSS APPLY
         (
@@ -4827,7 +4827,6 @@ BEGIN
            avg_rows = NULL
        FROM #queries AS q
        WHERE q.event_type = N'query_post_execution_showplan'
-       AND   @skip_plans = 0
     )
     SELECT
         qa.query_plan_hash_signed,
@@ -4927,6 +4926,7 @@ BEGIN
                 q2.event_time DESC
         ) AS q2
         WHERE q.showplan_xml.exist('*') = 1
+        OR    @skip_plans = 1
     )
     SELECT
         q.event_time,
@@ -5030,8 +5030,8 @@ BEGIN
                     oa.c.value('@timestamp', 'datetime2')
                 ),
             event_type = oa.c.value('@name', 'nvarchar(256)'),
-            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),
-            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
             statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),
             compile_cpu_ms = oa.c.value('(data[@name="cpu_time"]/value/text())[1]', 'bigint'),
             compile_duration_ms = oa.c.value('(data[@name="duration"]/value/text())[1]', 'bigint')
@@ -5119,8 +5119,8 @@ BEGIN
                     oa.c.value('@timestamp', 'datetime2')
                 ),
             event_type = oa.c.value('@name', 'nvarchar(256)'),
-            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),
-            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
             statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)')
         INTO #compiles_0
         FROM #human_events_xml AS xet
@@ -5172,11 +5172,11 @@ BEGIN
                     oa.c.value('@timestamp', 'datetime2')
                 ),
             event_type = oa.c.value('@name', 'nvarchar(256)'),
-            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
             sql_text = oa.c.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(MAX)'),
             compile_cpu_time_ms = oa.c.value('(data[@name="compile_cpu_time"]/value/text())[1]', 'bigint') / 1000.,
             compile_duration_ms = oa.c.value('(data[@name="compile_duration"]/value/text())[1]', 'bigint') / 1000.,
-            query_param_type = oa.c.value('(data[@name="query_param_type"]/value/text())[1]', 'int'),
+            query_param_type = oa.c.value('(data[@name="query_param_type"]/value/text())[1]', 'integer'),
             is_cached = oa.c.value('(data[@name="is_cached"]/value/text())[1]', 'bit'),
             is_recompiled = oa.c.value('(data[@name="is_recompiled"]/value/text())[1]', 'bit'),
             compile_code = oa.c.value('(data[@name="compile_code"]/text)[1]', 'nvarchar(256)'),
@@ -5282,9 +5282,9 @@ IF @compile_events = 1
                     oa.c.value('@timestamp', 'datetime2')
                 ),
             event_type = oa.c.value('@name', 'nvarchar(256)'),
-            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),
-            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),
-            recompile_cause = oa.c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)'),
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
+            recompile_cause = oa.c.value('(data[@name="recompile_cause"]/text)[1]', 'sysname'),
             statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),
             recompile_cpu_ms = oa.c.value('(data[@name="cpu_time"]/value/text())[1]', 'bigint'),
             recompile_duration_ms = oa.c.value('(data[@name="duration"]/value/text())[1]', 'bigint')
@@ -5371,9 +5371,9 @@ IF @compile_events = 1
                     oa.c.value('@timestamp', 'datetime2')
                 ),
             event_type = oa.c.value('@name', 'nvarchar(256)'),
-            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),
-            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'nvarchar(256)'),
-            recompile_cause = oa.c.value('(data[@name="recompile_cause"]/text)[1]', 'nvarchar(256)'),
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
+            object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
+            recompile_cause = oa.c.value('(data[@name="recompile_cause"]/text)[1]', 'sysname'),
             statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)')
         INTO #recompiles_0
         FROM #human_events_xml AS xet
@@ -5430,8 +5430,8 @@ BEGIN
                     oa.c.value('@timestamp', 'datetime2')
                 ),
             event_type = oa.c.value('@name', 'nvarchar(256)'),
-            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'nvarchar(256)'),
-            wait_type = oa.c.value('(data[@name="wait_type"]/text)[1]', 'nvarchar(256)'),
+            database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
+            wait_type = oa.c.value('(data[@name="wait_type"]/text)[1]', 'nvarchar(60)'),
             duration_ms = oa.c.value('(data[@name="duration"]/value/text())[1]', 'bigint') ,
             signal_duration_ms = oa.c.value('(data[@name="signal_duration"]/value/text())[1]', 'bigint'),
             wait_resource =
@@ -5578,16 +5578,16 @@ BEGIN
                 ),
                 oa.c.value('@timestamp', 'datetime2')
             ),
-        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
-        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
-        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
+        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
         transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
         resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
-        monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'int'),
-        blocking_spid = bg.value('(process/@spid)[1]', 'int'),
-        blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
-        blocked_spid = bd.value('(process/@spid)[1]', 'int'),
-        blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
+        monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
+        blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
+        blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
+        blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
+        blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
         transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
@@ -5596,8 +5596,8 @@ BEGIN
         wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
         lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
         status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bd.value('(process/@priority)[1]', 'int'),
-        transaction_count = bd.value('(process/@trancount)[1]', 'int'),
+        priority = bd.value('(process/@priority)[1]', 'integer'),
+        transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
         client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
         host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
         login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -5605,8 +5605,8 @@ BEGIN
         log_used = bd.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
         clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-        currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
-        currentdbid = bd.value('(process/@currentdb)[1]', 'int'),
+        currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
+        currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
         sort_order = CAST('' AS varchar(400)),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
@@ -5629,7 +5629,8 @@ BEGIN
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
 
-    ALTER TABLE #blocked
+    ALTER TABLE
+        #blocked
     ADD blocking_desc AS
             ISNULL
             (
@@ -5672,16 +5673,16 @@ BEGIN
                 ),
                 oa.c.value('@timestamp', 'datetime2')
             ),
-        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
-        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
-        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+        database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+        database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
+        object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
         transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
         resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
-        monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'int'),
-        blocking_spid = bg.value('(process/@spid)[1]', 'int'),
-        blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
-        blocked_spid = bd.value('(process/@spid)[1]', 'int'),
-        blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
+        monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
+        blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
+        blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
+        blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
+        blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
         query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
         transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(256)'),
@@ -5690,8 +5691,8 @@ BEGIN
         wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
         lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
         status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bg.value('(process/@priority)[1]', 'int'),
-        transaction_count = bg.value('(process/@trancount)[1]', 'int'),
+        priority = bg.value('(process/@priority)[1]', 'integer'),
+        transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
         client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
         host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
         login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -5699,8 +5700,8 @@ BEGIN
         log_used = bg.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
         clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-        currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-        currentdbid = bg.value('(process/@currentdb)[1]', 'int'),
+        currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
+        currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
         sort_order = CAST('' AS varchar(400)),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
@@ -5723,7 +5724,8 @@ BEGIN
        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
     PERSISTED;
 
-    ALTER TABLE #blocking
+    ALTER TABLE
+        #blocking
     ADD blocking_desc AS
             ISNULL
             (
@@ -5799,7 +5801,8 @@ BEGIN
           ON  bg.monitor_loop = h.monitor_loop
           AND bg.blocking_desc = h.blocked_desc
     )
-    UPDATE #blocked
+    UPDATE
+        #blocked
     SET
         blocking_level = h.level,
         sort_order = h.sort_order
@@ -5810,7 +5813,8 @@ BEGIN
       AND h.blocked_desc = b.blocked_desc
     OPTION(RECOMPILE);
 
-    UPDATE #blocking
+    UPDATE
+        #blocking
     SET
         blocking_level = bd.blocking_level,
         sort_order = bd.sort_order
@@ -6082,9 +6086,9 @@ BEGIN
             sql_handle =
                 CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
             stmtstart =
-                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+                ISNULL(n.c.value('@stmtstart', 'integer'), 0),
             stmtend =
-                ISNULL(n.c.value('@stmtend', 'int'), -1)
+                ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
         CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.database_name = @database_name
@@ -6107,9 +6111,9 @@ BEGIN
             sql_handle =
                 CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
             stmtstart =
-                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+                ISNULL(n.c.value('@stmtstart', 'integer'), 0),
             stmtend =
-                ISNULL(n.c.value('@stmtend', 'int'), -1)
+                ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
         CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.database_name = @database_name
@@ -6471,23 +6475,24 @@ BEGIN
         END;
 
         /*Update this column for when we see if we need to create views.*/
-        UPDATE hew
-            SET
-                hew.event_type_short =
-                    CASE
-                        WHEN hew.event_type LIKE N'%block%'
-                        THEN N'[_]Blocking'
-                        WHEN ( hew.event_type LIKE N'%comp%'
-                                 AND hew.event_type NOT LIKE N'%re%' )
-                        THEN N'[_]Compiles'
-                        WHEN hew.event_type LIKE N'%quer%'
-                        THEN N'[_]Queries'
-                        WHEN hew.event_type LIKE N'%recomp%'
-                        THEN N'[_]Recompiles'
-                        WHEN hew.event_type LIKE N'%wait%'
-                        THEN N'[_]Waits'
-                        ELSE N'?'
-                    END
+        UPDATE
+            hew
+        SET
+            hew.event_type_short =
+                CASE
+                    WHEN hew.event_type LIKE N'%block%'
+                    THEN N'[_]Blocking'
+                    WHEN ( hew.event_type LIKE N'%comp%'
+                             AND hew.event_type NOT LIKE N'%re%' )
+                    THEN N'[_]Compiles'
+                    WHEN hew.event_type LIKE N'%quer%'
+                    THEN N'[_]Queries'
+                    WHEN hew.event_type LIKE N'%recomp%'
+                    THEN N'[_]Recompiles'
+                    WHEN hew.event_type LIKE N'%wait%'
+                    THEN N'[_]Waits'
+                    ELSE N'?'
+                END
         FROM #human_events_worker AS hew
         WHERE hew.event_type_short = N'';
 
@@ -6587,15 +6592,16 @@ BEGIN
                 @table_sql;
 
             RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @event_type_check) WITH NOWAIT;
-            UPDATE #human_events_worker
-                SET is_table_created = 1
+            UPDATE
+                #human_events_worker
+            SET
+                is_table_created = 1
             WHERE id = @min_id
-            AND is_table_created = 0;
+            AND   is_table_created = 0;
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
             RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
-
             SET @min_id =
             (
                 SELECT TOP (1)
@@ -6608,9 +6614,7 @@ BEGIN
             );
 
             IF @debug = 1 BEGIN RAISERROR(N'new @min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
-
             IF @min_id IS NULL BREAK;
-
         END;
     END;
 
@@ -6626,10 +6630,10 @@ IF EXISTS
 OR
 (   /* If the proc has been modified, maybe views have been added or changed? */
     SELECT
-        modify_date
-    FROM sys.all_objects
-    WHERE type = N'P'
-    AND name = N'sp_HumanEvents'
+        o.modify_date
+    FROM sys.all_objects AS o
+    WHERE o.type = N'P'
+    AND   o.name = 'sp_HumanEvents'
 ) < DATEADD(HOUR, -1, SYSDATETIME())
 BEGIN
     RAISERROR(N'Found views to create, beginning!', 0, 1) WITH NOWAIT;
@@ -6685,24 +6689,27 @@ BEGIN
         WHERE @compile_events = 0;
 
         RAISERROR(N'Updating #view_check with output database (%s) and schema (%s)', 0, 1, @output_database_name, @output_schema_name) WITH NOWAIT;
-        UPDATE #view_check
-            SET
-                output_database = @output_database_name,
-                output_schema = @output_schema_name;
+        UPDATE
+            #view_check
+        SET
+            output_database = @output_database_name,
+            output_schema = @output_schema_name;
 
         RAISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT;
-        UPDATE vc
-            SET
-                vc.output_table = hew.output_table
+        UPDATE
+            vc
+        SET
+            vc.output_table = hew.output_table
         FROM #view_check AS vc
         JOIN #human_events_worker AS hew
           ON  vc.view_name LIKE N'%' + hew.event_type_short + N'%'
           AND hew.is_table_created = 1
           AND hew.is_view_created = 0;
 
-        UPDATE vc
-            SET
-                vc.output_table = hew.output_table + N'_parameterization'
+        UPDATE
+            vc
+        SET
+            vc.output_table = hew.output_table + N'_parameterization'
         FROM #view_check AS vc
         JOIN #human_events_worker AS hew
           ON  vc.view_name = N'HumanEvents_Parameterization'
@@ -6732,8 +6739,8 @@ BEGIN
                 1/0
             FROM #human_events_worker AS hew
             WHERE vc.view_name LIKE N'%' + hew.event_type_short + N'%'
-            AND hew.is_table_created = 1
-            AND hew.is_view_created = 0
+            AND   hew.is_table_created = 1
+            AND   hew.is_view_created = 0
         );
 
         WHILE @min_id <= @max_id
@@ -6799,15 +6806,15 @@ BEGIN
             IF @debug = 1
             BEGIN
                 PRINT SUBSTRING(@view_sql, 0,     4000);
-                PRINT SUBSTRING(@view_sql, 4000,  8000);
-                PRINT SUBSTRING(@view_sql, 8000,  12000);
-                PRINT SUBSTRING(@view_sql, 12000, 16000);
-                PRINT SUBSTRING(@view_sql, 16000, 20000);
-                PRINT SUBSTRING(@view_sql, 20000, 24000);
-                PRINT SUBSTRING(@view_sql, 24000, 28000);
-                PRINT SUBSTRING(@view_sql, 28000, 32000);
-                PRINT SUBSTRING(@view_sql, 32000, 36000);
-                PRINT SUBSTRING(@view_sql, 36000, 40000);
+                PRINT SUBSTRING(@view_sql, 4001,  8000);
+                PRINT SUBSTRING(@view_sql, 8001,  12000);
+                PRINT SUBSTRING(@view_sql, 12001, 16000);
+                PRINT SUBSTRING(@view_sql, 16001, 20000);
+                PRINT SUBSTRING(@view_sql, 20001, 24000);
+                PRINT SUBSTRING(@view_sql, 24001, 28000);
+                PRINT SUBSTRING(@view_sql, 28001, 32000);
+                PRINT SUBSTRING(@view_sql, 32001, 36000);
+                PRINT SUBSTRING(@view_sql, 36001, 40000);
             END;
 
             RAISERROR(N'creating view %s', 0, 1, @event_type_check) WITH NOWAIT;
@@ -6835,9 +6842,10 @@ BEGIN
             SET @spe = N'.sys.sp_executesql ';
         END;
 
-        UPDATE #human_events_worker
-            SET
-                is_view_created = 1;
+        UPDATE
+            #human_events_worker
+        SET
+            is_view_created = 1;
 
         SET @view_tracker = 1;
     END;
@@ -6904,42 +6912,45 @@ END;
                              N'( server_name, event_time, event_type, database_name, wait_type, duration_ms, ' + @nc10 +
                              N'  signal_duration_ms, wait_resource,  query_plan_hash_signed, query_hash_signed, plan_handle )' + @nc10 +
                              N'SELECT
-        @@SERVERNAME,
-        DATEADD
-        (
-            MINUTE,
-            DATEDIFF
+        server_name = @@SERVERNAME,
+        event_time =
+            DATEADD
             (
-                 MINUTE,
-                 GETUTCDATE(),
-                 SYSDATETIME()
-             ),
-             c.value(''@timestamp'', ''datetime2'')
-        ) AS event_time,
-        c.value(''@name'', ''nvarchar(256)'') AS event_type,
-        c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,
-        c.value(''(data[@name="wait_type"]/text)[1]'', ''nvarchar(256)'') AS wait_type,
-        c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'')  AS duration_ms,
-        c.value(''(data[@name="signal_duration"]/value/text())[1]'', ''bigint'') AS signal_duration_ms,' + @nc10 +
+                MINUTE,
+                DATEDIFF
+                (
+                     MINUTE,
+                     GETUTCDATE(),
+                     SYSDATETIME()
+                 ),
+                 c.value(''@timestamp'', ''datetime2'')
+            ),
+        event_type = c.value(''@name'', ''nvarchar(256)''),
+        database_name = c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
+        wait_type = c.value(''(data[@name="wait_type"]/text)[1]'', ''nvarchar(60)''),
+        duration_ms = c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint''),
+        signal_duration_ms = c.value(''(data[@name="signal_duration"]/value/text())[1]'', ''bigint''),' + @nc10 +
 CONVERT
 (
     nvarchar(MAX),
 CASE
     WHEN @v = 11 /*We can't get the wait resource on older versions of SQL Server*/
     THEN N'        ''Not Available < 2014'', ' + @nc10
-    ELSE N'        c.value(''(data[@name="wait_resource"]/value/text())[1]'', ''nvarchar(256)'')  AS wait_resource, ' + @nc10
+    ELSE N'        wait_resource = c.value(''(data[@name="wait_resource"]/value/text())[1]'', ''nvarchar(256)''), ' + @nc10
 END
-) + CONVERT(nvarchar(MAX), N'        CONVERT
+) + CONVERT(nvarchar(MAX), N'        query_plan_hash_signed =
+                CONVERT
                 (
                     binary(8),
                     c.value(''(action[@name="query_plan_hash_signed"]/value/text())[1]'', ''bigint'')
-                ) AS query_plan_hash_signed,
-        CONVERT
-        (
-            binary(8),
-            c.value(''(action[@name="query_hash_signed"]/value/text())[1]'', ''bigint'')
-        ) AS query_hash_signed,
-        c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)'') AS plan_handle
+                ),
+        query_hash_signed =
+            CONVERT
+            (
+                binary(8),
+                c.value(''(action[@name="query_hash_signed"]/value/text())[1]'', ''bigint'')
+            ),
+        plan_handle = c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)'')
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''(data[@name="duration"]/value/text()[. > 0])'') = 1
@@ -6983,45 +6994,47 @@ FROM
     FROM
     (
         SELECT
-            @@SERVERNAME AS server_name,
-            DATEADD
-            (
-                MINUTE,
-                DATEDIFF
+            server_name = @@SERVERNAME,
+            event_time =
+                DATEADD
                 (
                     MINUTE,
-                    GETUTCDATE(),
-                    SYSDATETIME()
-                ), oa.c.value(''@timestamp'', ''datetime2'')
-            ) AS event_time,
-            ''blocked'' AS activity,
-            DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'')) AS database_name,
-            oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'') AS database_id,
-            oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''int'') AS object_id,
-            oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint'') AS transaction_id,
-            oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)'') AS resource_owner_type,
-            oa.c.value(''(//@monitorLoop)[1]'', ''int'') AS monitor_loop,
-            bd.value(''(process/@spid)[1]'', ''int'') AS spid,
-            bd.value(''(process/@ecid)[1]'', ''int'') AS ecid,
-            bd.value(''(process/inputbuf/text())[1]'', ''nvarchar(MAX)'') AS text,
-            bd.value(''(process/@waittime)[1]'', ''bigint'') AS waittime,
-            bd.value(''(process/@transactionname)[1]'', ''nvarchar(256)'') AS transactionname,
-            bd.value(''(process/@lasttranstarted)[1]'', ''datetime2'') AS lasttranstarted,
-            bd.value(''(process/@waitresource)[1]'', ''nvarchar(100)'') AS wait_resource,
-            bd.value(''(process/@lockMode)[1]'', ''nvarchar(10)'') AS lockmode,
-            bd.value(''(process/@status)[1]'', ''nvarchar(10)'') AS status,
-            bd.value(''(process/@priority)[1]'', ''int'') AS priority,
-            bd.value(''(process/@trancount)[1]'', ''int'') AS trancount,
-            bd.value(''(process/@clientapp)[1]'', ''nvarchar(256)'') AS clientapp,
-            bd.value(''(process/@hostname)[1]'', ''nvarchar(256)'') AS hostname,
-            bd.value(''(process/@loginname)[1]'', ''nvarchar(256)'') AS loginname,
-            bd.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)'') AS isolationlevel,
-            CONVERT
-            (
-                varbinary(64),
-                bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)'')
-            ) AS sqlhandle,
-            oa.c.query(''.'') AS process_report
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ), oa.c.value(''@timestamp'', ''datetime2'')
+                ),
+            activity = ''blocked'',
+            database_name = DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer'')),
+            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
+            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
+            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
+            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)''),
+            monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
+            spid = bd.value(''(process/@spid)[1]'', ''integer''),
+            ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
+            text = bd.value(''(process/inputbuf/text())[1]'', ''nvarchar(MAX)''),
+            waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
+            transactionname = bd.value(''(process/@transactionname)[1]'', ''nvarchar(256)''),
+            lasttranstarted = bd.value(''(process/@lasttranstarted)[1]'', ''datetime2''),
+            wait_resource = bd.value(''(process/@waitresource)[1]'', ''nvarchar(100)''),
+            lockmode = bd.value(''(process/@lockMode)[1]'', ''nvarchar(10)''),
+            status = bd.value(''(process/@status)[1]'', ''nvarchar(10)''),
+            priority = bd.value(''(process/@priority)[1]'', ''integer''),
+            trancount = bd.value(''(process/@trancount)[1]'', ''integer''),
+            clientapp = bd.value(''(process/@clientapp)[1]'', ''nvarchar(256)''),
+            hostname = bd.value(''(process/@hostname)[1]'', ''nvarchar(256)''),
+            loginname = bd.value(''(process/@loginname)[1]'', ''nvarchar(256)''),
+            isolationlevel = bd.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)''),
+            sqlhandle =
+                CONVERT
+                (
+                    varbinary(64),
+                    bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)'')
+                ) AS sqlhandle,
+            process_report = oa.c.query(''.'')
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
         OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
@@ -7030,42 +7043,43 @@ FROM
         UNION ALL
 
         SELECT
-            @@SERVERNAME AS server_name,
-            DATEADD
-            (
-                MINUTE,
-                DATEDIFF
+            server_name = @@SERVERNAME,
+            event_time =
+                DATEADD
                 (
                     MINUTE,
-                    GETUTCDATE(),
-                    SYSDATETIME()
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ),
+                    oa.c.value(''@timestamp'', ''datetime2'')
                 ),
-                oa.c.value(''@timestamp'', ''datetime2'')
-            ) AS event_time,
-            ''blocking'' AS activity,
-            DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'')) AS database_name,
-            oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'') AS database_id,
-            oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''int'') AS object_id,
-            oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint'') AS transaction_id,
-            oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)'') AS resource_owner_type,
-            oa.c.value(''(//@monitorLoop)[1]'', ''int'') AS monitor_loop,
-            bg.value(''(process/@spid)[1]'', ''int'') AS spid,
-            bg.value(''(process/@ecid)[1]'', ''int'') AS ecid,
-            bg.value(''(process/inputbuf/text())[1]'', ''nvarchar(MAX)'') AS text,
-            NULL AS waittime,
-            NULL AS transactionname,
-            NULL AS lasttranstarted,
-            NULL AS wait_resource,
-            NULL AS lockmode,
-            bg.value(''(process/@status)[1]'', ''nvarchar(10)'') AS status,
-            bg.value(''(process/@priority)[1]'', ''int'') AS priority,
-            bg.value(''(process/@trancount)[1]'', ''int'') AS trancount,
-            bg.value(''(process/@clientapp)[1]'', ''nvarchar(256)'') AS clientapp,
-            bg.value(''(process/@hostname)[1]'', ''nvarchar(256)'') AS hostname,
-            bg.value(''(process/@loginname)[1]'', ''nvarchar(256)'') AS loginname,
-            bg.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)'') AS isolationlevel,
-            NULL AS sqlhandle,
-            oa.c.query(''.'') AS process_report
+            activity = ''blocking'',
+            database_name = DB_NAME(oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer'')),
+            database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
+            object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
+            transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
+            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)''),
+            monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
+            spid = bg.value(''(process/@spid)[1]'', ''integer''),
+            ecid = bg.value(''(process/@ecid)[1]'', ''integer''),
+            text = bg.value(''(process/inputbuf/text())[1]'', ''nvarchar(MAX)''),
+            waittime = NULL,
+            transactionname = NULL,
+            lasttranstarted = NULL,
+            wait_resource = NULL,
+            lockmode = NULL,
+            status = bg.value(''(process/@status)[1]'', ''nvarchar(10)''),
+            priority = bg.value(''(process/@priority)[1]'', ''integer''),
+            trancount = bg.value(''(process/@trancount)[1]'', ''integer''),
+            clientapp = bg.value(''(process/@clientapp)[1]'', ''nvarchar(256)''),
+            hostname = bg.value(''(process/@hostname)[1]'', ''nvarchar(256)''),
+            loginname = bg.value(''(process/@loginname)[1]'', ''nvarchar(256)''),
+            isolationlevel = bg.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)''),
+            sqlhandle = NULL,
+            process_report = oa.c.query(''.'')
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
         OUTER APPLY oa.c.nodes(''//blocked-process-report/blocking-process'') AS bg(bg)
@@ -7095,18 +7109,18 @@ FROM ' + @object_name_check + N' AS x2
 JOIN
 (
     SELECT
-        @@SERVERNAME AS server_name,
-        ''blocked'' AS activity,
-        oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''int'') AS database_id,
-        oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''int'') AS object_id,
-        oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint'') AS transaction_id,
-        oa.c.value(''(//@monitorLoop)[1]'', ''int'') AS monitor_loop,
-        bd.value(''(process/@spid)[1]'', ''int'') AS spid,
-        bd.value(''(process/@ecid)[1]'', ''int'') AS ecid,
-        bd.value(''(process/@waittime)[1]'', ''bigint'') AS waittime,
-        bd.value(''(process/@clientapp)[1]'', ''nvarchar(256)'') AS clientapp,
-        bd.value(''(process/@hostname)[1]'', ''nvarchar(256)'') AS hostname,
-        bd.value(''(process/@loginname)[1]'', ''nvarchar(256)'') AS loginname
+        server_name = @@SERVERNAME,
+        activity = ''blocked'',
+        database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
+        object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
+        transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
+        monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
+        spid = bd.value(''(process/@spid)[1]'', ''integer''),
+        ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
+        waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
+        clientapp = bd.value(''(process/@clientapp)[1]'', ''nvarchar(256)''),
+        hostname = bd.value(''(process/@hostname)[1]'', ''nvarchar(256)''),
+        loginname = bd.value(''(process/@loginname)[1]'', ''nvarchar(256)'')
     FROM #human_events_xml_internal AS xet
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
@@ -7133,49 +7147,52 @@ JOIN
                             N'  requested_memory_mb, used_memory_mb, ideal_memory_mb, granted_memory_mb, ' + @nc10 +
                             N'  query_plan_hash_signed, query_hash_signed, plan_handle )' + @nc10 +
                             CONVERT(nvarchar(MAX), N'SELECT
-    @@SERVERNAME,
-    DATEADD
-    (
-        MINUTE,
-        DATEDIFF
+    server_name = @@SERVERNAME,
+    event_time =
+        DATEADD
         (
             MINUTE,
-            GETUTCDATE(),
-            SYSDATETIME()
+            DATEDIFF
+            (
+                MINUTE,
+                GETUTCDATE(),
+                SYSDATETIME()
+            ),
+            oa.c.value(''@timestamp'', ''datetime2'')
         ),
-        oa.c.value(''@timestamp'', ''datetime2'')
-    ) AS event_time,
-    oa.c.value(''@name'', ''nvarchar(256)'') AS event_type,
-    oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,
-    oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],
-    oa.c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)'') AS sql_text,
-    oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement,
-    oa.c.query(''(data[@name="showplan_xml"]/value/*)[1]'') AS [showplan_xml],
-    oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') / 1000. AS cpu_ms,
-   (oa.c.value(''(data[@name="logical_reads"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS logical_reads,
-   (oa.c.value(''(data[@name="physical_reads"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS physical_reads,
-    oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') / 1000. AS duration_ms,
-   (oa.c.value(''(data[@name="writes"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS writes_mb,
-   (oa.c.value(''(data[@name="spills"]/value/text())[1]'', ''bigint'') * 8) / 1024. AS spills_mb,
-    oa.c.value(''(data[@name="row_count"]/value/text())[1]'', ''bigint'') AS row_count,
-    oa.c.value(''(data[@name="estimated_rows"]/value/text())[1]'', ''bigint'') AS estimated_rows,
-    oa.c.value(''(data[@name="dop"]/value/text())[1]'', ''int'') AS dop,
-    oa.c.value(''(data[@name="serial_ideal_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS serial_ideal_memory_mb,
-    oa.c.value(''(data[@name="requested_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS requested_memory_mb,
-    oa.c.value(''(data[@name="used_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS used_memory_mb,
-    oa.c.value(''(data[@name="ideal_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS ideal_memory_mb,
-    oa.c.value(''(data[@name="granted_memory_kb"]/value/text())[1]'', ''bigint'') / 1024. AS granted_memory_mb,
-    CONVERT
-    (
-        binary(8),
-        oa.c.value(''(action[@name="query_plan_hash_signed"]/value/text())[1]'', ''bigint'')
-    ) AS query_plan_hash_signed,
-    CONVERT
-    (
-        binary(8),
-        oa.c.value(''(action[@name="query_hash_signed"]/value/text())[1]'', ''bigint'')
-    ) AS query_hash_signed,
-    oa.c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)'') AS plan_handle
+    event_type = oa.c.value(''@name'', ''nvarchar(256)''),
+    database_name = oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
+    [object_name] = oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''sysname''),
+    sql_text = oa.c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)''),
+    statement = oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)''),
+    [showplan_xml] = oa.c.query(''(data[@name="showplan_xml"]/value/*)[1]''),
+    cpu_ms = oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') / 1000.,
+    logical_reads = (oa.c.value(''(data[@name="logical_reads"]/value/text())[1]'', ''bigint'') * 8) / 1024.,
+    physical_reads = (oa.c.value(''(data[@name="physical_reads"]/value/text())[1]'', ''bigint'') * 8) / 1024.,
+    duration_ms = oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') / 1000.,
+    writes_mb = (oa.c.value(''(data[@name="writes"]/value/text())[1]'', ''bigint'') * 8) / 1024.,
+    spills_mb = (oa.c.value(''(data[@name="spills"]/value/text())[1]'', ''bigint'') * 8) / 1024.,
+    row_count = oa.c.value(''(data[@name="row_count"]/value/text())[1]'', ''bigint''),
+    estimated_rows = oa.c.value(''(data[@name="estimated_rows"]/value/text())[1]'', ''bigint''),
+    dop = oa.c.value(''(data[@name="dop"]/value/text())[1]'', ''integer''),
+    serial_ideal_memory_mb = oa.c.value(''(data[@name="serial_ideal_memory_kb"]/value/text())[1]'', ''bigint'') / 1024.,
+    requested_memory_mb = oa.c.value(''(data[@name="requested_memory_kb"]/value/text())[1]'', ''bigint'') / 1024.,
+    used_memory_mb = oa.c.value(''(data[@name="used_memory_kb"]/value/text())[1]'', ''bigint'') / 1024.,
+    ideal_memory_mb = oa.c.value(''(data[@name="ideal_memory_kb"]/value/text())[1]'', ''bigint'') / 1024.,
+    granted_memory_mb = oa.c.value(''(data[@name="granted_memory_kb"]/value/text())[1]'', ''bigint'') / 1024.,
+    query_plan_hash_signed =
+        CONVERT
+        (
+            binary(8),
+            oa.c.value(''(action[@name="query_plan_hash_signed"]/value/text())[1]'', ''bigint'')
+        ),
+    query_hash_signed =
+        CONVERT
+        (
+            binary(8),
+            oa.c.value(''(action[@name="query_hash_signed"]/value/text())[1]'', ''bigint'')
+        ),
+    plan_handle = oa.c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)'')
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
@@ -7191,27 +7208,28 @@ AND   oa.c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '
                             N'  database_name, object_name, recompile_cause, statement_text '
                             + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END) + @nc10 +
                             CONVERT(nvarchar(MAX), N'SELECT
-    @@SERVERNAME,
-    DATEADD
-    (
-        MINUTE,
-        DATEDIFF
+    server = @@SERVERNAME,
+    event_time =
+        DATEADD
         (
             MINUTE,
-            GETUTCDATE(),
-            SYSDATETIME()
-        ), oa.c.value(''@timestamp'', ''datetime2'')
-    ) AS event_time,
-    oa.c.value(''@name'', ''nvarchar(256)'') AS event_type,
-    oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,
-    oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],
-    oa.c.value(''(data[@name="recompile_cause"]/text)[1]'', ''nvarchar(256)'') AS recompile_cause,
-    oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement_text '
+            DATEDIFF
+            (
+                MINUTE,
+                GETUTCDATE(),
+                SYSDATETIME()
+            ), oa.c.value(''@timestamp'', ''datetime2'')
+        ),
+    event_type = oa.c.value(''@name'', ''nvarchar(256)''),
+    database_name = oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
+    [object_name] = oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''sysname''),
+    recompile_cause = oa.c.value(''(data[@name="recompile_cause"]/text)[1]'', ''nvarchar(256)''),
+    statement_text = oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'')'
    + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/
           THEN
    N'  ,
-    oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') AS compile_cpu_ms,
-    oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') AS compile_duration_ms'
+    compile_cpu_ms = oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint''),
+    compile_duration_ms = oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'')'
           ELSE N''
      END) + N'
 FROM #human_events_xml_internal AS xet
@@ -7237,27 +7255,28 @@ ORDER BY
                             N'  database_name, object_name, statement_text '
                             + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms, compile_duration_ms )' ELSE N' )' END) + @nc10 +
                             CONVERT(nvarchar(MAX), N'SELECT
-    @@SERVERNAME,
-    DATEADD
-    (
-        MINUTE,
-        DATEDIFF
+    server_name = @@SERVERNAME,
+    event_time =
+        DATEADD
         (
             MINUTE,
-            GETUTCDATE(),
-            SYSDATETIME()
+            DATEDIFF
+            (
+                MINUTE,
+                GETUTCDATE(),
+                SYSDATETIME()
+            ),
+            oa.c.value(''@timestamp'', ''datetime2'')
         ),
-        oa.c.value(''@timestamp'', ''datetime2'')
-    ) AS event_time,
-    oa.c.value(''@name'', ''nvarchar(256)'') AS event_type,
-    oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,
-    oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''nvarchar(256)'') AS [object_name],
-    oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'') AS statement_text '
+    event_type = oa.c.value(''@name'', ''nvarchar(256)''),
+    database_name = oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
+    [object_name] = oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''sysname''),
+    statement_text = oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'')'
    + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/
           THEN
    N'  ,
-    oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint'') AS compile_cpu_ms,
-    oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'') AS compile_duration_ms'
+    compile_cpu_ms = oa.c.value(''(data[@name="cpu_time"]/value/text())[1]'', ''bigint''),
+    compile_duration_ms = oa.c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint'')'
           ELSE N''
      END) + N'
 FROM #human_events_xml_internal AS xet
@@ -7285,34 +7304,35 @@ ORDER BY
                             N'  compile_duration_ms, query_param_type, is_cached, is_recompiled, compile_code, has_literals, ' + @nc10 +
                             N'  is_parameterizable, parameterized_values_count, query_plan_hash, query_hash, plan_handle, statement_sql_hash ) ' + @nc10 +
                             CONVERT(nvarchar(MAX), N'SELECT
-    @@SERVERNAME,
-    DATEADD
-    (
-        MINUTE,
-        DATEDIFF
+    server_name = @@SERVERNAME,
+    event_time =
+        DATEADD
         (
             MINUTE,
-            GETUTCDATE(),
-            SYSDATETIME()
+            DATEDIFF
+            (
+                MINUTE,
+                GETUTCDATE(),
+                SYSDATETIME()
+            ),
+            oa.c.value(''@timestamp'', ''datetime2'')
         ),
-        oa.c.value(''@timestamp'', ''datetime2'')
-    ) AS event_time,
-    oa.c.value(''@name'', ''nvarchar(256)'') AS event_type,
-    oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''nvarchar(256)'') AS database_name,
-    oa.c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)'') AS sql_text,
-    oa.c.value(''(data[@name="compile_cpu_time"]/value/text())[1]'', ''bigint'') / 1000. AS compile_cpu_time_ms,
-    oa.c.value(''(data[@name="compile_duration"]/value/text())[1]'', ''bigint'') / 1000. AS compile_duration_ms,
-    oa.c.value(''(data[@name="query_param_type"]/value/text())[1]'', ''int'') AS query_param_type,
-    oa.c.value(''(data[@name="is_cached"]/value/text())[1]'', ''bit'') AS is_cached,
-    oa.c.value(''(data[@name="is_recompiled"]/value/text())[1]'', ''bit'') AS is_recompiled,
-    oa.c.value(''(data[@name="compile_code"]/text)[1]'', ''nvarchar(256)'') AS compile_code,
-    oa.c.value(''(data[@name="has_literals"]/value/text())[1]'', ''bit'') AS has_literals,
-    oa.c.value(''(data[@name="is_parameterizable"]/value/text())[1]'', ''bit'') AS is_parameterizable,
-    oa.c.value(''(data[@name="parameterized_values_count"]/value/text())[1]'', ''bigint'') AS parameterized_values_count,
-    oa.c.value(''xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])'', ''binary(8)'') AS query_plan_hash,
-    oa.c.value(''xs:hexBinary((data[@name="query_hash"]/value/text())[1])'', ''binary(8)'') AS query_hash,
-    oa.c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)'') AS plan_handle,
-    oa.c.value(''xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])'', ''varbinary(64)'') AS statement_sql_hash
+    event_type = oa.c.value(''@name'', ''nvarchar(256)''),
+    database_name = oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
+    sql_text = oa.c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)''),
+    compile_cpu_time_ms = oa.c.value(''(data[@name="compile_cpu_time"]/value/text())[1]'', ''bigint'') / 1000.,
+    compile_duration_ms = oa.c.value(''(data[@name="compile_duration"]/value/text())[1]'', ''bigint'') / 1000.,
+    query_param_type = oa.c.value(''(data[@name="query_param_type"]/value/text())[1]'', ''integer''),
+    is_cached = oa.c.value(''(data[@name="is_cached"]/value/text())[1]'', ''bit''),
+    is_recompiled = oa.c.value(''(data[@name="is_recompiled"]/value/text())[1]'', ''bit''),
+    compile_code = oa.c.value(''(data[@name="compile_code"]/text)[1]'', ''nvarchar(256)''),
+    has_literals = oa.c.value(''(data[@name="has_literals"]/value/text())[1]'', ''bit''),
+    is_parameterizable = oa.c.value(''(data[@name="is_parameterizable"]/value/text())[1]'', ''bit''),
+    parameterized_values_count = oa.c.value(''(data[@name="parameterized_values_count"]/value/text())[1]'', ''bigint''),
+    query_plan_hash = oa.c.value(''xs:hexBinary((data[@name="query_plan_hash"]/value/text())[1])'', ''binary(8)''),
+    query_hash = oa.c.value(''xs:hexBinary((data[@name="query_hash"]/value/text())[1])'', ''binary(8)''),
+    plan_handle = oa.c.value(''xs:hexBinary((action[@name="plan_handle"]/value/text())[1])'', ''varbinary(64)''),
+    statement_sql_hash = oa.c.value(''xs:hexBinary((data[@name="statement_sql_hash"]/value/text())[1])'', ''varbinary(64)'')
 FROM #human_events_xml_internal AS xet
 OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE oa.c.exist(''@name[.= "query_parameterization_data"]'') = 1
@@ -7341,8 +7361,8 @@ ORDER BY
                             xml,
                             t.target_data
                         )
-                FROM   sys.dm_xe_session_targets AS t
-                JOIN   sys.dm_xe_sessions AS s
+                FROM sys.dm_xe_session_targets AS t
+                JOIN sys.dm_xe_sessions AS s
                   ON s.address = t.event_session_address
                 WHERE s.name = @event_type_check
                 AND   t.target_name = N'ring_buffer';
@@ -7361,8 +7381,8 @@ ORDER BY
                             xml,
                             t.target_data
                         )
-                FROM   sys.dm_xe_database_session_targets AS t
-                JOIN   sys.dm_xe_database_sessions AS s
+                FROM sys.dm_xe_database_session_targets AS t
+                JOIN sys.dm_xe_database_sessions AS s
                   ON s.address = t.event_session_address
                 WHERE s.name = @event_type_check
                 AND   t.target_name = N'ring_buffer';
@@ -7383,34 +7403,35 @@ ORDER BY
             IF @debug = 1
             BEGIN
                 PRINT SUBSTRING(@table_sql, 0, 4000);
-                PRINT SUBSTRING(@table_sql, 4000, 8000);
-                PRINT SUBSTRING(@table_sql, 8000, 12000);
-                PRINT SUBSTRING(@table_sql, 12000, 16000);
-                PRINT SUBSTRING(@table_sql, 16000, 20000);
-                PRINT SUBSTRING(@table_sql, 20000, 24000);
-                PRINT SUBSTRING(@table_sql, 24000, 28000);
-                PRINT SUBSTRING(@table_sql, 28000, 32000);
-                PRINT SUBSTRING(@table_sql, 32000, 36000);
-                PRINT SUBSTRING(@table_sql, 36000, 40000);
+                PRINT SUBSTRING(@table_sql, 4001, 8000);
+                PRINT SUBSTRING(@table_sql, 8002, 12000);
+                PRINT SUBSTRING(@table_sql, 12001, 16000);
+                PRINT SUBSTRING(@table_sql, 16001, 20000);
+                PRINT SUBSTRING(@table_sql, 20001, 24000);
+                PRINT SUBSTRING(@table_sql, 24001, 28000);
+                PRINT SUBSTRING(@table_sql, 28001, 32000);
+                PRINT SUBSTRING(@table_sql, 32001, 36000);
+                PRINT SUBSTRING(@table_sql, 36001, 40000);
             END;
 
             /* this executes the insert */
             EXEC sys.sp_executesql
                 @table_sql,
-              N'@date_filter DATETIME',
+              N'@date_filter datetime',
                 @date_filter;
 
             /*Update the worker table's last checked, and conditionally, updated dates*/
-            UPDATE hew
-                SET
-                    hew.last_checked =
-                        SYSDATETIME(),
-                    hew.last_updated =
-                        CASE
-                            WHEN @@ROWCOUNT > 0
-                            THEN SYSDATETIME()
-                            ELSE hew.last_updated
-                        END
+            UPDATE
+                hew
+            SET
+                hew.last_checked =
+                    SYSDATETIME(),
+                hew.last_updated =
+                    CASE
+                        WHEN @@ROWCOUNT > 0
+                        THEN SYSDATETIME()
+                        ELSE hew.last_updated
+                    END
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id;
 
@@ -7695,7 +7716,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
     @version = '3.9',
-    @version_date = '20240901';
+    @version_date = '20240915';
 
 IF @help = 1
 BEGIN
@@ -10521,6 +10542,1617 @@ ORDER BY
 OPTION(RECOMPILE);
 END; --Final End
 GO
+
+/*
+EXEC sp_IndexCleanup
+    @database_name = 'StackOverflow2013',
+    @debug = 1;
+
+EXEC sp_IndexCleanup
+    @database_name = 'StackOverflow2013',
+    @table_name = 'Users',
+    @debug = 1
+*/
+
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
+SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
+SET IMPLICIT_TRANSACTIONS OFF;
+SET STATISTICS TIME, IO OFF;
+GO
+
+IF OBJECT_ID('dbo.sp_IndexCleanup', 'P') IS NULL
+BEGIN
+    EXECUTE ('CREATE PROCEDURE dbo.sp_IndexCleanup AS RETURN 138;');
+END;
+GO
+
+ALTER PROCEDURE
+    dbo.sp_IndexCleanup
+(
+    @database_name sysname = NULL,
+    @schema_name sysname = NULL,
+    @table_name sysname = NULL,
+    @help bit = 'false',
+    @debug bit = 'true',
+    @version varchar(20) = NULL OUTPUT,
+    @version_date datetime = NULL OUTPUT
+)
+WITH RECOMPILE
+AS
+BEGIN
+SET NOCOUNT ON;
+
+BEGIN TRY
+    SELECT
+        @version = '-2147483648',
+        @version_date = '17530101';
+
+    SELECT
+        warning = N'Read the messages pane carefully!'
+
+    PRINT '
+-------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------
+This is the BETA VERSION of sp_IndexCleanup
+
+It needs lots of love and testing in real environments with real indexes to fix many issues:
+ * Data collection
+ * Deduping logic
+ * Result correctness
+ * Edge cases
+
+ If you run this, only use the output to debug and validate result correctness.
+
+ Do not run any of the output scripts, period. Doing so may be harmful.
+ -------------------------------------------------------------------------------------------
+ -------------------------------------------------------------------------------------------
+ -------------------------------------------------------------------------------------------
+
+ ';
+
+
+    /*
+    Help section, for help.
+    Will become more helpful when out of beta.
+    */
+    IF @help = 1
+    BEGIN
+        SELECT
+            help = N'hello, i am sp_IndexCleanup - BETA'
+          UNION ALL
+        SELECT
+            help = N'this is a script to help clean up unused and duplicate indexes'
+          UNION ALL
+        SELECT
+            help = N'you are currently using a beta version, and the advice should not be followed'
+          UNION ALL
+        SELECT
+            help = N'without careful analysis and consideration. it may be harmful.'
+
+
+        /*
+        Parameters
+        */
+        SELECT
+            parameter_name =
+                ap.name,
+            data_type =
+                t.name,
+            description =
+                CASE
+                    ap.name
+                    WHEN ap.name
+                    THEN ap.name
+                END,
+            valid_inputs =
+                CASE
+                    ap.name
+                    WHEN ap.name
+                    THEN ap.name
+                END,
+            defaults =
+                CASE
+                    ap.name
+                    WHEN ap.name
+                    THEN ap.name
+                END
+        FROM sys.all_parameters AS ap
+        INNER JOIN sys.all_objects AS o
+          ON ap.object_id = o.object_id
+        INNER JOIN sys.types AS t
+          ON  ap.system_type_id = t.system_type_id
+          AND ap.user_type_id = t.user_type_id
+        WHERE o.name = N'sp_IndexCleanup'
+        OPTION(MAXDOP 1, RECOMPILE);
+
+        SELECT
+            mit_license_yo = 'i am MIT licensed, so like, do whatever'
+
+        UNION ALL
+
+        SELECT
+            mit_license_yo = 'see printed messages for full license';
+
+        RAISERROR('
+MIT License
+
+Copyright 2024 Darling Data, LLC
+
+https://www.erikdarling.com/
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+', 0, 1) WITH NOWAIT;
+
+        RETURN;
+    END;
+
+    DECLARE
+        /*general script variables*/
+        @sql nvarchar(MAX) = N'',
+        @database_id integer = NULL,
+        @object_id integer = NULL,
+        @full_object_name nvarchar(768) = NULL,
+        @final_script nvarchar(MAX) = '',
+        /*cursor variables*/
+        @c_database_id integer,
+        @c_schema_name sysname,
+        @c_table_name sysname,
+        @c_index_name sysname,
+        @c_is_unique bit,
+        @c_filter_definition nvarchar(MAX),
+        /*print variables*/
+        @helper integer = 0,
+        @sql_len integer,
+        @sql_debug nvarchar(MAX) = N'';
+
+    /*
+    Initial checks for object validity
+    */
+    IF  @database_name IS NULL
+    AND DB_NAME() NOT IN
+        (
+            N'master',
+            N'model',
+            N'msdb',
+            N'tempdb',
+            N'rdsadmin'
+        )
+    BEGIN
+        SELECT
+            @database_name = DB_NAME();
+    END;
+
+    IF @database_name IS NOT NULL
+    BEGIN
+        SELECT
+            @database_id = d.database_id
+        FROM sys.databases AS d
+        WHERE d.name = @database_name;
+    END;
+
+    IF  @schema_name IS NULL
+    AND @table_name IS NOT NULL
+    BEGIN
+        SELECT
+            @schema_name = N'dbo';
+    END;
+
+    IF  @schema_name IS NOT NULL
+    AND @table_name IS NOT NULL
+    BEGIN
+        SELECT
+            @full_object_name =
+                QUOTENAME(@database_name) +
+                N'.' +
+                QUOTENAME(@schema_name) +
+                N'.' +
+                QUOTENAME(@table_name);
+
+        SELECT
+            @object_id =
+                OBJECT_ID(@full_object_name);
+
+        IF @object_id IS NULL
+        BEGIN
+            RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
+            RETURN;
+        END;
+    END;
+
+    /*
+    Temp tables!
+    */
+    CREATE TABLE
+        #operational_stats
+    (
+        database_id integer NOT NULL,
+        object_id integer NOT NULL,
+        index_id integer NOT NULL,
+        range_scan_count bigint NULL,
+        singleton_lookup_count bigint NULL,
+        forwarded_fetch_count bigint NULL,
+        lob_fetch_in_pages bigint NULL,
+        row_overflow_fetch_in_pages bigint NULL,
+        leaf_insert_count bigint NULL,
+        leaf_update_count bigint NULL,
+        leaf_delete_count bigint NULL,
+        leaf_ghost_count bigint NULL,
+        nonleaf_insert_count bigint NULL,
+        nonleaf_update_count bigint NULL,
+        nonleaf_delete_count bigint NULL,
+        leaf_allocation_count bigint NULL,
+        nonleaf_allocation_count bigint NULL,
+        row_lock_count bigint NULL,
+        row_lock_wait_count bigint NULL,
+        row_lock_wait_in_ms bigint NULL,
+        page_lock_count bigint NULL,
+        page_lock_wait_count bigint NULL,
+        page_lock_wait_in_ms bigint NULL,
+        index_lock_promotion_attempt_count bigint NULL,
+        index_lock_promotion_count bigint NULL,
+        page_latch_wait_count bigint NULL,
+        page_latch_wait_in_ms bigint NULL,
+        tree_page_latch_wait_count bigint NULL,
+        tree_page_latch_wait_in_ms bigint NULL,
+        page_io_latch_wait_count bigint NULL,
+        page_io_latch_wait_in_ms bigint NULL,
+        page_compression_attempt_count bigint NULL,
+        page_compression_success_count bigint NULL,
+        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
+    );
+
+    CREATE TABLE
+        #index_details
+    (
+        database_id integer NOT NULL,
+        object_id integer NOT NULL,
+        index_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        table_name sysname NOT NULL,
+        index_name sysname NULL,
+        column_name sysname NOT NULL,
+        is_primary_key bit NULL,
+        is_unique bit NULL,
+        is_unique_constraint bit NULL,
+        is_indexed_view integer NOT NULL,
+        is_foreign_key bit NULL,
+        is_foreign_key_reference bit NULL,
+        key_ordinal tinyint NOT NULL,
+        index_column_id integer NOT NULL,
+        is_descending_key bit NOT NULL,
+        is_included_column bit NULL,
+        filter_definition nvarchar(MAX) NULL,
+        is_max_length integer NOT NULL,
+        user_seeks bigint NOT NULL,
+        user_scans bigint NOT NULL,
+        user_lookups bigint NOT NULL,
+        user_updates bigint NOT NULL,
+        last_user_seek datetime NULL,
+        last_user_scan datetime NULL,
+        last_user_lookup datetime NULL,
+        last_user_update datetime NULL,
+        PRIMARY KEY CLUSTERED(database_id, object_id, index_id, column_name)
+    );
+
+    CREATE TABLE
+        #partition_stats
+    (
+        database_id integer NOT NULL,
+        object_id integer NOT NULL,
+        index_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        table_name sysname NOT NULL,
+        index_name sysname NULL,
+        partition_id bigint NOT NULL,
+        partition_number int NOT NULL,
+        total_rows bigint NULL,
+        total_space_mb decimal(38, 2) NULL,
+        reserved_lob_mb decimal(38, 2) NULL,
+        reserved_row_overflow_mb decimal(38, 2) NULL,
+        data_compression_desc nvarchar(60) NULL,
+        built_on sysname NULL,
+        partition_function_name sysname NULL,
+        partition_columns nvarchar(MAX)
+        PRIMARY KEY CLUSTERED(database_id, object_id, index_id, partition_id)
+    );
+
+    CREATE TABLE
+        #index_analysis
+    (
+        database_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        table_name sysname NOT NULL,
+        index_name sysname NOT NULL,
+        is_unique bit NULL,
+        key_columns nvarchar(MAX) NULL,
+        included_columns nvarchar(MAX) NULL,
+        filter_definition nvarchar(MAX) NULL,
+        is_redundant bit NULL,
+        superseded_by sysname NULL,
+        missing_columns nvarchar(MAX) NULL,
+        action nvarchar(MAX) NULL,
+        INDEX c CLUSTERED
+            (database_id, schema_name, table_name, index_name)
+    );
+
+    CREATE TABLE
+        #index_cleanup_report
+    (
+        database_name sysname NOT NULL,
+        table_name sysname NOT NULL,
+        index_name sysname NOT NULL,
+        action nvarchar(MAX) NULL,
+        cleanup_script nvarchar(MAX) NULL,
+        original_definition nvarchar(MAX) NULL,
+        /*Usage details*/
+        user_seeks bigint NULL,
+        user_scans bigint NULL,
+        user_lookups bigint NULL,
+        user_updates bigint NULL,
+        last_user_seek datetime NULL,
+        last_user_scan datetime NULL,
+        last_user_lookup datetime NULL,
+        last_user_update datetime NULL,
+        /*Operational stats*/
+        range_scan_count bigint NULL,
+        singleton_lookup_count bigint NULL,
+        leaf_insert_count bigint NULL,
+        leaf_update_count bigint NULL,
+        leaf_delete_count bigint NULL,
+        page_lock_count bigint NULL,
+        page_lock_wait_count bigint NULL,
+        page_lock_wait_in_ms bigint NULL
+    );
+
+    CREATE TABLE
+        #index_cleanup_summary
+    (
+        database_name sysname NOT NULL,
+        table_name sysname NOT NULL,
+        index_name sysname NOT NULL,
+        action nvarchar(MAX) NOT NULL,
+        details nvarchar(MAX) NULL,
+        current_definition nvarchar(MAX) NOT NULL,
+        proposed_definition nvarchar(MAX) NULL,
+        usage_summary nvarchar(MAX) NULL,
+        operational_summary nvarchar(MAX) NULL
+    );
+
+    CREATE TABLE
+        #final_index_actions
+    (
+        database_name sysname NOT NULL,
+        table_name sysname NOT NULL,
+        index_name sysname NOT NULL,
+        action nvarchar(MAX) NOT NULL,
+        script nvarchar(MAX) NOT NULL
+    );
+
+    /*
+    Start insert queries
+    */
+    SELECT
+        @sql = N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
+
+    SELECT
+        @sql += N'
+    SELECT
+        os.database_id,
+        os.object_id,
+        os.index_id,
+        range_scan_count = SUM(os.range_scan_count),
+        singleton_lookup_count = SUM(os.singleton_lookup_count),
+        forwarded_fetch_count = SUM(os.forwarded_fetch_count),
+        lob_fetch_in_pages = SUM(os.lob_fetch_in_pages),
+        row_overflow_fetch_in_pages = SUM(os.row_overflow_fetch_in_pages),
+        leaf_insert_count = SUM(os.leaf_insert_count),
+        leaf_update_count = SUM(os.leaf_update_count),
+        leaf_delete_count = SUM(os.leaf_delete_count),
+        leaf_ghost_count = SUM(os.leaf_ghost_count),
+        nonleaf_insert_count = SUM(os.nonleaf_insert_count),
+        nonleaf_update_count = SUM(os.nonleaf_update_count),
+        nonleaf_delete_count = SUM(os.nonleaf_delete_count),
+        leaf_allocation_count = SUM(os.leaf_allocation_count),
+        nonleaf_allocation_count = SUM(os.nonleaf_allocation_count),
+        row_lock_count = SUM(os.row_lock_count),
+        row_lock_wait_count = SUM(os.row_lock_wait_count),
+        row_lock_wait_in_ms = SUM(os.row_lock_wait_in_ms),
+        page_lock_count = SUM(os.page_lock_count),
+        page_lock_wait_count = SUM(os.page_lock_wait_count),
+        page_lock_wait_in_ms = SUM(os.page_lock_wait_in_ms),
+        index_lock_promotion_attempt_count = SUM(os.index_lock_promotion_attempt_count),
+        index_lock_promotion_count = SUM(os.index_lock_promotion_count),
+        page_latch_wait_count = SUM(os.page_latch_wait_count),
+        page_latch_wait_in_ms = SUM(os.page_latch_wait_in_ms),
+        tree_page_latch_wait_count = SUM(os.tree_page_latch_wait_count),
+        tree_page_latch_wait_in_ms = SUM(os.tree_page_latch_wait_in_ms),
+        page_io_latch_wait_count = SUM(os.page_io_latch_wait_count),
+        page_io_latch_wait_in_ms = SUM(os.page_io_latch_wait_in_ms),
+        page_compression_attempt_count = SUM(os.page_compression_attempt_count),
+        page_compression_success_count = SUM(os.page_compression_success_count)
+    FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_index_operational_stats
+    (
+        @database_id,
+        @object_id,
+        NULL,
+        NULL
+    ) AS os
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
+        WHERE t.object_id = os.object_id
+        AND   t.is_ms_shipped = 0
+    )
+    AND os.index_id > 1
+    GROUP BY
+        os.database_id,
+        os.object_id,
+        os.index_id
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        PRINT @sql;
+    END;
+
+    INSERT
+        #operational_stats
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        object_id,
+        index_id,
+        range_scan_count,
+        singleton_lookup_count,
+        forwarded_fetch_count,
+        lob_fetch_in_pages,
+        row_overflow_fetch_in_pages,
+        leaf_insert_count,
+        leaf_update_count,
+        leaf_delete_count,
+        leaf_ghost_count,
+        nonleaf_insert_count,
+        nonleaf_update_count,
+        nonleaf_delete_count,
+        leaf_allocation_count,
+        nonleaf_allocation_count,
+        row_lock_count,
+        row_lock_wait_count,
+        row_lock_wait_in_ms,
+        page_lock_count,
+        page_lock_wait_count,
+        page_lock_wait_in_ms,
+        index_lock_promotion_attempt_count,
+        index_lock_promotion_count,
+        page_latch_wait_count,
+        page_latch_wait_in_ms,
+        tree_page_latch_wait_count,
+        tree_page_latch_wait_in_ms,
+        page_io_latch_wait_count,
+        page_io_latch_wait_in_ms,
+        page_compression_attempt_count,
+        page_compression_success_count
+    )
+    EXEC sys.sp_executesql
+        @sql,
+      N'@database_id integer,
+        @object_id integer',
+        @database_id,
+        @object_id;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#operational_stats',
+            os.*
+        FROM #operational_stats AS os;
+    END;
+
+    SELECT
+        @sql = N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
+
+    SELECT
+        @sql += N'
+    SELECT
+        database_id = @database_id,
+        t.object_id,
+        i.index_id,
+        schema_name = s.name,
+        table_name = t.name,
+        index_name = i.name,
+        column_name = c.name,
+        i.is_primary_key,
+        i.is_unique,
+        i.is_unique_constraint,
+        is_indexed_view =
+            CASE
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM ' + QUOTENAME(@database_name) + N'.sys.objects AS so
+                    WHERE i.object_id = so.object_id
+                    AND   so.is_ms_shipped = 0
+                    AND   so.type = ''V''
+                )
+                THEN 1
+                ELSE 0
+            END,
+        is_foreign_key =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@database_name) + N'.sys.foreign_key_columns AS f
+                         WHERE f.parent_column_id = c.column_id
+                         AND   f.parent_object_id = c.object_id
+                     )
+                THEN 1
+                ELSE 0
+            END,
+        is_foreign_key_reference =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@database_name) + N'.sys.foreign_key_columns AS f
+                         WHERE f.referenced_column_id = c.column_id
+                         AND   f.referenced_object_id = c.object_id
+                     )
+                THEN 1
+                ELSE 0
+            END,
+        ic.key_ordinal,
+        ic.index_column_id,
+        ic.is_descending_key,
+        ic.is_included_column,
+        i.filter_definition,
+        is_max_length =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + QUOTENAME(@database_name) + N'.sys.types AS t
+                         WHERE  c.system_type_id = t.system_type_id
+                         AND    c.user_type_id = t.user_type_id
+                         AND    t.name IN (N''varchar'', N''nvarchar'')
+                         AND    t.max_length = -1
+                     )
+                THEN 1
+                ELSE 0
+            END,
+        user_seeks = ISNULL(us.user_seeks, 0),
+        user_scans = ISNULL(us.user_scans, 0),
+        user_lookups = ISNULL(us.user_lookups, 0),
+        user_updates = ISNULL(us.user_updates, 0),
+        us.last_user_seek,
+        us.last_user_scan,
+        us.last_user_lookup,
+        us.last_user_update
+    FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
+      ON t.schema_id = s.schema_id
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.indexes AS i
+      ON t.object_id = i.object_id
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.index_columns AS ic
+      ON  i.object_id = ic.object_id
+      AND i.index_id = ic.index_id
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.columns AS c
+      ON  ic.object_id = c.object_id
+      AND ic.column_id = c.column_id
+    LEFT JOIN sys.dm_db_index_usage_stats AS us
+      ON  i.object_id = us.object_id
+      AND i.index_id = us.index_id
+      AND us.database_id = @database_id
+    WHERE t.is_ms_shipped = 0
+    AND   i.type = 2
+    AND   i.is_disabled = 0
+    AND   i.is_hypothetical = 0';
+
+    IF @object_id IS NOT NULL
+    BEGIN
+        SELECT @sql += N'
+    AND   t.object_id = @object_id';
+    END;
+
+    SELECT
+        @sql += N'
+    AND   NOT EXISTS
+    (
+          SELECT
+              1/0
+          FROM ' + QUOTENAME(@database_name) + N'.sys.objects AS so
+          WHERE i.object_id = so.object_id
+          AND   so.is_ms_shipped = 0
+          AND   so.type = ''TF''
+    )
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        PRINT @sql;
+    END;
+
+    INSERT
+        #index_details
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        object_id,
+        index_id,
+        schema_name,
+        table_name,
+        index_name,
+        column_name,
+        is_primary_key,
+        is_unique,
+        is_unique_constraint,
+        is_indexed_view,
+        is_foreign_key,
+        is_foreign_key_reference,
+        key_ordinal,
+        index_column_id,
+        is_descending_key,
+        is_included_column,
+        filter_definition,
+        is_max_length,
+        user_seeks,
+        user_scans,
+        user_lookups,
+        user_updates,
+        last_user_seek,
+        last_user_scan,
+        last_user_lookup,
+        last_user_update
+    )
+    EXEC sys.sp_executesql
+        @sql,
+      N'@database_id integer,
+        @object_id integer',
+        @database_id,
+        @object_id;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_details',
+            *
+        FROM #index_details AS id;
+    END;
+
+    SELECT
+        @sql = N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
+
+    SELECT
+        @sql += N'
+    SELECT
+        database_id = @database_id,
+        x.object_id,
+        x.index_id,
+        x.schema_name,
+        x.table_name,
+        x.index_name,
+        x.partition_id,
+        x.partition_number,
+        x.total_rows,
+        x.total_space_mb,
+        x.reserved_lob_mb,
+        x.reserved_row_overflow_mb,
+        x.data_compression_desc,
+        built_on =
+            ISNULL
+            (
+                psfg.partition_scheme_name,
+                psfg.filegroup_name
+            ),
+        psfg.partition_function_name,
+        pc.partition_columns
+    FROM
+    (
+        SELECT
+            ps.object_id,
+            ps.index_id,
+            schema_name = s.name,
+            table_name = t.name,
+            index_name = i.name,
+            ps.partition_id,
+            p.partition_number,
+            total_rows = SUM(ps.row_count),
+            total_space_mb = SUM(a.total_pages) * 8 / 1024.0,
+            reserved_lob_mb = SUM(ps.lob_reserved_page_count) * 8. / 1024.,
+            reserved_row_overflow_mb = SUM(ps.row_overflow_reserved_page_count) * 8. / 1024.,
+            p.data_compression_desc,
+            i.data_space_id
+        FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
+        JOIN ' + QUOTENAME(@database_name) + N'.sys.indexes AS i
+          ON t.object_id = i.object_id
+        JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
+          ON t.schema_id = s.schema_id
+        JOIN ' + QUOTENAME(@database_name) + N'.sys.partitions AS p
+          ON  i.object_id = p.object_id
+          AND i.index_id = p.index_id
+        JOIN ' + QUOTENAME(@database_name) + N'.sys.allocation_units AS a
+          ON p.partition_id = a.container_id
+        LEFT HASH JOIN ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats AS ps
+          ON p.partition_id = ps.partition_id
+        WHERE t.type <> ''TF''
+        AND   i.type = 2';
+
+    IF @object_id IS NOT NULL
+    BEGIN
+        SELECT @sql += N'
+        AND   t.object_id = @object_id';
+    END;
+
+    SELECT
+        @sql += N'
+        GROUP BY
+            t.name,
+            i.name,
+            i.data_space_id,
+            s.name,
+            p.partition_number,
+            p.data_compression_desc,
+            ps.object_id,
+            ps.index_id,
+            ps.partition_id
+    ) AS x
+    OUTER APPLY
+    (
+        SELECT
+            filegroup_name =
+                fg.name,
+            partition_scheme_name =
+                ps.name,
+            partition_function_name =
+                pf.name
+        FROM ' + QUOTENAME(@database_name) + N'.sys.filegroups AS fg
+        FULL JOIN ' + QUOTENAME(@database_name) + N'.sys.partition_schemes AS ps
+          ON ps.data_space_id = fg.data_space_id
+        LEFT JOIN ' + QUOTENAME(@database_name) + N'.sys.partition_functions AS pf
+          ON pf.function_id = ps.function_id
+        WHERE x.data_space_id = fg.data_space_id
+        OR    x.data_space_id = ps.data_space_id
+    ) AS psfg
+    OUTER APPLY
+    (
+        SELECT
+            partition_columns =
+                STUFF
+                (
+                  (
+                    SELECT
+                        N'', '' +
+                        c.name
+                    FROM ' + QUOTENAME(@database_name) + N'.sys.index_columns AS ic
+                    JOIN ' + QUOTENAME(@database_name) + N'.sys.columns AS c
+                      ON c.object_id = ic.object_id
+                     AND c.column_id = ic.column_id
+                    WHERE ic.object_id = x.object_id
+                    AND   ic.index_id = x.index_id
+                    AND   ic.partition_ordinal > 0
+                    ORDER BY
+                        ic.partition_ordinal
+                    FOR XML
+                        PATH(''''),
+                        TYPE
+                  ).value(''.'', ''nvarchar(MAX)''),
+                  1,
+                  2,
+                  ''''
+                )
+    ) AS pc
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        PRINT @sql;
+    END;
+
+    INSERT
+        #partition_stats WITH(TABLOCK)
+    (
+        database_id,
+        object_id,
+        index_id,
+        schema_name,
+        table_name,
+        index_name,
+        partition_id,
+        partition_number,
+        total_rows,
+        total_space_mb,
+        reserved_lob_mb,
+        reserved_row_overflow_mb,
+        data_compression_desc,
+        built_on,
+        partition_function_name,
+        partition_columns
+    )
+    EXEC sys.sp_executesql
+        @sql,
+      N'@database_id integer,
+        @object_id integer',
+        @database_id,
+        @object_id;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#partition_stats',
+            *
+        FROM #partition_stats AS ps;
+    END;
+
+    INSERT INTO
+        #index_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        schema_name,
+        table_name,
+        index_name,
+        is_unique,
+        key_columns,
+        included_columns,
+        filter_definition
+    )
+    SELECT
+        @database_id,
+        id1.schema_name,
+        id1.table_name,
+        id1.index_name,
+        id1.is_unique,
+        key_columns =
+            STUFF
+            (
+              (
+                SELECT
+                    N', ' +
+                    id2.column_name +
+                    CASE
+                        WHEN id2.is_descending_key = 1
+                        THEN N' DESC'
+                        ELSE N''
+                    END
+                FROM #index_details id2
+                WHERE id2.object_id = id1.object_id
+                AND   id2.index_id = id1.index_id
+                AND   id2.is_included_column = 0
+                ORDER BY
+                    id2.key_ordinal
+                FOR XML
+                    PATH(''),
+                    TYPE
+              ).value('text()[1]','nvarchar(max)'),
+              1,
+              2,
+              ''
+            ),
+        included_columns =
+            STUFF
+            (
+              (
+                SELECT
+                    N', ' +
+                    id2.column_name
+                FROM #index_details id2
+                WHERE id2.object_id = id1.object_id
+                AND   id2.index_id = id1.index_id
+                AND   id2.is_included_column = 1
+                ORDER BY
+                    id2.column_name
+                FOR XML
+                    PATH(''),
+                    TYPE
+              ).value('text()[1]','nvarchar(max)'),
+              1,
+              2,
+              ''
+            ),
+        id1.filter_definition
+    FROM #index_details id1
+    GROUP BY
+        id1.schema_name,
+        id1.table_name,
+        id1.index_name,
+        id1.is_unique,
+        id1.object_id,
+        id1.index_id,
+        id1.filter_definition
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis',
+            *
+        FROM #index_analysis AS ia;
+    END;
+
+    /*Analyze indexes*/
+    DECLARE
+        @index_cursor CURSOR;
+
+    SET @index_cursor = CURSOR
+        LOCAL
+        STATIC
+        FORWARD_ONLY
+        READ_ONLY
+    FOR
+    SELECT DISTINCT
+        ia.database_id,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        ia.is_unique,
+        ia.filter_definition
+    FROM #index_analysis AS ia
+    ORDER BY
+        ia.table_name,
+        ia.index_name;
+
+    OPEN @index_cursor;
+
+    FETCH NEXT
+    FROM @index_cursor
+    INTO
+        @c_database_id,
+        @c_schema_name,
+        @c_table_name,
+        @c_index_name,
+        @c_is_unique,
+        @c_filter_definition;
+
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        WITH
+            IndexColumns AS
+        (
+            SELECT
+                id.database_id,
+                id.schema_name,
+                id.table_name,
+                id.index_name,
+                id.column_name,
+                id.is_included_column,
+                id.key_ordinal
+            FROM #index_details id
+            WHERE id.database_id = @c_database_id
+            AND   id.schema_name = @c_schema_name
+            AND   id.table_name = @c_table_name
+        ),
+            CurrentIndexColumns AS
+        (
+            SELECT
+                ic.*
+            FROM IndexColumns AS ic
+            WHERE ic.index_name = @c_index_name
+        ),
+            OtherIndexColumns AS
+        (
+            SELECT
+                ic.*
+            FROM IndexColumns AS ic
+            WHERE ic.index_name <> @c_index_name
+        )
+        UPDATE
+            ia
+        SET
+            ia.is_redundant =
+                CASE
+                    WHEN NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM CurrentIndexColumns cic
+                        WHERE NOT EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM OtherIndexColumns oic
+                            WHERE oic.column_name = cic.column_name
+                            AND   oic.is_included_column = cic.is_included_column
+                            AND
+                            (
+                                 oic.key_ordinal = cic.key_ordinal
+                              OR oic.is_included_column = 1
+                            )
+                        )
+                    )
+                    AND ISNULL(ia.filter_definition, '') = ISNULL(@c_filter_definition, '')
+                    AND
+                    (
+                         ia.is_unique = 0
+                      OR @c_is_unique = 1
+                    )
+                    THEN 1
+                    ELSE 0
+                END,
+            ia.superseded_by =
+                CASE
+                    WHEN NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM CurrentIndexColumns cic
+                        WHERE NOT EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM OtherIndexColumns oic
+                            WHERE oic.column_name = cic.column_name
+                            AND
+                            (
+                                oic.is_included_column = cic.is_included_column
+                             OR oic.is_included_column = 0
+                            )
+                            AND
+                            (
+                                oic.key_ordinal = cic.key_ordinal
+                             OR oic.is_included_column = 1
+                            )
+                        )
+                    )
+                    AND ISNULL(ia.filter_definition, '') = ISNULL(@c_filter_definition, '')
+                    AND
+                    (
+                        ia.is_unique = 0
+                     OR @c_is_unique = 1
+                    )
+                    THEN @c_index_name
+                    ELSE ia.superseded_by
+                END,
+            ia.missing_columns =
+                STUFF
+                (
+                  (
+                      SELECT
+                          N', ' +
+                          oic.column_name
+                      FROM OtherIndexColumns oic
+                      WHERE NOT EXISTS
+                      (
+                          SELECT
+                              1/0
+                          FROM CurrentIndexColumns cic
+                          WHERE cic.column_name = oic.column_name
+                      )
+                      FOR XML
+                          PATH(''),
+                          TYPE
+                  ).value('.', 'nvarchar(MAX)'),
+                  1,
+                  2,
+                  ''
+                )
+        FROM #index_analysis ia
+        WHERE ia.database_id = @c_database_id
+        AND   ia.schema_name = @c_schema_name
+        AND   ia.table_name = @c_table_name
+        AND   ia.index_name <> @c_index_name;
+
+        FETCH NEXT
+        FROM @index_cursor
+        INTO
+            @c_database_id,
+            @c_schema_name,
+            @c_table_name,
+            @c_index_name,
+            @c_is_unique,
+            @c_filter_definition;
+    END;
+
+    /*Determine actions*/
+    UPDATE
+        #index_analysis
+    SET
+        action =
+            CASE
+                WHEN is_redundant = 1
+                THEN N'DROP'
+                WHEN superseded_by IS NOT NULL
+                AND  missing_columns IS NULL
+                THEN N'MERGE INTO ' +
+                     superseded_by
+                WHEN superseded_by IS NOT NULL
+                AND  missing_columns IS NOT NULL
+                THEN N'MERGE INTO ' +
+                     superseded_by +
+                     N' (ADD ' +
+                     missing_columns +
+                     N')'
+                ELSE N'KEEP'
+            END;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis',
+            ia.*
+        FROM #index_analysis AS ia;
+    END;
+
+    INSERT INTO
+        #index_cleanup_report
+    WITH
+        (TABLOCK)
+    (
+        database_name,
+        table_name,
+        index_name,
+        action,
+        cleanup_script,
+        original_definition,
+        user_seeks,
+        user_scans,
+        user_lookups,
+        user_updates,
+        last_user_seek,
+        last_user_scan,
+        last_user_lookup,
+        last_user_update,
+        range_scan_count,
+        singleton_lookup_count,
+        leaf_insert_count,
+        leaf_update_count,
+        leaf_delete_count,
+        page_lock_count,
+        page_lock_wait_count,
+        page_lock_wait_in_ms
+    )
+    SELECT
+        @database_name,
+        ia.table_name,
+        ia.index_name,
+        ia.action,
+        cleanup_script =
+            CASE
+                WHEN ia.action = N'DROP'
+                THEN N'DROP INDEX ' +
+                     QUOTENAME(ia.index_name) +
+                     N' ON ' +
+                     QUOTENAME(ia.table_name) +
+                     N';'
+                WHEN ia.action LIKE N'MERGE INTO%'
+                THEN N'CREATE ' +
+                     CASE
+                         WHEN ia.is_unique = 1
+                         THEN N'UNIQUE '
+                         ELSE N''
+                     END +
+                     N'INDEX ' +
+                     QUOTENAME(ia.superseded_by) +
+                     N' ON ' +
+                     QUOTENAME(ia.table_name) +
+                     N'(' +
+                     ISNULL(superseding.key_columns, ia.key_columns) +
+                     N')' +
+                     CASE
+                         WHEN ISNULL(superseding.included_columns, ia.included_columns) IS NOT NULL
+                         THEN N' INCLUDE (' +
+                              ISNULL(superseding.included_columns, ia.included_columns) +
+                              CASE
+                                  WHEN ia.missing_columns IS NOT NULL
+                                  THEN N', ' +
+                                  ia.missing_columns
+                                  ELSE N''
+                              END +
+                              N')'
+                         ELSE N''
+                     END +
+                     CASE
+                         WHEN ps.partition_function_name IS NOT NULL
+                         THEN N' ON ' +
+                              QUOTENAME(ps.partition_function_name) +
+                              N'(' +
+                              ps.partition_columns +
+                              N')'
+                         ELSE N''
+                     END +
+                     CASE
+                         WHEN ia.filter_definition IS NOT NULL
+                         THEN N' WHERE ' +
+                              ia.filter_definition
+                         ELSE N''
+                     END +
+                     N' WITH (DROP_EXISTING = ON' +
+                     CASE
+                         WHEN ps.data_compression_desc <> N'NONE'
+                         THEN N', DATA_COMPRESSION = ' +
+                              ps.data_compression_desc
+                         ELSE N''
+                     END +
+                     N');' +
+                     NCHAR(13) + NCHAR(10) +
+                     N'ALTER INDEX ' +
+                     QUOTENAME(ia.index_name) +
+                     N' ON ' +
+                     QUOTENAME(ia.table_name) +
+                     N' DISABLE;'
+                ELSE N''
+            END,
+        original_definition =
+            N'CREATE ' +
+                CASE
+                    WHEN ia.is_unique = 1
+                    THEN N'UNIQUE '
+                    ELSE N''
+                END +
+                N'INDEX ' +
+                QUOTENAME(ia.index_name) +
+                N' ON ' +
+                QUOTENAME(ia.table_name) +
+                N'(' +
+                ia.key_columns +
+                N')' +
+                CASE
+                    WHEN ia.included_columns IS NOT NULL
+                    THEN N' INCLUDE (' +
+                         ia.included_columns +
+                         N')'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN ps.partition_function_name IS NOT NULL
+                    THEN N' ON ' +
+                         QUOTENAME(ps.partition_function_name) +
+                         N'(' +
+                         ps.partition_columns +
+                         N')'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN ia.filter_definition IS NOT NULL
+                    THEN N' WHERE ' +
+                         ia.filter_definition
+                    ELSE N''
+                END,
+        id.user_seeks,
+        id.user_scans,
+        id.user_lookups,
+        id.user_updates,
+        id.last_user_seek,
+        id.last_user_scan,
+        id.last_user_lookup,
+        id.last_user_update,
+        os.range_scan_count,
+        os.singleton_lookup_count,
+        os.leaf_insert_count,
+        os.leaf_update_count,
+        os.leaf_delete_count,
+        os.page_lock_count,
+        os.page_lock_wait_count,
+        os.page_lock_wait_in_ms
+    FROM #index_analysis ia
+    LEFT JOIN #partition_stats ps
+      ON  ia.table_name = ps.table_name
+      AND ia.index_name = ps.index_name
+    LEFT JOIN #index_details id
+      ON  ia.table_name = id.table_name
+      AND ia.index_name = id.index_name
+    LEFT JOIN #operational_stats os
+      ON  id.object_id = os.object_id
+      AND id.index_id = os.index_id
+    LEFT JOIN #index_analysis superseding
+      ON  ia.superseded_by = superseding.index_name
+      AND ia.table_name = superseding.table_name;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_cleanup_report',
+            icr.*
+        FROM #index_cleanup_report AS icr;
+    END;
+
+    INSERT INTO
+        #index_cleanup_summary
+    WITH
+        (TABLOCK)
+    (
+        database_name,
+        table_name,
+        index_name,
+        action,
+        details,
+        current_definition,
+        proposed_definition,
+        usage_summary,
+        operational_summary
+    )
+    SELECT
+        icr.database_name,
+        icr.table_name,
+        icr.index_name,
+        action =
+            CASE
+                 WHEN icr.action = N'KEEP'
+                 THEN N'Keep'
+                 WHEN icr.action = N'DROP'
+                 THEN N'Drop'
+                 WHEN icr.action LIKE N'MERGE INTO%'
+                 THEN N'Merge'
+                 ELSE N'???'
+            END,
+        details =
+            CASE
+                 WHEN icr.action = N'KEEP'
+                 THEN N'No action needed'
+                 WHEN icr.action = N'DROP'
+                 THEN N'Index is redundant and can be safely dropped'
+                 WHEN icr.action LIKE N'MERGE INTO%'
+                 THEN N'Merge into index: ' +
+                      SUBSTRING
+                      (
+                          icr.action,
+                          12,
+                          CHARINDEX(N' ', icr.action, 12) - 12
+                      )
+                 ELSE N'???'
+            END,
+        current_definition = icr.original_definition,
+        proposed_definition =
+            CASE
+                 WHEN icr.action LIKE N'MERGE INTO%'
+                 THEN icr.cleanup_script
+                 ELSE NULL
+            END,
+        usage_summary =
+            N'Seeks: '     + CONVERT(nvarchar(20), icr.user_seeks) +
+            N', Scans: '   + CONVERT(nvarchar(20), icr.user_scans) +
+            N', Lookups: ' + CONVERT(nvarchar(20), icr.user_lookups) +
+            N', Updates: ' + CONVERT(nvarchar(20), icr.user_updates) +
+            N', Last used: ' +
+            ISNULL
+            (
+                 CONVERT
+                 (
+                     nvarchar(30),
+                     NULLIF
+                     (
+                         DATEADD
+                         (
+                             SECOND,
+                             -1,
+                             CASE
+                                  WHEN icr.last_user_seek > icr.last_user_scan
+                                  AND  icr.last_user_seek > icr.last_user_lookup
+                                  THEN icr.last_user_seek
+                                  WHEN icr.last_user_scan > icr.last_user_lookup
+                                  THEN icr.last_user_scan
+                                  ELSE icr.last_user_lookup
+                             END
+                         ),
+                         N'1900-01-01'
+                     ), 120
+                 ),
+                 N'Unknown'
+            ),
+        operational_summary =
+            N'Range scans: ' + CONVERT(nvarchar(20), icr.range_scan_count) +
+            N', Lookups: '   + CONVERT(nvarchar(20), icr.singleton_lookup_count) +
+            N', Inserts: '   + CONVERT(nvarchar(20), icr.leaf_insert_count) +
+            N', Updates: '   + CONVERT(nvarchar(20), icr.leaf_update_count) +
+            N', Deletes: '   + CONVERT(nvarchar(20), icr.leaf_delete_count)
+    FROM #index_cleanup_report AS icr;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_cleanup_summary',
+            ics.*
+        FROM #index_cleanup_summary AS ics;
+    END;
+
+    SELECT
+        ics.database_name,
+        ics.table_name,
+        ics.index_name,
+        ics.action,
+        ics.details,
+        ics.current_definition,
+        ics.proposed_definition,
+        ics.usage_summary,
+        ics.operational_summary
+    FROM #index_cleanup_summary AS ics
+    ORDER BY
+        CASE ics.action
+             WHEN N'Drop' THEN 1
+             WHEN N'Merge' THEN 2
+             WHEN N'Keep' THEN 3
+             ELSE 999
+        END,
+        ics.table_name,
+        ics.index_name;
+
+    WITH
+        IndexActions AS
+    (
+        SELECT
+            icr.database_name,
+            icr.table_name,
+            icr.index_name,
+            icr.action,
+            icr.cleanup_script,
+            n = ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        icr.table_name,
+                        icr.index_name
+                    ORDER BY
+                        CASE
+                            WHEN icr.action LIKE N'MERGE INTO%'
+                            THEN 1
+                            WHEN icr.action = N'DROP'
+                            THEN 2
+                            ELSE 3
+                        END
+                )
+        FROM #index_cleanup_report icr
+    )
+    INSERT INTO
+        #final_index_actions
+    WITH
+        (TABLOCK)
+    (
+        database_name,
+        table_name,
+        index_name,
+        action,
+        script
+    )
+    SELECT
+        database_name,
+        table_name,
+        index_name,
+        action,
+        CASE
+            WHEN action LIKE N'MERGE INTO%'
+            THEN cleanup_script
+            WHEN action = N'DROP'
+            THEN N'ALTER INDEX ' +
+                 QUOTENAME(index_name) +
+                 N' ON ' +
+                 QUOTENAME(table_name) +
+                 N' DISABLE;'
+            ELSE N'???'
+        END AS script
+    FROM IndexActions
+    WHERE n = 1;
+
+    SELECT
+        f.database_name,
+        f.table_name,
+        f.index_name,
+        f.action,
+        f.script,
+        sort_order =
+            CASE action
+                WHEN N'MERGE INTO' THEN 2
+                WHEN N'DROP' THEN 3
+                ELSE 999
+            END
+    FROM #final_index_actions AS f
+    WHERE f.action <> N'KEEP'
+
+    UNION ALL
+
+    SELECT
+        r.database_name,
+        r.table_name,
+        r.index_name,
+        action =
+            N'DISABLE (Unused)',
+        script =
+            N'ALTER INDEX ' +
+            QUOTENAME(r.index_name) +
+            N' ON ' +
+            QUOTENAME(r.table_name) +
+            N' DISABLE;',
+        sort_order = 1
+    FROM #index_cleanup_report AS r
+    WHERE r.user_seeks = 0
+    AND   r.user_scans = 0
+    AND   r.user_lookups = 0
+    AND   r.user_updates = 0
+    ORDER BY
+        table_name,
+        index_name,
+        sort_order;
+
+    SELECT
+        @final_script += f.script + NCHAR(13) + NCHAR(10)
+    FROM #final_index_actions AS f
+    WHERE f.action LIKE N'MERGE INTO%'
+    ORDER BY
+        f.table_name,
+        f.index_name;
+
+    SELECT
+        @final_script += f.script + NCHAR(13) + NCHAR(10)
+    FROM #final_index_actions AS f
+    WHERE f.action IN
+          (
+              N'DROP',
+              N'MERGE INTO'
+          )
+    ORDER BY
+        f.table_name,
+        f.index_name;
+
+    SELECT
+        @final_script +=
+            N'ALTER INDEX ' +
+            QUOTENAME(i.index_name) +
+            N' ON ' +
+            QUOTENAME(i.table_name) +
+            N' DISABLE;' +
+            NCHAR(13) + NCHAR(10)
+    FROM #index_cleanup_report AS i
+    WHERE i.user_seeks = 0
+    AND   i.user_scans = 0
+    AND   i.user_lookups = 0
+    AND   i.user_updates = 0
+    ORDER BY
+        i.table_name,
+        i.index_name;
+
+    PRINT N'----------------------';
+    PRINT N'Final script to review. DO NOT EXECUTE WITHOUT CAREFUL REVIEW.';
+    PRINT N'Implementation Script:';
+    PRINT N'----------------------';
+    SELECT
+        @sql_len = LEN(@final_script);
+
+    IF @sql_len < 4000
+    BEGIN
+        PRINT @sql;
+    END
+    ELSE
+    BEGIN
+        WHILE @helper <= @sql_len
+        BEGIN
+            SELECT
+                @sql_debug =
+                    SUBSTRING(@final_script, @helper + 1, 2000) + NCHAR(13) + NCHAR(10);
+
+            PRINT @sql_debug;
+            SET @helper += 2000;
+        END;
+    END;
+
+END TRY
+BEGIN CATCH
+    PRINT N'Error occurred: ' + ERROR_MESSAGE();
+END CATCH;
+END; /*Final End*/
+GO
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -10596,7 +12228,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 BEGIN
     SELECT
         @version = '1.9',
-        @version_date = '20240901';
+        @version_date = '20240915';
 
     IF @help = 1
     BEGIN
@@ -11044,7 +12676,10 @@ BEGIN
     WHILE @l_log <= @h_log
     BEGIN
         DECLARE
-            c
+            @cs CURSOR;
+
+        SET
+            @cs =
         CURSOR
             LOCAL
             SCROLL
@@ -11057,10 +12692,10 @@ BEGIN
 
         IF @debug = 1 BEGIN RAISERROR('Opening cursor', 0, 1) WITH NOWAIT; END;
 
-        OPEN c;
+        OPEN @cs;
 
         FETCH FIRST
-        FROM c
+        FROM @cs
         INTO @c;
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
@@ -11115,7 +12750,7 @@ BEGIN
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;
             /*Get the next search command*/
             FETCH NEXT
-            FROM c
+            FROM @cs
             INTO @c;
 
             /*Increment our loop counter*/
@@ -11146,14 +12781,12 @@ BEGIN
             BREAK;
         END;
         IF @debug = 1 BEGIN RAISERROR('Ended WHILE loop', 0, 1) WITH NOWAIT; END;
-
-        /*Close out the cursor*/
-        CLOSE c;
-        DEALLOCATE c;
     END;
     IF @debug = 1 BEGIN RAISERROR('Ended cursor', 0, 1) WITH NOWAIT; END;
 
     /*get rid of some messages we don't care about*/
+    IF @debug = 1 BEGIN RAISERROR('Delete dumb messages', 0, 1) WITH NOWAIT; END;
+
     DELETE
         el WITH(TABLOCKX)
     FROM #error_log AS el
@@ -11185,6 +12818,31 @@ BEGIN
               N'The Service Broker endpoint is in disabled or stopped state.'
           )
     OPTION(RECOMPILE);
+
+    /*get rid of duplicate messages we don't care about*/
+    IF @debug = 1 BEGIN RAISERROR('Delete dupe messages', 0, 1) WITH NOWAIT; END;
+
+    WITH
+        d AS
+    (
+        SELECT
+            el.*,
+            n =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        el.log_date,
+                        el.process_info,
+                        el.text
+                    ORDER BY
+                        el.log_date
+                )
+        FROM #error_log AS el
+    )
+    DELETE
+        d
+    FROM d AS d WITH (TABLOCK)
+    WHERE d.n > 1;
 
     /*Return the search results*/
     SELECT
@@ -11289,7 +12947,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
     @version = '4.9',
-    @version_date = '20240901';
+    @version_date = '20240915';
 
 
 IF @help = 1
@@ -11563,14 +13221,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                  ELSE 0
             END,
         @prefix sysname =
-            CASE
-                WHEN @@SERVICENAME = N'MSSQLSERVER'
-                THEN N'SQLServer:'
-                ELSE N'MSSQL$' +
-                     @@SERVICENAME +
-                     N':'
-            END +
-            N'%',
+        (
+            SELECT TOP (1)
+                SUBSTRING
+                (
+                    dopc.object_name,
+                    1,
+                    CHARINDEX(N':', dopc.object_name)
+                )
+            FROM sys.dm_os_performance_counters AS dopc
+        ) +
+        N'%',
         @memory_grant_cap xml,
         @cache_xml xml,
         @cache_sql nvarchar(MAX) = N'';
@@ -11798,6 +13459,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     THEN N'Query scheduling'
                     WHEN dows.wait_type = N'THREADPOOL'
                     THEN N'Potential worker thread exhaustion'
+                    WHEN dows.wait_type = N'RESOURCE_GOVERNOR_IDLE'
+                    THEN N'Potential CPU cap waits'
                     WHEN dows.wait_type = N'CMEMTHREAD'
                     THEN N'Tasks waiting on memory objects'
                     WHEN dows.wait_type = N'PAGELATCH_EX'
@@ -11848,6 +13511,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     THEN N'Potential Availability Group Issues'
                     WHEN dows.wait_type = N'HADR_GROUP_COMMIT'
                     THEN N'Potential Availability Group Issues'
+                    WHEN dows.wait_type = N'WAIT_ON_SYNC_STATISTICS_REFRESH'
+                    THEN N'Waiting on sync stats updates (compilation)'
                 END,
             hours_wait_time =
                 CASE
@@ -11891,7 +13556,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
             sample_time =
                 GETDATE(),
             sorting =
-                ROW_NUMBER() OVER (ORDER BY dows.wait_time_ms DESC)
+                ROW_NUMBER() OVER
+                (
+                    ORDER BY
+                        dows.wait_time_ms DESC
+                )
         FROM sys.dm_os_wait_stats AS dows
         WHERE
         (
@@ -11927,6 +13596,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      /*CPU*/
                      N'SOS_SCHEDULER_YIELD',
                      N'THREADPOOL',
+                     N'RESOURCE_GOVERNOR_IDLE',
                      /*tempdb (potentially)*/
                      N'PAGELATCH_EX',
                      N'PAGELATCH_SH',
@@ -11953,7 +13623,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      N'BTREE_INSERT_FLOW_CONTROL',
                      /*Availability Group*/
                      N'HADR_SYNC_COMMIT',
-                     N'HADR_GROUP_COMMIT'
+                     N'HADR_GROUP_COMMIT',
+                     /*Stats/Compilation*/
+                     N'WAIT_ON_SYNC_STATISTICS_REFRESH'
                  )
             /*Locking*/
             OR dows.wait_type LIKE N'LCK%'
@@ -11990,6 +13662,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         N''
                     )
             FROM @waits AS w
+            WHERE w.waiting_tasks_count_n > 0
             ORDER BY
                 w.sorting
             OPTION(MAXDOP 1, RECOMPILE);
@@ -13219,7 +14892,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     domcc.single_pages_in_use_kb +
                     domcc.multi_pages_in_use_kb'
                     END + N'
-                ) / 1024. / 1024. > 0.5
+                ) / 1024. / 1024. > 0
             ORDER BY
                 pages_gb DESC
             FOR XML
@@ -13227,7 +14900,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 TYPE
         ) AS x (c)
         OPTION(MAXDOP 1, RECOMPILE);
-        '
+        ';
 
         IF @debug = 1
         BEGIN
@@ -13566,7 +15239,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 dowt.*
             FROM sys.dm_os_waiting_tasks AS dowt
             WHERE dowt.session_id = deqmg.session_id
-            ORDER BY dowt.wait_duration_ms DESC
+            ORDER BY
+                dowt.wait_duration_ms DESC
         ) AS waits
         OUTER APPLY sys.dm_exec_text_query_plan
         (
@@ -13710,12 +15384,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         )
                     ),
                 sqlserver_cpu_utilization =
-                    t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int'),
+                    t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','integer'),
                 other_process_cpu_utilization =
-                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','int')
-                     - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','int')),
+                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','integer')
+                     - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','integer')),
                 total_cpu_utilization =
-                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'int'))
+                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'integer'))
             FROM sys.dm_os_sys_info AS osi
             CROSS JOIN
             (
@@ -13779,13 +15453,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
             current_workers =
                 SUM(dos.current_workers_count),
             total_active_request_count =
-                SUM(wg.active_request_count),
+                MAX(wg.active_request_count),
             total_queued_request_count =
-                SUM(wg.queued_request_count),
+                MAX(wg.queued_request_count),
             total_blocked_task_count =
-                SUM(wg.blocked_task_count),
+                MAX(wg.blocked_task_count),
             total_active_parallel_thread_count =
-                SUM(wg.active_parallel_thread_count),
+                MAX(wg.active_parallel_thread_count),
             avg_runnable_tasks_count =
                 AVG(dos.runnable_tasks_count),
             high_runnable_percent =
@@ -13807,7 +15481,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 high_runnable_percent =
                     '' +
                     RTRIM(y.runnable_pct) +
-                    '% of your queries are waiting to get on a CPU.'
+                    '% of ' +
+                    RTRIM(y.total) +
+                    ' queries are waiting to get on a CPU.'
             FROM
             (
                 SELECT
@@ -13840,7 +15516,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ) AS x
             ) AS y
             WHERE y.runnable_pct >= 10
-            AND   y.total >= 10
+            AND   y.total >= 4
         ) AS r
         WHERE dos.status = N'VISIBLE ONLINE'
         OPTION(MAXDOP 1, RECOMPILE);
@@ -14420,7 +16096,7 @@ These are for your outputs.
 */
 SELECT
     @version = '4.9',
-    @version_date = '20240901';
+    @version_date = '20240915';
 
 /*
 Helpful section! For help.
@@ -15663,7 +17339,10 @@ BEGIN
 END;
 
 DECLARE
-    database_cursor CURSOR
+    @database_cursor CURSOR;
+
+SET
+    @database_cursor = CURSOR
     LOCAL
     SCROLL
     DYNAMIC
@@ -15673,10 +17352,10 @@ SELECT
     d.database_name
 FROM #databases AS d;
 
-OPEN database_cursor;
+OPEN @database_cursor;
 
 FETCH FIRST
-FROM database_cursor
+FROM @database_cursor
 INTO @database_name;
 
 WHILE @@FETCH_STATUS = 0
@@ -16310,17 +17989,10 @@ SELECT
     query_capture_mode_desc,
     size_based_cleanup_mode_desc
 FROM ' + @database_name_quoted + N'.sys.database_query_store_options AS dqso
-WHERE
-(
-     dqso.desired_state <> 4
-  OR dqso.readonly_reason <> 8
-)
-AND
-(
-      dqso.desired_state = 1
-   OR dqso.actual_state IN (1, 3)
-   OR dqso.desired_state <> dqso.actual_state
-)
+WHERE dqso.desired_state <> 4
+AND   dqso.readonly_reason <> 8
+AND   dqso.desired_state <> dqso.actual_state
+AND   dqso.actual_state IN (0, 3)
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
@@ -16373,27 +18045,6 @@ BEGIN
         @current_table;
 END;
 
-IF @query_store_trouble = 1
-BEGIN
-    SELECT
-        query_store_trouble =
-             'Query Store may be in a disagreeable state',
-        database_name =
-            DB_NAME(qst.database_id),
-        qst.desired_state_desc,
-        qst.actual_state_desc,
-        qst.readonly_reason,
-        qst.current_storage_size_mb,
-        qst.flush_interval_seconds,
-        qst.interval_length_minutes,
-        qst.max_storage_size_mb,
-        qst.stale_query_threshold_days,
-        qst.max_plans_per_query,
-        qst.query_capture_mode_desc,
-        qst.size_based_cleanup_mode_desc
-    FROM #query_store_trouble AS qst
-    OPTION(RECOMPILE);
-END;
 
 /*
 If you specified a procedure name, we need to figure out if there are any plans for it available
@@ -16619,7 +18270,7 @@ Check that you spelled everything correctly and you''re in the right database
 We will skip this database and continue',
                        10, 1, @procedure_name, @database_name) WITH NOWAIT;
         FETCH NEXT
-        FROM database_cursor
+        FROM @database_cursor
         INTO @database_name;
 
         CONTINUE;
@@ -19017,7 +20668,7 @@ WHERE NOT EXISTS
           AND   qsqt.query_sql_text NOT LIKE N''CREATE%INDEX%''
           AND   qsqt.query_sql_text NOT LIKE N''CREATE STATISTICS%''
           AND   qsqt.query_sql_text NOT LIKE N''UPDATE STATISTICS%''
-          AND   qsqt.query_sql_text NOT LIKE N''SELECT StatMan%''
+          AND   qsqt.query_sql_text NOT LIKE N''%SELECT StatMan%''
           AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
           AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
       )
@@ -19121,15 +20772,22 @@ BEGIN
             QueryHashesWithIds.plan_id,
             QueryHashesWithCounts.query_hash,
             QueryHashesWithCounts.plan_hash_count_for_query_hash,
-            DENSE_RANK() OVER (ORDER BY QueryHashesWithCounts.plan_hash_count_for_query_hash DESC, QueryHashesWithCounts.query_hash DESC) AS ranking
+            ranking =
+                DENSE_RANK() OVER
+                (
+                    ORDER BY
+                        QueryHashesWithCounts.plan_hash_count_for_query_hash DESC,
+                        QueryHashesWithCounts.query_hash DESC
+                )
         FROM
         (
            SELECT
                qsq.query_hash,
-               COUNT(DISTINCT qsp.query_plan_hash) AS plan_hash_count_for_query_hash
+               plan_hash_count_for_query_hash =
+                   COUNT(DISTINCT qsp.query_plan_hash)
            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
+             ON qsq.query_id = qsp.query_id
            JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
              ON qsp.plan_id = qsrs.plan_id
            WHERE 1 = 1
@@ -19145,16 +20803,16 @@ BEGIN
                qsp.plan_id
            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-              ON qsq.query_id = qsp.query_id
+             ON qsq.query_id = qsp.query_id
            JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
              ON qsp.plan_id = qsrs.plan_id
             WHERE 1 = 1
            ' + @where_clause
              + N'
         ) AS QueryHashesWithIds
-        ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
+          ON QueryHashesWithCounts.query_hash = QueryHashesWithIds.query_hash
     ) AS ranked_plans
-    WHERE ranked_plans.ranking <= @TOP
+    WHERE ranked_plans.ranking <= @top
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
@@ -19202,6 +20860,7 @@ BEGIN
             @current_table;
     END;
 END;
+
 IF @sort_order = 'total waits'
 BEGIN
     SELECT
@@ -19223,10 +20882,11 @@ BEGIN
     SELECT TOP (@top)
         @database_id,
         qsrs.plan_id,
-        SUM(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+        total_query_wait_time_ms =
+            SUM(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-    ON qsrs.plan_id = qsws.plan_id
+      ON qsrs.plan_id = qsws.plan_id
     WHERE 1 = 1
     ' + @where_clause
       + N'
@@ -19284,7 +20944,8 @@ END;
     'total waits' is special. It's a sum, not a max, so
     we cover it above rather than here.
 */
-IF @sort_order_is_a_wait = 1 AND @sort_order <> 'total waits'
+IF  @sort_order_is_a_wait = 1
+AND @sort_order <> 'total waits'
 BEGIN
     SELECT
         @current_table = 'inserting #plan_ids_with_total_waits',
@@ -19305,10 +20966,11 @@ BEGIN
     SELECT TOP (@top)
         @database_id,
         qsrs.plan_id,
-        MAX(qsws.total_query_wait_time_ms) AS total_query_wait_time_ms
+        total_query_wait_time_ms =
+            MAX(qsws.total_query_wait_time_ms)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
-    ON qsrs.plan_id = qsws.plan_id
+      ON qsrs.plan_id = qsws.plan_id
     WHERE 1 = 1
     AND qsws.wait_category = '  +
     CASE @sort_order
@@ -19736,7 +21398,9 @@ SELECT
                         (qsp_plans.plan_id)
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
                 WHERE qsp_plans.query_id = qsp.query_id
-                FOR XML PATH(''''), TYPE
+                FOR XML
+                    PATH(''''),
+                    TYPE
             ).value(''./text()[1]'', ''varchar(max)''),
             1,
             2,
@@ -19936,8 +21600,8 @@ CROSS APPLY
         qsq.*
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     WHERE qsq.query_id = qsp.query_id
-    ORDER
-        BY qsq.last_execution_time DESC
+    ORDER BY
+        qsq.last_execution_time DESC
 ) AS qsq
 WHERE qsp.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
@@ -20330,8 +21994,11 @@ SELECT
     dqso.size_based_cleanup_mode_desc,'
     +
     CASE
-        WHEN (@product_version = 13
-              AND @azure = 0)
+        WHEN
+        (
+              @product_version = 13
+          AND @azure = 0
+        )
         THEN N'
     NULL'
         ELSE N'
@@ -21094,12 +22761,9 @@ BEGIN
 END;
 
 FETCH NEXT
-FROM database_cursor
+FROM @database_cursor
 INTO @database_name;
 END;
-
-CLOSE database_cursor;
-DEALLOCATE database_cursor;
 
 /*
 This is where we start returning results
@@ -21185,8 +22849,9 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''),
-                                 TYPE
+                         FOR XML
+                             PATH(N''''),
+                             TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -21424,8 +23089,9 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''),
-                                 TYPE
+                         FOR XML
+                             PATH(N''''),
+                             TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -21668,8 +23334,9 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''),
-                                 TYPE
+                         FOR XML
+                             PATH(N''''),
+                             TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -21886,8 +23553,9 @@ FROM
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML PATH(N''''),
-                                 TYPE
+                         FOR XML
+                             PATH(N''''),
+                             TYPE
                      )
              END,
         qsp.compatibility_level,'
@@ -22173,7 +23841,9 @@ SELECT
                            qsws.wait_category_desc
                        ORDER BY
                            SUM(qsws.avg_query_wait_time_ms) DESC
-                       FOR XML PATH(''''), TYPE
+                       FOR XML
+                           PATH(''''),
+                           TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
                     1,
                     2,
@@ -22225,7 +23895,9 @@ SELECT
                            qsws.wait_category_desc
                        ORDER BY
                            SUM(qsws.avg_query_wait_time_ms) DESC
-                       FOR XML PATH(''''), TYPE
+                       FOR XML
+                           PATH(''''),
+                           TYPE
                     ).value(''./text()[1]'', ''varchar(max)''),
                     1,
                     2,
@@ -23522,6 +25194,28 @@ BEGIN
     END;
 
 END; /*End expert mode = 1, format output = 1*/
+
+IF @query_store_trouble = 1
+BEGIN
+    SELECT
+        query_store_trouble =
+             'Query Store may be in a disagreeable state',
+        database_name =
+            DB_NAME(qst.database_id),
+        qst.desired_state_desc,
+        qst.actual_state_desc,
+        qst.readonly_reason,
+        qst.current_storage_size_mb,
+        qst.flush_interval_seconds,
+        qst.interval_length_minutes,
+        qst.max_storage_size_mb,
+        qst.stale_query_threshold_days,
+        qst.max_plans_per_query,
+        qst.query_capture_mode_desc,
+        qst.size_based_cleanup_mode_desc
+    FROM #query_store_trouble AS qst
+    OPTION(RECOMPILE);
+END;
 
 /*
 Return help table, unless told not to
