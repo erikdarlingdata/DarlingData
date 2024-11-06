@@ -125,7 +125,7 @@ EXEC dbo.sp_QuickieStore
 /*Search for specific query text*/
 EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
-    @query_text_search = 'WITH Comment'
+    @query_text_search = 'WITH Comment';
 
 /*Only return queries with query hints (2022+)*/
 EXEC dbo.sp_QuickieStore
@@ -242,6 +242,14 @@ EXEC dbo.sp_QuickieStore
     @sort_order = 'duration',
     @regression_direction = 'absolute',
     @regression_baseline_start_date = @TwoWeekAgo;
+
+
+/*Search for queries that take a while and return lots of rows on average*/
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @top = 10,
+    @sort_order = 'rows',
+    @duration_ms = 20000;
 
 
 /*Troubleshoot performance*/
