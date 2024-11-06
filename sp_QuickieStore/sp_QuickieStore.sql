@@ -220,7 +220,7 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
-                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits'
+                WHEN N'@sort_order' THEN 'cpu, logical reads, physical reads, writes, duration, memory, tempdb, executions, recent, plan count by hashes, cpu waits, lock waits, locks waits, latch waits, latches waits, buffer latch waits, buffer latches waits, buffer io waits, log waits, log io waits, network waits, network io waits, parallel waits, parallelism waits, memory waits, total waits, rows'
                 WHEN N'@top' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
@@ -2658,7 +2658,8 @@ IF @sort_order NOT IN
        'parallel waits',
        'parallelism waits',
        'memory waits',
-       'total waits'
+       'total waits',
+       'rows'
    )
 BEGIN
    RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
@@ -5532,6 +5533,7 @@ BEGIN
                      WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
                      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
                      WHEN 'executions' THEN N'qsrs.count_executions'
+                     WHEN 'rows' THEN N'qsrs.avg_rowcount'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
                 END
                 + N' ))
@@ -5629,6 +5631,7 @@ BEGIN
                      WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory'
                      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
                      WHEN 'executions' THEN N'qsrs.count_executions'
+                     WHEN 'rows' THEN N'qsrs.avg_rowcount'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
                 END
                 + N' ))
@@ -5749,6 +5752,7 @@ BEGIN
                      WHEN 'memory' THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.'
                      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'(hashes_with_changes.change_since_regression_time_period * 8.) / 1024.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
                      WHEN 'executions' THEN N'hashes_with_changes.change_since_regression_time_period'
+                     WHEN 'rows' THEN N'hashes_with_changes.change_since_regression_time_period'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'hashes_with_changes.change_since_regression_time_period / 1000.' ELSE N'hashes_with_changes.change_since_regression_time_period / 1000.' END
                 END
             ELSE N'hashes_with_changes.change_since_regression_time_period' END
@@ -5956,6 +5960,7 @@ BEGIN
          WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
          WHEN 'executions' THEN N'qsrs.count_executions'
          WHEN 'recent' THEN N'qsrs.last_execution_time'
+         WHEN 'rows' THEN N'qsrs.avg_rowcount'
          ELSE N'qsrs.avg_cpu_time'
     END +
     N') DESC
@@ -6368,6 +6373,7 @@ SELECT
              WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used' ELSE N'qsrs.avg_cpu_time' END
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
+             WHEN 'rows' THEN N'qsrs.avg_rowcount'
              WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
              ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END
@@ -8221,6 +8227,7 @@ FROM
                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
+                 WHEN 'rows' THEN N'qsrs.avg_rowcount'
                  WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
@@ -8512,6 +8519,7 @@ FROM
                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
+                 WHEN 'rows' THEN N'qsrs.avg_rowcount'
                  WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
@@ -8763,6 +8771,7 @@ FROM
                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
+                 WHEN 'rows' THEN N'qsrs.avg_rowcount'
                  WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
@@ -9023,6 +9032,7 @@ FROM
                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
+                 WHEN 'rows' THEN N'qsrs.avg_rowcount'
                  WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
@@ -9300,6 +9310,7 @@ SELECT
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
+                  WHEN 'rows' THEN N'x.avg_rowcount'
                   WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash_from_hash_counting'
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time' END
              END END
@@ -9335,6 +9346,7 @@ SELECT
                   WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
+                  WHEN 'rows' THEN N'TRY_PARSE(x.avg_rowcount AS money)'
                   WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC, x.query_hash_from_hash_counting'
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
              END END
