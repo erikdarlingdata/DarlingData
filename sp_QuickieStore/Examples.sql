@@ -166,7 +166,7 @@ EXEC dbo.sp_QuickieStore
 /*Search for specific query text*/
 EXEC dbo.sp_QuickieStore
     @database_name = 'StackOverflow2013',
-    @query_text_search = 'WITH Comment'
+    @query_text_search = 'WITH Comment';
 
 /*Search for specific query text, with brackets automatically escaped.
 Commonly needed when dealing with ORM queries.
@@ -417,6 +417,14 @@ EXEC sp_QuickieStore
 SELECT
     Version = @version_output,
     VersionDate = @version_date_output;
+
+/*Search for queries that take a while and return lots of rows on average*/
+EXEC dbo.sp_QuickieStore
+    @database_name = 'StackOverflow2013',
+    @top = 10,
+    @sort_order = 'rows',
+    @duration_ms = 20000;
+
 
 /*Troubleshoot performance*/
 EXEC dbo.sp_QuickieStore
