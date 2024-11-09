@@ -679,7 +679,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ),
             dows.waiting_tasks_count,
             sample_time =
-                GETDATE(),
+                SYSDATETIME(),
             sorting =
                 ROW_NUMBER() OVER
                 (
@@ -1006,7 +1006,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             io_stall_read_ms,
             io_stall_write_ms,
             sample_time =
-                GETDATE()
+                SYSDATETIME()
         FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs
         JOIN ' +
         CONVERT
@@ -1339,7 +1339,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     dosi.sqlserver_start_time
                                 FROM sys.dm_os_sys_info AS dosi
                             )
-                        ELSE GETDATE()
+                        ELSE SYSDATETIME()
                     END,
                 object_name =
                     RTRIM(LTRIM(dopc.object_name)),
@@ -1418,7 +1418,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     total =
                         FORMAT(dopc.cntr_value, 'N0'),
                     total_per_second =
-                        FORMAT(dopc.cntr_value / DATEDIFF(SECOND, dopc.sample_time, GETDATE()), 'N0')
+                        FORMAT
+                        (
+                            dopc.cntr_value / 
+                            DATEDIFF
+                            (
+                                SECOND, 
+                                dopc.sample_time, 
+                                SYSDATETIME()
+                            ), 
+                            'N0'
+                        )
                 FROM @dm_os_performance_counters AS dopc
             )
             SELECT
@@ -2068,7 +2078,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 FOR XML
                     PATH(''),
                     TYPE
-            );
+            )
+        OPTION(MAXDOP 1, RECOMPILE);
 
         IF @memory_grant_cap IS NULL
         BEGIN
@@ -2268,11 +2279,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             (
                                 REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                                 REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                REPLACE(
                                     dest.text COLLATE Latin1_General_BIN2,
                                 NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
                                 NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
                                 NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N''''),
+                                N''<?'', N''??''), N''?>'', N''??''),
                                 (der.statement_start_offset / 2) + 1,
                                 (
                                     (
@@ -2772,11 +2785,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 (
                                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
                                     REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
-                                    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                    REPLACE(
                                         dest.text COLLATE Latin1_General_BIN2,
                                     NCHAR(31),N''?''),NCHAR(30),N''?''),NCHAR(29),N''?''),NCHAR(28),N''?''),NCHAR(27),N''?''),NCHAR(26),N''?''),NCHAR(25),N''?''),NCHAR(24),N''?''),NCHAR(23),N''?''),NCHAR(22),N''?''),
                                     NCHAR(21),N''?''),NCHAR(20),N''?''),NCHAR(19),N''?''),NCHAR(18),N''?''),NCHAR(17),N''?''),NCHAR(16),N''?''),NCHAR(15),N''?''),NCHAR(14),N''?''),NCHAR(12),N''?''),
                                     NCHAR(11),N''?''),NCHAR(8),N''?''),NCHAR(7),N''?''),NCHAR(6),N''?''),NCHAR(5),N''?''),NCHAR(4),N''?''),NCHAR(3),N''?''),NCHAR(2),N''?''),NCHAR(1),N''?''),NCHAR(0),N''''),
+                                    N''<?'', N''??''), N''?>'', N''??''),
                                     (der.statement_start_offset / 2) + 1,
                                     (
                                         (
