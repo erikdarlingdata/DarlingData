@@ -6306,7 +6306,7 @@ SELECT
                 @sql += N'
         JOIN #regression_changes AS regression
           ON qsrs.plan_id = regression.plan_id
-         AND regression.database_id = @database_id' 
+         AND regression.database_id = @database_id'
         END
         ELSE IF @sort_order = 'plan count by hashes'
         BEGIN
@@ -6349,7 +6349,7 @@ SELECT
           ELSE @where_clause
           END
       + N'
-    ORDER BY 
+    ORDER BY
         ' +
     CASE @regression_mode
     WHEN 1 THEN
@@ -6402,16 +6402,16 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 IF @debug = 1
 BEGIN
     PRINT LEN(@sql);
-    
+
     IF LEN(@sql) > 7999
     BEGIN
         SELECT
-            query = 
+            query =
             (
-                SELECT 
-                    [processing-instruction(_)] = 
+                SELECT
+                    [processing-instruction(_)] =
                         @sql
-                FOR XML 
+                FOR XML
                     PATH(''),
                     TYPE
             );

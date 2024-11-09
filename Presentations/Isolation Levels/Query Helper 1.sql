@@ -1,8 +1,7 @@
 /*Make sure nothing weird is open*/
 IF @@TRANCOUNT > 0
 BEGIN
-    SELECT 
+    SELECT
         tc = @@TRANCOUNT;
     ROLLBACK;
 END;
-
