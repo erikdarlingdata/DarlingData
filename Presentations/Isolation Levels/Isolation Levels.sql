@@ -1715,7 +1715,7 @@ then stick with Read Committed, and add Repeatable Read/Serializable hints where
 
 If you're okay with queries using the most recently known good version of row data
 without being blocked, then an optimistic isolation level is for you
- * Some queries may read "out of date" data, but not "dirty dat"
+ * Some queries may read "out of date" data, but not "dirty" data
 
 If you're okay with queries returning potato-faced nonsense, keep using NOLOCK
 
