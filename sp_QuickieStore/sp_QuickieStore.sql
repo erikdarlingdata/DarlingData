@@ -25,7 +25,7 @@ GO
 ███████║   ██║   ╚██████╔╝██║  ██║███████╗██╗
 ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -137,8 +137,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.9',
-    @version_date = '20240915';
+    @version = '5.1',
+    @version_date = '20250101';
 
 /*
 Helpful section! For help.
@@ -408,7 +408,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
