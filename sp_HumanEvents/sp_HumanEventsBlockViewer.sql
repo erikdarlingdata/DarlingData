@@ -1817,7 +1817,7 @@ SELECT
     b.host_name,
     b.login_name,
     b.transaction_id,
-    b.blocked_process_report
+    b.blocked_process_report as blocked_process_report_xml
 FROM
 (
     SELECT
