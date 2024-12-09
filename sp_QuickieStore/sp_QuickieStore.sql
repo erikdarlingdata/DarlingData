@@ -1017,7 +1017,7 @@ CREATE TABLE
                     ),
                     0
                 ),
-                0
+            0
         ),
     avg_duration_ms float NULL,
     last_duration_ms bigint NOT NULL,
@@ -1370,10 +1370,7 @@ SELECT
 Set @regression_mode if the given arguments indicate that
 we are checking for regressed queries.
 */
-IF
-(
-@regression_baseline_start_date IS NOT NULL
-)
+IF @regression_baseline_start_date IS NOT NULL
 BEGIN
     SELECT
         @regression_mode = 1;
@@ -1384,11 +1381,17 @@ Error out if the @regression parameters do not make sense.
 */
 IF
 (
-@regression_baseline_start_date IS NULL
-AND (@regression_baseline_end_date IS NOT NULL OR @regression_comparator IS NOT NULL OR @regression_direction IS NOT NULL)
+  @regression_baseline_start_date IS NULL
+  AND 
+  (   
+      @regression_baseline_end_date IS NOT NULL 
+   OR @regression_comparator IS NOT NULL 
+   OR @regression_direction IS NOT NULL
+  )
 )
 BEGIN
     RAISERROR('@regression_baseline_start_date is mandatory if you have specified any other @regression_ parameter.', 11, 1) WITH NOWAIT;
+    RETURN;
 END;
 
 /*
@@ -1399,12 +1402,13 @@ I do not think that we can know what people want.
 */
 IF
 (
-@regression_baseline_start_date IS NOT NULL
+    @regression_baseline_start_date IS NOT NULL
 AND @regression_baseline_end_date IS NOT NULL
 AND @regression_baseline_start_date >= @regression_baseline_end_date
 )
 BEGIN
     RAISERROR('@regression_baseline_start_date has been set greater than or equal to @regression_baseline_end_date. This does not make sense. Check that the values of both parameters are as you intended them to be.', 11, 1) WITH NOWAIT;
+    RETURN;
 END;
 
 
@@ -1413,7 +1417,7 @@ Validate @regression_comparator.
 */
 IF
 (
-@regression_comparator IS NOT NULL
+    @regression_comparator IS NOT NULL
 AND @regression_comparator NOT IN ('relative', 'absolute')
 )
 BEGIN
@@ -1428,7 +1432,7 @@ Validate @regression_direction.
 */
 IF
 (
-@regression_direction IS NOT NULL
+    @regression_direction IS NOT NULL
 AND @regression_direction NOT IN ('regressed', 'worse', 'improved', 'better', 'magnitude', 'absolute')
 )
 BEGIN
@@ -1444,11 +1448,12 @@ as our @sort_order. How could that ever make sense?
 */
 IF
 (
-@regression_mode = 1
+    @regression_mode = 1
 AND @sort_order = 'recent'
 )
 BEGIN
     RAISERROR('Your @sort_order is ''recent'', but you are trying to compare metrics for two time periods. If you can imagine a useful way to do that, then make a feature request. Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
+    RETURN;
 END;
 
 /*
@@ -1457,11 +1462,12 @@ as our @sort_order. How could that ever make sense?
 */
 IF
 (
-@regression_mode = 1
+    @regression_mode = 1
 AND @sort_order = 'plan count by hashes'
 )
 BEGIN
     RAISERROR('Your @sort_order is ''plan count by hashes'', but you are trying to compare metrics for two time periods. This is probably not useful, since our method of comparing two time period relies on only checking query hashes that are in both time periods. If you can imagine a useful way to do that, then make a feature request. Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
+    RETURN;
 END;
 
 
@@ -1473,11 +1479,12 @@ of something that doesn't care about it.
 */
 IF
 (
-@regression_comparator = 'relative'
+    @regression_comparator = 'relative'
 AND @regression_direction IN ('absolute', 'magnitude')
 )
 BEGIN
     RAISERROR('Your @regression_comparator is ''relative'', but you have asked for an ''absolute'' or ''magnitude'' @regression_direction. This is probably a mistake. Your @regression_direction tells us to take the absolute value of our result of comparing the metrics in the current time period to the baseline time period, but your @regression_comparator is telling us to use division to compare the two time periods. This is unlikely to produce useful results. If you can imagine a useful way to do that, then make a feature request. Otherwise, either change @regression_direction to another value (e.g. ''better'' or ''worse'') or change @regression_comparator to ''absolute''.', 11, 1) WITH NOWAIT;
+    RETURN;
 END;
 
 
@@ -1517,7 +1524,7 @@ Error out if the @execution_type_desc value is invalid.
 */
 IF
 (
-@execution_type_desc IS NOT NULL
+    @execution_type_desc IS NOT NULL
 AND @execution_type_desc NOT IN ('regular', 'aborted', 'exception')
 )
 BEGIN
@@ -1531,6 +1538,7 @@ You supplied ''%s''.
 If you leave @execution_type_desc NULL, then we grab every type of execution.
 
 See the official documentation for sys.query_store_runtime_stats for more details on the execution types.', 11, 1, @execution_type_desc) WITH NOWAIT;
+    RETURN;
 END;
 
 
@@ -2053,29 +2061,28 @@ We set the other @regression_ variables while we're at it.
 */
 IF @regression_mode = 1
 BEGIN
-
 /*
 We set both _date_original variables earlier.
 */
-SELECT
-    @regression_baseline_start_date =
-            DATEADD
-            (
-                MINUTE,
-                @utc_minutes_difference,
-                @regression_baseline_start_date_original
-            ),
-    @regression_baseline_end_date =
-            DATEADD
-            (
-                MINUTE,
-                @utc_minutes_difference,
-                @regression_baseline_end_date_original
-            ),
-    @regression_comparator =
-        ISNULL(@regression_comparator, 'absolute'),
-    @regression_direction =
-        ISNULL(@regression_direction, 'regressed');
+    SELECT
+        @regression_baseline_start_date =
+                DATEADD
+                (
+                    MINUTE,
+                    @utc_minutes_difference,
+                    @regression_baseline_start_date_original
+                ),
+        @regression_baseline_end_date =
+                DATEADD
+                (
+                    MINUTE,
+                    @utc_minutes_difference,
+                    @regression_baseline_end_date_original
+                ),
+        @regression_comparator =
+            ISNULL(@regression_comparator, 'absolute'),
+        @regression_direction =
+            ISNULL(@regression_direction, 'regressed');
 END;
 
 /*
@@ -2702,8 +2709,11 @@ These columns are only available in 2017+
 */
 IF
 (
-    (@sort_order = 'tempdb' OR @sort_order_is_a_wait = 1)
-AND @new = 0
+  (
+      @sort_order = 'tempdb' 
+   OR @sort_order_is_a_wait = 1
+  )
+  AND @new = 0
 )
 BEGIN
    RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
@@ -2739,12 +2749,12 @@ Hints aren't in Query Store until 2022, so we can't do that on television
 */
 IF
 (
-    (
-         @only_queries_with_hints    = 1
-      OR @only_queries_with_feedback = 1
-      OR @only_queries_with_variants = 1
-    )
-AND @sql_2022_views = 0
+  (
+       @only_queries_with_hints    = 1
+    OR @only_queries_with_feedback = 1
+    OR @only_queries_with_variants = 1
+  )
+  AND  @sql_2022_views = 0
 )
 BEGIN
     RAISERROR('Query Store hints, feedback, and variants are not available prior to SQL Server 2022', 10, 1) WITH NOWAIT;
@@ -2931,7 +2941,7 @@ END;
 /*
 See if AGs are a thing so we can skip the checks for replica stuff
 */
-IF (@azure = 1)
+IF @azure = 1
 BEGIN
     SELECT
         @ags_present = 0;
@@ -2968,7 +2978,7 @@ END;
 Get filters ready, or whatever
 We're only going to pull some stuff from runtime stats and plans
 */
-IF (@start_date <= @end_date)
+IF @start_date <= @end_date
 BEGIN
     SELECT
         @where_clause += N'AND   qsrs.last_execution_time >= @start_date
@@ -3075,7 +3085,7 @@ BEGIN
           the interval. i.e. 23:59:59.9999999 -> 23:59:59. which should make that
           value safe to use as the endpoint for our "before midnight" interval.
         */
-        IF (@work_start_utc < @work_end_utc)
+        IF @work_start_utc < @work_end_utc
         SELECT
             @where_clause += N'AND   CONVERT(time(0), qsrs.last_execution_time) BETWEEN @work_start_utc AND @work_end_utc' + @nc10;
         ELSE
