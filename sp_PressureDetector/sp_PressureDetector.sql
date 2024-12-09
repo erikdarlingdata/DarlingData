@@ -1861,9 +1861,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 notification_type =
                     t.record.value('(/Record/ResourceMonitor/Notification)[1]', 'varchar(50)'),
                 indicators_process =
-                    t.record.value('(/Record/ResourceMonitor/IndicatorsProcess)[1]', 'int'),
+                    t.record.value('(/Record/ResourceMonitor/IndicatorsProcess)[1]', 'integer'),
                 indicators_system =
-                    t.record.value('(/Record/ResourceMonitor/IndicatorsSystem)[1]', 'int'),
+                    t.record.value('(/Record/ResourceMonitor/IndicatorsSystem)[1]', 'integer'),
                 physical_memory_available_gb =
                     t.record.value('(/Record/MemoryRecord/AvailablePhysicalMemory)[1]', 'bigint') / 1024 / 1024,
                 virtual_memory_available_gb =
@@ -2211,6 +2211,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         SET @mem_sql += N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+        SET LOCK_TIMEOUT 1000;
 
         SELECT
             deqmg.session_id,
@@ -2399,6 +2400,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             requested_memory_gb DESC,
             deqmg.request_time
         OPTION(MAXDOP 1, RECOMPILE);
+        
+        SET LOCK_TIMEOUT -1;
         '
                   );
 
@@ -2717,6 +2720,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
             SET @cpu_sql += N'
             SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            SET LOCK_TIMEOUT 1000;
 
             SELECT
                 der.session_id,
@@ -2952,7 +2956,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
             OPTION(MAXDOP 1, RECOMPILE);'
                   ELSE N'
                 der.cpu_time DESC
-            OPTION(MAXDOP 1, RECOMPILE);'
+            OPTION(MAXDOP 1, RECOMPILE);
+            
+            SET LOCK_TIMEOUT -1;
+            '
               END
                   );
 
