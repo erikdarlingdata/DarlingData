@@ -868,7 +868,7 @@ BEGIN
         query_text =
             CASE
                 WHEN kheb.query_text
-                     LIKE CONVERT(nvarchar(1), 0x0a00, 0) + N'Proc |[Database Id = %' ESCAPE N'|'
+                     LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
                 THEN
                     (
                         SELECT
