@@ -68,7 +68,7 @@ ALTER PROCEDURE
     @seconds_sample tinyint = 10,
     @gimme_danger bit = 0,
     @keep_alive bit = 0,
-    @custom_name nvarchar(256) = N'',
+    @custom_name sysname = N'',
     @output_database_name sysname = N'',
     @output_schema_name sysname = N'dbo',
     @delete_retention_days integer = 3,
@@ -1797,7 +1797,7 @@ BEGIN
                     ),
                     oa.c.value('@timestamp', 'datetime2')
                 ),
-            event_type = oa.c.value('@name', 'nvarchar(256)'),
+            event_type = oa.c.value('@name', 'sysname'),
             database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
             object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
             sql_text = oa.c.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(MAX)'),
@@ -2149,7 +2149,7 @@ BEGIN
                     ),
                     oa.c.value('@timestamp', 'datetime2')
                 ),
-            event_type = oa.c.value('@name', 'nvarchar(256)'),
+            event_type = oa.c.value('@name', 'sysname'),
             database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
             object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
             statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)'),
@@ -2238,7 +2238,7 @@ BEGIN
                     ),
                     oa.c.value('@timestamp', 'datetime2')
                 ),
-            event_type = oa.c.value('@name', 'nvarchar(256)'),
+            event_type = oa.c.value('@name', 'sysname'),
             database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
             object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
             statement_text = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(MAX)')
@@ -2291,7 +2291,7 @@ BEGIN
                     ),
                     oa.c.value('@timestamp', 'datetime2')
                 ),
-            event_type = oa.c.value('@name', 'nvarchar(256)'),
+            event_type = oa.c.value('@name', 'sysname'),
             database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
             sql_text = oa.c.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(MAX)'),
             compile_cpu_time_ms = oa.c.value('(data[@name="compile_cpu_time"]/value/text())[1]', 'bigint') / 1000.,
@@ -2299,7 +2299,7 @@ BEGIN
             query_param_type = oa.c.value('(data[@name="query_param_type"]/value/text())[1]', 'integer'),
             is_cached = oa.c.value('(data[@name="is_cached"]/value/text())[1]', 'bit'),
             is_recompiled = oa.c.value('(data[@name="is_recompiled"]/value/text())[1]', 'bit'),
-            compile_code = oa.c.value('(data[@name="compile_code"]/text)[1]', 'nvarchar(256)'),
+            compile_code = oa.c.value('(data[@name="compile_code"]/text)[1]', 'sysname'),
             has_literals = oa.c.value('(data[@name="has_literals"]/value/text())[1]', 'bit'),
             is_parameterizable = oa.c.value('(data[@name="is_parameterizable"]/value/text())[1]', 'bit'),
             parameterized_values_count = oa.c.value('(data[@name="parameterized_values_count"]/value/text())[1]', 'bigint'),
@@ -2401,7 +2401,7 @@ IF @compile_events = 1
                     ),
                     oa.c.value('@timestamp', 'datetime2')
                 ),
-            event_type = oa.c.value('@name', 'nvarchar(256)'),
+            event_type = oa.c.value('@name', 'sysname'),
             database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
             object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
             recompile_cause = oa.c.value('(data[@name="recompile_cause"]/text)[1]', 'sysname'),
@@ -2417,13 +2417,14 @@ IF @compile_events = 1
 
         ALTER TABLE #recompiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
 
-        IF @debug = 1 BEGIN SELECT N'#recompiles_1' AS table_name, * FROM #recompiles_1 AS r; END;
+        IF @debug = 1 BEGIN SELECT N'#recompiles_1' AS table_name, * FROM #recompiles_1 AS r ORDER BY r.event_time; END;
 
         WITH
             cbq AS
         (
             SELECT
                 statement_text_checksum,
+                recompile_cause,
                 total_recompiles = COUNT_BIG(*),
                 total_recompile_cpu_ms = SUM(recompile_cpu_ms),
                 avg_recompile_cpu_ms = AVG(recompile_cpu_ms),
@@ -2433,7 +2434,8 @@ IF @compile_events = 1
                 max_recompile_duration_ms = MAX(recompile_duration_ms)
             FROM #recompiles_1
             GROUP BY
-                statement_text_checksum
+                statement_text_checksum,
+                recompile_cause
         )
         SELECT
             pattern = N'total recompiles',
@@ -2465,12 +2467,22 @@ IF @compile_events = 1
         FROM cbq AS c
         CROSS APPLY
         (
-            SELECT TOP(1) *
+            SELECT
+                k.*,
+                n =
+                ROW_NUMBER() OVER
+                (
+                    PARTITION BY
+                        k.statement_text_checksum,
+                        k.recompile_cause
+                    ORDER BY
+                        k.event_time DESC
+                )
             FROM #recompiles_1 AS k
             WHERE c.statement_text_checksum = k.statement_text_checksum
-            ORDER BY
-                k.event_time DESC
+            AND   c.recompile_cause = k.recompile_cause
         ) AS k
+        WHERE k.n = 1
         ORDER BY
             c.total_recompiles DESC;
 
@@ -2490,7 +2502,7 @@ IF @compile_events = 1
                     ),
                     oa.c.value('@timestamp', 'datetime2')
                 ),
-            event_type = oa.c.value('@name', 'nvarchar(256)'),
+            event_type = oa.c.value('@name', 'sysname'),
             database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
             object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
             recompile_cause = oa.c.value('(data[@name="recompile_cause"]/text)[1]', 'sysname'),
@@ -2549,7 +2561,7 @@ BEGIN
                     ),
                     oa.c.value('@timestamp', 'datetime2')
                 ),
-            event_type = oa.c.value('@name', 'nvarchar(256)'),
+            event_type = oa.c.value('@name', 'sysname'),
             database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
             wait_type = oa.c.value('(data[@name="wait_type"]/text)[1]', 'nvarchar(60)'),
             duration_ms = oa.c.value('(data[@name="duration"]/value/text())[1]', 'bigint') ,
@@ -2558,7 +2570,7 @@ BEGIN
                 CASE
                     WHEN @v = 11
                     THEN N'Not Available < 2014'
-                    ELSE oa.c.value('(data[@name="wait_resource"]/value/text())[1]', 'nvarchar(256)')
+                    ELSE oa.c.value('(data[@name="wait_resource"]/value/text())[1]', 'sysname')
                 END,
            query_plan_hash_signed =
                CONVERT
@@ -2702,7 +2714,7 @@ BEGIN
         database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
         object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
         transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
+        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'sysname'),
         monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
         blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
         blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
@@ -2710,7 +2722,7 @@ BEGIN
         blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-        transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(256)'),
+        transaction_name = bd.value('(process/@transactionname)[1]', 'sysname'),
         last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
         last_transaction_completed = CONVERT(datetime2, NULL),
         wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
@@ -2718,9 +2730,9 @@ BEGIN
         status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
         priority = bd.value('(process/@priority)[1]', 'integer'),
         transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
-        client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-        host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
-        login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
+        client_app = bd.value('(process/@clientapp)[1]', 'sysname'),
+        host_name = bd.value('(process/@hostname)[1]', 'sysname'),
+        login_name = bd.value('(process/@loginname)[1]', 'sysname'),
         isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
         log_used = bd.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
@@ -2797,7 +2809,7 @@ BEGIN
         database_id = oa.c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
         object_id = oa.c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
         transaction_id = oa.c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
-        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
+        resource_owner_type = oa.c.value('(data[@name="resource_owner_type"]/text)[1]', 'sysname'),
         monitor_loop = oa.c.value('(//@monitorLoop)[1]', 'integer'),
         blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
         blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
@@ -2805,7 +2817,7 @@ BEGIN
         blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
         query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
-        transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(256)'),
+        transaction_name = bg.value('(process/@transactionname)[1]', 'sysname'),
         last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
         last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
         wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
@@ -2813,9 +2825,9 @@ BEGIN
         status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
         priority = bg.value('(process/@priority)[1]', 'integer'),
         transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
-        client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-        host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
-        login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
+        client_app = bg.value('(process/@clientapp)[1]', 'sysname'),
+        host_name = bg.value('(process/@hostname)[1]', 'sysname'),
+        login_name = bg.value('(process/@loginname)[1]', 'sysname'),
         isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
         log_used = bg.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
@@ -3665,13 +3677,13 @@ BEGIN
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +
                                  N'  database_name sysname NULL, wait_type nvarchar(60) NULL, duration_ms bigint NULL, signal_duration_ms bigint NULL, ' + @nc10 +
-                                 N'  wait_resource nvarchar(256) NULL, query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, plan_handle varbinary(64) NULL );'
+                                 N'  wait_resource sysname NULL, query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, plan_handle varbinary(64) NULL );'
                             WHEN @event_type_check LIKE N'%lock%'
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, ' + @nc10 +
                                  N'  activity nvarchar(20) NULL, database_name sysname NULL, database_id integer NULL, object_id bigint NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + @nc10 +
-                                 N'  transaction_id bigint NULL, resource_owner_type nvarchar(256) NULL, monitor_loop integer NULL, spid integer NULL, ecid integer NULL, query_text nvarchar(MAX) NULL, ' +
-                                 N'  wait_time bigint NULL, transaction_name nvarchar(256) NULL, last_transaction_started nvarchar(30) NULL, wait_resource nvarchar(100) NULL, ' + @nc10 +
+                                 N'  transaction_id bigint NULL, resource_owner_type sysname NULL, monitor_loop integer NULL, spid integer NULL, ecid integer NULL, query_text nvarchar(MAX) NULL, ' +
+                                 N'  wait_time bigint NULL, transaction_name sysname NULL, last_transaction_started nvarchar(30) NULL, wait_resource nvarchar(100) NULL, ' + @nc10 +
                                  N'  lock_mode nvarchar(10) NULL, status nvarchar(10) NULL, priority integer NULL, transaction_count integer NULL, ' + @nc10 +
                                  N'  client_app sysname NULL, host_name sysname NULL, login_name sysname NULL, isolation_level nvarchar(30) NULL, sql_handle varbinary(64) NULL, blocked_process_report XML NULL );'
                             WHEN @event_type_check LIKE N'%quer%'
@@ -3686,7 +3698,7 @@ BEGIN
                             WHEN @event_type_check LIKE N'%recomp%'
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +
-                                 N'  database_name sysname NULL, object_name nvarchar(512) NULL, recompile_cause nvarchar(256) NULL, statement_text nvarchar(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
+                                 N'  database_name sysname NULL, object_name nvarchar(512) NULL, recompile_cause sysname NULL, statement_text nvarchar(MAX) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
                                  + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms bigint NULL, compile_duration_ms bigint NULL );' ELSE N' );' END
                             WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
@@ -3699,7 +3711,7 @@ BEGIN
                                  N'CREATE TABLE ' + @object_name_check + N'_parameterization' + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL,  event_type sysname NULL,  ' + @nc10 +
                                  N'  database_name sysname NULL, sql_text nvarchar(MAX) NULL, compile_cpu_time_ms bigint NULL, compile_duration_ms bigint NULL, query_param_type integer NULL,  ' + @nc10 +
-                                 N'  is_cached bit NULL, is_recompiled bit NULL, compile_code nvarchar(256) NULL, has_literals bit NULL, is_parameterizable bit NULL, parameterized_values_count bigint NULL, ' + @nc10 +
+                                 N'  is_cached bit NULL, is_recompiled bit NULL, compile_code sysname NULL, has_literals bit NULL, is_parameterizable bit NULL, parameterized_values_count bigint NULL, ' + @nc10 +
                                  N'  query_plan_hash binary(8) NULL, query_hash binary(8) NULL, plan_handle varbinary(64) NULL, statement_sql_hash varbinary(64) NULL );'
                                         ELSE N''
                                    END
@@ -4045,7 +4057,7 @@ END;
                  ),
                  c.value(''@timestamp'', ''datetime2'')
             ),
-        event_type = c.value(''@name'', ''nvarchar(256)''),
+        event_type = c.value(''@name'', ''sysname''),
         database_name = c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
         wait_type = c.value(''(data[@name="wait_type"]/text)[1]'', ''nvarchar(60)''),
         duration_ms = c.value(''(data[@name="duration"]/value/text())[1]'', ''bigint''),
@@ -4056,7 +4068,7 @@ CONVERT
 CASE
     WHEN @v = 11 /*We can't get the wait resource on older versions of SQL Server*/
     THEN N'        ''Not Available < 2014'', ' + @nc10
-    ELSE N'        wait_resource = c.value(''(data[@name="wait_resource"]/value/text())[1]'', ''nvarchar(256)''), ' + @nc10
+    ELSE N'        wait_resource = c.value(''(data[@name="wait_resource"]/value/text())[1]'', ''sysname''), ' + @nc10
 END
 ) + CONVERT(nvarchar(MAX), N'        query_plan_hash_signed =
                 CONVERT
@@ -4131,22 +4143,22 @@ FROM
             database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
             object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
             transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)''),
+            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''sysname''),
             monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
             spid = bd.value(''(process/@spid)[1]'', ''integer''),
             ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
             text = bd.value(''(process/inputbuf/text())[1]'', ''nvarchar(MAX)''),
             waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
-            transactionname = bd.value(''(process/@transactionname)[1]'', ''nvarchar(256)''),
+            transactionname = bd.value(''(process/@transactionname)[1]'', ''sysname''),
             lasttranstarted = bd.value(''(process/@lasttranstarted)[1]'', ''datetime2''),
             wait_resource = bd.value(''(process/@waitresource)[1]'', ''nvarchar(100)''),
             lockmode = bd.value(''(process/@lockMode)[1]'', ''nvarchar(10)''),
             status = bd.value(''(process/@status)[1]'', ''nvarchar(10)''),
             priority = bd.value(''(process/@priority)[1]'', ''integer''),
             trancount = bd.value(''(process/@trancount)[1]'', ''integer''),
-            clientapp = bd.value(''(process/@clientapp)[1]'', ''nvarchar(256)''),
-            hostname = bd.value(''(process/@hostname)[1]'', ''nvarchar(256)''),
-            loginname = bd.value(''(process/@loginname)[1]'', ''nvarchar(256)''),
+            clientapp = bd.value(''(process/@clientapp)[1]'', ''sysname''),
+            hostname = bd.value(''(process/@hostname)[1]'', ''sysname''),
+            loginname = bd.value(''(process/@loginname)[1]'', ''sysname''),
             isolationlevel = bd.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)''),
             sqlhandle =
                 CONVERT
@@ -4181,7 +4193,7 @@ FROM
             database_id = oa.c.value(''(data[@name="database_id"]/value/text())[1]'', ''integer''),
             object_id = oa.c.value(''(data[@name="object_id"]/value/text())[1]'', ''integer''),
             transaction_id = oa.c.value(''(data[@name="transaction_id"]/value/text())[1]'', ''bigint''),
-            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''nvarchar(256)''),
+            resource_owner_type = oa.c.value(''(data[@name="resource_owner_type"]/text)[1]'', ''sysname''),
             monitor_loop = oa.c.value(''(//@monitorLoop)[1]'', ''integer''),
             spid = bg.value(''(process/@spid)[1]'', ''integer''),
             ecid = bg.value(''(process/@ecid)[1]'', ''integer''),
@@ -4194,9 +4206,9 @@ FROM
             status = bg.value(''(process/@status)[1]'', ''nvarchar(10)''),
             priority = bg.value(''(process/@priority)[1]'', ''integer''),
             trancount = bg.value(''(process/@trancount)[1]'', ''integer''),
-            clientapp = bg.value(''(process/@clientapp)[1]'', ''nvarchar(256)''),
-            hostname = bg.value(''(process/@hostname)[1]'', ''nvarchar(256)''),
-            loginname = bg.value(''(process/@loginname)[1]'', ''nvarchar(256)''),
+            clientapp = bg.value(''(process/@clientapp)[1]'', ''sysname''),
+            hostname = bg.value(''(process/@hostname)[1]'', ''sysname''),
+            loginname = bg.value(''(process/@loginname)[1]'', ''sysname''),
             isolationlevel = bg.value(''(process/@isolationlevel)[1]'', ''nvarchar(50)''),
             sqlhandle = NULL,
             process_report = oa.c.query(''.'')
@@ -4238,9 +4250,9 @@ JOIN
         spid = bd.value(''(process/@spid)[1]'', ''integer''),
         ecid = bd.value(''(process/@ecid)[1]'', ''integer''),
         waittime = bd.value(''(process/@waittime)[1]'', ''bigint''),
-        clientapp = bd.value(''(process/@clientapp)[1]'', ''nvarchar(256)''),
-        hostname = bd.value(''(process/@hostname)[1]'', ''nvarchar(256)''),
-        loginname = bd.value(''(process/@loginname)[1]'', ''nvarchar(256)'')
+        clientapp = bd.value(''(process/@clientapp)[1]'', ''sysname''),
+        hostname = bd.value(''(process/@hostname)[1]'', ''sysname''),
+        loginname = bd.value(''(process/@loginname)[1]'', ''sysname'')
     FROM #human_events_xml_internal AS xet
     OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
     OUTER APPLY oa.c.nodes(''//blocked-process-report/blocked-process'') AS bd(bd)
@@ -4280,7 +4292,7 @@ JOIN
             ),
             oa.c.value(''@timestamp'', ''datetime2'')
         ),
-    event_type = oa.c.value(''@name'', ''nvarchar(256)''),
+    event_type = oa.c.value(''@name'', ''sysname''),
     database_name = oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
     [object_name] = oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''sysname''),
     sql_text = oa.c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)''),
@@ -4340,10 +4352,10 @@ AND   oa.c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '
                 SYSDATETIME()
             ), oa.c.value(''@timestamp'', ''datetime2'')
         ),
-    event_type = oa.c.value(''@name'', ''nvarchar(256)''),
+    event_type = oa.c.value(''@name'', ''sysname''),
     database_name = oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
     [object_name] = oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''sysname''),
-    recompile_cause = oa.c.value(''(data[@name="recompile_cause"]/text)[1]'', ''nvarchar(256)''),
+    recompile_cause = oa.c.value(''(data[@name="recompile_cause"]/text)[1]'', ''sysname''),
     statement_text = oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'')'
    + CONVERT(nvarchar(MAX), CASE WHEN @compile_events = 1 /*Only get these columns if we're using the newer XE: sql_statement_post_compile*/
           THEN
@@ -4388,7 +4400,7 @@ ORDER BY
             ),
             oa.c.value(''@timestamp'', ''datetime2'')
         ),
-    event_type = oa.c.value(''@name'', ''nvarchar(256)''),
+    event_type = oa.c.value(''@name'', ''sysname''),
     database_name = oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
     [object_name] = oa.c.value(''(data[@name="object_name"]/value/text())[1]'', ''sysname''),
     statement_text = oa.c.value(''(data[@name="statement"]/value/text())[1]'', ''nvarchar(MAX)'')'
@@ -4437,7 +4449,7 @@ ORDER BY
             ),
             oa.c.value(''@timestamp'', ''datetime2'')
         ),
-    event_type = oa.c.value(''@name'', ''nvarchar(256)''),
+    event_type = oa.c.value(''@name'', ''sysname''),
     database_name = oa.c.value(''(action[@name="database_name"]/value/text())[1]'', ''sysname''),
     sql_text = oa.c.value(''(action[@name="sql_text"]/value/text())[1]'', ''nvarchar(MAX)''),
     compile_cpu_time_ms = oa.c.value(''(data[@name="compile_cpu_time"]/value/text())[1]'', ''bigint'') / 1000.,
@@ -4445,7 +4457,7 @@ ORDER BY
     query_param_type = oa.c.value(''(data[@name="query_param_type"]/value/text())[1]'', ''integer''),
     is_cached = oa.c.value(''(data[@name="is_cached"]/value/text())[1]'', ''bit''),
     is_recompiled = oa.c.value(''(data[@name="is_recompiled"]/value/text())[1]'', ''bit''),
-    compile_code = oa.c.value(''(data[@name="compile_code"]/text)[1]'', ''nvarchar(256)''),
+    compile_code = oa.c.value(''(data[@name="compile_code"]/text)[1]'', ''sysname''),
     has_literals = oa.c.value(''(data[@name="has_literals"]/value/text())[1]'', ''bit''),
     is_parameterizable = oa.c.value(''(data[@name="is_parameterizable"]/value/text())[1]'', ''bit''),
     parameterized_values_count = oa.c.value(''(data[@name="parameterized_values_count"]/value/text())[1]'', ''bigint''),
