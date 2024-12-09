@@ -1382,10 +1382,10 @@ Error out if the @regression parameters do not make sense.
 IF
 (
   @regression_baseline_start_date IS NULL
-  AND 
-  (   
-      @regression_baseline_end_date IS NOT NULL 
-   OR @regression_comparator IS NOT NULL 
+  AND
+  (
+      @regression_baseline_end_date IS NOT NULL
+   OR @regression_comparator IS NOT NULL
    OR @regression_direction IS NOT NULL
   )
 )
@@ -2710,7 +2710,7 @@ These columns are only available in 2017+
 IF
 (
   (
-      @sort_order = 'tempdb' 
+      @sort_order = 'tempdb'
    OR @sort_order_is_a_wait = 1
   )
   AND @new = 0
