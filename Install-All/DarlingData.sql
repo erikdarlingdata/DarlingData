@@ -1,4 +1,4 @@
--- Compile Date: 12/09/2024 21:21:29 UTC
+-- Compile Date: 12/09/2024 21:28:55 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -26,7 +26,7 @@ GO
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
 
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -66,8 +66,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.9',
-        @version_date = '20240915';
+        @version = '2.1',
+        @version_date = '20250101';
 
     IF @help = 1
     BEGIN
@@ -157,7 +157,7 @@ BEGIN
         RAISERROR('
 MIT License
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -2904,7 +2904,7 @@ GO
 ███████╗ ╚████╔╝ ███████╗██║ ╚████║   ██║   ███████║
 ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -2967,8 +2967,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.9',
-    @version_date = '20240915';
+    @version = '6.1',
+    @version_date = '20250101';
 
 IF @help = 1
 BEGIN
@@ -3200,7 +3200,7 @@ BEGIN
     RAISERROR(N'
 MIT License
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -7683,7 +7683,7 @@ GO
  ╚████╔╝ ██║███████╗╚███╔███╔╝███████╗██║  ██║
   ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚═╝  ╚═╝
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -7727,8 +7727,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '3.9',
-    @version_date = '20240915';
+    @version = '4.1',
+    @version_date = '20250101';
 
 IF @help = 1
 BEGIN
@@ -7849,7 +7849,7 @@ ON SERVER
     RAISERROR('
 MIT License
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -12191,7 +12191,7 @@ GO
 ██║  ██║╚██████╔╝██║ ╚████║   ██║   ███████╗██║  ██║
 ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -12239,8 +12239,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
     SELECT
-        @version = '1.9',
-        @version_date = '20240915';
+        @version = '2.1',
+        @version_date = '20250101';
 
     IF @help = 1
     BEGIN
@@ -12317,7 +12317,7 @@ BEGIN
         RAISERROR('
     MIT License
 
-    Copyright 2024 Darling Data, LLC
+    Copyright 2025 Darling Data, LLC
 
     https://www.erikdarling.com/
 
@@ -12912,7 +12912,7 @@ GO
 ██████╔╝███████╗   ██║   ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
 ╚═════╝ ╚══════╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -12958,8 +12958,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.9',
-    @version_date = '20240915';
+    @version = '5.1',
+    @version_date = '20250101';
 
 
 IF @help = 1
@@ -13056,7 +13056,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -16021,7 +16021,7 @@ GO
 ███████║   ██║   ╚██████╔╝██║  ██║███████╗██╗
 ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -16133,8 +16133,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '4.9',
-    @version_date = '20240915';
+    @version = '5.1',
+    @version_date = '20250101';
 
 /*
 Helpful section! For help.
@@ -16404,7 +16404,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
