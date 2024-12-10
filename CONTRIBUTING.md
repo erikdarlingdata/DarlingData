@@ -56,7 +56,7 @@ I have a particular formatting style that I stick to. You can code things howeve
 * Reasonable casing (not all upper, not all lower)
 * Keywords on new lines (from, join, on, where, and, or, order by, group by)
 * Indenting things appropriately
-* Using AS in aliases
+* Using AS in table aliases
 * Column aliases using the "column = expression" format
 * Parentheses in TOP expressions, e.g. TOP (1000)
 * Aligning parentheses 
