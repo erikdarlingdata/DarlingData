@@ -52,14 +52,9 @@ ALTER FUNCTION
 RETURNS table
 AS
 RETURN
-SELECT
+SELECT TOP (9223372036854775807)
     dtl.request_mode,
-    locked_object =
-        CASE dtl.resource_type
-             WHEN N'OBJECT'
-             THEN OBJECT_NAME(dtl.resource_associated_entity_id)
-             ELSE OBJECT_NAME(p.object_id)
-        END,
+    l.locked_object,
     index_name =
         ISNULL(i.name, N'OBJECT'),
     dtl.resource_type,
@@ -70,6 +65,16 @@ SELECT
             IIF
             (
                 dtl.resource_associated_entity_id = P.hobt_id,
+                1,
+                0
+            )
+        ),
+    object_locks =
+        SUM
+        (
+            IIF
+            (
+                dtl.resource_type = N'OBJECT',
                 1,
                 0
             )
@@ -98,26 +103,43 @@ SELECT
         COUNT_BIG(*)
 FROM sys.dm_tran_locks AS dtl WITH(NOLOCK)
 LEFT JOIN sys.partitions AS p WITH(NOLOCK)
-  ON p.hobt_id = dtl.resource_associated_entity_id
+  ON dtl.resource_associated_entity_id = p.hobt_id
+OUTER APPLY
+(
+    SELECT
+        locked_object = ao.name
+    FROM sys.all_objects AS ao
+    WHERE dtl.resource_type = N'OBJECT'
+    AND    dtl.resource_associated_entity_id = ao.object_id
+
+    UNION ALL
+
+    SELECT
+        locked_object = ao.name
+    FROM sys.all_objects AS ao
+    WHERE dtl.resource_type <> N'OBJECT'
+    AND   p.object_id = ao.object_id
+) AS l
 OUTER APPLY
 (
     SELECT TOP (1)
         i.name
     FROM sys.indexes AS i WITH(NOLOCK)
-    WHERE  p.object_id = i.object_id
-    AND    p.index_id  = i.index_id
+    WHERE i.object_id = p.object_id
+    AND   i.index_id = p.index_id
 ) AS i
 WHERE (dtl.request_session_id = @spid OR @spid IS NULL)
 AND    dtl.resource_type <> N'DATABASE'
 AND    dtl.request_request_id = CURRENT_REQUEST_ID()
 AND    dtl.request_owner_id = CURRENT_TRANSACTION_ID()
+AND    l.locked_object <> N'WhatsUpLocks'
 GROUP BY
-    CASE dtl.resource_type
-         WHEN N'OBJECT'
-         THEN OBJECT_NAME(dtl.resource_associated_entity_id)
-         ELSE OBJECT_NAME(p.object_id)
-    END,
+    l.locked_object,
     i.name,
     dtl.resource_type,
     dtl.request_mode,
-    dtl.request_status;
+    dtl.request_status
+ORDER BY
+    l.locked_object,
+    index_name,
+    total_locks DESC;
