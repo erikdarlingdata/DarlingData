@@ -14,7 +14,7 @@ This is a quick one-off script I use in some presentations to look at index size
 
 https://github.com/erikdarlingdata/DarlingData
 
-Copyright (c) 2024 Darling Data, LLC
+Copyright (c) 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction,
@@ -26,7 +26,7 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMA
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-IF OBJECT_ID(N'dbo.WhatsUpIndexes') IS NULL
+IF OBJECT_ID(N'dbo.WhatsUpIndexes', N'IF') IS NULL
 BEGIN
     DECLARE
         @vsql nvarchar(MAX) = N'
@@ -37,7 +37,7 @@ BEGIN
         x = 138;';
 
     PRINT @vsql;
-    EXEC (@vsql);
+    EXECUTE (@vsql);
 END;
 GO
 

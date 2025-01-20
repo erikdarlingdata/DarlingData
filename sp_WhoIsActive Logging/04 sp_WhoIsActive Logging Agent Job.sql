@@ -11,7 +11,7 @@ GO
 
 /*
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 This will log sp_WhoIsActive to a table.
@@ -53,7 +53,7 @@ DECLARE
     @RetentionPeriod nvarchar(10) = N'10';
 
 DECLARE
-    @command nvarchar(MAX) = N'EXEC dbo.sp_WhoIsActiveLogging_Main ' + @RetentionPeriod + N';'
+    @command nvarchar(MAX) = N'EXECUTE dbo.sp_WhoIsActiveLogging_Main ' + @RetentionPeriod + N';'
 
 
 IF NOT EXISTS
@@ -65,7 +65,7 @@ IF NOT EXISTS
     AND   category_class = 1
 )
 BEGIN
-    EXEC @ReturnCode = msdb.dbo.sp_add_category
+    EXECUTE @ReturnCode = msdb.dbo.sp_add_category
         @class = N'JOB',
         @type = N'LOCAL',
         @name = N'Data Collector';
@@ -75,7 +75,7 @@ BEGIN
 END;
 
 
-EXEC @ReturnCode =  msdb.dbo.sp_add_job
+EXECUTE @ReturnCode =  msdb.dbo.sp_add_job
         @job_name = N'Log sp_WhoIsActive To A Daily Table',
         @enabled = 1,
         @notify_level_eventlog = 0,
@@ -106,7 +106,7 @@ IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
 
-EXEC @ReturnCode = msdb.dbo.sp_add_jobstep
+EXECUTE @ReturnCode = msdb.dbo.sp_add_jobstep
     @job_id = @jobId,
     @step_name = N'Log sp_WhoIsActive To A Daily Table',
     @step_id = 1,
@@ -126,14 +126,14 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-    EXEC @ReturnCode = msdb.dbo.sp_update_job
+    EXECUTE @ReturnCode = msdb.dbo.sp_update_job
         @job_id = @jobId,
         @start_step_id = 1;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-    EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule
+    EXECUTE @ReturnCode = msdb.dbo.sp_add_jobschedule
         @job_id = @jobId, @name = N'Log sp_WhoIsActive To A Daily Table Every Minute',
         @enabled = 1,
         @freq_type = 4,
@@ -151,7 +151,7 @@ IF (@@ERROR <> 0 OR @ReturnCode <> 0)
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-    EXEC @ReturnCode = msdb.dbo.sp_add_jobserver
+    EXECUTE @ReturnCode = msdb.dbo.sp_add_jobserver
         @job_id = @jobId,
         @server_name = N'(local)';
 
