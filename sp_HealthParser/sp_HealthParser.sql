@@ -34,7 +34,7 @@ https://github.com/erikdarlingdata/DarlingData
 
 IF OBJECT_ID('dbo.sp_HealthParser') IS NULL
    BEGIN
-       EXEC ('CREATE PROCEDURE dbo.sp_HealthParser AS RETURN 138;');
+       EXECUTE ('CREATE PROCEDURE dbo.sp_HealthParser AS RETURN 138;');
    END;
 GO
 
@@ -487,7 +487,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 wait_info
             )
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @sql,
                 @params,
                 @start_date,
@@ -533,7 +533,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
             sp_server_diagnostics_component_result
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql,
             @params,
             @start_date,
@@ -589,7 +589,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 xml_deadlock_report
             )
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @sql,
                 @params,
                 @start_date,
@@ -655,7 +655,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            (
                wait_info
            )
-           EXEC sys.sp_executesql
+           EXECUTE sys.sp_executesql
                @sql,
                @params,
                @start_date,
@@ -705,7 +705,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
             sp_server_diagnostics_component_result
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql,
             @params,
             @start_date,
@@ -763,7 +763,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 xml_deadlock_report
             )
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @sql,
                 @params,
                 @start_date,

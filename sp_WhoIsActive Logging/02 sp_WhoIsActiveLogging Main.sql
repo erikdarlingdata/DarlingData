@@ -11,7 +11,7 @@ GO
 
 /*
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 This will log sp_WhoIsActive to a table.
@@ -31,7 +31,7 @@ sign that you need to update sp_WhoIsActive
 
 IF OBJECT_ID('dbo.sp_WhoIsActiveLogging_Main') IS NULL   
    BEGIN   
-       EXEC ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_Main AS RETURN 138;');   
+       EXECUTE ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_Main AS RETURN 138;');   
    END;   
 GO 
 
@@ -103,7 +103,7 @@ BEGIN
     IF OBJECT_ID(@destination_table) IS NULL
     BEGIN
 
-        EXEC dbo.sp_WhoIsActive
+        EXECUTE dbo.sp_WhoIsActive
             @get_transaction_info = 1,
             @get_outer_command = 1,
             @get_plans = 1,
@@ -123,7 +123,7 @@ BEGIN
                     @destination_table
                 );
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @schema;
 
     END;
@@ -131,7 +131,7 @@ BEGIN
     /*
     This logs to the table.
     */
-    EXEC dbo.sp_WhoIsActive
+    EXECUTE dbo.sp_WhoIsActive
         @get_transaction_info = 1,
         @get_outer_command = 1,
         @get_plans = 1,
@@ -142,10 +142,10 @@ BEGIN
         @destination_table = @destination_table;
 
     /*Execute this to prune tables*/
-    EXEC dbo.sp_WhoIsActiveLogging_Retention
+    EXECUTE dbo.sp_WhoIsActiveLogging_Retention
         @RetentionPeriod = @RetentionPeriod;
     
     /*Execute this to create views*/
-    EXEC dbo.sp_WhoIsActiveLogging_CreateViews;
+    EXECUTE dbo.sp_WhoIsActiveLogging_CreateViews;
 END;
 GO

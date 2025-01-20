@@ -29,15 +29,15 @@ Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
-EXEC sp_QuickieStore
+EXECUTE sp_QuickieStore
     @help = 1;
 
 For working through errors:
-EXEC sp_QuickieStore
+EXECUTE sp_QuickieStore
     @debug = 1;
 
 For performance issues:
-EXEC sp_QuickieStore
+EXECUTE sp_QuickieStore
     @troubleshoot_performance = 1;
 
 For support, head over to GitHub:
@@ -47,7 +47,7 @@ https://github.com/erikdarlingdata/DarlingData
 
 IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL
    BEGIN
-       EXEC ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');
+       EXECUTE ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');
    END;
 GO
 
@@ -2170,7 +2170,7 @@ SELECT
 IF @troubleshoot_performance = 1
 BEGIN
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -2211,7 +2211,7 @@ BEGIN
     PRINT @sql;
 END;
 
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql,
   N'@query_store_exists bit OUTPUT',
     @query_store_exists OUTPUT;
@@ -2220,12 +2220,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -2260,7 +2260,7 @@ SELECT
 IF @troubleshoot_performance = 1
 BEGIN
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -2336,7 +2336,7 @@ INSERT
     query_capture_mode_desc,
     size_based_cleanup_mode_desc
 )
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql,
   N'@database_id integer',
     @database_id;
@@ -2351,12 +2351,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -2382,7 +2382,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -2416,7 +2416,7 @@ AND   p.name LIKE @procedure_name;' + @nc10;
         (
             [object_id]
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql,
           N'@procedure_schema sysname,
             @procedure_name sysname',
@@ -2427,12 +2427,12 @@ AND   p.name LIKE @procedure_name;' + @nc10;
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -2446,7 +2446,7 @@ AND   p.name LIKE @procedure_name;' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -2489,7 +2489,7 @@ OPTION(RECOMPILE);' + @nc10;
             PRINT @sql;
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql,
           N'@procedure_exists bit OUTPUT,
             @procedure_name_quoted sysname',
@@ -2500,12 +2500,12 @@ OPTION(RECOMPILE);' + @nc10;
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -2522,7 +2522,7 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -2553,7 +2553,7 @@ OPTION(RECOMPILE);' + @nc10;
             PRINT @sql;
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql,
           N'@procedure_exists bit OUTPUT,
             @procedure_name_quoted sysname',
@@ -2564,12 +2564,12 @@ OPTION(RECOMPILE);' + @nc10;
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -2853,7 +2853,7 @@ BEGIN
     IF @troubleshoot_performance = 1
     BEGIN
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -2884,7 +2884,7 @@ OPTION(RECOMPILE);' + @nc10;
         PRINT @sql;
     END;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@query_store_waits_enabled bit OUTPUT',
         @query_store_waits_enabled OUTPUT;
@@ -2893,12 +2893,12 @@ OPTION(RECOMPILE);' + @nc10;
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -3114,7 +3114,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -3164,7 +3164,7 @@ OPTION(RECOMPILE);' + @nc10;
     (
         plan_id
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@procedure_name_quoted sysname',
         @procedure_name_quoted;
@@ -3173,12 +3173,12 @@ OPTION(RECOMPILE);' + @nc10;
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -3209,7 +3209,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -3244,19 +3244,19 @@ OPTION(RECOMPILE);' + @nc10;
     (
         plan_id
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql;
 
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -3303,7 +3303,7 @@ BEGIN
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_ints,
           N'@ids nvarchar(4000)',
             @include_plan_ids;
@@ -3335,7 +3335,7 @@ BEGIN
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_ints,
           N'@ids nvarchar(4000)',
             @ignore_plan_ids;
@@ -3367,7 +3367,7 @@ BEGIN
         (
             query_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_ints,
           N'@ids nvarchar(4000)',
             @include_query_ids;
@@ -3377,7 +3377,7 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -3410,19 +3410,19 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -3470,7 +3470,7 @@ OPTION(RECOMPILE);' + @nc10;
         (
             query_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_ints,
           N'@ids nvarchar(4000)',
             @ignore_query_ids;
@@ -3480,7 +3480,7 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -3513,19 +3513,19 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -3588,7 +3588,7 @@ BEGIN
         (
             query_hash_s
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_strings,
           N'@ids nvarchar(4000)',
             @include_query_hashes;
@@ -3598,7 +3598,7 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -3638,19 +3638,19 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -3699,7 +3699,7 @@ OPTION(RECOMPILE);' + @nc10;
         (
             query_hash_s
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_strings,
           N'@ids nvarchar(4000)',
             @ignore_query_hashes;
@@ -3709,7 +3709,7 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -3749,19 +3749,19 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -3810,7 +3810,7 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_hash_s
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_strings,
           N'@ids nvarchar(4000)',
             @include_plan_hashes;
@@ -3820,7 +3820,7 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -3853,19 +3853,19 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -3914,7 +3914,7 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_hash_s
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_strings,
           N'@ids nvarchar(4000)',
             @ignore_plan_hashes;
@@ -3924,7 +3924,7 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -3957,19 +3957,19 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -4018,7 +4018,7 @@ OPTION(RECOMPILE);' + @nc10;
         (
             sql_handle_s
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_strings,
           N'@ids nvarchar(4000)',
             @include_sql_handles;
@@ -4029,7 +4029,7 @@ OPTION(RECOMPILE);' + @nc10;
         IF @troubleshoot_performance = 1
         BEGIN
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -4076,19 +4076,19 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -4137,7 +4137,7 @@ OPTION(RECOMPILE);' + @nc10;
         (
             sql_handle_s
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @string_split_strings,
           N'@ids nvarchar(4000)',
             @ignore_sql_handles;
@@ -4147,7 +4147,7 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -4194,19 +4194,19 @@ OPTION(RECOMPILE);' + @nc10;
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -4248,7 +4248,7 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -4284,19 +4284,19 @@ BEGIN
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -4322,7 +4322,7 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -4358,19 +4358,19 @@ BEGIN
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -4396,7 +4396,7 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -4432,19 +4432,19 @@ BEGIN
         (
             plan_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql
 
         IF @troubleshoot_performance = 1
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -4475,7 +4475,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -4512,19 +4512,19 @@ OPTION(RECOMPILE);' + @nc10;
     (
         plan_id
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql
 
     IF @troubleshoot_performance = 1
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -4593,7 +4593,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -4668,7 +4668,7 @@ END;
     (
         plan_id
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@query_text_search nvarchar(4000)',
         @query_text_search;
@@ -4677,12 +4677,12 @@ END;
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -4751,7 +4751,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -4826,7 +4826,7 @@ END;
     (
         plan_id
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@query_text_search_not nvarchar(4000)',
         @query_text_search_not;
@@ -4835,12 +4835,12 @@ END;
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -4870,7 +4870,7 @@ BEGIN
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -4923,7 +4923,7 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     (
         plan_id
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@top bigint',
         @top;
@@ -4932,12 +4932,12 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -4965,7 +4965,7 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -5008,19 +5008,19 @@ INSERT
 (
     plan_id
 )
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql;
 
 IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -5126,7 +5126,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -5209,7 +5209,7 @@ BEGIN
         query_hash,
         plan_hash_count_for_query_hash
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
         @parameters,
         @top,
@@ -5229,12 +5229,12 @@ BEGIN
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -5250,7 +5250,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -5326,7 +5326,7 @@ OR
         from_regression_baseline,
         total_query_wait_time_ms
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
         @parameters,
         @top,
@@ -5346,12 +5346,12 @@ OR
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -5373,7 +5373,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -5468,7 +5468,7 @@ BEGIN
         from_regression_baseline,
         total_query_wait_time_ms
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
         @parameters,
         @top,
@@ -5488,12 +5488,12 @@ BEGIN
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -5521,7 +5521,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -5576,7 +5576,7 @@ BEGIN
         query_hash,
         regression_metric_average
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
         @parameters,
         @top,
@@ -5596,12 +5596,12 @@ BEGIN
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -5619,7 +5619,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -5675,7 +5675,7 @@ BEGIN
         query_hash,
         current_metric_average
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
         @parameters,
         @top,
@@ -5695,12 +5695,12 @@ BEGIN
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -5714,7 +5714,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -5861,7 +5861,7 @@ BEGIN
         query_hash,
         change_since_regression_time_period
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
         @parameters,
         @top,
@@ -5881,12 +5881,12 @@ BEGIN
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -5910,7 +5910,7 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -5990,7 +5990,7 @@ INSERT
 (
     plan_id
 )
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql,
     @parameters,
     @top,
@@ -6010,12 +6010,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -6033,7 +6033,7 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -6458,7 +6458,7 @@ INSERT
     from_regression_baseline,
     context_settings
 )
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql,
     @parameters,
     @top,
@@ -6478,12 +6478,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -6500,7 +6500,7 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -6645,7 +6645,7 @@ INSERT
     is_optimized_plan_forcing_disabled,
     plan_type_desc
 )
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql,
   N'@plans_top bigint,
     @database_id int',
@@ -6656,12 +6656,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -6678,7 +6678,7 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -6772,7 +6772,7 @@ INSERT
     max_compile_memory_mb,
     is_clouddb_internal_query
 )
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql,
   N'@database_id int',
     @database_id;
@@ -6781,12 +6781,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -6803,7 +6803,7 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -6862,7 +6862,7 @@ INSERT
     is_part_of_encrypted_module,
     has_restricted_text
 )
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql,
   N'@database_id int',
     @database_id;
@@ -6871,12 +6871,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -6894,7 +6894,7 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -7033,12 +7033,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -7054,7 +7054,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -7094,12 +7094,12 @@ BEGIN
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -7118,7 +7118,7 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -7226,7 +7226,7 @@ INSERT
     size_based_cleanup_mode_desc,
     wait_stats_capture_mode_desc
 )
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql,
   N'@database_id int',
     @database_id;
@@ -7235,12 +7235,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -7269,7 +7269,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -7354,7 +7354,7 @@ OPTION(RECOMPILE);' + @nc10;
         min_query_wait_time_ms,
         max_query_wait_time_ms
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@database_id int',
         @database_id;
@@ -7363,12 +7363,12 @@ OPTION(RECOMPILE);' + @nc10;
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -7386,7 +7386,7 @@ SELECT
 
 IF @troubleshoot_performance = 1
 BEGIN
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_insert,
       N'@current_table nvarchar(100)',
         @current_table;
@@ -7443,7 +7443,7 @@ INSERT
     is_replication_specific,
     is_contained
 )
-EXEC sys.sp_executesql
+EXECUTE sys.sp_executesql
     @sql,
   N'@database_id int',
     @database_id;
@@ -7452,12 +7452,12 @@ IF @troubleshoot_performance = 1
 BEGIN
     SET STATISTICS XML OFF;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_update,
       N'@current_table nvarchar(100)',
         @current_table;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @troubleshoot_info,
       N'@sql nvarchar(max),
         @current_table nvarchar(100)',
@@ -7571,7 +7571,7 @@ BEGIN
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -7618,7 +7618,7 @@ OPTION(RECOMPILE);' + @nc10;
         create_time,
         last_updated_time
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@database_id int',
         @database_id;
@@ -7627,12 +7627,12 @@ OPTION(RECOMPILE);' + @nc10;
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -7647,7 +7647,7 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -7687,7 +7687,7 @@ OPTION(RECOMPILE);' + @nc10;
         parent_query_id,
         dispatcher_plan_id
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@database_id int',
         @database_id;
@@ -7696,12 +7696,12 @@ OPTION(RECOMPILE);' + @nc10;
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -7716,7 +7716,7 @@ OPTION(RECOMPILE);' + @nc10;
 
     IF @troubleshoot_performance = 1
     BEGIN
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_insert,
           N'@current_table nvarchar(100)',
             @current_table;
@@ -7761,7 +7761,7 @@ OPTION(RECOMPILE);' + @nc10;
         query_hint_failure_count,
         source_desc
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@database_id int',
         @database_id;
@@ -7770,12 +7770,12 @@ OPTION(RECOMPILE);' + @nc10;
     BEGIN
         SET STATISTICS XML OFF;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_update,
           N'@current_table nvarchar(100)',
             @current_table;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @troubleshoot_info,
           N'@sql nvarchar(max),
             @current_table nvarchar(100)',
@@ -7792,7 +7792,7 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -7834,7 +7834,7 @@ OPTION(RECOMPILE);' + @nc10;
             plan_id,
             replica_group_id
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql,
           N'@database_id int',
             @database_id;
@@ -7843,12 +7843,12 @@ OPTION(RECOMPILE);' + @nc10;
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -7863,7 +7863,7 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF @troubleshoot_performance = 1
         BEGIN
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
               N'@current_table nvarchar(100)',
                 @current_table;
@@ -7902,7 +7902,7 @@ OPTION(RECOMPILE);' + @nc10;
             role_type,
             replica_name
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql,
           N'@database_id int',
             @database_id;
@@ -7911,12 +7911,12 @@ OPTION(RECOMPILE);' + @nc10;
         BEGIN
             SET STATISTICS XML OFF;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_update,
               N'@current_table nvarchar(100)',
                 @current_table;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @troubleshoot_info,
               N'@sql nvarchar(max),
                 @current_table nvarchar(100)',
@@ -9396,7 +9396,7 @@ OPTION(RECOMPILE);'
         PRINT SUBSTRING(@sql, 8000, 16000);
     END;
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@utc_offset_string nvarchar(6),
         @timezone sysname',
@@ -9991,7 +9991,7 @@ BEGIN
             PRINT @sql;
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
     END;
 END; /*End expert mode format output = 0*/
@@ -10620,7 +10620,7 @@ BEGIN
             PRINT @sql;
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @sql;
     END;
 
@@ -10761,11 +10761,11 @@ BEGIN
             support =
                 'https://github.com/erikdarlingdata/DarlingData',
             help =
-                'EXEC sp_QuickieStore @help = 1;',
+                'EXECUTE sp_QuickieStore @help = 1;',
             problems =
-                'EXEC sp_QuickieStore @debug = 1;',
+                'EXECUTE sp_QuickieStore @debug = 1;',
             performance =
-                'EXEC sp_QuickieStore @troubleshoot_performance = 1;',
+                'EXECUTE sp_QuickieStore @troubleshoot_performance = 1;',
             version_and_date =
                 N'version date: ' + CONVERT(nvarchar(10), @version_date, 23),
             thanks =
