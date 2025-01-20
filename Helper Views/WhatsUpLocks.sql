@@ -15,7 +15,7 @@ It's definitely not a replacement for sp_WhoIsActive, it just gives me what I ca
 
 https://github.com/erikdarlingdata/DarlingData
 
-Copyright (c) 2024 Darling Data, LLC
+Copyright (c) 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction,
@@ -27,7 +27,7 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMA
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-IF OBJECT_ID(N'dbo.WhatsUpLocks') IS NULL
+IF OBJECT_ID(N'dbo.WhatsUpLocks', N'IF') IS NULL
 BEGIN
     DECLARE
         @fsql nvarchar(MAX) = N'
@@ -40,14 +40,14 @@ BEGIN
         x = 138;';
 
     PRINT @fsql;
-    EXEC (@fsql);
+    EXECUTE (@fsql);
 END;
 GO
 
 ALTER FUNCTION
     dbo.WhatsUpLocks
 (
-    @spid int
+    @spid integer
 )
 RETURNS table
 AS

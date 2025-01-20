@@ -11,7 +11,7 @@ GO
 
 This script will set up alerts for high severity and corruption errors in SQL Server.
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -53,7 +53,7 @@ DECLARE
 
 RETURN;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Severity 019',
     @message_id = 0,
     @severity = 19,
@@ -62,12 +62,12 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Severity 019',
     @operator_name = @operator_name,
     @notification_method = 7;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Severity 020',
     @message_id = 0,
     @severity = 20,
@@ -76,12 +76,12 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Severity 020',
     @operator_name = @operator_name,
     @notification_method = 7;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Severity 021',
     @message_id = 0,
     @severity = 21,
@@ -90,12 +90,12 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Severity 021',
     @operator_name = @operator_name,
     @notification_method = 7;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Severity 022',
     @message_id = 0,
     @severity = 22,
@@ -104,12 +104,12 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Severity 022',
     @operator_name = @operator_name,
     @notification_method = 7;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Severity 023',
     @message_id = 0,
     @severity = 23,
@@ -118,12 +118,12 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Severity 023',
     @operator_name = @operator_name,
     @notification_method = 7;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Severity 024',
     @message_id = 0,
     @severity = 24,
@@ -132,12 +132,12 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Severity 024',
     @operator_name = @operator_name,
     @notification_method = 7;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Severity 025',
     @message_id = 0,
     @severity = 25,
@@ -146,12 +146,12 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Severity 025',
     @operator_name = @operator_name,
     @notification_method = 7;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Error Number 823',
     @message_id = 823,
     @severity = 0,
@@ -160,12 +160,12 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Error Number 823',
     @operator_name = @operator_name,
     @notification_method = 7;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Error Number 824',
     @message_id = 824,
     @severity = 0,
@@ -174,12 +174,12 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Error Number 824',
     @operator_name = @operator_name,
     @notification_method = 7;
 
-EXEC msdb.dbo.sp_add_alert
+EXECUTE msdb.dbo.sp_add_alert
     @name = N'Error Number 825',
     @message_id = 825,
     @severity = 0,
@@ -188,7 +188,7 @@ EXEC msdb.dbo.sp_add_alert
     @include_event_description_in = 1,
     @job_id = N'00000000-0000-0000-0000-000000000000';
 
-EXEC msdb.dbo.sp_add_notification
+EXECUTE msdb.dbo.sp_add_notification
     @alert_name = N'Error Number 825',
     @operator_name = @operator_name,
     @notification_method = 7;

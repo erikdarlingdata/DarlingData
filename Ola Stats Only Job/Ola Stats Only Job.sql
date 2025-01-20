@@ -29,7 +29,7 @@ If you're using a version older than that, I feel sorry for your mother.
 Ola's scripts and licensing information is available here:
  * https://github.com/olahallengren/sql-server-maintenance-solution
 
-Copyright (c) 2024 Darling Data, LLC
+Copyright (c) 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction,
@@ -51,9 +51,9 @@ GO
 BEGIN TRANSACTION;
 
 DECLARE
-    @ReturnCode int = 0,
+    @ReturnCode integer = 0,
     @jobId binary(16),
-    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112))),
+    @active_start_date int = (SELECT CONVERT(integer, CONVERT(varchar(35), GETDATE(), 112))),
     @schedule_uid nvarchar(36) = NEWID();
 
 
@@ -66,7 +66,7 @@ IF NOT EXISTS
     AND   category_class = 1
 )
 BEGIN
-    EXEC @ReturnCode = msdb.dbo.sp_add_category
+    EXECUTE @ReturnCode = msdb.dbo.sp_add_category
         @class = N'JOB',
         @type = N'LOCAL',
         @name = N'[Uncategorized (Local)]';
@@ -75,7 +75,7 @@ BEGIN
         GOTO QuitWithRollback;
 END;
 
-EXEC @ReturnCode = msdb.dbo.sp_add_job
+EXECUTE @ReturnCode = msdb.dbo.sp_add_job
     @job_name = N'IndexOptimize - STATISTICS_ONLY',
     @enabled = 1,
     @notify_level_eventlog = 0,
@@ -91,7 +91,7 @@ EXEC @ReturnCode = msdb.dbo.sp_add_job
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-EXEC @ReturnCode = msdb.dbo.sp_add_jobstep
+EXECUTE @ReturnCode = msdb.dbo.sp_add_jobstep
     @job_id = @jobId,
     @step_name = N'Update Statistics',
     @step_id = 1,
@@ -104,20 +104,20 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep
     @retry_interval = 0,
     @os_run_priority = 0,
     @subsystem = N'TSQL',
-    @command = N'EXECUTE dbo.IndexOptimize @Databases = ''USER_DATABASES'', @FragmentationLow = NULL, @FragmentationMedium = NULL, @FragmentationHigh = NULL, @UpdateStatistics = ''ALL'', @StatisticsModificationLevel = 5, @MinNumberOfPages = 50000, @LogToTable = ''Y'';',
+    @command = N'EXECUTE dbo.IndexOptimize @Databases = ''USER_DATABASES'', @FragmentationLow = NULL, @FragmentationMedium = NULL, @FragmentationHigh = NULL, @UpdateStatistics = ''ALL'', @StatisticsModificationLevel = 5, @LogToTable = ''Y'';',
     @flags = 0;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-EXEC @ReturnCode = msdb.dbo.sp_update_job
+EXECUTE @ReturnCode = msdb.dbo.sp_update_job
     @job_id = @jobId,
     @start_step_id = 1;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule
+EXECUTE @ReturnCode = msdb.dbo.sp_add_jobschedule
     @job_id = @jobId,
     @name = N'Nightly Statistics Update',
     @enabled = 1,
@@ -136,7 +136,7 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-    EXEC @ReturnCode = msdb.dbo.sp_add_jobserver
+    EXECUTE @ReturnCode = msdb.dbo.sp_add_jobserver
         @job_id = @jobId,
     @server_name = N'(local)';
 
