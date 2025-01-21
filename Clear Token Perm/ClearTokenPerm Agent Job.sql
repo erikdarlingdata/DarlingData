@@ -16,7 +16,7 @@ For background on why you might need this:
 
 In short, if your security caches are growing out of control, it can cause all sorts of weird issues with SQL Server.
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -52,7 +52,7 @@ IF NOT EXISTS
     AND   category_class = 1
 )
 BEGIN
-    EXEC @ReturnCode = msdb.dbo.sp_add_category
+    EXECUTE @ReturnCode = msdb.dbo.sp_add_category
         @class = N'JOB',
         @type = N'LOCAL',
         @name = N'[Uncategorized (Local)]';
@@ -62,7 +62,7 @@ BEGIN
 END;
 
 
-EXEC @ReturnCode = msdb.dbo.sp_add_job
+EXECUTE @ReturnCode = msdb.dbo.sp_add_job
     @job_name = N'Clear Security Cache Every 30 Minutes',
     @enabled = 1,
     @notify_level_eventlog = 0,
@@ -85,7 +85,7 @@ https://github.com/erikdarlingdata/DarlingData',
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-EXEC @ReturnCode = msdb.dbo.sp_add_jobstep
+EXECUTE @ReturnCode = msdb.dbo.sp_add_jobstep
     @job_id = @jobId,
     @step_name = N'Execute dbo.ClearTokenPerm',
     @step_id = 1,
@@ -98,7 +98,7 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep
     @retry_interval = 0,
     @os_run_priority = 0,
     @subsystem = N'TSQL',
-    @command = N'EXEC dbo.ClearTokenPerm
+    @command = N'EXECUTE dbo.ClearTokenPerm
     @CacheSizeGB = 1;',
     @database_name = N'master',
     @flags = 0;
@@ -106,14 +106,14 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-EXEC @ReturnCode = msdb.dbo.sp_update_job
+EXECUTE @ReturnCode = msdb.dbo.sp_update_job
     @job_id = @jobId,
     @start_step_id = 1;
 
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule
+EXECUTE @ReturnCode = msdb.dbo.sp_add_jobschedule
     @job_id = @jobId,
     @name = N'Clear Security Cache Every 30 Minutes',
     @enabled = 1,
@@ -132,7 +132,7 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule
 IF (@@ERROR <> 0 OR @ReturnCode <> 0)
     GOTO QuitWithRollback;
 
-EXEC @ReturnCode = msdb.dbo.sp_add_jobserver
+EXECUTE @ReturnCode = msdb.dbo.sp_add_jobserver
     @job_id =
     @jobId,
     @server_name = N'(local)';

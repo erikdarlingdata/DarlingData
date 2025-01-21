@@ -28,11 +28,11 @@ Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @help = 1;
 
 For working through errors:
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @debug = 1;
 
 For support, head over to GitHub:
@@ -42,7 +42,7 @@ https://github.com/erikdarlingdata/DarlingData
 
 IF OBJECT_ID('dbo.sp_HumanEvents') IS NULL
    BEGIN
-       EXEC ('CREATE PROCEDURE dbo.sp_HumanEvents AS RETURN 138;');
+       EXECUTE ('CREATE PROCEDURE dbo.sp_HumanEvents AS RETURN 138;');
    END;
 GO
 
@@ -249,40 +249,40 @@ BEGIN
     SELECT N'this is handled dynamically, but please don''t think you''re crazy if one "doesn''t work"' UNION ALL
     SELECT N'to capture all types of "completed" queries that have run for at least one second for 20 seconds from a specific database' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
-    SELECT N'EXEC dbo.sp_HumanEvents @event_type = ''query'', @query_duration_ms = 1000, @seconds_sample = 20, @database_name = ''YourMom'';' UNION ALL
+    SELECT N'EXECUTE dbo.sp_HumanEvents @event_type = ''query'', @query_duration_ms = 1000, @seconds_sample = 20, @database_name = ''YourMom'';' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
     SELECT N'or that have asked for 1gb of memory' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
-    SELECT N'EXEC dbo.sp_HumanEvents @event_type = ''query'', @query_duration_ms = 1000, @seconds_sample = 20, @requested_memory_mb = 1024;' UNION ALL
+    SELECT N'EXECUTE dbo.sp_HumanEvents @event_type = ''query'', @query_duration_ms = 1000, @seconds_sample = 20, @requested_memory_mb = 1024;' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
     SELECT N'maybe you want to find unparameterized queries from a poorly written app' UNION ALL
     SELECT N'newer versions will use sql_statement_post_compile, older versions will use uncached_sql_batch_statistics and sql_statement_recompile' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
-    SELECT N'EXEC dbo.sp_HumanEvents @event_type = ''compilations'', @client_app_name = N''GL00SNIFЯ'', @session_id = ''sample'', @sample_divisor = 3;' UNION ALL
+    SELECT N'EXECUTE dbo.sp_HumanEvents @event_type = ''compilations'', @client_app_name = N''GL00SNIFЯ'', @session_id = ''sample'', @sample_divisor = 3;' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
     SELECT N'perhaps you think queries recompiling are the cause of your problems!' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
-    SELECT N'EXEC dbo.sp_HumanEvents @event_type = ''recompilations'', @seconds_sample = 30;' UNION ALL
+    SELECT N'EXECUTE dbo.sp_HumanEvents @event_type = ''recompilations'', @seconds_sample = 30;' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
     SELECT N'look, blocking is annoying. just turn on RCSI, you goblin.' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
-    SELECT N'EXEC dbo.sp_HumanEvents @event_type = ''blocking'', @seconds_sample = 60, @blocking_duration_ms = 5000;' UNION ALL
+    SELECT N'EXECUTE dbo.sp_HumanEvents @event_type = ''blocking'', @seconds_sample = 60, @blocking_duration_ms = 5000;' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
     SELECT N'i mean wait stats are probably a meme but whatever' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
-    SELECT N'EXEC dbo.sp_HumanEvents @event_type = ''waits'', @wait_duration_ms = 10, @seconds_sample = 100, @wait_type = N''all'';' UNION ALL
+    SELECT N'EXECUTE dbo.sp_HumanEvents @event_type = ''waits'', @wait_duration_ms = 10, @seconds_sample = 100, @wait_type = N''all'';' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
     SELECT N'note that THREADPOOL is SOS_WORKER in xe-land. why? i dunno.' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
-    SELECT N'EXEC dbo.sp_HumanEvents @event_type = ''waits'', @wait_duration_ms = 10, @seconds_sample = 100, @wait_type = N''SOS_WORKER,RESOURCE_SEMAPHORE,YOUR_MOM'';' UNION ALL
+    SELECT N'EXECUTE dbo.sp_HumanEvents @event_type = ''waits'', @wait_duration_ms = 10, @seconds_sample = 100, @wait_type = N''SOS_WORKER,RESOURCE_SEMAPHORE,YOUR_MOM'';' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
     SELECT N'to set up a permanent session for compiles, but you can specify any of the session types here' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
-    SELECT N'EXEC sp_HumanEvents @event_type = N''compiles'', @debug = 1, @keep_alive = 1;' UNION ALL
+    SELECT N'EXECUTE sp_HumanEvents @event_type = N''compiles'', @debug = 1, @keep_alive = 1;' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
     SELECT N'to log to a database named whatever, and a schema called dbo' UNION ALL
     SELECT REPLICATE(N'-', 100) UNION ALL
-    SELECT N'EXEC sp_HumanEvents @debug = 1, @output_database_name = N''whatever'', @output_schema_name = N''dbo'';' UNION ALL
+    SELECT N'EXECUTE sp_HumanEvents @debug = 1, @output_database_name = N''whatever'', @output_schema_name = N''dbo'';' UNION ALL
     SELECT REPLICATE(N'-', 100);
 
 
@@ -624,7 +624,7 @@ BEGIN
     WHILE @@FETCH_STATUS = 0
     BEGIN
         PRINT @drop_old_sql;
-        EXEC (@drop_old_sql);
+        EXECUTE (@drop_old_sql);
 
         FETCH NEXT
         FROM @drop_cursor
@@ -1030,8 +1030,8 @@ AND EXISTS
 )
 BEGIN
         RAISERROR(N'You need to set up the blocked process report in order to use this:
-    EXEC sys.sp_configure ''show advanced options'', 1;
-    EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
+    EXECUTE sys.sp_configure ''show advanced options'', 1;
+    EXECUTE sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
     RECONFIGURE;',
     11, 0) WITH NOWAIT;
     RETURN;
@@ -1097,7 +1097,7 @@ BEGIN
     BEGIN
         RAISERROR(N'A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @drop_sql;
     END;
 END;
@@ -1115,7 +1115,7 @@ BEGIN
     BEGIN
         RAISERROR(N'A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @drop_sql;
     END;
 END;
@@ -1146,7 +1146,7 @@ BEGIN
         @s_params  =
             N'@is_out integer OUTPUT';
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @s_sql,
         @s_params,
         @is_out = @s_out OUTPUT;
@@ -1699,11 +1699,11 @@ SET @session_sql +=
 SET @session_sql += @session_with;
 
 IF @debug = 1 BEGIN RAISERROR(@session_sql, 0, 1) WITH NOWAIT; END;
-EXEC (@session_sql);
+EXECUTE (@session_sql);
 
 /* This starts the event session */
 IF @debug = 1 BEGIN RAISERROR(@start_sql, 0, 1) WITH NOWAIT; END;
-EXEC (@start_sql);
+EXECUTE (@start_sql);
 
 /* bail out here if we want to keep the session */
 IF @keep_alive = 1
@@ -3415,11 +3415,11 @@ IF @keep_alive = 0
 BEGIN
     IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
     RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
-    EXEC (@stop_sql);
+    EXECUTE (@stop_sql);
 
     IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
    RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
-   EXEC (@drop_sql);
+   EXECUTE (@drop_sql);
 END;
 RETURN;
 
@@ -3494,7 +3494,7 @@ BEGIN
      IF @debug = 1 BEGIN RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT; END;
      RAISERROR(N'Starting keeper_HumanEvents... inactive sessions', 0, 1) WITH NOWAIT;
 
-     EXEC sys.sp_executesql
+     EXECUTE sys.sp_executesql
          @the_sleeper_must_awaken;
     END;
 
@@ -3720,7 +3720,7 @@ BEGIN
             END;
 
             IF @debug = 1 BEGIN RAISERROR(@table_sql, 0, 1) WITH NOWAIT; END;
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @table_sql;
 
             RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @event_type_check) WITH NOWAIT;
@@ -3950,7 +3950,7 @@ BEGIN
             END;
 
             RAISERROR(N'creating view %s', 0, 1, @event_type_check) WITH NOWAIT;
-            EXEC @spe @view_sql;
+            EXECUTE @spe @view_sql;
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
@@ -4547,7 +4547,7 @@ ORDER BY
             END;
 
             /* this executes the insert */
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @table_sql,
               N'@date_filter datetime',
                 @date_filter;
@@ -4634,7 +4634,7 @@ BEGIN
         IF @debug = 1 BEGIN RAISERROR(@the_deleter_must_awaken, 0, 1) WITH NOWAIT; END;
 
         /* execute the delete */
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @the_deleter_must_awaken,
           N'@delete_retention_days INT',
             @delete_retention_days;
@@ -4667,7 +4667,7 @@ BEGIN
       ON dxs.name = ses.name
     WHERE ses.name LIKE N'%HumanEvents_%';
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @cleanup_sessions;
 
     IF @debug = 1 BEGIN RAISERROR(@cleanup_sessions, 0, 1) WITH NOWAIT; END;
@@ -4689,7 +4689,7 @@ BEGIN
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
             WHERE s.name LIKE ''' + '%HumanEvents%' + N''';';
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @cleanup_tables,
       N'@i_cleanup_tables nvarchar(MAX) OUTPUT',
         @i_cleanup_tables = @drop_holder OUTPUT;
@@ -4700,7 +4700,7 @@ BEGIN
         RAISERROR(@drop_holder, 0, 1) WITH NOWAIT;
     END;
 
-    EXEC @executer @drop_holder;
+    EXECUTE @executer @drop_holder;
 
     /*Cleanup views*/
     RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT;
@@ -4720,7 +4720,7 @@ BEGIN
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
             WHERE v.name LIKE ''' + '%HumanEvents%' + N''';';
 
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @cleanup_views,
       N'@i_cleanup_views nvarchar(MAX) OUTPUT',
         @i_cleanup_views = @drop_holder OUTPUT;
@@ -4731,7 +4731,7 @@ BEGIN
         RAISERROR(@drop_holder, 0, 1) WITH NOWAIT;
     END;
 
-    EXEC @executer @drop_holder;
+    EXECUTE @executer @drop_holder;
 
     RETURN;
 END;
@@ -4749,11 +4749,11 @@ BEGIN CATCH
             BEGIN
                 IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
                 RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
-                EXEC (@stop_sql);
+                EXECUTE (@stop_sql);
 
                 IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
                 RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
-                EXEC (@drop_sql);
+                EXECUTE (@drop_sql);
             END;
 
             THROW;

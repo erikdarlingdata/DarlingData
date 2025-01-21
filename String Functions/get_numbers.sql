@@ -13,8 +13,8 @@ AS
 For support:
 https://github.com/erikdarlingdata/DarlingData
 
-Copyright 2023 Darling Data, LLC
-https://erikdarlingdata.com
+Copyright 2025 Darling Data, LLC
+https://erikdarling.com
 
 MIT LICENSE
 
@@ -82,8 +82,8 @@ AS
 For support:
 https://github.com/erikdarlingdata/DarlingData
 
-Copyright 2023 Darling Data, LLC
-https://erikdarlingdata.com
+Copyright 2025 Darling Data, LLC
+https://erikdarling.com
 
 MIT LICENSE
 

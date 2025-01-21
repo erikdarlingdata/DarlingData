@@ -42,11 +42,11 @@ Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
-EXEC sp_HumanEventsBlockViewer
+EXECUTE sp_HumanEventsBlockViewer
     @help = 1;
 
 For working through errors:
-EXEC sp_HumanEventsBlockViewer
+EXECUTE sp_HumanEventsBlockViewer
     @debug = 1;
 
 For support, head over to GitHub:
@@ -55,7 +55,7 @@ https://github.com/erikdarlingdata/DarlingData
 
 IF OBJECT_ID('dbo.sp_HumanEventsBlockViewer') IS NULL
    BEGIN
-       EXEC ('CREATE PROCEDURE dbo.sp_HumanEventsBlockViewer AS RETURN 138;');
+       EXECUTE ('CREATE PROCEDURE dbo.sp_HumanEventsBlockViewer AS RETURN 138;');
    END;
 GO
 
@@ -91,10 +91,10 @@ BEGIN
         introduction =
             'hi, i''m sp_HumanEventsBlockViewer!' UNION ALL
     SELECT  'you can use me in conjunction with sp_HumanEvents to quickly parse the sqlserver.blocked_process_report event' UNION ALL
-    SELECT  'EXEC sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
+    SELECT  'EXECUTE sp_HumanEvents @event_type = N''blocking'', @keep_alive = 1;' UNION ALL
     SELECT  'it will also work with any other extended event session that captures blocking' UNION ALL
     SELECT  'just use the @session_name parameter to point me there' UNION ALL
-    SELECT  'EXEC dbo.sp_HumanEventsBlockViewer @session_name = N''blocked_process_report'';' UNION ALL
+    SELECT  'EXECUTE dbo.sp_HumanEventsBlockViewer @session_name = N''blocked_process_report'';' UNION ALL
     SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
     SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
@@ -156,8 +156,8 @@ BEGIN
 
     RAISERROR('
 The blocked process report needs to be enabled:
-EXEC sys.sp_configure ''show advanced options'', 1;
-EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
+EXECUTE sys.sp_configure ''show advanced options'', 1;
+EXECUTE sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
 RECONFIGURE;', 0, 1) WITH NOWAIT;
 
     RAISERROR('
@@ -235,8 +235,8 @@ IF EXISTS
 )
 BEGIN
     RAISERROR(N'The blocked process report needs to be enabled:
-EXEC sys.sp_configure ''show advanced options'', 1;
-EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
+EXECUTE sys.sp_configure ''show advanced options'', 1;
+EXECUTE sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
 RECONFIGURE;',
     11, 0) WITH NOWAIT;
     RETURN;
@@ -253,8 +253,8 @@ IF EXISTS
 )
 BEGIN
     RAISERROR(N'For best results, set up the blocked process report like this:
-EXEC sys.sp_configure ''show advanced options'', 1;
-EXEC sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
+EXECUTE sys.sp_configure ''show advanced options'', 1;
+EXECUTE sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
 RECONFIGURE;',
     10, 0) WITH NOWAIT;
 END;
@@ -1817,7 +1817,7 @@ SELECT
     b.host_name,
     b.login_name,
     b.transaction_id,
-    b.blocked_process_report
+    blocked_process_report_xml = b.blocked_process_report
 FROM
 (
     SELECT

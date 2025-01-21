@@ -21,7 +21,7 @@ https://github.com/erikdarlingdata/DarlingData
 
 MIT License
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -71,7 +71,7 @@ END;
 
 WHILE @counter < 50000
 BEGIN
-    EXEC sys.sp_setapprole
+    EXECUTE sys.sp_setapprole
         @rolename = N'your_terrible_app',
         @password = N'y0ur_t3rr1bl3_4pp',
         @fCreateCookie = true,
@@ -80,7 +80,7 @@ BEGIN
     SELECT
         @bl0b_eater = USER_NAME();
 
-    EXEC sys.sp_unsetapprole
+    EXECUTE sys.sp_unsetapprole
         @cronut;
 
     SELECT
@@ -174,9 +174,9 @@ SELECT
     token_name =
         c.c.value('@name', 'varchar(50)'),
     principal_id =
-        c.c.value('@id', 'int'),
+        c.c.value('@id', 'integer'),
     database_id =
-        c.c.value('@dbid', 'int'),
+        c.c.value('@dbid', 'integer'),
     time_stamp =
         c.c.value('@timestamp', 'bigint')
 INTO #tapus
@@ -204,7 +204,7 @@ SELECT
 FROM #tapus AS t
 INNER JOIN sys.server_principals AS p
   ON t.principal_id = p.principal_id
-WHERE t.token_name = 'SecContextToken'
+WHERE t.token_name = N'SecContextToken'
 GROUP BY
     p.name
 ORDER BY
@@ -219,8 +219,8 @@ SELECT
 FROM #tapus AS t
 INNER JOIN sys.databases AS d
   ON d.database_id = t.database_id
-WHERE t.token_name = 'UserToken'
-AND   t.cache_name = 'TokenAndPermUserStore'
+WHERE t.token_name = N'UserToken'
+AND   t.cache_name = N'TokenAndPermUserStore'
 GROUP BY
     d.name
 ORDER BY
@@ -235,7 +235,7 @@ SELECT
 FROM #tapus AS t
 INNER JOIN sys.databases AS d
   ON d.database_id = t.database_id
-WHERE t.token_name = 'UserToken'
+WHERE t.token_name = N'UserToken'
 GROUP BY
     d.name
 ORDER BY

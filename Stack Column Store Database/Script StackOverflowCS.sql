@@ -1,7 +1,7 @@
 /*
 MIT License
 
-Copyright (c) 2024 Darling Data, LLC
+Copyright (c) 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -78,7 +78,7 @@ GO
 
 IF (1 = FULLTEXTSERVICEPROPERTY('IsFullTextInstalled'))
 BEGIN
-    EXEC StackOverflowCS.sys.sp_fulltext_database @action = 'enable';
+    EXECUTE StackOverflowCS.sys.sp_fulltext_database @action = 'enable';
 END;
 GO
 ALTER DATABASE StackOverflowCS SET ANSI_NULL_DEFAULT OFF;

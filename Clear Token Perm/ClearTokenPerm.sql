@@ -16,7 +16,7 @@ For background on why you might need this:
 
 In short, if your security caches are growing out of control, it can cause all sorts of weird issues with SQL Server.
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -48,7 +48,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 DECLARE
     @clear_triggered bit = 0;
 
-IF OBJECT_ID(N'dbo.ClearTokenPermLogging') IS NULL
+IF OBJECT_ID(N'dbo.ClearTokenPermLogging', N'U') IS NULL
 BEGIN
     CREATE TABLE
         dbo.ClearTokenPermLogging
@@ -70,8 +70,8 @@ IF
                 (domc.pages_kb / 1024. / 1024.)
             )
     FROM sys.dm_os_memory_clerks AS domc
-    WHERE domc.type = 'USERSTORE_TOKENPERM'
-    AND   domc.name = 'TokenAndPermUserStore'
+    WHERE domc.type = N'USERSTORE_TOKENPERM'
+    AND   domc.name = N'TokenAndPermUserStore'
 ) >= @CacheSizeGB
 BEGIN
     INSERT
@@ -93,8 +93,8 @@ BEGIN
         clear_triggered =
             1
     FROM sys.dm_os_memory_clerks AS domc
-    WHERE domc.type = 'USERSTORE_TOKENPERM'
-    AND   domc.name = 'TokenAndPermUserStore';
+    WHERE domc.type = N'USERSTORE_TOKENPERM'
+    AND   domc.name = N'TokenAndPermUserStore';
 
     DBCC FREESYSTEMCACHE('TokenAndPermUserStore');
 END;
@@ -119,14 +119,14 @@ BEGIN
         clear_triggered =
             0
     FROM sys.dm_os_memory_clerks AS domc
-    WHERE domc.type = 'USERSTORE_TOKENPERM'
-    AND   domc.name = 'TokenAndPermUserStore';
+    WHERE domc.type = N'USERSTORE_TOKENPERM'
+    AND   domc.name = N'TokenAndPermUserStore';
     END;
 END;
 RETURN;
 
 /*Example execution*/
-EXEC dbo.ClearTokenPerm
+EXECUTE dbo.ClearTokenPerm
     @CacheSizeGB = 1;
 
 /*Query a log*/
