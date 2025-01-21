@@ -119,7 +119,7 @@ SELECT
     h.cache_size,
     h.run_date
 FROM @holder AS h
-ORDER BY 
+ORDER BY
     h.id;
 
 SELECT
@@ -147,12 +147,12 @@ FROM
     FROM sys.dm_os_ring_buffers AS dorb
     CROSS JOIN sys.dm_os_sys_info AS inf
     WHERE dorb.ring_buffer_type = N'RING_BUFFER_SECURITY_CACHE'
-    ORDER BY 
+    ORDER BY
         dorb.timestamp DESC
 ) AS x
 OUTER APPLY x.record.nodes('//TokenAndPermUserStore') AS t(c)
 OUTER APPLY x.record.nodes('//ACRCacheStores') AS a(c)
-ORDER BY 
+ORDER BY
     x.event_time DESC;
 
 DROP TABLE IF EXISTS
