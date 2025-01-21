@@ -15,7 +15,7 @@ CREATE OR ALTER PROCEDURE
 AS
 BEGIN
 /*
-This is good to set on, because you don't need 
+This is good to set on, because you don't need
 to see this output unless you're debugging a problem.
 */
 SET NOCOUNT ON;
@@ -53,7 +53,7 @@ DECLARE
     @start_time datetime2 = NULL, /*Query timing stuff*/
     @edition sysname = NULL; /*A set variable example for later*/
 
-    
+
     /*
     We're going to set this to a "dynamic" value
     meaning it might be different depending on
@@ -64,8 +64,8 @@ DECLARE
     ends up as, because we may make code path decisions
     based on this value throughout the procedure.
     */
-    SELECT 
-        @edition = 
+    SELECT
+        @edition =
              CONVERT
              (
                  sysname,
@@ -100,12 +100,12 @@ raiserror with a substitution wildcard in the message. For regular integers,
 you can use %i, %u, or %d, but bigger integers need to use %I64d.
 
 The alternative is ugly:
-    DECLARE 
+    DECLARE
         @msg nvarchar(MAX) = N'';
-    
+
     SELECT
         @msg = N'there were ' + CONVERT(nvarchar(11), ROWCOUNT_BIG()) + N' rows in sys.databases';
-    
+
     PRINT @msg;
 */
 IF @debug_logic = 1
@@ -162,11 +162,11 @@ BEGIN
         @len = LEN(@s);
 
     RAISERROR('total length for %s is %i', 0, 1, N'@s', @len) WITH NOWAIT;
-   
+
     WHILE @block < @len
     BEGIN
         PRINT SUBSTRING(@s, @block, @block_size);
-       
+
         SELECT
             @block += @block_size -1;
     END;
@@ -224,9 +224,9 @@ Open cursor
 DECLARE
     c
 CURSOR
-    LOCAL 
-    SCROLL 
-    DYNAMIC 
+    LOCAL
+    SCROLL
+    DYNAMIC
     READ_ONLY
 FOR
 SELECT
@@ -256,7 +256,7 @@ BEGIN
         RAISERROR('fetching next', 0, 1) WITH NOWAIT;
     END;
 
-    FETCH NEXT 
+    FETCH NEXT
     FROM c
     INTO @current_id;
 
@@ -294,7 +294,7 @@ IF @debug_performance = 1
 BEGIN
     SELECT
         @start_time = SYSDATETIME();
-    
+
     SELECT
         query = 'start: querying system health data',
         start_time = @start_time,
@@ -323,15 +323,15 @@ BEGIN
     SELECT
         query = 'finish: querying system health data',
         end_time = SYSDATETIME(),
-        query_ms = 
+        query_ms =
             FORMAT
             (
                 DATEDIFF
                 (
-                    MILLISECOND, 
-                    @start_time, 
+                    MILLISECOND,
+                    @start_time,
                     SYSDATETIME()
-                ), 
+                ),
                 'N0'
             );
 END;
@@ -391,39 +391,39 @@ the code, it makes a lot more sense.
 IF @debug_logic = 1
 BEGIN
     SELECT
-        parameter_values = 
+        parameter_values =
             'parameter values',
-        debug_logic = 
+        debug_logic =
             @debug_logic,
-        debug_performance = 
+        debug_performance =
             @debug_performance,
-        execute_sql = 
+        execute_sql =
             @execute_sql;
 
     SELECT
         variable_values =
             'variable_values',
-        s = 
+        s =
             @s,
-        [len] = 
+        [len] =
             @len,
-        [block] = 
+        [block] =
             @block,
-        block_size = 
+        block_size =
             @block_size,
-        rowcount_big = 
+        rowcount_big =
             @rowcount_big,
-        low_id = 
+        low_id =
             @low_id,
-        high_id = 
+        high_id =
             @high_id,
-        total = 
+        total =
             @total,
         current_id =
             @current_id,
-        loop_count = 
+        loop_count =
             @loop_count,
-        edition = 
+        edition =
             @edition;
 END;
 /*

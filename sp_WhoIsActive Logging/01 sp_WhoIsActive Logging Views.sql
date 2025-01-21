@@ -29,11 +29,11 @@ SQL Agent has some weird settings.
 This sets them to the correct ones.
 */
 
-IF OBJECT_ID('dbo.sp_WhoIsActiveLogging_CreateViews') IS NULL   
-   BEGIN   
-       EXECUTE ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_CreateViews AS RETURN 138;');   
-   END;   
-GO 
+IF OBJECT_ID('dbo.sp_WhoIsActiveLogging_CreateViews') IS NULL
+   BEGIN
+       EXECUTE ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_CreateViews AS RETURN 138;');
+   END;
+GO
 
 ALTER PROCEDURE
     dbo.sp_WhoIsActiveLogging_CreateViews
@@ -65,7 +65,7 @@ BEGIN
                 NCHAR(10)
         FROM sys.tables AS t
         WHERE t.name LIKE N'WhoIsActive[_][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]%'
-        ORDER BY 
+        ORDER BY
             t.create_date DESC
         FOR XML
             PATH(N''),
@@ -247,4 +247,4 @@ BEGIN
             @sql;
     END;
 END;
-GO 
+GO
