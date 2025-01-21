@@ -17,7 +17,7 @@ The dm_os_buffer_descriptors DMV especially can be really slow at times
 
 https://github.com/erikdarlingdata/DarlingData
 
-Copyright (c) 2024 Darling Data, LLC
+Copyright (c) 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction,
@@ -30,7 +30,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 */
 
-IF OBJECT_ID(N'dbo.WhatsUpMemory') IS NULL
+IF OBJECT_ID(N'dbo.WhatsUpMemory', N'IF') IS NULL
 BEGIN
     DECLARE
         @vsql nvarchar(MAX) = N'
@@ -41,7 +41,7 @@ BEGIN
         x = 138;';
 
     PRINT @vsql;
-    EXEC (@vsql);
+    EXECUTE (@vsql);
 END;
 GO
 

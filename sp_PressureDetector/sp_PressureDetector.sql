@@ -29,11 +29,11 @@ Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
-EXEC sp_PressureDetector
+EXECUTE sp_PressureDetector
     @help = 1;
 
 For working through errors:
-EXEC sp_PressureDetector
+EXECUTE sp_PressureDetector
     @debug = 1;
 
 For support, head over to GitHub:
@@ -43,7 +43,7 @@ https://github.com/erikdarlingdata/DarlingData
 
 
 IF OBJECT_ID('dbo.sp_PressureDetector') IS NULL
-    EXEC ('CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
+    EXECUTE ('CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
 GO
 
 ALTER PROCEDURE
@@ -464,7 +464,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 message =
                     'This works a lot better on a troublesome server with the DAC enabled',
                 command_to_run =
-                    'EXEC sp_configure ''remote admin connections'', 1; RECONFIGURE;',
+                    'EXECUTE sp_configure ''remote admin connections'', 1; RECONFIGURE;',
                 how_to_use_the_dac =
                     'https://bit.ly/RemoteDAC';
         END;
@@ -1056,7 +1056,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             io_stall_write_ms,
             sample_time
         )
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @disk_check;
 
         IF @sample_seconds = 0
@@ -1777,7 +1777,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             PRINT @pool_sql;
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @pool_sql;
 
         /*Checking total database size*/
@@ -1817,7 +1817,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 OPTION(MAXDOP 1, RECOMPILE);';
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @database_size_out,
           N'@database_size_out_gb varchar(10) OUTPUT',
             @database_size_out_gb OUTPUT;
@@ -2042,7 +2042,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             RAISERROR('%s', 0, 1, @cache_sql) WITH NOWAIT;
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @cache_sql,
           N'@cache_xml xml OUTPUT',
             @cache_xml OUTPUT;
@@ -2411,7 +2411,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             PRINT SUBSTRING(@mem_sql, 4000, 8000);
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @mem_sql;
     END;
 
@@ -2436,7 +2436,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 PRINT @reserved_worker_count;
             END;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @reserved_worker_count,
               N'@reserved_worker_count_out varchar(10) OUTPUT',
                 @reserved_worker_count_out OUTPUT;
@@ -2499,7 +2499,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             PRINT @cpu_details;
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @cpu_details,
           N'@cpu_details_output xml OUTPUT',
             @cpu_details_output OUTPUT;
@@ -2969,7 +2969,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 PRINT SUBSTRING(@cpu_sql, 4000, 8000);
             END;
 
-            EXEC sys.sp_executesql
+            EXECUTE sys.sp_executesql
                 @cpu_sql;
         END; /*End not skipping queries*/
     END; /*End CPU checks*/
