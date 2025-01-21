@@ -1,5 +1,5 @@
 /*
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -24,7 +24,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 -- To capture all types of “completed” queries that have run for at least one second, for 20 seconds, from a specific database
 
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'query',
     @query_duration_ms = 1000,
     @seconds_sample = 20,
@@ -32,7 +32,7 @@ EXEC dbo.sp_HumanEvents
 
 -- Maybe you want to filter out queries that have asked for a bit of memory:
 
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'query',
     @query_duration_ms = 1000,
     @seconds_sample = 20,
@@ -40,7 +40,7 @@ EXEC dbo.sp_HumanEvents
 
 -- Or maybe you want to find unparameterized queries from a poorly written app that constructs strings in ugly ways, but it generates a lot of queries so you only want data on about a third of them.
 
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'compilations',
     @client_app_name = N'GL00SNIFЯ',
     @session_id = 'sample',
@@ -48,20 +48,20 @@ EXEC dbo.sp_HumanEvents
 
 -- Perhaps you think queries recompiling are the cause of your problems! Heck, they might be. Have you tried removing recompile hints? 😁
 
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'recompilations',
     @seconds_sample = 30;
 
 -- Look, blocking is annoying. Just turn on RCSI, you goblin. Unless you’re not allowed to.
 
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'blocking',
     @seconds_sample = 60,
     @blocking_duration_ms = 5000;
 
 -- If you want to track wait stats, this’ll work pretty well. Keep in mind “all” is a focused list of “interesting” waits to queries, not every wait stat.
 
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'waits',
     @wait_duration_ms = 10,
     @seconds_sample = 100,
@@ -69,7 +69,7 @@ EXEC dbo.sp_HumanEvents
 
 -- Note that THREADPOOL is SOS_WORKER in xe-land. why? I dunno.
 
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'waits',
     @wait_duration_ms = 100,
     @seconds_sample = 10,
@@ -79,7 +79,7 @@ EXEC dbo.sp_HumanEvents
 
 -- For example, if you run this command:
 
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @event_type = N'query',
     @query_duration_ms = 1;
 
@@ -93,7 +93,7 @@ EXEC sp_HumanEvents
 
 -- You need to use this command instead:
 
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @event_type = N'query',
     @query_duration_ms = 1,
     @gimme_danger = 1;
@@ -103,24 +103,24 @@ EXEC sp_HumanEvents
 -- First, you need to set up permanent sessions to collect data. You can use commands like these to do that, but I urge you to add some filters like above to cut down on the data collected. On busy servers, over-collection can cause performance issues.
 
 
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @event_type = N'compiles',
     @keep_alive = 1;
 
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @event_type = N'recompiles',
     @keep_alive = 1;
 
 
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @event_type = N'query',
     @keep_alive = 1;
 
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @event_type = N'waits',
     @keep_alive = 1;
 
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @event_type = N'blocking',
     @keep_alive = 1;
 
@@ -128,7 +128,7 @@ EXEC sp_HumanEvents
 -- Once your sessions are set up, this is the command to tell sp_HumanEvents which database and schema to log data to.
 -- Table names are created internally, so don’t worry about those.
 
-EXEC sp_HumanEvents
+EXECUTE sp_HumanEvents
     @output_database_name = N'YourDatabase',
     @output_schema_name = N'dbo';
 

@@ -13,7 +13,7 @@ GO
 
 Stored procedure to be used for logging performance information from dynamic SQL
 
-Copyright (c) 2024 Darling Data, LLC
+Copyright (c) 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
@@ -32,7 +32,7 @@ USE OR OTHER DEALINGS IN THE SOFTWARE.
 CREATE OR ALTER PROCEDURE
     dbo.logging
 (
-    @spid int,
+    @spid integer,
     @sql nvarchar(MAX),
     @query_plan xml,
     @guid_in uniqueidentifier,

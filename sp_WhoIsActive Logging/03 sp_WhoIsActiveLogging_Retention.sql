@@ -11,7 +11,7 @@ GO
 
 /*
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 This will set delete tables older than a defined retention period, with  default of 10 days.
@@ -29,7 +29,7 @@ This sets them to the correct ones.
 
 IF OBJECT_ID('dbo.sp_WhoIsActiveLogging_Retention') IS NULL   
    BEGIN   
-       EXEC ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_Retention AS RETURN 138;');   
+       EXECUTE ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_Retention AS RETURN 138;');   
    END;   
 GO 
 
@@ -81,7 +81,7 @@ BEGIN
                  'nvarchar(max)'
              );
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @dsql;
     END;
 END;

@@ -1,7 +1,7 @@
 /*
 MIT License
 
-Copyright (c) 2024 Darling Data, LLC
+Copyright (c) 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -33,13 +33,13 @@ SOFTWARE.
 
 Example executions
 
-EXEC dbo.make_big_stack_cs
+EXECUTE dbo.make_big_stack_cs
     @loops = 25,
     @truncate_tables = 1,
     @count_when_done = 1,
     @rebuild_when_done = 1;
 
-EXEC dbo.make_big_stack_cs
+EXECUTE dbo.make_big_stack_cs
     @loops = 25,
     @truncate_tables = 0,
     @count_when_done = 1,

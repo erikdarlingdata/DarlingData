@@ -7,7 +7,7 @@ Remember to scroll down and replace the database and schema names you want to us
 */
 
 /*
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -31,9 +31,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 BEGIN TRANSACTION;
 DECLARE
-    @ReturnCode int = 0,
+    @ReturnCode integer = 0,
     @jobId binary(16),
-    @active_start_date int = (SELECT CONVERT(int, CONVERT(varchar(35), GETDATE(), 112))),
+    @active_start_date int = (SELECT CONVERT(integer, CONVERT(varchar(35), GETDATE(), 112))),
     @schedule_uid nvarchar(36) = NEWID();
 
 

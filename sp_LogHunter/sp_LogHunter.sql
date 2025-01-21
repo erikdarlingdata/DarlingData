@@ -28,23 +28,23 @@ Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
-EXEC sp_LogHunter
+EXECUTE sp_LogHunter
     @help = 1;
 
 For working through errors:
-EXEC sp_LogHunter
+EXECUTE sp_LogHunter
     @debug = 1;
 
 For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
 
-EXEC sp_LogHunter;
+EXECUTE sp_LogHunter;
 
 */
 
 IF OBJECT_ID('dbo.sp_LogHunter') IS NULL
    BEGIN
-       EXEC ('CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');
+       EXECUTE ('CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');
    END;
 GO
 
@@ -314,7 +314,7 @@ BEGIN
             CONVERT
             (
                 nvarchar(4000),
-                N'EXEC master.dbo.xp_readerrorlog [@@@], 1, '
+                N'EXECUTE master.dbo.xp_readerrorlog [@@@], 1, '
                 + search_string
                 + N', '
                 + N'" "'
@@ -343,7 +343,7 @@ BEGIN
         log_date,
         log_size
     )
-    EXEC sys.sp_enumerrorlogs;
+    EXECUTE sys.sp_enumerrorlogs;
 
     IF @debug = 1 BEGIN SELECT table_name = '#enum before delete', e.* FROM #enum AS e; END;
 
@@ -575,7 +575,7 @@ BEGIN
                         process_info,
                         text
                     )
-                    EXEC sys.sp_executesql
+                    EXECUTE sys.sp_executesql
                         @c;
                 END TRY
                 BEGIN CATCH

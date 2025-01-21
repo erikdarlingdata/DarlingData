@@ -1,6 +1,6 @@
 /*
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 */
@@ -8,9 +8,9 @@ https://www.erikdarling.com/
 CREATE OR ALTER PROCEDURE
     dbo.DebugExample
 (
-    @debug_logic bit = 0,
-    @debug_performance bit = 0,
-    @execute_sql bit = 1
+    @debug_logic bit = 'false',
+    @debug_performance bit = 'false',
+    @execute_sql bit = 'true'
 )
 AS
 BEGIN
