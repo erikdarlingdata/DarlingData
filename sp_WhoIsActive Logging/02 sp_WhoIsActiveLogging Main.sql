@@ -29,11 +29,11 @@ sign that you need to update sp_WhoIsActive
 
 */
 
-IF OBJECT_ID('dbo.sp_WhoIsActiveLogging_Main') IS NULL   
-   BEGIN   
-       EXECUTE ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_Main AS RETURN 138;');   
-   END;   
-GO 
+IF OBJECT_ID('dbo.sp_WhoIsActiveLogging_Main') IS NULL
+   BEGIN
+       EXECUTE ('CREATE PROCEDURE dbo.sp_WhoIsActiveLogging_Main AS RETURN 138;');
+   END;
+GO
 
 ALTER PROCEDURE
     dbo.sp_WhoIsActiveLogging_Main
@@ -144,7 +144,7 @@ BEGIN
     /*Execute this to prune tables*/
     EXECUTE dbo.sp_WhoIsActiveLogging_Retention
         @RetentionPeriod = @RetentionPeriod;
-    
+
     /*Execute this to create views*/
     EXECUTE dbo.sp_WhoIsActiveLogging_CreateViews;
 END;
