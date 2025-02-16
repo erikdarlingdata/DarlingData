@@ -1255,12 +1255,12 @@ BEGIN
 END;
 
 /*
-Attempt at overloading procedure name so it can 
+Attempt at overloading procedure name so it can
 accept a [schema].[procedure] pasted from results
 from other executions of sp_QuickieStore
 */
 IF
-(   
+(
       @procedure_name LIKE N'[[]%].[[]%]'
   AND @procedure_schema IS NULL
 )
