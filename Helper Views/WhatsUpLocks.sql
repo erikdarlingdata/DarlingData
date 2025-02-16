@@ -58,13 +58,13 @@ SELECT TOP (9223372036854775807)
     ISNULL
     (
         (
-            SELECT 
+            SELECT
                 der.blocking_session_id
             FROM sys.dm_exec_requests AS der
             WHERE dtl.request_session_id = der.session_id
         ),
         0
-    ), 
+    ),
     dtl.request_mode,
     l.locked_object,
     index_name =
