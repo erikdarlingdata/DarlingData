@@ -1,4 +1,4 @@
--- Compile Date: 01/21/2025 14:08:40 UTC
+-- Compile Date: 02/16/2025 14:01:48 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -10277,6 +10277,48 @@ OPTION(RECOMPILE);
 
 IF @debug = 1
 BEGIN
+    RAISERROR('Inserting #block_findings, check_id 7.3', 0, 1) WITH NOWAIT;
+END;
+
+INSERT
+    #block_findings
+(
+    check_id,
+    database_name,
+    object_name,
+    finding_group,
+    finding,
+    sort_order
+)
+SELECT
+    check_id =
+        7,
+    database_name =
+        b.database_name,
+    object_name =
+        N'-',
+    finding_group =
+        N'Auto-Stats Update Blocking',
+    finding =
+        N'There have been ' +
+        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+        N' user transaction queries involved in blocking sessions in ' +
+        b.database_name +
+        N'.',
+   sort_order =
+       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+FROM #blocks AS b
+WHERE b.transaction_name = N'sqlsource_transform'
+AND   (b.database_name = @database_name
+       OR @database_name IS NULL)
+AND   (b.contentious_object = @object_name
+       OR @object_name IS NULL)
+GROUP BY
+    b.database_name
+OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
     RAISERROR('Inserting #block_findings, check_id 8', 0, 1) WITH NOWAIT;
 END;
 
@@ -12218,13 +12260,13 @@ GO
 ALTER PROCEDURE
     dbo.sp_LogHunter
 (
-    @days_back int = -7, /*How many days back you want to look in the error logs*/
+    @days_back integer = -7, /*How many days back you want to look in the error logs*/
     @start_date datetime = NULL, /*If you want to search a specific time frame*/
     @end_date datetime = NULL, /*If you want to search a specific time frame*/
     @custom_message nvarchar(4000) = NULL, /*If there's something you specifically want to search for*/
     @custom_message_only bit = 0, /*If you only want to search for this specific thing*/
     @first_log_only bit = 0, /*If you only want to search the first log file*/
-    @language_id int = 1033, /*If you want to use a language other than English*/
+    @language_id integer = 1033, /*If you want to use a language other than English*/
     @help bit = 0, /*Get help*/
     @debug bit = 0, /*Prints messages and selects from temp tables*/
     @version varchar(30) = NULL OUTPUT,
@@ -12439,10 +12481,10 @@ BEGIN
     /*variables for the variable gods*/
     DECLARE
         @c nvarchar(4000) /*holds the command to execute*/,
-        @l_log int = 0 /*low log file id*/,
-        @h_log int = 0 /*high log file id*/,
-        @t_searches int = 0 /*total number of searches to run*/,
-        @l_count int = 1 /*loop count*/,
+        @l_log integer = 0 /*low log file id*/,
+        @h_log integer = 0 /*high log file id*/,
+        @t_searches integer = 0 /*total number of searches to run*/,
+        @l_count integer = 1 /*loop count*/,
         @stopper bit = 0 /*stop loop execution safety*/;
 
     /*temp tables for holding temporary things*/
@@ -12457,8 +12499,8 @@ BEGIN
     CREATE TABLE
         #enum
     (
-        archive int
-            PRIMARY KEY,
+        archive integer
+          PRIMARY KEY CLUSTERED,
         log_date date,
         log_size bigint
     );
@@ -12467,8 +12509,8 @@ BEGIN
         #search
     (
         id integer
-            IDENTITY
-            PRIMARY KEY,
+           IDENTITY
+           PRIMARY KEY CLUSTERED,
         search_string nvarchar(4000) DEFAULT N'""',
         days_back nvarchar(30) NULL,
         start_date nvarchar(30) NULL,
@@ -12498,7 +12540,9 @@ BEGIN
     CREATE TABLE
         #errors
     (
-        id int PRIMARY KEY IDENTITY,
+        id integer
+           PRIMARY KEY CLUSTERED
+           IDENTITY,
         command nvarchar(4000) NOT NULL
     );
 
@@ -12714,6 +12758,7 @@ BEGIN
         WHILE @@FETCH_STATUS = 0 AND @stopper = 0
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Entering cursor', 0, 1) WITH NOWAIT; END;
+
             /*Replace the canary value with the log number we're working in*/
             SELECT
                 @c =
@@ -12760,6 +12805,7 @@ BEGIN
             END;
 
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;
+
             /*Get the next search command*/
             FETCH NEXT
             FROM @cs
@@ -12772,6 +12818,7 @@ BEGIN
         END;
 
         IF @debug = 1 BEGIN RAISERROR('Getting next log', 0, 1) WITH NOWAIT; END;
+
         /*Increment the log numbers*/
         SELECT
             @l_log = MIN(e.archive),

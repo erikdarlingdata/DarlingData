@@ -331,8 +331,8 @@ BEGIN
     CREATE TABLE
         #errors
     (
-        id integer 
-           PRIMARY KEY CLUSTERED 
+        id integer
+           PRIMARY KEY CLUSTERED
            IDENTITY,
         command nvarchar(4000) NOT NULL
     );
@@ -549,7 +549,7 @@ BEGIN
         WHILE @@FETCH_STATUS = 0 AND @stopper = 0
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Entering cursor', 0, 1) WITH NOWAIT; END;
-            
+
             /*Replace the canary value with the log number we're working in*/
             SELECT
                 @c =
@@ -596,7 +596,7 @@ BEGIN
             END;
 
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;
-            
+
             /*Get the next search command*/
             FETCH NEXT
             FROM @cs
@@ -609,7 +609,7 @@ BEGIN
         END;
 
         IF @debug = 1 BEGIN RAISERROR('Getting next log', 0, 1) WITH NOWAIT; END;
-        
+
         /*Increment the log numbers*/
         SELECT
             @l_log = MIN(e.archive),
