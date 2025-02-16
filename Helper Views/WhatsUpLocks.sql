@@ -53,18 +53,31 @@ RETURNS table
 AS
 RETURN
 SELECT TOP (9223372036854775807)
+    dtl.request_session_id,
+    blocked_by =
+    ISNULL
+    (
+        (
+            SELECT 
+                der.blocking_session_id
+            FROM sys.dm_exec_requests AS der
+            WHERE dtl.request_session_id = der.session_id
+        ),
+        0
+    ), 
     dtl.request_mode,
     l.locked_object,
     index_name =
         ISNULL(i.name, N'OBJECT'),
     dtl.resource_type,
     dtl.request_status,
+    dtl.request_owner_type,
     hobt_lock_count =
         SUM
         (
             IIF
             (
-                dtl.resource_associated_entity_id = P.hobt_id,
+                dtl.resource_associated_entity_id = p.hobt_id,
                 1,
                 0
             )
@@ -108,15 +121,15 @@ OUTER APPLY
 (
     SELECT
         locked_object = ao.name
-    FROM sys.all_objects AS ao
+    FROM sys.all_objects AS ao WITH(NOLOCK)
     WHERE dtl.resource_type = N'OBJECT'
-    AND    dtl.resource_associated_entity_id = ao.object_id
+    AND   dtl.resource_associated_entity_id = ao.object_id
 
     UNION ALL
 
     SELECT
         locked_object = ao.name
-    FROM sys.all_objects AS ao
+    FROM sys.all_objects AS ao WITH(NOLOCK)
     WHERE dtl.resource_type <> N'OBJECT'
     AND   p.object_id = ao.object_id
 ) AS l
@@ -129,17 +142,20 @@ OUTER APPLY
     AND   i.index_id = p.index_id
 ) AS i
 WHERE (dtl.request_session_id = @spid OR @spid IS NULL)
+AND   (dtl.request_request_id = CURRENT_REQUEST_ID() OR @spid IS NULL)
+AND   (dtl.request_owner_id = CURRENT_TRANSACTION_ID() OR @spid IS NULL)
 AND    dtl.resource_type <> N'DATABASE'
-AND    dtl.request_request_id = CURRENT_REQUEST_ID()
-AND    dtl.request_owner_id = CURRENT_TRANSACTION_ID()
-AND    l.locked_object <> N'WhatsUpLocks'
+AND    l.locked_object   <> N'WhatsUpLocks'
 GROUP BY
-    l.locked_object,
-    i.name,
+    dtl.request_session_id,
     dtl.resource_type,
     dtl.request_mode,
-    dtl.request_status
+    dtl.request_status,
+    dtl.request_owner_type,
+    l.locked_object,
+    i.name
 ORDER BY
+    dtl.request_session_id,
     l.locked_object,
     index_name,
     total_locks DESC;
