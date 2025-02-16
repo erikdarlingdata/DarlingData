@@ -1255,13 +1255,29 @@ BEGIN
 END;
 
 /*
+Attempt at overloading procedure name so it can 
+accept a [schema].[procedure] pasted from results
+from other executions of sp_QuickieStore
+*/
+IF
+(   
+      @procedure_name LIKE N'[[]%].[[]%]'
+  AND @procedure_schema IS NULL
+)
+BEGIN
+    SELECT
+        @procedure_schema = PARSENAME(@procedure_name, 2),
+        @procedure_name   = PARSENAME(@procedure_name, 1);
+END;
+
+/*
 Variables for the variable gods
 */
 DECLARE
     @azure bit,
-    @engine int,
-    @product_version int,
-    @database_id int,
+    @engine integer,
+    @product_version integer,
+    @database_id integer,
     @database_name_quoted sysname,
     @procedure_name_quoted nvarchar(1024),
     @collation sysname,
@@ -1670,13 +1686,13 @@ SELECT
     @engine =
         CONVERT
         (
-            int,
+            integer,
             SERVERPROPERTY('ENGINEEDITION')
         ),
     @product_version =
         CONVERT
         (
-            int,
+            integer,
             PARSENAME
             (
                 CONVERT
@@ -1726,7 +1742,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @execution_count bigint,
           @duration_ms bigint,
           @execution_type_desc nvarchar(60),
-          @database_id int,
+          @database_id integer,
           @queries_top bigint,
           @work_start_utc time(0),
           @work_end_utc time(0),
@@ -2370,7 +2386,6 @@ If you specified a procedure name, we need to figure out if there are any plans 
 */
 IF @procedure_name IS NOT NULL
 BEGIN
-
     IF @procedure_schema IS NULL
     BEGIN
         SELECT
@@ -2422,6 +2437,12 @@ AND   p.name LIKE @procedure_name;' + @nc10;
             @procedure_name sysname',
             @procedure_schema,
             @procedure_name;
+
+        IF ROWCOUNT_BIG() = 0
+        BEGIN
+            RAISERROR('No object_ids were found for %s in schema %s', 11, 1, @procedure_schema, @procedure_name) WITH NOWAIT;
+            RETURN;
+        END;
 
         IF @troubleshoot_performance = 1
         BEGIN
@@ -7481,7 +7502,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 1 = 1
                 THEN ', ANSI_PADDING'
@@ -7491,7 +7512,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 8 = 8
                 THEN ', CONCAT_NULL_YIELDS_NULL'
@@ -7501,7 +7522,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 16 = 16
                 THEN ', ANSI_WARNINGS'
@@ -7511,7 +7532,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 32 = 32
                 THEN ', ANSI_NULLS'
@@ -7521,7 +7542,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 64 = 64
                 THEN ', QUOTED_IDENTIFIER'
@@ -7531,7 +7552,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 4096 = 4096
                 THEN ', ARITH_ABORT'
@@ -7541,7 +7562,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 8192 = 8192
                 THEN ', NUMERIC_ROUNDABORT'
