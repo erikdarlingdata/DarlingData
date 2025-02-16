@@ -1,4 +1,4 @@
--- Compile Date: 02/16/2025 17:46:46 UTC
+-- Compile Date: 02/16/2025 17:53:21 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -9504,6 +9504,7 @@ WHERE b.n = 1
 AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
 ORDER BY
+    b.event_time,
     b.sort_order,
     CASE
         WHEN b.activity = 'blocking'
