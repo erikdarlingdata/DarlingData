@@ -269,7 +269,7 @@ DECLARE
         CASE
             WHEN CONVERT
                  (
-                     int,
+                     integer,
                      SERVERPROPERTY('EngineEdition')
                  ) = 5
             THEN 1
@@ -1614,61 +1614,9 @@ SELECT
              THEN kheb.blocking_ecid
              ELSE kheb.blocked_ecid
         END,
-    query_text =
-        CASE
-            WHEN kheb.query_text
-                 LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
-            THEN
-                (
-                    SELECT
-                        [processing-instruction(query)] =
-                            OBJECT_SCHEMA_NAME
-                            (
-                                    SUBSTRING
-                                    (
-                                        kheb.query_text,
-                                        CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
-                                        LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
-                                    )
-                                    ,
-                                    SUBSTRING
-                                    (
-                                        kheb.query_text,
-                                        CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
-                                        CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
-                                    )
-                            ) +
-                            N'.' +
-                            OBJECT_NAME
-                            (
-                                 SUBSTRING
-                                 (
-                                     kheb.query_text,
-                                     CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
-                                     LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
-                                 )
-                                 ,
-                                 SUBSTRING
-                                 (
-                                     kheb.query_text,
-                                     CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
-                                     CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
-                                 )
-                            )
-                    FOR XML
-                        PATH(N''),
-                        TYPE
-                )
-            ELSE
-                (
-                    SELECT
-                        [processing-instruction(query)] =
-                            kheb.query_text
-                    FOR XML
-                        PATH(N''),
-                        TYPE
-                )
-        END,
+    query_text = 
+        CONVERT(xml, NULL),
+    query_text_pre = kheb.query_text,
     wait_time_ms =
         kheb.wait_time,
     kheb.status,
@@ -1755,19 +1703,92 @@ OPTION(RECOMPILE);
 
 IF @debug = 1
 BEGIN
+    RAISERROR('Updating #blocks query_text column', 0, 1) WITH NOWAIT;
+END;
+
+UPDATE
+    kheb
+SET 
+    kheb.query_text = qt.query_text
+FROM #blocks AS kheb
+CROSS APPLY
+(
+    SELECT
+        query_text =
+        CASE 
+            WHEN kheb.query_text_pre LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
+            THEN
+                (
+                    SELECT
+                        [processing-instruction(query)] =
+                            OBJECT_SCHEMA_NAME
+                            (
+                                    SUBSTRING
+                                    (
+                                        kheb.query_text_pre,
+                                        CHARINDEX(N'Object Id = ', kheb.query_text_pre) + 12,
+                                        LEN(kheb.query_text_pre) - (CHARINDEX(N'Object Id = ', kheb.query_text_pre) + 12)
+                                    )
+                                    ,
+                                    SUBSTRING
+                                    (
+                                        kheb.query_text_pre,
+                                        CHARINDEX(N'Database Id = ', kheb.query_text_pre) + 14,
+                                        CHARINDEX(N'Object Id', kheb.query_text_pre) - (CHARINDEX(N'Database Id = ', kheb.query_text_pre) + 14)
+                                    )
+                            ) +
+                            N'.' +
+                            OBJECT_NAME
+                            (
+                                 SUBSTRING
+                                 (
+                                     kheb.query_text_pre,
+                                     CHARINDEX(N'Object Id = ', kheb.query_text_pre) + 12,
+                                     LEN(kheb.query_text_pre) - (CHARINDEX(N'Object Id = ', kheb.query_text_pre) + 12)
+                                 )
+                                 ,
+                                 SUBSTRING
+                                 (
+                                     kheb.query_text_pre,
+                                     CHARINDEX(N'Database Id = ', kheb.query_text_pre) + 14,
+                                     CHARINDEX(N'Object Id', kheb.query_text_pre) - (CHARINDEX(N'Database Id = ', kheb.query_text_pre) + 14)
+                                 )
+                            )
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                )
+            ELSE
+                (
+                    SELECT
+                        [processing-instruction(query)] =
+                            kheb.query_text_pre
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                )
+        END
+) AS qt
+OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
     RAISERROR('Updating #blocks contentious_object column', 0, 1) WITH NOWAIT;
 END;
-UPDATE b
-    SET b.contentious_object =
-        ISNULL
-        (
-            co.contentious_object,
-            N'Unresolved: ' +
-            N'database: ' +
-            b.database_name +
-            N' object_id: ' +
-            RTRIM(b.object_id)
-        )
+
+UPDATE 
+    b
+SET 
+    b.contentious_object =
+    ISNULL
+    (
+        co.contentious_object,
+        N'Unresolved: ' +
+        N'database: ' +
+        b.database_name +
+        N' object_id: ' +
+        RTRIM(b.object_id)
+    )
 FROM #blocks AS b
 CROSS APPLY
 (
