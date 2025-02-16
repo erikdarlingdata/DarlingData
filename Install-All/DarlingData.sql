@@ -1,4 +1,4 @@
--- Compile Date: 02/16/2025 14:01:48 UTC
+-- Compile Date: 02/16/2025 17:46:46 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -7914,7 +7914,7 @@ DECLARE
         CASE
             WHEN CONVERT
                  (
-                     int,
+                     integer,
                      SERVERPROPERTY('EngineEdition')
                  ) = 5
             THEN 1
@@ -9260,60 +9260,8 @@ SELECT
              ELSE kheb.blocked_ecid
         END,
     query_text =
-        CASE
-            WHEN kheb.query_text
-                 LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
-            THEN
-                (
-                    SELECT
-                        [processing-instruction(query)] =
-                            OBJECT_SCHEMA_NAME
-                            (
-                                    SUBSTRING
-                                    (
-                                        kheb.query_text,
-                                        CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
-                                        LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
-                                    )
-                                    ,
-                                    SUBSTRING
-                                    (
-                                        kheb.query_text,
-                                        CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
-                                        CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
-                                    )
-                            ) +
-                            N'.' +
-                            OBJECT_NAME
-                            (
-                                 SUBSTRING
-                                 (
-                                     kheb.query_text,
-                                     CHARINDEX(N'Object Id = ', kheb.query_text) + 12,
-                                     LEN(kheb.query_text) - (CHARINDEX(N'Object Id = ', kheb.query_text) + 12)
-                                 )
-                                 ,
-                                 SUBSTRING
-                                 (
-                                     kheb.query_text,
-                                     CHARINDEX(N'Database Id = ', kheb.query_text) + 14,
-                                     CHARINDEX(N'Object Id', kheb.query_text) - (CHARINDEX(N'Database Id = ', kheb.query_text) + 14)
-                                 )
-                            )
-                    FOR XML
-                        PATH(N''),
-                        TYPE
-                )
-            ELSE
-                (
-                    SELECT
-                        [processing-instruction(query)] =
-                            kheb.query_text
-                    FOR XML
-                        PATH(N''),
-                        TYPE
-                )
-        END,
+        CONVERT(xml, NULL),
+    query_text_pre = kheb.query_text,
     wait_time_ms =
         kheb.wait_time,
     kheb.status,
@@ -9400,19 +9348,92 @@ OPTION(RECOMPILE);
 
 IF @debug = 1
 BEGIN
+    RAISERROR('Updating #blocks query_text column', 0, 1) WITH NOWAIT;
+END;
+
+UPDATE
+    kheb
+SET
+    kheb.query_text = qt.query_text
+FROM #blocks AS kheb
+CROSS APPLY
+(
+    SELECT
+        query_text =
+        CASE
+            WHEN kheb.query_text_pre LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
+            THEN
+                (
+                    SELECT
+                        [processing-instruction(query)] =
+                            OBJECT_SCHEMA_NAME
+                            (
+                                    SUBSTRING
+                                    (
+                                        kheb.query_text_pre,
+                                        CHARINDEX(N'Object Id = ', kheb.query_text_pre) + 12,
+                                        LEN(kheb.query_text_pre) - (CHARINDEX(N'Object Id = ', kheb.query_text_pre) + 12)
+                                    )
+                                    ,
+                                    SUBSTRING
+                                    (
+                                        kheb.query_text_pre,
+                                        CHARINDEX(N'Database Id = ', kheb.query_text_pre) + 14,
+                                        CHARINDEX(N'Object Id', kheb.query_text_pre) - (CHARINDEX(N'Database Id = ', kheb.query_text_pre) + 14)
+                                    )
+                            ) +
+                            N'.' +
+                            OBJECT_NAME
+                            (
+                                 SUBSTRING
+                                 (
+                                     kheb.query_text_pre,
+                                     CHARINDEX(N'Object Id = ', kheb.query_text_pre) + 12,
+                                     LEN(kheb.query_text_pre) - (CHARINDEX(N'Object Id = ', kheb.query_text_pre) + 12)
+                                 )
+                                 ,
+                                 SUBSTRING
+                                 (
+                                     kheb.query_text_pre,
+                                     CHARINDEX(N'Database Id = ', kheb.query_text_pre) + 14,
+                                     CHARINDEX(N'Object Id', kheb.query_text_pre) - (CHARINDEX(N'Database Id = ', kheb.query_text_pre) + 14)
+                                 )
+                            )
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                )
+            ELSE
+                (
+                    SELECT
+                        [processing-instruction(query)] =
+                            kheb.query_text_pre
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                )
+        END
+) AS qt
+OPTION(RECOMPILE);
+
+IF @debug = 1
+BEGIN
     RAISERROR('Updating #blocks contentious_object column', 0, 1) WITH NOWAIT;
 END;
-UPDATE b
-    SET b.contentious_object =
-        ISNULL
-        (
-            co.contentious_object,
-            N'Unresolved: ' +
-            N'database: ' +
-            b.database_name +
-            N' object_id: ' +
-            RTRIM(b.object_id)
-        )
+
+UPDATE
+    b
+SET
+    b.contentious_object =
+    ISNULL
+    (
+        co.contentious_object,
+        N'Unresolved: ' +
+        N'database: ' +
+        b.database_name +
+        N' object_id: ' +
+        RTRIM(b.object_id)
+    )
 FROM #blocks AS b
 CROSS APPLY
 (
@@ -17298,13 +17319,29 @@ BEGIN
 END;
 
 /*
+Attempt at overloading procedure name so it can
+accept a [schema].[procedure] pasted from results
+from other executions of sp_QuickieStore
+*/
+IF
+(
+      @procedure_name LIKE N'[[]%].[[]%]'
+  AND @procedure_schema IS NULL
+)
+BEGIN
+    SELECT
+        @procedure_schema = PARSENAME(@procedure_name, 2),
+        @procedure_name   = PARSENAME(@procedure_name, 1);
+END;
+
+/*
 Variables for the variable gods
 */
 DECLARE
     @azure bit,
-    @engine int,
-    @product_version int,
-    @database_id int,
+    @engine integer,
+    @product_version integer,
+    @database_id integer,
     @database_name_quoted sysname,
     @procedure_name_quoted nvarchar(1024),
     @collation sysname,
@@ -17713,13 +17750,13 @@ SELECT
     @engine =
         CONVERT
         (
-            int,
+            integer,
             SERVERPROPERTY('ENGINEEDITION')
         ),
     @product_version =
         CONVERT
         (
-            int,
+            integer,
             PARSENAME
             (
                 CONVERT
@@ -17769,7 +17806,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
           @execution_count bigint,
           @duration_ms bigint,
           @execution_type_desc nvarchar(60),
-          @database_id int,
+          @database_id integer,
           @queries_top bigint,
           @work_start_utc time(0),
           @work_end_utc time(0),
@@ -18413,7 +18450,6 @@ If you specified a procedure name, we need to figure out if there are any plans 
 */
 IF @procedure_name IS NOT NULL
 BEGIN
-
     IF @procedure_schema IS NULL
     BEGIN
         SELECT
@@ -18465,6 +18501,12 @@ AND   p.name LIKE @procedure_name;' + @nc10;
             @procedure_name sysname',
             @procedure_schema,
             @procedure_name;
+
+        IF ROWCOUNT_BIG() = 0
+        BEGIN
+            RAISERROR('No object_ids were found for %s in schema %s', 11, 1, @procedure_schema, @procedure_name) WITH NOWAIT;
+            RETURN;
+        END;
 
         IF @troubleshoot_performance = 1
         BEGIN
@@ -23524,7 +23566,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 1 = 1
                 THEN ', ANSI_PADDING'
@@ -23534,7 +23576,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 8 = 8
                 THEN ', CONCAT_NULL_YIELDS_NULL'
@@ -23544,7 +23586,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 16 = 16
                 THEN ', ANSI_WARNINGS'
@@ -23554,7 +23596,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 32 = 32
                 THEN ', ANSI_NULLS'
@@ -23564,7 +23606,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 64 = 64
                 THEN ', QUOTED_IDENTIFIER'
@@ -23574,7 +23616,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 4096 = 4096
                 THEN ', ARITH_ABORT'
@@ -23584,7 +23626,7 @@ SET
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         qcs.set_options
                     ) & 8192 = 8192
                 THEN ', NUMERIC_ROUNDABORT'

@@ -1614,7 +1614,7 @@ SELECT
              THEN kheb.blocking_ecid
              ELSE kheb.blocked_ecid
         END,
-    query_text = 
+    query_text =
         CONVERT(xml, NULL),
     query_text_pre = kheb.query_text,
     wait_time_ms =
@@ -1708,14 +1708,14 @@ END;
 
 UPDATE
     kheb
-SET 
+SET
     kheb.query_text = qt.query_text
 FROM #blocks AS kheb
 CROSS APPLY
 (
     SELECT
         query_text =
-        CASE 
+        CASE
             WHEN kheb.query_text_pre LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
             THEN
                 (
@@ -1776,9 +1776,9 @@ BEGIN
     RAISERROR('Updating #blocks contentious_object column', 0, 1) WITH NOWAIT;
 END;
 
-UPDATE 
+UPDATE
     b
-SET 
+SET
     b.contentious_object =
     ISNULL
     (
