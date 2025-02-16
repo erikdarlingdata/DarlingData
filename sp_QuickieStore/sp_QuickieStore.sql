@@ -1255,6 +1255,19 @@ BEGIN
 END;
 
 /*
+Attempt at overloading procedure name so it can 
+accept a [schema].[procedure] pasted from results
+from other executions of sp_QuickieStore
+*/
+IF @procedure_name LIKE N'[[]%].[[]%]'
+AND @procedure_schema IS NULL
+BEGIN
+SELECT
+    @procedure_schema = PARSENAME(@procedure_name, 2),
+    @procedure_name   = PARSENAME(@procedure_name, 1);
+END;
+
+/*
 Variables for the variable gods
 */
 DECLARE
@@ -2370,7 +2383,6 @@ If you specified a procedure name, we need to figure out if there are any plans 
 */
 IF @procedure_name IS NOT NULL
 BEGIN
-
     IF @procedure_schema IS NULL
     BEGIN
         SELECT
@@ -2422,6 +2434,12 @@ AND   p.name LIKE @procedure_name;' + @nc10;
             @procedure_name sysname',
             @procedure_schema,
             @procedure_name;
+
+        IF ROWCOUNT_BIG() = 0
+        BEGIN
+            RAISERROR('No object_ids were found for %s in schema %s', 11, 1, @procedure_schema, @procedure_name) WITH NOWAIT;
+            RETURN;
+        END;
 
         IF @troubleshoot_performance = 1
         BEGIN
