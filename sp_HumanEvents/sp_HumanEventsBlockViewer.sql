@@ -1859,6 +1859,7 @@ WHERE b.n = 1
 AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
 ORDER BY
+    b.event_time,
     b.sort_order,
     CASE
         WHEN b.activity = 'blocking'
