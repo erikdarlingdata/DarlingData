@@ -108,7 +108,6 @@ AS
 BEGIN
 SET STATISTICS XML OFF;
 SET NOCOUNT ON;
-SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN TRY
@@ -129,7 +128,6 @@ BEGIN
 * 2017 CU3+
 * 2019+
 * Probably Azure?', 11, 1) WITH NOWAIT;
-
     RETURN;
 END;
 
@@ -439,7 +437,7 @@ Plans we'll be working on
 CREATE TABLE
     #distinct_plans
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -448,7 +446,7 @@ Hold plan_ids for procedures we're searching
 CREATE TABLE
     #procedure_plans
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -457,7 +455,7 @@ Hold plan_ids for procedures we're searching
 CREATE TABLE
     #procedure_object_ids
 (
-    [object_id] bigint PRIMARY KEY
+    [object_id] bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -466,7 +464,7 @@ Hold plan_ids for ad hoc or procedures we're searching for
 CREATE TABLE
     #query_types
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -475,7 +473,8 @@ Hold plan_ids for plans we want
 CREATE TABLE
     #include_plan_ids
 (
-    plan_id bigint PRIMARY KEY WITH (IGNORE_DUP_KEY = ON)
+    plan_id bigint PRIMARY KEY CLUSTERED
+                   WITH (IGNORE_DUP_KEY = ON)
 );
 
 /*
@@ -484,7 +483,7 @@ Hold query_ids for plans we want
 CREATE TABLE
     #include_query_ids
 (
-    query_id bigint PRIMARY KEY
+    query_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -493,7 +492,8 @@ Hold plan_ids for ignored plans
 CREATE TABLE
     #ignore_plan_ids
 (
-    plan_id bigint PRIMARY KEY WITH (IGNORE_DUP_KEY = ON)
+    plan_id bigint PRIMARY KEY CLUSTERED 
+                   WITH (IGNORE_DUP_KEY = ON)
 );
 
 /*
@@ -502,7 +502,7 @@ Hold query_ids for ignored plans
 CREATE TABLE
     #ignore_query_ids
 (
-    query_id bigint PRIMARY KEY
+    query_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -518,7 +518,8 @@ CREATE TABLE
             binary(8),
             query_hash_s,
             1
-        ) PERSISTED NOT NULL PRIMARY KEY
+        ) PERSISTED NOT NULL 
+          PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -551,7 +552,7 @@ CREATE TABLE
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
     plan_hash_count_for_query_hash int NOT NULL,
-    PRIMARY KEY (database_id, plan_id, query_hash)
+    PRIMARY KEY  CLUSTERED (database_id, plan_id, query_hash)
 );
 
 /*
@@ -571,7 +572,7 @@ CREATE TABLE
     plan_id bigint NOT NULL,
     from_regression_baseline varchar(3) NOT NULL,
     total_query_wait_time_ms bigint NOT NULL,
-    PRIMARY KEY (database_id, plan_id, from_regression_baseline)
+    PRIMARY KEY  CLUSTERED(database_id, plan_id, from_regression_baseline)
 );
 
 /*
@@ -582,7 +583,7 @@ baseline time period.
 CREATE TABLE
     #regression_baseline_runtime_stats
 (
-    query_hash binary(8) NOT NULL PRIMARY KEY,
+    query_hash binary(8) NOT NULL PRIMARY KEY CLUSTERED,
     /* Nullable to protect from division by 0. */
     regression_metric_average float NULL
 );
@@ -595,7 +596,7 @@ normal time period.
 CREATE TABLE
     #regression_current_runtime_stats
 (
-    query_hash binary(8) NOT NULL PRIMARY KEY,
+    query_hash binary(8) NOT NULL PRIMARY KEY CLUSTERED,
     /* Nullable to protect from division by 0. */
     current_metric_average float NULL
 );
@@ -617,7 +618,7 @@ CREATE TABLE
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
     change_since_regression_time_period float NULL,
-    PRIMARY KEY (database_id, plan_id, query_hash)
+    PRIMARY KEY  CLUSTERED (database_id, plan_id, query_hash)
 );
 
 /*
@@ -633,7 +634,8 @@ CREATE TABLE
             binary(8),
             plan_hash_s,
             1
-        ) PERSISTED NOT NULL PRIMARY KEY
+        ) PERSISTED NOT NULL 
+          PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -649,7 +651,8 @@ CREATE TABLE
             binary(8),
             query_hash_s,
             1
-        ) PERSISTED NOT NULL PRIMARY KEY
+        ) PERSISTED NOT NULL 
+          PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -665,7 +668,8 @@ CREATE TABLE
             binary(8),
             plan_hash_s,
             1
-        ) PERSISTED NOT NULL PRIMARY KEY
+        ) PERSISTED NOT NULL 
+          PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -681,7 +685,8 @@ CREATE TABLE
             varbinary(64),
             sql_handle_s,
             1
-        ) PERSISTED NOT NULL PRIMARY KEY
+        ) PERSISTED NOT NULL 
+          PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -697,7 +702,8 @@ CREATE TABLE
             varbinary(64),
             sql_handle_s,
             1
-        ) PERSISTED NOT NULL PRIMARY KEY
+        ) PERSISTED NOT NULL 
+          PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -706,7 +712,7 @@ Hold plan_ids for only query with hints
 CREATE TABLE
     #only_queries_with_hints
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -715,7 +721,7 @@ Hold plan_ids for only query with feedback
 CREATE TABLE
     #only_queries_with_feedback
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -724,7 +730,7 @@ Hold plan_ids for only query with variants
 CREATE TABLE
     #only_queries_with_variants
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -736,7 +742,7 @@ failures is just an extension of searching for forced plans
 CREATE TABLE
     #forced_plans_failures
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -745,7 +751,7 @@ Hold plan_ids for matching query text
 CREATE TABLE
     #query_text_search
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -754,7 +760,7 @@ Hold plan_ids for matching query text (not)
 CREATE TABLE
     #query_text_search_not
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -772,7 +778,7 @@ Index and statistics entries to avoid
 CREATE TABLE
     #maintenance_plans
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -885,7 +891,12 @@ CREATE TABLE
                     database_id
                 )
             ),
-            N'Adhoc'
+            CASE 
+                WHEN object_id > 0 
+                THEN N'Unknown object_id: ' + 
+                     RTRIM(object_id)
+                ELSE N'Adhoc'
+            END
         ),
     batch_sql_handle varbinary(64) NULL,
     query_hash binary(8) NOT NULL,
@@ -1224,7 +1235,7 @@ CREATE TABLE
 CREATE TABLE
     #databases
 (
-    database_name sysname PRIMARY KEY
+    database_name sysname PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -1423,7 +1434,8 @@ AND @regression_baseline_end_date IS NOT NULL
 AND @regression_baseline_start_date >= @regression_baseline_end_date
 )
 BEGIN
-    RAISERROR('@regression_baseline_start_date has been set greater than or equal to @regression_baseline_end_date. This does not make sense. Check that the values of both parameters are as you intended them to be.', 11, 1) WITH NOWAIT;
+    RAISERROR('@regression_baseline_start_date has been set greater than or equal to @regression_baseline_end_date. 
+This does not make sense. Check that the values of both parameters are as you intended them to be.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -1468,7 +1480,9 @@ IF
 AND @sort_order = 'recent'
 )
 BEGIN
-    RAISERROR('Your @sort_order is ''recent'', but you are trying to compare metrics for two time periods. If you can imagine a useful way to do that, then make a feature request. Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
+    RAISERROR('Your @sort_order is ''recent'', but you are trying to compare metrics for two time periods. 
+If you can imagine a useful way to do that, then make a feature request. 
+Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -1482,7 +1496,10 @@ IF
 AND @sort_order = 'plan count by hashes'
 )
 BEGIN
-    RAISERROR('Your @sort_order is ''plan count by hashes'', but you are trying to compare metrics for two time periods. This is probably not useful, since our method of comparing two time period relies on only checking query hashes that are in both time periods. If you can imagine a useful way to do that, then make a feature request. Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
+    RAISERROR('Your @sort_order is ''plan count by hashes'', but you are trying to compare metrics for two time periods. 
+This is probably not useful, since our method of comparing two time period relies on only checking query hashes that are in both time periods. 
+If you can imagine a useful way to do that, then make a feature request. 
+Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -1499,7 +1516,11 @@ IF
 AND @regression_direction IN ('absolute', 'magnitude')
 )
 BEGIN
-    RAISERROR('Your @regression_comparator is ''relative'', but you have asked for an ''absolute'' or ''magnitude'' @regression_direction. This is probably a mistake. Your @regression_direction tells us to take the absolute value of our result of comparing the metrics in the current time period to the baseline time period, but your @regression_comparator is telling us to use division to compare the two time periods. This is unlikely to produce useful results. If you can imagine a useful way to do that, then make a feature request. Otherwise, either change @regression_direction to another value (e.g. ''better'' or ''worse'') or change @regression_comparator to ''absolute''.', 11, 1) WITH NOWAIT;
+    RAISERROR('Your @regression_comparator is ''relative'', but you have asked for an ''absolute'' or ''magnitude'' @regression_direction. This is probably a mistake. 
+Your @regression_direction tells us to take the absolute value of our result of comparing the metrics in the current time period to the baseline time period, 
+but your @regression_comparator is telling us to use division to compare the two time periods. This is unlikely to produce useful results. 
+If you can imagine a useful way to do that, then make a feature request. Otherwise, either change @regression_direction to another value 
+(e.g. ''better'' or ''worse'') or change @regression_comparator to ''absolute''.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -2357,7 +2378,7 @@ EXECUTE sys.sp_executesql
   N'@database_id integer',
     @database_id;
 
-IF @@ROWCOUNT > 0
+IF ROWCOUNT_BIG() > 0
 BEGIN
     SELECT
         @query_store_trouble = 1;
@@ -5286,7 +5307,8 @@ BEGIN
         qsrs.plan_id,
         from_regression_baseline =
             CASE
-                WHEN qsrs.last_execution_time >= @start_date AND qsrs.last_execution_time < @end_date
+                WHEN qsrs.last_execution_time >= @start_date 
+                AND  qsrs.last_execution_time < @end_date
                 THEN ''No''
                 ELSE ''Yes''
             END,
@@ -5312,7 +5334,8 @@ OR
     GROUP
         BY qsrs.plan_id,
         CASE
-            WHEN qsrs.last_execution_time >= @start_date AND qsrs.last_execution_time < @end_date
+            WHEN qsrs.last_execution_time >= @start_date 
+            AND  qsrs.last_execution_time < @end_date
             THEN ''No''
             ELSE ''Yes''
         END
@@ -5409,7 +5432,8 @@ BEGIN
         qsrs.plan_id,
         from_regression_baseline =
             CASE
-                WHEN qsrs.last_execution_time >= @start_date AND qsrs.last_execution_time < @end_date
+                WHEN qsrs.last_execution_time >= @start_date 
+                AND   qsrs.last_execution_time < @end_date
                 THEN ''No''
                 ELSE ''Yes''
             END,
@@ -5454,7 +5478,8 @@ BEGIN
     GROUP
         BY qsrs.plan_id,
         CASE
-            WHEN qsrs.last_execution_time >= @start_date AND qsrs.last_execution_time < @end_date
+            WHEN qsrs.last_execution_time >= @start_date 
+            AND   qsrs.last_execution_time < @end_date
             THEN ''No''
             ELSE ''Yes''
         END
@@ -5556,7 +5581,7 @@ BEGIN
         qsq.query_hash,
         /* All of these but count_executions are already floats. */
         regression_metric_average =
-            CONVERT(FLOAT, AVG( ' +
+            CONVERT(float, AVG(' +
                 CASE @sort_order
                      WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
                      WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
@@ -5569,7 +5594,7 @@ BEGIN
                      WHEN 'rows' THEN N'qsrs.avg_rowcount'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
                 END
-                + N' ))
+                + N'))
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
       ON qsq.query_id = qsp.query_id
@@ -5654,7 +5679,7 @@ BEGIN
         qsq.query_hash,
         /* All of these but count_executions are already floats. */
         current_metric_average =
-            CONVERT(FLOAT, AVG( ' +
+            CONVERT(float, AVG(' +
                 CASE @sort_order
                      WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
                      WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
@@ -5667,7 +5692,7 @@ BEGIN
                      WHEN 'rows' THEN N'qsrs.avg_rowcount'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
                 END
-                + N' ))
+                + N'))
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
       ON qsq.query_id = qsp.query_id
@@ -5824,21 +5849,21 @@ BEGIN
             but mathematics has given us better tools.
             */
             + CASE @regression_direction
-               WHEN 'regressed' THEN N'change_since_regression_time_period'
-               WHEN 'worse' THEN N'change_since_regression_time_period'
-               WHEN 'improved' THEN N'change_since_regression_time_period * -1.0'
-               WHEN 'better' THEN N'change_since_regression_time_period * -1.0'
-               /*
-               The following two branches cannot be hit if
-               @regression_comparator is 'relative'.
-               We have made errors be thrown if somebody tries
-               to mix the two.
-               If you can figure out a way to make the two make
-               sense together, then feel free to add it in.
-               */
-               WHEN 'magnitude' THEN N'ABS(change_since_regression_time_period)'
-               WHEN 'absolute' THEN N'ABS(change_since_regression_time_period)'
-            END
+                   WHEN 'regressed' THEN N'change_since_regression_time_period'
+                   WHEN 'worse' THEN N'change_since_regression_time_period'
+                   WHEN 'improved' THEN N'change_since_regression_time_period * -1.0'
+                   WHEN 'better' THEN N'change_since_regression_time_period * -1.0'
+                   /*
+                   The following two branches cannot be hit if
+                   @regression_comparator is 'relative'.
+                   We have made errors be thrown if somebody tries
+                   to mix the two.
+                   If you can figure out a way to make the two make
+                   sense together, then feel free to add it in.
+                   */
+                   WHEN 'magnitude' THEN N'ABS(change_since_regression_time_period)'
+                   WHEN 'absolute' THEN N'ABS(change_since_regression_time_period)'
+              END
             + N' DESC
     ) AS hashes_with_changes
     JOIN
@@ -6156,7 +6181,8 @@ BEGIN
    SELECT
        @sql +=  N'
    CASE
-       WHEN qsrs_with_lasts.last_execution_time >= @start_date AND qsrs_with_lasts.last_execution_time < @end_date
+       WHEN qsrs_with_lasts.last_execution_time >= @start_date 
+       AND  qsrs_with_lasts.last_execution_time < @end_date
        THEN ''No''
        ELSE ''Yes''
    END,';
@@ -6410,7 +6436,8 @@ SELECT
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
              WHEN 'rows' THEN N'qsrs.avg_rowcount'
-             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+                hashes.query_hash'
              ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END
     END + N' DESC
@@ -6425,7 +6452,7 @@ the two time periods under consideration
 distinct.
 */
 CASE @regression_mode
-   WHEN 1 THEN  N' ,
+   WHEN 1 THEN  N',
    CASE
        WHEN qsrs_with_lasts.last_execution_time >= @start_date AND qsrs_with_lasts.last_execution_time < @end_date
        THEN ''No''
@@ -6990,50 +7017,50 @@ FROM
         deqs.min_used_threads,
         deqs.max_used_threads,
         partitioned_last_grant_kb =
-                                   LAST_VALUE(deqs.last_grant_kb) OVER
-                                   (
-                                       PARTITION BY
-                                           deqs.sql_handle
-                                       ORDER BY
-                                           deqs.last_execution_time DESC
-                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                   ),
+            LAST_VALUE(deqs.last_grant_kb) OVER
+            (
+                PARTITION BY
+                    deqs.sql_handle
+                ORDER BY
+                    deqs.last_execution_time DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_used_grant_kb =
-                                   LAST_VALUE(deqs.last_used_grant_kb) OVER
-                                   (
-                                       PARTITION BY
-                                           deqs.sql_handle
-                                       ORDER BY
-                                           deqs.last_execution_time DESC
-                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                   ),
+            LAST_VALUE(deqs.last_used_grant_kb) OVER
+            (
+                PARTITION BY
+                    deqs.sql_handle
+                ORDER BY
+                    deqs.last_execution_time DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
         partitioned_last_ideal_grant_kb =
-                                   LAST_VALUE(deqs.last_ideal_grant_kb) OVER
-                                   (
-                                       PARTITION BY
-                                           deqs.sql_handle
-                                       ORDER BY
-                                           deqs.last_execution_time DESC
-                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                   ),
+            LAST_VALUE(deqs.last_ideal_grant_kb) OVER
+            (
+                PARTITION BY
+                    deqs.sql_handle
+                ORDER BY
+                    deqs.last_execution_time DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
        partitioned_last_reserved_threads =
-                                   LAST_VALUE(deqs.last_reserved_threads) OVER
-                                   (
-                                       PARTITION BY
-                                           deqs.sql_handle
-                                       ORDER BY
-                                           deqs.last_execution_time DESC
-                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                   ),
+           LAST_VALUE(deqs.last_reserved_threads) OVER
+           (
+               PARTITION BY
+                   deqs.sql_handle
+               ORDER BY
+                   deqs.last_execution_time DESC
+               ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+           ),
        partitioned_last_used_threads =
-                                   LAST_VALUE(deqs.last_used_threads) OVER
-                                   (
-                                       PARTITION BY
-                                           deqs.sql_handle
-                                       ORDER BY
-                                           deqs.last_execution_time DESC
-                                       ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                   )
+           LAST_VALUE(deqs.last_used_threads) OVER
+           (
+               PARTITION BY
+                   deqs.sql_handle
+               ORDER BY
+                   deqs.last_execution_time DESC
+               ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+           )
     FROM sys.dm_exec_query_stats AS deqs
     WHERE EXISTS
           (
@@ -7048,7 +7075,7 @@ GROUP BY
 OPTION(RECOMPILE);
 
 SELECT
-    @rc = @@ROWCOUNT;
+    @rc = ROWCOUNT_BIG();
 
 IF @troubleshoot_performance = 1
 BEGIN
@@ -7325,16 +7352,16 @@ FROM
         Both are very wrong, so we need this.
         */
         partitioned_last_query_wait_time_ms =
-                                             LAST_VALUE(qsws.last_query_wait_time_ms) OVER
-                                             (
-                                                 PARTITION BY
-                                                     qsws.plan_id,
-                                                     qsws.execution_type,
-                                                     qsws.wait_category_desc
-                                                 ORDER BY
-                                                     qsws.runtime_stats_interval_id DESC
-                                                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-                                             )
+            LAST_VALUE(qsws.last_query_wait_time_ms) OVER
+            (
+                PARTITION BY
+                    qsws.plan_id,
+                    qsws.execution_type,
+                    qsws.wait_category_desc
+                ORDER BY
+                    qsws.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            )
     FROM #query_store_runtime_stats AS qsrs
     CROSS APPLY
     (
@@ -8061,6 +8088,7 @@ FROM
         N'
         qsp.query_plan_hash,'
                 WHEN @include_query_hashes IS NOT NULL
+                OR   @sort_order = 'plan count by hashes'
                 THEN
         N'
         qsq.query_hash,'
@@ -8172,8 +8200,8 @@ FROM
         + CASE
                WHEN @regression_mode = 1
                THEN N' from_regression_baseline_time_period = qsrs.from_regression_baseline,
-                       query_hash_from_regression_checking = regression.query_hash,
-                       change_in_average_for_query_hash_since_regression_time_period = regression.change_since_regression_time_period,
+        query_hash_from_regression_checking = regression.query_hash,
+        change_in_average_for_query_hash_since_regression_time_period = regression.change_since_regression_time_period,
                      '
                ELSE N''
           END
@@ -8281,7 +8309,8 @@ FROM
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
                  WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+                    hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
             END
@@ -8295,10 +8324,11 @@ FROM
         */
         + CASE
                WHEN @sort_order = 'plan count by hashes'
-               THEN N' , hashes.plan_hash_count_for_query_hash,
-                         query_hash_from_hash_counting = hashes.query_hash'
+               THEN N', 
+               hashes.plan_hash_count_for_query_hash,
+               query_hash_from_hash_counting = hashes.query_hash'
                WHEN @sort_order_is_a_wait = 1
-               THEN N' , total_wait_time_from_sort_order_ms = waits.total_query_wait_time_ms'
+               THEN N', total_wait_time_from_sort_order_ms = waits.total_query_wait_time_ms'
                ELSE N''
            END
             )
@@ -8335,6 +8365,7 @@ FROM
         N'
         qsp.query_plan_hash,'
                 WHEN @include_query_hashes IS NOT NULL
+                OR   @sort_order = 'plan count by hashes'
                 THEN
         N'
         qsq.query_hash,'
@@ -8450,7 +8481,7 @@ FROM
         + CASE
                WHEN @regression_mode = 1
                THEN N' from_regression_baseline_time_period = qsrs.from_regression_baseline,
-                       query_hash_from_regression_checking = regression.query_hash,
+        query_hash_from_regression_checking = regression.query_hash,
                      '
                ELSE N''
           END
@@ -8573,7 +8604,8 @@ FROM
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
                  WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+                    hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
             END
@@ -8588,10 +8620,12 @@ FROM
         */
         + CASE
                WHEN @sort_order = 'plan count by hashes'
-               THEN N' , plan_hash_count_for_query_hash = FORMAT(hashes.plan_hash_count_for_query_hash, ''N0''),
-                         query_hash_from_hash_counting = hashes.query_hash'
+               THEN N', 
+               plan_hash_count_for_query_hash = FORMAT(hashes.plan_hash_count_for_query_hash, ''N0''),
+               query_hash_from_hash_counting = hashes.query_hash'
                WHEN @sort_order_is_a_wait = 1
-               THEN N' , total_wait_time_from_sort_order_ms = FORMAT(waits.total_query_wait_time_ms, ''N0'')'
+               THEN N', 
+               total_wait_time_from_sort_order_ms = FORMAT(waits.total_query_wait_time_ms, ''N0'')'
                ELSE N''
            END
             )
@@ -8628,6 +8662,7 @@ FROM
         N'
         qsp.query_plan_hash,'
                 WHEN @include_query_hashes IS NOT NULL
+                OR   @sort_order = 'plan count by hashes'
                 THEN
         N'
         qsq.query_hash,'
@@ -8739,8 +8774,8 @@ FROM
         + CASE
                WHEN @regression_mode = 1
                THEN N' from_regression_baseline_time_period = qsrs.from_regression_baseline,
-                       query_hash_from_regression_checking = regression.query_hash,
-                       change_in_average_for_query_hash_since_regression_time_period = regression.change_since_regression_time_period,
+        query_hash_from_regression_checking = regression.query_hash,
+        change_in_average_for_query_hash_since_regression_time_period = regression.change_since_regression_time_period,
                      '
                ELSE N''
           END
@@ -8825,7 +8860,8 @@ FROM
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
                  WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+                    hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
             END
@@ -8839,10 +8875,11 @@ FROM
         */
         + CASE
                WHEN @sort_order = 'plan count by hashes'
-               THEN N' , hashes.plan_hash_count_for_query_hash,
-                         query_hash_from_hash_counting = hashes.query_hash'
+               THEN N', 
+               hashes.plan_hash_count_for_query_hash,
+               query_hash_from_hash_counting = hashes.query_hash'
                WHEN @sort_order_is_a_wait = 1
-               THEN N' , total_wait_time_from_sort_order_ms = waits.total_query_wait_time_ms'
+               THEN N', total_wait_time_from_sort_order_ms = waits.total_query_wait_time_ms'
                ELSE N''
            END
             )
@@ -8879,6 +8916,7 @@ FROM
         N'
         qsp.query_plan_hash,'
                 WHEN @include_query_hashes IS NOT NULL
+                OR   @sort_order = 'plan count by hashes'
                 THEN
         N'
         qsq.query_hash,'
@@ -8991,7 +9029,7 @@ FROM
         + CASE
                WHEN @regression_mode = 1
                THEN N' from_regression_baseline_time_period = qsrs.from_regression_baseline,
-                       query_hash_from_regression_checking = regression.query_hash,
+        query_hash_from_regression_checking = regression.query_hash,
                      '
                ELSE N''
           END
@@ -9086,7 +9124,8 @@ FROM
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
                  WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+                    hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
             END
@@ -9101,10 +9140,12 @@ FROM
         */
         + CASE
                WHEN @sort_order = 'plan count by hashes'
-               THEN N' , plan_hash_count_for_query_hash = FORMAT(hashes.plan_hash_count_for_query_hash, ''N0''),
-                         query_hash_from_hash_counting = hashes.query_hash'
+               THEN N', 
+        plan_hash_count_for_query_hash = FORMAT(hashes.plan_hash_count_for_query_hash, ''N0''),
+        query_hash_from_hash_counting = hashes.query_hash'
                WHEN @sort_order_is_a_wait = 1
-               THEN N' , total_wait_time_from_sort_order_ms = FORMAT(waits.total_query_wait_time_ms, ''N0'')'
+               THEN N', 
+        total_wait_time_from_sort_order_ms = FORMAT(waits.total_query_wait_time_ms, ''N0'')'
                ELSE N''
            END
             )
@@ -9130,33 +9171,33 @@ FROM
     BEGIN
         SELECT
             @sql += N'
-            JOIN #regression_changes AS regression
-            ON qsrs.plan_id = regression.plan_id
-            AND qsrs.database_id = regression.database_id';
+        JOIN #regression_changes AS regression
+        ON  qsrs.plan_id = regression.plan_id
+        AND qsrs.database_id = regression.database_id';
     END;
 
     IF @sort_order = 'plan count by hashes'
     BEGIN
         SELECT
             @sql += N'
-            JOIN #plan_ids_with_query_hashes AS hashes
-            ON qsrs.plan_id = hashes.plan_id
-            AND qsrs.database_id = hashes.database_id';
+        JOIN #plan_ids_with_query_hashes AS hashes
+        ON  qsrs.plan_id = hashes.plan_id
+        AND qsrs.database_id = hashes.database_id';
     END;
 
     IF @sort_order_is_a_wait = 1
     BEGIN
         SELECT
             @sql += N'
-            JOIN #plan_ids_with_total_waits AS waits
-            ON qsrs.plan_id = waits.plan_id
-            AND qsrs.database_id = waits.database_id';
+        JOIN #plan_ids_with_total_waits AS waits
+        ON  qsrs.plan_id = waits.plan_id
+        AND qsrs.database_id = waits.database_id';
 
         IF @regression_mode = 1
         BEGIN
             SELECT
                 @sql += N'
-                AND qsrs.from_regression_baseline = waits.from_regression_baseline'
+        AND qsrs.from_regression_baseline = waits.from_regression_baseline'
         END;
     END;
 
@@ -9332,8 +9373,10 @@ SELECT
         nvarchar(MAX),
         N'
 ) AS x
-' + CASE WHEN @regression_mode = 1 THEN N' ' ELSE N' WHERE x.n = 1 ' END
-+ N' ORDER BY ' +
+' + CASE WHEN @regression_mode = 1 THEN N' ' ELSE N'WHERE x.n = 1 ' END
++ N' 
+ORDER BY 
+    ' +
     CASE @format_output
          WHEN 0
          THEN
@@ -9364,7 +9407,8 @@ SELECT
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'rows' THEN N'x.avg_rowcount'
-                  WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, x.query_hash_from_hash_counting'
+                  WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, 
+    x.query_hash_from_hash_counting'
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time' END
              END END
          /*
@@ -9400,7 +9444,8 @@ SELECT
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'rows' THEN N'TRY_PARSE(x.avg_rowcount AS money)'
-                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC, x.query_hash_from_hash_counting'
+                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC, 
+    x.query_hash_from_hash_counting'
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
              END END
     END
@@ -10001,7 +10046,7 @@ BEGIN
         (
             nvarchar(MAX),
             N'
-        dqso.size_based_cleanup_mode_desc
+            dqso.size_based_cleanup_mode_desc
         FROM #database_query_store_options AS dqso
         OPTION(RECOMPILE);'
         );
@@ -10414,7 +10459,7 @@ BEGIN
             FROM #query_store_wait_stats AS qsws
             CROSS APPLY
             (
-                SELECT DISTINCT
+                SELECT
                     qsrs.avg_duration_ms,
                     qsrs.last_duration_ms,
                     qsrs.min_duration_ms,
@@ -10630,7 +10675,7 @@ BEGIN
 
         SELECT
             @sql += N'
-        dqso.size_based_cleanup_mode_desc
+            dqso.size_based_cleanup_mode_desc
         FROM #database_query_store_options AS dqso
         OPTION(RECOMPILE);';
 
