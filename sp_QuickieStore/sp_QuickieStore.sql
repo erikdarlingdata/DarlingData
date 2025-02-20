@@ -97,7 +97,7 @@ ALTER PROCEDURE
     @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
     @regression_comparator varchar(20) = NULL, /*what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with the regression time period.*/
     @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, want do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
-    @include_query_hash_totals bit = 0, /*will add an additional column to final output with total resource usage by query hash*/
+    @include_query_hash_totals bit = 0, /*will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
@@ -209,7 +209,7 @@ BEGIN
                 WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
                 WHEN N'@regression_comparator' THEN 'what difference to use (''relative'' or ''absolute'') when comparing @sort_order''s metric for the normal time period with any regression time period.'
                 WHEN N'@regression_direction' THEN 'when comparing against any regression baseline, what do you want the results sorted by (''magnitude'', ''improved'', or ''regressed'')?'
-                WHEN N'@include_query_hash_totals' THEN N'will add an additional column to final output with total resource usage by query hash'
+                WHEN N'@include_query_hash_totals' THEN N'will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
@@ -8213,7 +8213,14 @@ FROM
                ELSE N''
           END
         + N'
-        qsrs.count_executions,
+        qsrs.count_executions, '
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        count_executions_by_query_hash = SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
         qsrs.total_duration_ms,'
@@ -8585,7 +8592,14 @@ FROM
         (
             nvarchar(MAX),
             N'
-        count_executions = FORMAT(qsrs.count_executions, ''N0''),
+        count_executions = FORMAT(qsrs.count_executions, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        count_executions_by_query_hash = FORMAT(SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
         total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),'
@@ -8944,7 +8958,14 @@ FROM
                ELSE N''
           END
         + N'
-        qsrs.count_executions,
+        qsrs.count_executions,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        count_executions_by_query_hash = SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
         qsrs.total_duration_ms,'
@@ -9286,7 +9307,14 @@ FROM
                ELSE N''
           END
         + N'
-        count_executions = FORMAT(qsrs.count_executions, ''N0''),
+        count_executions = FORMAT(qsrs.count_executions, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        count_executions_by_query_hash = FORMAT(SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
         total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),'
