@@ -97,6 +97,7 @@ ALTER PROCEDURE
     @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
     @regression_comparator varchar(20) = NULL, /*what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with the regression time period.*/
     @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, want do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
+    @include_query_hash_totals bit = 0, /*will add an additional column to final output with total resource usage by query hash*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
@@ -208,6 +209,7 @@ BEGIN
                 WHEN N'@regression_baseline_end_date' THEN 'the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally'
                 WHEN N'@regression_comparator' THEN 'what difference to use (''relative'' or ''absolute'') when comparing @sort_order''s metric for the normal time period with any regression time period.'
                 WHEN N'@regression_direction' THEN 'when comparing against any regression baseline, what do you want the results sorted by (''magnitude'', ''improved'', or ''regressed'')?'
+                WHEN N'@include_query_hash_totals' THEN N'will add an additional column to final output with total resource usage by query hash'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
@@ -260,6 +262,7 @@ BEGIN
                 WHEN N'@regression_baseline_end_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@regression_comparator' THEN 'relative, absolute'
                 WHEN N'@regression_direction' THEN 'regressed, worse, improved, better, magnitude, absolute, whatever'
+                WHEN N'@include_query_hash_totals' THEN N'0 or 1'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
                 WHEN N'@troubleshoot_performance' THEN '0 or 1'
@@ -312,8 +315,9 @@ BEGIN
                 WHEN N'@regression_baseline_end_date' THEN 'NULL; One week after @regression_baseline_start_date if that is specified'
                 WHEN N'@regression_comparator' THEN 'NULL; absolute if @regression_baseline_start_date is specified'
                 WHEN N'@regression_direction' THEN 'NULL; regressed if @regression_baseline_start_date is specified'
-                WHEN N'@debug' THEN '0'
+                WHEN N'@include_query_hash_totals' THEN N'0'
                 WHEN N'@help' THEN '0'
+                WHEN N'@debug' THEN '0'
                 WHEN N'@troubleshoot_performance' THEN '0'
                 WHEN N'@version' THEN 'none; OUTPUT'
                 WHEN N'@version_date' THEN 'none; OUTPUT'
@@ -2011,6 +2015,8 @@ SELECT
         ISNULL(@get_all_databases, 0),
     @workdays =
         ISNULL(@workdays, 0),
+    @include_query_hash_totals =
+        ISNULL(@include_query_hash_totals, 0),
     /*
         doing start and end date last because they're more complicated
         if start or end date is null,
@@ -8089,6 +8095,7 @@ FROM
         qsp.query_plan_hash,'
                 WHEN @include_query_hashes IS NOT NULL
                 OR   @sort_order = 'plan count by hashes'
+                OR   @include_query_hash_totals = 1
                 THEN
         N'
         qsq.query_hash,'
@@ -8209,32 +8216,74 @@ FROM
         qsrs.count_executions,
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
-        qsrs.total_duration_ms,
+        qsrs.total_duration_ms,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_duration_by_query_hash = SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_duration_ms,
         qsrs.min_duration_ms,
         qsrs.max_duration_ms,
         qsrs.avg_cpu_time_ms,
-        qsrs.total_cpu_time_ms,
+        qsrs.total_cpu_time_ms,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_cpu_by_query_hash = SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_cpu_time_ms,
         qsrs.min_cpu_time_ms,
         qsrs.max_cpu_time_ms,
         qsrs.avg_logical_io_reads_mb,
-        qsrs.total_logical_io_reads_mb,
+        qsrs.total_logical_io_reads_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_logical_io_reads_mb_by_query_hash = SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_logical_io_reads_mb,
         qsrs.min_logical_io_reads_mb,
         qsrs.max_logical_io_reads_mb,
         qsrs.avg_logical_io_writes_mb,
-        qsrs.total_logical_io_writes_mb,
+        qsrs.total_logical_io_writes_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_logical_io_writes_mb_by_query_hash = SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_logical_io_writes_mb,
         qsrs.min_logical_io_writes_mb,
         qsrs.max_logical_io_writes_mb,
         qsrs.avg_physical_io_reads_mb,
-        qsrs.total_physical_io_reads_mb,
+        qsrs.total_physical_io_reads_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_physical_io_reads_mb_by_query_hash = SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_physical_io_reads_mb,
         qsrs.min_physical_io_reads_mb,
         qsrs.max_physical_io_reads_mb,
         qsrs.avg_clr_time_ms,
-        qsrs.total_clr_time_ms,
+        qsrs.total_clr_time_ms,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_clr_time_ms_by_query_hash = SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_clr_time_ms,
         qsrs.min_clr_time_ms,
         qsrs.max_clr_time_ms,
@@ -8242,12 +8291,26 @@ FROM
         qsrs.min_dop,
         qsrs.max_dop,
         qsrs.avg_query_max_used_memory_mb,
-        qsrs.total_query_max_used_memory_mb,
+        qsrs.total_query_max_used_memory_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_query_max_used_memory_mb_by_query_hash = SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_query_max_used_memory_mb,
         qsrs.min_query_max_used_memory_mb,
         qsrs.max_query_max_used_memory_mb,
         qsrs.avg_rowcount,
-        qsrs.total_rowcount,
+        qsrs.total_rowcount,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_rowcount_by_query_hash = SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_rowcount,
         qsrs.min_rowcount,
         qsrs.max_rowcount,'
@@ -8257,17 +8320,38 @@ FROM
                  THEN
         N'
         qsrs.avg_num_physical_io_reads_mb,
-        qsrs.total_num_physical_io_reads_mb,
+        qsrs.total_num_physical_io_reads_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_num_physical_io_reads_mb_by_query_hash = SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_num_physical_io_reads_mb,
         qsrs.min_num_physical_io_reads_mb,
         qsrs.max_num_physical_io_reads_mb,
         qsrs.avg_log_bytes_used_mb,
-        qsrs.total_log_bytes_used_mb,
+        qsrs.total_log_bytes_used_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_log_bytes_used_mb_by_query_hash = SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_log_bytes_used_mb,
         qsrs.min_log_bytes_used_mb,
         qsrs.max_log_bytes_used_mb,
         qsrs.avg_tempdb_space_used_mb,
-        qsrs.total_tempdb_space_used_mb,
+        qsrs.total_tempdb_space_used_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_tempdb_space_used_mb_by_query_hash = SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.last_tempdb_space_used_mb,
         qsrs.min_tempdb_space_used_mb,
         qsrs.max_tempdb_space_used_mb,'
@@ -8366,6 +8450,7 @@ FROM
         qsp.query_plan_hash,'
                 WHEN @include_query_hashes IS NOT NULL
                 OR   @sort_order = 'plan count by hashes'
+                OR   @include_query_hash_totals = 1
                 THEN
         N'
         qsq.query_hash,'
@@ -8503,32 +8588,75 @@ FROM
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
-        total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),
+        total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_duration_ms_by_query_hash = FORMAT(SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_duration_ms = FORMAT(qsrs.last_duration_ms, ''N0''),
         min_duration_ms = FORMAT(qsrs.min_duration_ms, ''N0''),
         max_duration_ms = FORMAT(qsrs.max_duration_ms, ''N0''),
         avg_cpu_time_ms = FORMAT(qsrs.avg_cpu_time_ms, ''N0''),
         total_cpu_time_ms = FORMAT(qsrs.total_cpu_time_ms, ''N0''),
+        '
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_cpu_time_ms_by_query_hash = FORMAT(SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_cpu_time_ms = FORMAT(qsrs.last_cpu_time_ms, ''N0''),
         min_cpu_time_ms = FORMAT(qsrs.min_cpu_time_ms, ''N0''),
         max_cpu_time_ms = FORMAT(qsrs.max_cpu_time_ms, ''N0''),
         avg_logical_io_reads_mb = FORMAT(qsrs.avg_logical_io_reads_mb, ''N0''),
-        total_logical_io_reads_mb = FORMAT(qsrs.total_logical_io_reads_mb, ''N0''),
+        total_logical_io_reads_mb = FORMAT(qsrs.total_logical_io_reads_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_logical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_logical_io_reads_mb = FORMAT(qsrs.last_logical_io_reads_mb, ''N0''),
         min_logical_io_reads_mb = FORMAT(qsrs.min_logical_io_reads_mb, ''N0''),
         max_logical_io_reads_mb = FORMAT(qsrs.max_logical_io_reads_mb, ''N0''),
         avg_logical_io_writes_mb = FORMAT(qsrs.avg_logical_io_writes_mb, ''N0''),
-        total_logical_io_writes_mb = FORMAT(qsrs.total_logical_io_writes_mb, ''N0''),
+        total_logical_io_writes_mb = FORMAT(qsrs.total_logical_io_writes_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_logical_io_writes_mb_by_query_hash = FORMAT(SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_logical_io_writes_mb = FORMAT(qsrs.last_logical_io_writes_mb, ''N0''),
         min_logical_io_writes_mb = FORMAT(qsrs.min_logical_io_writes_mb, ''N0''),
         max_logical_io_writes_mb = FORMAT(qsrs.max_logical_io_writes_mb, ''N0''),
         avg_physical_io_reads_mb = FORMAT(qsrs.avg_physical_io_reads_mb, ''N0''),
-        total_physical_io_reads_mb = FORMAT(qsrs.total_physical_io_reads_mb, ''N0''),
+        total_physical_io_reads_mb = FORMAT(qsrs.total_physical_io_reads_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_physical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_physical_io_reads_mb = FORMAT(qsrs.last_physical_io_reads_mb, ''N0''),
         min_physical_io_reads_mb = FORMAT(qsrs.min_physical_io_reads_mb, ''N0''),
         max_physical_io_reads_mb = FORMAT(qsrs.max_physical_io_reads_mb, ''N0''),
         avg_clr_time_ms = FORMAT(qsrs.avg_clr_time_ms, ''N0''),
-        total_clr_time_ms = FORMAT(qsrs.total_clr_time_ms, ''N0''),
+        total_clr_time_ms = FORMAT(qsrs.total_clr_time_ms, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_clr_time_ms_by_query_hash = FORMAT(SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_clr_time_ms = FORMAT(qsrs.last_clr_time_ms, ''N0''),
         min_clr_time_ms = FORMAT(qsrs.min_clr_time_ms, ''N0''),
         max_clr_time_ms = FORMAT(qsrs.max_clr_time_ms, ''N0''),
@@ -8536,12 +8664,26 @@ FROM
         qsrs.min_dop,
         qsrs.max_dop,
         avg_query_max_used_memory_mb = FORMAT(qsrs.avg_query_max_used_memory_mb, ''N0''),
-        total_query_max_used_memory_mb = FORMAT(qsrs.total_query_max_used_memory_mb, ''N0''),
+        total_query_max_used_memory_mb = FORMAT(qsrs.total_query_max_used_memory_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_query_max_used_memory_mb_by_query_hash = FORMAT(SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_query_max_used_memory_mb = FORMAT(qsrs.last_query_max_used_memory_mb, ''N0''),
         min_query_max_used_memory_mb = FORMAT(qsrs.min_query_max_used_memory_mb, ''N0''),
         max_query_max_used_memory_mb = FORMAT(qsrs.max_query_max_used_memory_mb, ''N0''),
         avg_rowcount = FORMAT(qsrs.avg_rowcount, ''N0''),
-        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),
+        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_rowcount_by_query_hash = FORMAT(SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_rowcount = FORMAT(qsrs.last_rowcount, ''N0''),
         min_rowcount = FORMAT(qsrs.min_rowcount, ''N0''),
         max_rowcount = FORMAT(qsrs.max_rowcount, ''N0''),'
@@ -8552,17 +8694,38 @@ FROM
                  THEN
         N'
         avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
-        total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),
+        total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_num_physical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_num_physical_io_reads_mb = FORMAT(qsrs.last_num_physical_io_reads_mb, ''N0''),
         min_num_physical_io_reads_mb = FORMAT(qsrs.min_num_physical_io_reads_mb, ''N0''),
         max_num_physical_io_reads_mb = FORMAT(qsrs.max_num_physical_io_reads_mb, ''N0''),
         avg_log_bytes_used_mb = FORMAT(qsrs.avg_log_bytes_used_mb, ''N0''),
-        total_log_bytes_used_mb = FORMAT(qsrs.total_log_bytes_used_mb, ''N0''),
+        total_log_bytes_used_mb = FORMAT(qsrs.total_log_bytes_used_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_log_bytes_used_mb_by_query_hash = FORMAT(SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_log_bytes_used_mb = FORMAT(qsrs.last_log_bytes_used_mb, ''N0''),
         min_log_bytes_used_mb = FORMAT(qsrs.min_log_bytes_used_mb, ''N0''),
         max_log_bytes_used_mb = FORMAT(qsrs.max_log_bytes_used_mb, ''N0''),
         avg_tempdb_space_used_mb = FORMAT(qsrs.avg_tempdb_space_used_mb, ''N0''),
-        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),
+        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_tempdb_space_used_mb_by_query_hash = FORMAT(SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         last_tempdb_space_used_mb = FORMAT(qsrs.last_tempdb_space_used_mb, ''N0''),
         min_tempdb_space_used_mb = FORMAT(qsrs.min_tempdb_space_used_mb, ''N0''),
         max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
@@ -8663,6 +8826,7 @@ FROM
         qsp.query_plan_hash,'
                 WHEN @include_query_hashes IS NOT NULL
                 OR   @sort_order = 'plan count by hashes'
+                OR   @include_query_hash_totals = 1
                 THEN
         N'
         qsq.query_hash,'
@@ -8783,30 +8947,86 @@ FROM
         qsrs.count_executions,
         qsrs.executions_per_second,
         qsrs.avg_duration_ms,
-        qsrs.total_duration_ms,
+        qsrs.total_duration_ms,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_duration_ms_by_query_hash = SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_duration_ms,
         qsrs.avg_cpu_time_ms,
-        qsrs.total_cpu_time_ms,
+        qsrs.total_cpu_time_ms,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_cpu_time_ms_by_query_hash = SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_cpu_time_ms,
         qsrs.avg_logical_io_reads_mb,
-        qsrs.total_logical_io_reads_mb,
+        qsrs.total_logical_io_reads_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_logical_io_reads_mb_by_query_hash = SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_logical_io_reads_mb,
         qsrs.avg_logical_io_writes_mb,
-        qsrs.total_logical_io_writes_mb,
+        qsrs.total_logical_io_writes_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_logical_io_writes_mb_by_query_hash = SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_logical_io_writes_mb,
         qsrs.avg_physical_io_reads_mb,
-        qsrs.total_physical_io_reads_mb,
+        qsrs.total_physical_io_reads_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_physical_io_reads_mb_by_query_hash = SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_physical_io_reads_mb,
         qsrs.avg_clr_time_ms,
-        qsrs.total_clr_time_ms,
+        qsrs.total_clr_time_ms,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_clr_time_ms_by_query_hash = SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_clr_time_ms,
         qsrs.min_dop,
         qsrs.max_dop,
         qsrs.avg_query_max_used_memory_mb,
-        qsrs.total_query_max_used_memory_mb,
+        qsrs.total_query_max_used_memory_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_query_max_used_memory_mb_by_query_hash = SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_query_max_used_memory_mb,
         qsrs.avg_rowcount,
-        qsrs.total_rowcount,
+        qsrs.total_rowcount,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_rowcount_by_query_hash = SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_rowcount,'
         +
             CASE @new
@@ -8814,13 +9034,34 @@ FROM
                  THEN
         N'
         qsrs.avg_num_physical_io_reads_mb,
-        qsrs.total_num_physical_io_reads_mb,
+        qsrs.total_num_physical_io_reads_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_num_physical_io_reads_mb_by_query_hash = SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_num_physical_io_reads_mb,
         qsrs.avg_log_bytes_used_mb,
-        qsrs.total_log_bytes_used_mb,
+        qsrs.total_log_bytes_used_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_log_bytes_used_mb_by_query_hash = SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_log_bytes_used_mb,
         qsrs.avg_tempdb_space_used_mb,
-        qsrs.total_tempdb_space_used_mb,
+        qsrs.total_tempdb_space_used_mb,'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_tempdb_space_used_mb_by_query_hash = SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
+                  ELSE N''
+            END +
+        '
         qsrs.max_tempdb_space_used_mb,'
                  ELSE
         N''
@@ -8917,6 +9158,7 @@ FROM
         qsp.query_plan_hash,'
                 WHEN @include_query_hashes IS NOT NULL
                 OR   @sort_order = 'plan count by hashes'
+                OR   @include_query_hash_totals = 1
                 THEN
         N'
         qsq.query_hash,'
@@ -9047,30 +9289,86 @@ FROM
         count_executions = FORMAT(qsrs.count_executions, ''N0''),
         executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
         avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
-        total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),
+        total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_duration_ms_by_query_hash = FORMAT(SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_duration_ms = FORMAT(qsrs.max_duration_ms, ''N0''),
         avg_cpu_time_ms = FORMAT(qsrs.avg_cpu_time_ms, ''N0''),
-        total_cpu_time_ms = FORMAT(qsrs.total_cpu_time_ms, ''N0''),
+        total_cpu_time_ms = FORMAT(qsrs.total_cpu_time_ms, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_cpu_time_ms_by_query_hash = FORMAT(SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_cpu_time_ms = FORMAT(qsrs.max_cpu_time_ms, ''N0''),
         avg_logical_io_reads_mb = FORMAT(qsrs.avg_logical_io_reads_mb, ''N0''),
-        total_logical_io_reads_mb = FORMAT(qsrs.total_logical_io_reads_mb, ''N0''),
+        total_logical_io_reads_mb = FORMAT(qsrs.total_logical_io_reads_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_logical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_logical_io_reads_mb = FORMAT(qsrs.max_logical_io_reads_mb, ''N0''),
         avg_logical_io_writes_mb = FORMAT(qsrs.avg_logical_io_writes_mb, ''N0''),
-        total_logical_io_writes_mb = FORMAT(qsrs.total_logical_io_writes_mb, ''N0''),
+        total_logical_io_writes_mb = FORMAT(qsrs.total_logical_io_writes_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_logical_io_writes_mb_by_query_hash = FORMAT(SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_logical_io_writes_mb = FORMAT(qsrs.max_logical_io_writes_mb, ''N0''),
         avg_physical_io_reads_mb = FORMAT(qsrs.avg_physical_io_reads_mb, ''N0''),
-        total_physical_io_reads_mb = FORMAT(qsrs.total_physical_io_reads_mb, ''N0''),
+        total_physical_io_reads_mb = FORMAT(qsrs.total_physical_io_reads_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_physical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_physical_io_reads_mb = FORMAT(qsrs.max_physical_io_reads_mb, ''N0''),
         avg_clr_time_ms = FORMAT(qsrs.avg_clr_time_ms, ''N0''),
-        total_clr_time_ms = FORMAT(qsrs.total_clr_time_ms, ''N0''),
+        total_clr_time_ms = FORMAT(qsrs.total_clr_time_ms, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_clr_time_ms_by_query_hash = FORMAT(SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_clr_time_ms = FORMAT(qsrs.max_clr_time_ms, ''N0''),
         min_dop = FORMAT(qsrs.min_dop, ''N0''),
         max_dop = FORMAT(qsrs.max_dop, ''N0''),
         avg_query_max_used_memory_mb = FORMAT(qsrs.avg_query_max_used_memory_mb, ''N0''),
-        total_query_max_used_memory_mb = FORMAT(qsrs.total_query_max_used_memory_mb, ''N0''),
+        total_query_max_used_memory_mb = FORMAT(qsrs.total_query_max_used_memory_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_query_max_used_memory_mb_by_query_hash = FORMAT(SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_query_max_used_memory_mb = FORMAT(qsrs.max_query_max_used_memory_mb, ''N0''),
         avg_rowcount = FORMAT(qsrs.avg_rowcount, ''N0''),
-        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),
+        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_rowcount_by_query_hash = FORMAT(SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_rowcount = FORMAT(qsrs.max_rowcount, ''N0''),'
         +
             CASE @new
@@ -9078,13 +9376,34 @@ FROM
                  THEN
         N'
         avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
-        total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),
+        total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_num_physical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_num_physical_io_reads_mb = FORMAT(qsrs.max_num_physical_io_reads_mb, ''N0''),
         avg_log_bytes_used_mb = FORMAT(qsrs.avg_log_bytes_used_mb, ''N0''),
-        total_log_bytes_used_mb = FORMAT(qsrs.total_log_bytes_used_mb, ''N0''),
+        total_log_bytes_used_mb = FORMAT(qsrs.total_log_bytes_used_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_log_bytes_used_mb_by_query_hash = FORMAT(SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_log_bytes_used_mb = FORMAT(qsrs.max_log_bytes_used_mb, ''N0''),
         avg_tempdb_space_used_mb = FORMAT(qsrs.avg_tempdb_space_used_mb, ''N0''),
-        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),
+        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
+            + CASE
+                  WHEN @include_query_hash_totals = 1
+                  THEN N'
+        total_tempdb_space_used_mb_by_query_hash = FORMAT(SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
+                  ELSE N''
+            END +
+        '
         max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
                  ELSE
         N''
@@ -10963,6 +11282,8 @@ BEGIN
             @regression_comparator,
         regression_direction =
             @regression_direction,
+        include_query_hash_totals =
+            @include_query_hash_totals,
         help =
             @help,
         debug =
