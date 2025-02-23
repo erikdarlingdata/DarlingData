@@ -323,9 +323,9 @@ BEGIN
                 WHEN N'@version_date' THEN 'none; OUTPUT'
             END
     FROM sys.all_parameters AS ap
-    INNER JOIN sys.all_objects AS o
+    JOIN sys.all_objects AS o
       ON ap.object_id = o.object_id
-    INNER JOIN sys.types AS t
+    JOIN sys.types AS t
       ON  ap.system_type_id = t.system_type_id
       AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_QuickieStore'
@@ -5607,7 +5607,7 @@ BEGIN
     JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
       ON qsp.plan_id = qsrs.plan_id
     LEFT JOIN #plan_ids_with_total_waits AS waits
-      ON qsp.plan_id = waits.plan_id
+      ON  qsp.plan_id = waits.plan_id
       AND waits.from_regression_baseline = ''Yes''
     WHERE 1 = 1
     ' + @regression_where_clause
@@ -5705,7 +5705,7 @@ BEGIN
     JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
       ON qsp.plan_id = qsrs.plan_id
     LEFT JOIN #plan_ids_with_total_waits AS waits
-      ON qsp.plan_id = waits.plan_id
+      ON  qsp.plan_id = waits.plan_id
       AND waits.from_regression_baseline = ''No''
     WHERE 1 = 1
     AND qsq.query_hash IN (SELECT base.query_hash FROM #regression_baseline_runtime_stats AS base)
@@ -5879,7 +5879,7 @@ BEGIN
            qsp.plan_id
        FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
        JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-          ON qsq.query_id = qsp.query_id
+         ON qsq.query_id = qsp.query_id
        JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
          ON qsp.plan_id = qsrs.plan_id
         WHERE
@@ -9519,8 +9519,8 @@ FROM
         SELECT
             @sql += N'
         JOIN #regression_changes AS regression
-        ON  qsrs.plan_id = regression.plan_id
-        AND qsrs.database_id = regression.database_id';
+          ON  qsrs.plan_id = regression.plan_id
+          AND qsrs.database_id = regression.database_id';
     END;
 
     IF @sort_order = 'plan count by hashes'
@@ -9528,8 +9528,8 @@ FROM
         SELECT
             @sql += N'
         JOIN #plan_ids_with_query_hashes AS hashes
-        ON  qsrs.plan_id = hashes.plan_id
-        AND qsrs.database_id = hashes.database_id';
+          ON  qsrs.plan_id = hashes.plan_id
+          AND qsrs.database_id = hashes.database_id';
     END;
 
     IF @sort_order_is_a_wait = 1
@@ -9537,8 +9537,8 @@ FROM
         SELECT
             @sql += N'
         JOIN #plan_ids_with_total_waits AS waits
-        ON  qsrs.plan_id = waits.plan_id
-        AND qsrs.database_id = waits.database_id';
+          ON  qsrs.plan_id = waits.plan_id
+          AND qsrs.database_id = waits.database_id';
 
         IF @regression_mode = 1
         BEGIN
@@ -9582,7 +9582,7 @@ SELECT
             qsqt.*
         FROM #query_store_query AS qsq
         JOIN #query_store_query_text AS qsqt
-          ON qsqt.query_text_id = qsq.query_text_id
+          ON  qsqt.query_text_id = qsq.query_text_id
           AND qsqt.database_id = qsq.database_id
         WHERE qsq.query_id = qsp.query_id
         AND   qsq.database_id = qsp.database_id
@@ -10124,8 +10124,8 @@ BEGIN
                 qsqt.max_used_threads
             FROM #query_store_query AS qsq
             JOIN #query_store_query_text AS qsqt
-            ON  qsq.query_text_id = qsqt.query_text_id
-            AND qsq.database_id = qsqt.database_id
+              ON  qsq.query_text_id = qsqt.query_text_id
+              AND qsq.database_id = qsqt.database_id
             WHERE
             (
                 qsqt.total_grant_mb IS NOT NULL
@@ -10193,11 +10193,11 @@ BEGIN
                         qsq.object_name
                     FROM #query_store_runtime_stats AS qsrs
                     JOIN #query_store_plan AS qsp
-                    ON  qsrs.plan_id = qsp.plan_id
-                    AND qsrs.database_id = qsp.database_id
+                      ON  qsrs.plan_id = qsp.plan_id
+                      AND qsrs.database_id = qsp.database_id
                     JOIN #query_store_query AS qsq
-                    ON  qsp.query_id = qsq.query_id
-                    AND qsp.database_id = qsq.database_id
+                      ON  qsp.query_id = qsq.query_id
+                      AND qsp.database_id = qsq.database_id
                     WHERE qsws.plan_id = qsrs.plan_id
                     AND   qsws.database_id = qsrs.database_id
                 ) AS x
@@ -10247,11 +10247,11 @@ BEGIN
                         qsq.object_name
                     FROM #query_store_runtime_stats AS qsrs
                     JOIN #query_store_plan AS qsp
-                    ON  qsrs.plan_id = qsp.plan_id
-                    AND qsrs.database_id = qsp.database_id
+                      ON  qsrs.plan_id = qsp.plan_id
+                      AND qsrs.database_id = qsp.database_id
                     JOIN #query_store_query AS qsq
-                    ON  qsp.query_id = qsq.query_id
-                    AND qsp.database_id = qsq.database_id
+                      ON  qsp.query_id = qsq.query_id
+                      AND qsp.database_id = qsq.database_id
                     WHERE qsws.plan_id = qsrs.plan_id
                 ) AS x
                 GROUP BY
@@ -10302,8 +10302,8 @@ BEGIN
                     1/0
                 FROM #query_store_replicas AS qsr
                 JOIN #query_store_plan_forcing_locations AS qspfl
-                    ON  qsr.replica_group_id = qspfl.replica_group_id
-                    AND qsr.database_id = qspfl.database_id
+                  ON  qsr.replica_group_id = qspfl.replica_group_id
+                  AND qsr.database_id = qspfl.database_id
             )
             BEGIN
                 SELECT
@@ -10321,7 +10321,7 @@ BEGIN
                     qspfl.replica_group_id
                 FROM #query_store_replicas AS qsr
                 JOIN #query_store_plan_forcing_locations AS qspfl
-                ON qsr.replica_group_id = qspfl.replica_group_id
+                  ON qsr.replica_group_id = qspfl.replica_group_id
                 ORDER BY
                     qsr.replica_group_id;
             END;
@@ -10924,8 +10924,8 @@ BEGIN
                     1/0
                 FROM #query_store_replicas AS qsr
                 JOIN #query_store_plan_forcing_locations AS qspfl
-                    ON  qsr.replica_group_id = qspfl.replica_group_id
-                    AND qsr.replica_group_id = qspfl.database_id
+                  ON  qsr.replica_group_id = qspfl.replica_group_id
+                  AND qsr.replica_group_id = qspfl.database_id
             )
             BEGIN
                 SELECT
@@ -10943,8 +10943,8 @@ BEGIN
                     qspfl.replica_group_id
                 FROM #query_store_replicas AS qsr
                 JOIN #query_store_plan_forcing_locations AS qspfl
-                ON  qsr.replica_group_id = qspfl.replica_group_id
-                AND qsr.database_id = qspfl.database_id
+                  ON  qsr.replica_group_id = qspfl.replica_group_id
+                  AND qsr.database_id = qspfl.database_id
                 ORDER BY
                     qsr.replica_group_id
                 OPTION(RECOMPILE);
