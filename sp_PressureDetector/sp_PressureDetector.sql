@@ -1420,13 +1420,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     total_per_second =
                         FORMAT
                         (
-                            dopc.cntr_value / 
+                            dopc.cntr_value /
                             DATEDIFF
                             (
-                                SECOND, 
-                                dopc.sample_time, 
+                                SECOND,
+                                dopc.sample_time,
                                 SYSDATETIME()
-                            ), 
+                            ),
                             'N0'
                         )
                 FROM @dm_os_performance_counters AS dopc
@@ -2400,7 +2400,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             requested_memory_gb DESC,
             deqmg.request_time
         OPTION(MAXDOP 1, RECOMPILE);
-        
+
         SET LOCK_TIMEOUT -1;
         '
                   );
@@ -2957,7 +2957,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                   ELSE N'
                 der.cpu_time DESC
             OPTION(MAXDOP 1, RECOMPILE);
-            
+
             SET LOCK_TIMEOUT -1;
             '
               END

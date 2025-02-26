@@ -1,9 +1,9 @@
-﻿USE StackOverflow2013;
+USE StackOverflow2013;
 SET NOCOUNT ON;
 EXEC dbo.DropIndexes;
 IF @@TRANCOUNT > 0
 BEGIN
-    SELECT 
+    SELECT
         tc = @@TRANCOUNT;
     ROLLBACK;
 END;
@@ -53,33 +53,33 @@ GO
 
 
 /*
-███████╗██╗   ██╗███████╗██████╗ ██╗   ██╗████████╗██╗  ██╗██╗███╗   ██╗ ██████╗                                       
-██╔════╝██║   ██║██╔════╝██╔══██╗╚██╗ ██╔╝╚══██╔══╝██║  ██║██║████╗  ██║██╔════╝                                       
-█████╗  ██║   ██║█████╗  ██████╔╝ ╚████╔╝    ██║   ███████║██║██╔██╗ ██║██║  ███╗                                      
-██╔══╝  ╚██╗ ██╔╝██╔══╝  ██╔══██╗  ╚██╔╝     ██║   ██╔══██║██║██║╚██╗██║██║   ██║                                      
-███████╗ ╚████╔╝ ███████╗██║  ██║   ██║      ██║   ██║  ██║██║██║ ╚████║╚██████╔╝                                      
-╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝                                       
-                                                                                                                       
-██╗   ██╗ ██████╗ ██╗   ██╗    ██╗  ██╗███╗   ██╗ ██████╗ ██╗    ██╗     █████╗ ██████╗  ██████╗ ██╗   ██╗████████╗    
-╚██╗ ██╔╝██╔═══██╗██║   ██║    ██║ ██╔╝████╗  ██║██╔═══██╗██║    ██║    ██╔══██╗██╔══██╗██╔═══██╗██║   ██║╚══██╔══╝    
- ╚████╔╝ ██║   ██║██║   ██║    █████╔╝ ██╔██╗ ██║██║   ██║██║ █╗ ██║    ███████║██████╔╝██║   ██║██║   ██║   ██║       
-  ╚██╔╝  ██║   ██║██║   ██║    ██╔═██╗ ██║╚██╗██║██║   ██║██║███╗██║    ██╔══██║██╔══██╗██║   ██║██║   ██║   ██║       
-   ██║   ╚██████╔╝╚██████╔╝    ██║  ██╗██║ ╚████║╚██████╔╝╚███╔███╔╝    ██║  ██║██████╔╝╚██████╔╝╚██████╔╝   ██║       
-   ╚═╝    ╚═════╝  ╚═════╝     ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝  ╚══╝╚══╝     ╚═╝  ╚═╝╚═════╝  ╚═════╝  ╚═════╝    ╚═╝       
-                                                                                                                       
+███████╗██╗   ██╗███████╗██████╗ ██╗   ██╗████████╗██╗  ██╗██╗███╗   ██╗ ██████╗
+██╔════╝██║   ██║██╔════╝██╔══██╗╚██╗ ██╔╝╚══██╔══╝██║  ██║██║████╗  ██║██╔════╝
+█████╗  ██║   ██║█████╗  ██████╔╝ ╚████╔╝    ██║   ███████║██║██╔██╗ ██║██║  ███╗
+██╔══╝  ╚██╗ ██╔╝██╔══╝  ██╔══██╗  ╚██╔╝     ██║   ██╔══██║██║██║╚██╗██║██║   ██║
+███████╗ ╚████╔╝ ███████╗██║  ██║   ██║      ██║   ██║  ██║██║██║ ╚████║╚██████╔╝
+╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝   ╚═╝      ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝ ╚═════╝
+
+██╗   ██╗ ██████╗ ██╗   ██╗    ██╗  ██╗███╗   ██╗ ██████╗ ██╗    ██╗     █████╗ ██████╗  ██████╗ ██╗   ██╗████████╗
+╚██╗ ██╔╝██╔═══██╗██║   ██║    ██║ ██╔╝████╗  ██║██╔═══██╗██║    ██║    ██╔══██╗██╔══██╗██╔═══██╗██║   ██║╚══██╔══╝
+ ╚████╔╝ ██║   ██║██║   ██║    █████╔╝ ██╔██╗ ██║██║   ██║██║ █╗ ██║    ███████║██████╔╝██║   ██║██║   ██║   ██║
+  ╚██╔╝  ██║   ██║██║   ██║    ██╔═██╗ ██║╚██╗██║██║   ██║██║███╗██║    ██╔══██║██╔══██╗██║   ██║██║   ██║   ██║
+   ██║   ╚██████╔╝╚██████╔╝    ██║  ██╗██║ ╚████║╚██████╔╝╚███╔███╔╝    ██║  ██║██████╔╝╚██████╔╝╚██████╔╝   ██║
+   ╚═╝    ╚═════╝  ╚═════╝     ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝  ╚══╝╚══╝     ╚═╝  ╚═╝╚═════╝  ╚═════╝  ╚═════╝    ╚═╝
+
 ██╗███████╗ ██████╗ ██╗      █████╗ ████████╗██╗ ██████╗ ███╗   ██╗    ██╗     ███████╗██╗   ██╗███████╗██╗     ███████╗
 ██║██╔════╝██╔═══██╗██║     ██╔══██╗╚══██╔══╝██║██╔═══██╗████╗  ██║    ██║     ██╔════╝██║   ██║██╔════╝██║     ██╔════╝
 ██║███████╗██║   ██║██║     ███████║   ██║   ██║██║   ██║██╔██╗ ██║    ██║     █████╗  ██║   ██║█████╗  ██║     ███████╗
 ██║╚════██║██║   ██║██║     ██╔══██║   ██║   ██║██║   ██║██║╚██╗██║    ██║     ██╔══╝  ╚██╗ ██╔╝██╔══╝  ██║     ╚════██║
 ██║███████║╚██████╔╝███████╗██║  ██║   ██║   ██║╚██████╔╝██║ ╚████║    ███████╗███████╗ ╚████╔╝ ███████╗███████╗███████║
 ╚═╝╚══════╝ ╚═════╝ ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝    ╚══════╝╚══════╝  ╚═══╝  ╚══════╝╚══════╝╚══════╝
-                                                                                                                       
-██╗███████╗    ██╗    ██╗██████╗  ██████╗ ███╗   ██╗ ██████╗                                                           
-██║██╔════╝    ██║    ██║██╔══██╗██╔═══██╗████╗  ██║██╔════╝                                                           
-██║███████╗    ██║ █╗ ██║██████╔╝██║   ██║██╔██╗ ██║██║  ███╗                                                          
-██║╚════██║    ██║███╗██║██╔══██╗██║   ██║██║╚██╗██║██║   ██║                                                          
-██║███████║    ╚███╔███╔╝██║  ██║╚██████╔╝██║ ╚████║╚██████╔╝                                                          
-╚═╝╚══════╝     ╚══╝╚══╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝                                                       
+
+██╗███████╗    ██╗    ██╗██████╗  ██████╗ ███╗   ██╗ ██████╗
+██║██╔════╝    ██║    ██║██╔══██╗██╔═══██╗████╗  ██║██╔════╝
+██║███████╗    ██║ █╗ ██║██████╔╝██║   ██║██╔██╗ ██║██║  ███╗
+██║╚════██║    ██║███╗██║██╔══██╗██║   ██║██║╚██╗██║██║   ██║
+██║███████║    ╚███╔███╔╝██║  ██║╚██████╔╝██║ ╚████║╚██████╔╝
+╚═╝╚══════╝     ╚══╝╚══╝ ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝
 */
 
 
@@ -98,8 +98,8 @@ GO
 ██╔══╝  ██╔══██╗██║██╔═██╗     ██║  ██║██╔══██║██╔══██╗██║     ██║██║╚██╗██║██║   ██║
 ███████╗██║  ██║██║██║  ██╗    ██████╔╝██║  ██║██║  ██║███████╗██║██║ ╚████║╚██████╔╝
 ╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝╚═╝  ╚═══╝ ╚═════╝
-       
-    Consultant With Very Reasonable Rates™️  
+
+    Consultant With Very Reasonable Rates™️
 
     W: erikdarling.com
     E: erik@erikdarling.com
@@ -195,11 +195,11 @@ BEGIN TRANSACTION;
     UPDATE
         p
     SET
-        p.LastActivityDate = 
+        p.LastActivityDate =
             DATEADD
             (
-                MILLISECOND, 
-                1, 
+                MILLISECOND,
+                1,
                 p.LastActivityDate
             )
     FROM dbo.Posts AS p
@@ -228,13 +228,13 @@ OPTION(MAXDOP 1);
 /*Put this one in a new window, run third*/
 USE StackOverflow2013;
 SET NOCOUNT ON;
-    
+
     UPDATE
         p
     SET
         p.PostTypeId = 1
     FROM dbo.Posts AS p
-    WHERE p.Id IN 
+    WHERE p.Id IN
     (
         11227877,
         11227902,
@@ -244,12 +244,12 @@ SET NOCOUNT ON;
         14889969,
         16184827,
         17782979,
-        17828251        
+        17828251
     );
 
 
 /*
-After you run this, roll back the update 
+After you run this, roll back the update
 query and look at the select query results
  * What is PostTypeId now?
  * How do you feel about that?
@@ -263,7 +263,7 @@ UPDATE
 SET
     p.PostTypeId = 2
 FROM dbo.Posts AS p
-WHERE p.Id IN 
+WHERE p.Id IN
 (
     11227877,
     11227902,
@@ -273,7 +273,7 @@ WHERE p.Id IN
     14889969,
     16184827,
     17782979,
-    17828251        
+    17828251
 );
 
 
@@ -320,7 +320,7 @@ The vast majority of applications don't need RR/SZ across the board
 /*Don't pretend you don't have one.*/
 USE Crap;
 SET NOCOUNT ON;
-GO 
+GO
 
 /*el tiablo*/
 DROP TABLE IF EXISTS
@@ -334,7 +334,7 @@ CREATE TABLE
     id bigint NOT NULL
        PRIMARY KEY CLUSTERED,
     a_thing integer NOT NULL,
-    a_date datetime2(7) NOT NULL 
+    a_date datetime2(7) NOT NULL
         DEFAULT SYSDATETIME()
 );
 
@@ -355,9 +355,9 @@ VALUES
      (9, 90);
 
 /*
-Repeatable Read 
+Repeatable Read
  * Only locks rows that it has read
- * Allows changes *around* locked keys 
+ * Allows changes *around* locked keys
  * Does not allow changes *to* locked keys
 
 */
@@ -366,17 +366,17 @@ Repeatable Read
 /*New window, scroll to stop message*/
 USE Crap;
 SET NOCOUNT ON;
-GO 
+GO
 
 /*First, prove that keys are locked*/
-BEGIN TRANSACTION; 
+BEGIN TRANSACTION;
     UPDATE
         p
-    SET 
+    SET
         p.id = 10,
         p.a_thing = 100
     FROM dbo.Pessimism AS p
-    WHERE p.id = 1;   
+    WHERE p.id = 1;
 ROLLBACK TRANSACTION;
 
 /*Even Stevens, allowed by Repeatable Read*/
@@ -413,7 +413,7 @@ BEGIN TRANSACTION;
 
     UPDATE
         p
-    SET 
+    SET
         p.id = 2,
         p.a_thing = 20
     FROM dbo.Pessimism AS p
@@ -454,7 +454,7 @@ ROLLBACK TRANSACTION;
 
 
 /*
-Serializable 
+Serializable
  * Only locks rows that it has read
  * Blocks movement between keys (key range locks)
  * Is not a point in time from the *start* of the transaction
@@ -468,7 +468,7 @@ Serializable
 /*Put this one in a new window*/
 USE Crap;
 SET NOCOUNT ON;
-GO 
+GO
 
 BEGIN TRANSACTION;
     INSERT
@@ -492,7 +492,7 @@ COMMIT TRANSACTION;
 /*Make sure nothing weird is open*/
 IF @@TRANCOUNT > 0
 BEGIN
-    SELECT 
+    SELECT
         tc = @@TRANCOUNT;
     ROLLBACK;
 END;
@@ -506,7 +506,7 @@ BEGIN TRANSACTION;
     AND   1 = (SELECT 1);
     /*Stop here and show the inserts*/
 
-    
+
     /*Run this after the inserts*/
     SELECT
         p.*
@@ -530,9 +530,9 @@ BEGIN TRANSACTION;
         p.*
     FROM dbo.Pessimism AS p WITH (SERIALIZABLE, ROWLOCK)
     WHERE p.id < 5
-    
-    UNION ALL 
-    
+
+    UNION ALL
+
     /* Lock = 5 */
     SELECT
         p.*
@@ -549,13 +549,13 @@ Under Serializable
     a consistent "snapshot" view of the data for
     *both* Serializable queries within it,
     at least not from the *start* of the transaction.
-  
+
   * It does provide a consistent snapshot of the data
     as of the time the transaction *commits*,
     this presents the ~unchanging view~ of the data
-  
+
   * What you don't know: the logical order that
-    your transaction occurred among other 
+    your transaction occurred among other
     concurrent transactions
 
 */
@@ -572,8 +572,8 @@ Under Serializable
 /*
 ██╗    ██╗██╗  ██╗██╗   ██╗    ██╗    ██╗      ██████╗ ██╗   ██╗███████╗
 ██║    ██║██║  ██║╚██╗ ██╔╝    ██║    ██║     ██╔═══██╗██║   ██║██╔════╝
-██║ █╗ ██║███████║ ╚████╔╝     ██║    ██║     ██║   ██║██║   ██║█████╗ 
-██║███╗██║██╔══██║  ╚██╔╝      ██║    ██║     ██║   ██║╚██╗ ██╔╝██╔══╝ 
+██║ █╗ ██║███████║ ╚████╔╝     ██║    ██║     ██║   ██║██║   ██║█████╗
+██║███╗██║██╔══██║  ╚██╔╝      ██║    ██║     ██║   ██║╚██╗ ██╔╝██╔══╝
 ╚███╔███╔╝██║  ██║   ██║       ██║    ███████╗╚██████╔╝ ╚████╔╝ ███████╗
  ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝       ╚═╝    ╚══════╝ ╚═════╝   ╚═══╝  ╚══════╝
 
@@ -583,7 +583,7 @@ Under Serializable
 ██║╚██╗██║██║   ██║██║     ██║   ██║██║     ██╔═██╗
 ██║ ╚████║╚██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗
 ╚═╝  ╚═══╝ ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
-                                                   
+
 (Which is the same thing as Read Uncommmitted, gosh darnit)
 
 Because I'm A Consultant: More NOLOCK, More Money
@@ -599,7 +599,7 @@ The only other thing produces as much money as NOLOCK is:
 Because No One Knows What It Does:
  * I've heard hundreds of developers say "it keeps my query from taking locks"
  * It *still takes* locks (Sch-S), what it really does is IGNORE LOCKS
-   
+
 These are the phenomena you can see under *Read Committed*
   * See the same row twice with the same values
   * See the same row twice with different values
@@ -661,7 +661,7 @@ SELECT
 
 /*Feed the other some data*/
 INSERT
-    dbo.lock 
+    dbo.lock
 (
     id,
     lock
@@ -675,9 +675,9 @@ USE Crap;
 SET NOCOUNT ON;
 
 BEGIN TRAN;
-    UPDATE 
+    UPDATE
         l
-    SET 
+    SET
         l.lock = 2147483647
     FROM dbo.lock AS l;
     /*Stop here*/
@@ -740,7 +740,7 @@ Most concerns about race conditions are true for Read Committed, too
  * Your queries probably all use NOLOCK anyway
  * Your code patterns are probably susceptible to race conditions anyway
  * Read Committed doesn't guarantee much anyway
- 
+
 Blocking and Deadlocking between read and write queries is stupid
 
 Let's talk about why you should *probably* choose an
@@ -779,7 +779,7 @@ SET NOCOUNT ON;
 /*Make sure nothing weird is open*/
 IF @@TRANCOUNT > 0
 BEGIN
-    SELECT 
+    SELECT
         tc = @@TRANCOUNT;
     ROLLBACK;
 END;
@@ -861,9 +861,9 @@ SET STATISTICS XML OFF;
 
 WHILE 1 = 1
 BEGIN
-    UPDATE 
+    UPDATE
         t
-    SET 
+    SET
         t.totals += 1
     FROM dbo.two AS t;
 END;
@@ -919,26 +919,26 @@ Result
 
 
 /*
-██████╗ ███████╗ █████╗ ██████╗                                                               
-██╔══██╗██╔════╝██╔══██╗██╔══██╗                                                              
-██████╔╝█████╗  ███████║██║  ██║                                                              
-██╔══██╗██╔══╝  ██╔══██║██║  ██║                                                              
-██║  ██║███████╗██║  ██║██████╔╝                                                              
-╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝                                                               
-                                                                                              
- ██████╗ ██████╗ ███╗   ███╗███╗   ███╗██╗████████╗████████╗███████╗██████╗                   
-██╔════╝██╔═══██╗████╗ ████║████╗ ████║██║╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗██╗               
-██║     ██║   ██║██╔████╔██║██╔████╔██║██║   ██║      ██║   █████╗  ██║  ██║╚═╝               
-██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██║   ██║      ██║   ██╔══╝  ██║  ██║██╗               
-╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║   ██║      ██║   ███████╗██████╔╝╚═╝               
- ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═════╝                   
-                                                                                              
+██████╗ ███████╗ █████╗ ██████╗
+██╔══██╗██╔════╝██╔══██╗██╔══██╗
+██████╔╝█████╗  ███████║██║  ██║
+██╔══██╗██╔══╝  ██╔══██║██║  ██║
+██║  ██║███████╗██║  ██║██████╔╝
+╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝
+
+ ██████╗ ██████╗ ███╗   ███╗███╗   ███╗██╗████████╗████████╗███████╗██████╗
+██╔════╝██╔═══██╗████╗ ████║████╗ ████║██║╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗██╗
+██║     ██║   ██║██╔████╔██║██╔████╔██║██║   ██║      ██║   █████╗  ██║  ██║╚═╝
+██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██║   ██║      ██║   ██╔══╝  ██║  ██║██╗
+╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║   ██║      ██║   ███████╗██████╔╝╚═╝
+ ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═════╝
+
 ███╗   ██╗ ██████╗ ████████╗    ███████╗ ██████╗      ██████╗ ██████╗ ███████╗ █████╗ ████████╗
 ████╗  ██║██╔═══██╗╚══██╔══╝    ██╔════╝██╔═══██╗    ██╔════╝ ██╔══██╗██╔════╝██╔══██╗╚══██╔══╝
-██╔██╗ ██║██║   ██║   ██║       ███████╗██║   ██║    ██║  ███╗██████╔╝█████╗  ███████║   ██║  
-██║╚██╗██║██║   ██║   ██║       ╚════██║██║   ██║    ██║   ██║██╔══██╗██╔══╝  ██╔══██║   ██║  
-██║ ╚████║╚██████╔╝   ██║       ███████║╚██████╔╝    ╚██████╔╝██║  ██║███████╗██║  ██║   ██║  
-╚═╝  ╚═══╝ ╚═════╝    ╚═╝       ╚══════╝ ╚═════╝      ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝   ╚═╝  
+██╔██╗ ██║██║   ██║   ██║       ███████╗██║   ██║    ██║  ███╗██████╔╝█████╗  ███████║   ██║
+██║╚██╗██║██║   ██║   ██║       ╚════██║██║   ██║    ██║   ██║██╔══██╗██╔══╝  ██╔══██║   ██║
+██║ ╚████║╚██████╔╝   ██║       ███████║╚██████╔╝    ╚██████╔╝██║  ██║███████╗██║  ██║   ██║
+╚═╝  ╚═══╝ ╚═════╝    ╚═╝       ╚══════╝ ╚═════╝      ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝   ╚═╝
 
 Read Committed kinda stinks.
 
@@ -979,27 +979,27 @@ which cause a lot of blocking problems.
 
 
 /*
-████████╗██╗  ██╗███████╗    ██████╗ ███████╗██████╗ ██╗██╗     ███████╗   
-╚══██╔══╝██║  ██║██╔════╝    ██╔══██╗██╔════╝██╔══██╗██║██║     ██╔════╝   
-   ██║   ███████║█████╗      ██████╔╝█████╗  ██████╔╝██║██║     ███████╗   
-   ██║   ██╔══██║██╔══╝      ██╔═══╝ ██╔══╝  ██╔══██╗██║██║     ╚════██║   
-   ██║   ██║  ██║███████╗    ██║     ███████╗██║  ██║██║███████╗███████║   
-   ╚═╝   ╚═╝  ╚═╝╚══════╝    ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝   
-                                                                           
- ██████╗ ███████╗    ██████╗ ███████╗ █████╗ ██████╗                       
-██╔═══██╗██╔════╝    ██╔══██╗██╔════╝██╔══██╗██╔══██╗                      
-██║   ██║█████╗      ██████╔╝█████╗  ███████║██║  ██║                      
-██║   ██║██╔══╝      ██╔══██╗██╔══╝  ██╔══██║██║  ██║                      
-╚██████╔╝██║         ██║  ██║███████╗██║  ██║██████╔╝                      
- ╚═════╝ ╚═╝         ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝                       
-                                                                           
+████████╗██╗  ██╗███████╗    ██████╗ ███████╗██████╗ ██╗██╗     ███████╗
+╚══██╔══╝██║  ██║██╔════╝    ██╔══██╗██╔════╝██╔══██╗██║██║     ██╔════╝
+   ██║   ███████║█████╗      ██████╔╝█████╗  ██████╔╝██║██║     ███████╗
+   ██║   ██╔══██║██╔══╝      ██╔═══╝ ██╔══╝  ██╔══██╗██║██║     ╚════██║
+   ██║   ██║  ██║███████╗    ██║     ███████╗██║  ██║██║███████╗███████║
+   ╚═╝   ╚═╝  ╚═╝╚══════╝    ╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝╚══════╝╚══════╝
+
+ ██████╗ ███████╗    ██████╗ ███████╗ █████╗ ██████╗
+██╔═══██╗██╔════╝    ██╔══██╗██╔════╝██╔══██╗██╔══██╗
+██║   ██║█████╗      ██████╔╝█████╗  ███████║██║  ██║
+██║   ██║██╔══╝      ██╔══██╗██╔══╝  ██╔══██║██║  ██║
+╚██████╔╝██║         ██║  ██║███████╗██║  ██║██████╔╝
+ ╚═════╝ ╚═╝         ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝
+
  ██████╗ ██████╗ ███╗   ███╗███╗   ███╗██╗████████╗████████╗███████╗██████╗
 ██╔════╝██╔═══██╗████╗ ████║████╗ ████║██║╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗
 ██║     ██║   ██║██╔████╔██║██╔████╔██║██║   ██║      ██║   █████╗  ██║  ██║
 ██║     ██║   ██║██║╚██╔╝██║██║╚██╔╝██║██║   ██║      ██║   ██╔══╝  ██║  ██║
 ╚██████╗╚██████╔╝██║ ╚═╝ ██║██║ ╚═╝ ██║██║   ██║      ██║   ███████╗██████╔╝
  ╚═════╝ ╚═════╝ ╚═╝     ╚═╝╚═╝     ╚═╝╚═╝   ╚═╝      ╚═╝   ╚══════╝╚═════╝
-                                                                           
+
 These are the types of inconsistencies that can happen under Read Committed (pessimistic)
 
 Remember that it's a very weak isolation level, and can encounter many of the same
@@ -1017,11 +1017,11 @@ types of inconsitencies that Read Uncommitted can, with the exception of dirty r
 +-----------------------------------+---------------+------------+--------------------+--------------+
 
 Dirty Reads:
- * If a transaction reads data that has been modified 
+ * If a transaction reads data that has been modified
    by another transaction but not yet committed.
 
 Nonrepeatable Reads:
- * If a transaction reads the same row twice 
+ * If a transaction reads the same row twice
    and finds different data each time.
 
 Phantom Reads:
@@ -1036,7 +1036,7 @@ Phantom Reads:
 /*Make sure nothing weird is open*/
 IF @@TRANCOUNT > 0
 BEGIN
-    SELECT 
+    SELECT
         tc = @@TRANCOUNT;
     ROLLBACK;
 END;
@@ -1112,9 +1112,9 @@ ORDER BY
 /*
 Execute this here.
 
-Start the transaction, run the first update, 
+Start the transaction, run the first update,
 and then go run the select query in the other window
-with GO 2 unquoted. 
+with GO 2 unquoted.
 
 It will get blocked on id 7, then we can make changes
 to a bunch of other rows and see the results.
@@ -1207,20 +1207,20 @@ Imagine circumstances like this under high concurrency.
 
 
 /*
-██████╗ ███████╗ █████╗ ██████╗                         
-██╔══██╗██╔════╝██╔══██╗██╔══██╗                        
-██████╔╝█████╗  ███████║██║  ██║                        
-██╔══██╗██╔══╝  ██╔══██║██║  ██║                        
-██║  ██║███████╗██║  ██║██████╔╝                        
-╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝                         
-                                                        
+██████╗ ███████╗ █████╗ ██████╗
+██╔══██╗██╔════╝██╔══██╗██╔══██╗
+██████╔╝█████╗  ███████║██║  ██║
+██╔══██╗██╔══╝  ██╔══██║██║  ██║
+██║  ██║███████╗██║  ██║██████╔╝
+╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝
+
 ██████╗ ██╗      ██████╗  ██████╗██╗  ██╗███████╗██████╗
 ██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝██╔════╝██╔══██╗
 ██████╔╝██║     ██║   ██║██║     █████╔╝ █████╗  ██████╔╝
 ██╔══██╗██║     ██║   ██║██║     ██╔═██╗ ██╔══╝  ██╔══██╗
 ██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗███████╗██║  ██║
 ╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
-                                                        
+
 Under Read Committed (pessimistic, locking)
 read queries can block modification queries
 
@@ -1232,7 +1232,7 @@ Let's look at how
 /*Make sure nothing weird is open*/
 IF @@TRANCOUNT > 0
 BEGIN
-    SELECT 
+    SELECT
         tc = @@TRANCOUNT;
     ROLLBACK;
 END;
@@ -1306,20 +1306,20 @@ ROLLBACK;
 
 
 /*
-██████╗ ███████╗ █████╗ ██████╗                                 
-██╔══██╗██╔════╝██╔══██╗██╔══██╗                                
-██████╔╝█████╗  ███████║██║  ██║                                
-██╔══██╗██╔══╝  ██╔══██║██║  ██║                                
-██║  ██║███████╗██║  ██║██████╔╝                                
-╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝                                 
-                                                                
+██████╗ ███████╗ █████╗ ██████╗
+██╔══██╗██╔════╝██╔══██╗██╔══██╗
+██████╔╝█████╗  ███████║██║  ██║
+██╔══██╗██╔══╝  ██╔══██║██║  ██║
+██║  ██║███████╗██║  ██║██████╔╝
+╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝
+
 ██████╗ ███████╗ █████╗ ██████╗ ██╗      ██████╗  ██████╗██╗  ██╗
 ██╔══██╗██╔════╝██╔══██╗██╔══██╗██║     ██╔═══██╗██╔════╝██║ ██╔╝
 ██║  ██║█████╗  ███████║██║  ██║██║     ██║   ██║██║     █████╔╝
 ██║  ██║██╔══╝  ██╔══██║██║  ██║██║     ██║   ██║██║     ██╔═██╗
 ██████╔╝███████╗██║  ██║██████╔╝███████╗╚██████╔╝╚██████╗██║  ██╗
 ╚═════╝ ╚══════╝╚═╝  ╚═╝╚═════╝ ╚══════╝ ╚═════╝  ╚═════╝╚═╝  ╚═╝
-                                                               
+
 Similarly, read queries can deadlock with write queries
 
 */
@@ -1328,7 +1328,7 @@ Similarly, read queries can deadlock with write queries
 /*Make sure nothing weird is open*/
 IF @@TRANCOUNT > 0
 BEGIN
-    SELECT 
+    SELECT
         tc = @@TRANCOUNT;
     ROLLBACK;
 END;
@@ -1419,17 +1419,17 @@ To fix the deadlock:
  ██████╗ ██████╗ ███╗   ██╗ ██████╗██╗   ██╗██████╗ ██████╗ ███████╗███╗   ██╗ ██████╗██╗   ██╗
 ██╔════╝██╔═══██╗████╗  ██║██╔════╝██║   ██║██╔══██╗██╔══██╗██╔════╝████╗  ██║██╔════╝╚██╗ ██╔╝
 ██║     ██║   ██║██╔██╗ ██║██║     ██║   ██║██████╔╝██████╔╝█████╗  ██╔██╗ ██║██║      ╚████╔╝
-██║     ██║   ██║██║╚██╗██║██║     ██║   ██║██╔══██╗██╔══██╗██╔══╝  ██║╚██╗██║██║       ╚██╔╝ 
-╚██████╗╚██████╔╝██║ ╚████║╚██████╗╚██████╔╝██║  ██║██║  ██║███████╗██║ ╚████║╚██████╗   ██║  
- ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝ ╚═════╝   ╚═╝  
-                                                                                              
-███████╗███████╗███╗   ██╗███████╗██╗████████╗██╗██╗   ██╗██╗████████╗██╗   ██╗               
-██╔════╝██╔════╝████╗  ██║██╔════╝██║╚══██╔══╝██║██║   ██║██║╚══██╔══╝╚██╗ ██╔╝               
-███████╗█████╗  ██╔██╗ ██║███████╗██║   ██║   ██║██║   ██║██║   ██║    ╚████╔╝                
-╚════██║██╔══╝  ██║╚██╗██║╚════██║██║   ██║   ██║╚██╗ ██╔╝██║   ██║     ╚██╔╝                 
-███████║███████╗██║ ╚████║███████║██║   ██║   ██║ ╚████╔╝ ██║   ██║      ██║                  
-╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝   ╚═╝   ╚═╝  ╚═══╝  ╚═╝   ╚═╝      ╚═╝                  
-                                                                                              
+██║     ██║   ██║██║╚██╗██║██║     ██║   ██║██╔══██╗██╔══██╗██╔══╝  ██║╚██╗██║██║       ╚██╔╝
+╚██████╗╚██████╔╝██║ ╚████║╚██████╗╚██████╔╝██║  ██║██║  ██║███████╗██║ ╚████║╚██████╗   ██║
+ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝ ╚═════╝   ╚═╝
+
+███████╗███████╗███╗   ██╗███████╗██╗████████╗██╗██╗   ██╗██╗████████╗██╗   ██╗
+██╔════╝██╔════╝████╗  ██║██╔════╝██║╚══██╔══╝██║██║   ██║██║╚══██╔══╝╚██╗ ██╔╝
+███████╗█████╗  ██╔██╗ ██║███████╗██║   ██║   ██║██║   ██║██║   ██║    ╚████╔╝
+╚════██║██╔══╝  ██║╚██╗██║╚════██║██║   ██║   ██║╚██╗ ██╔╝██║   ██║     ╚██╔╝
+███████║███████╗██║ ╚████║███████║██║   ██║   ██║ ╚████╔╝ ██║   ██║      ██║
+╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝   ╚═╝   ╚═╝  ╚═══╝  ╚═╝   ╚═╝      ╚═╝
+
 You're smart if you use an optimistic isolation level, because the behavior is reliable
  * Read Uncommitted makes almost no guarantees
  * Read Committed makes flimsy guarantees
@@ -1504,7 +1504,7 @@ Code patterns that can give you unexpected results under:
 BEGIN TRANSACTION;
     DECLARE
         @NextUser integer;
-   
+
     SELECT TOP (1)
         @NextUser = u.Id
     FROM dbo.Users AS u /*WITH(UPDLOCK, SERIALIZABLE)*/
@@ -1522,12 +1522,12 @@ BEGIN TRANSACTION;
     What if someone else logs in after you assign this variable?
      * What locking hints do you need each time you touch the Users table?
      * Do you need a transaction to protect the entire thing?
-   
+
     Look at the join order
      * What if someone logs in after the first scan of the Users table?
-   
+
     */
-    
+
     UPDATE
         u
     SET
@@ -1565,9 +1565,9 @@ BEGIN TRANSACTION;
             tsbu.QuestionScore
         FROM dbo.TotalScoreByUser AS tsbu /*WITH(UPDLOCK, SERIALIZABLE)*/
         /*Brief Read Committed locks only here*/
-   
+
         UNION ALL
-   
+
         SELECT
             tsbu.Id,
             tsbu.AnswerScore
@@ -1576,7 +1576,7 @@ BEGIN TRANSACTION;
     ) AS x (Id, Score)
     GROUP BY
         x.Id;
-   
+
     /*
     What if stuff changes here?
 
@@ -1621,9 +1621,9 @@ BEGIN TRANSACTION;
                 tsbu.QuestionScore
             FROM dbo.TotalScoreByUser AS tsbu /*WITH(UPDLOCK, SERIALIZABLE)*/
             /*Brief Read Committed locks only here*/
-       
+
             UNION ALL
-       
+
             SELECT
                 tsbu.Id,
                 tsbu.AnswerScore
@@ -1684,12 +1684,12 @@ BEGIN TRANSACTION;
             t.AnswerScore = x.AnswerScore,
             t.TotalScore = x.TotalScore,
             t.MaxScore = x.MaxScore
-    WHEN NOT MATCHED 
+    WHEN NOT MATCHED
       BY TARGET
     THEN
         INSERT (  Id,   DisplayName,   QuestionScore,   AnswerScore,   TotalScore,   MaxScore)
         VALUES (x.Id, x.DisplayName, x.QuestionScore, x.AnswerScore, x.TotalScore, x.MaxScore)
-    WHEN NOT MATCHED 
+    WHEN NOT MATCHED
       BY SOURCE
     THEN
         DELETE;
@@ -1741,13 +1741,13 @@ Things to watch out for if you start using an optimistic isolation level:
 ╚════██║██║    ╚██╗ ██╔╝╚════██║
 ███████║██║     ╚████╔╝ ███████║
 ╚══════╝╚═╝      ╚═══╝  ╚══════╝
-                                
-██████╗  ██████╗███████╗██╗     
-██╔══██╗██╔════╝██╔════╝██║     
-██████╔╝██║     ███████╗██║     
-██╔══██╗██║     ╚════██║██║     
-██║  ██║╚██████╗███████║██║     
-╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝     
+
+██████╗  ██████╗███████╗██╗
+██╔══██╗██╔════╝██╔════╝██║
+██████╔╝██║     ███████╗██║
+██╔══██╗██║     ╚════██║██║
+██║  ██║╚██████╗███████║██║
+╚═╝  ╚═╝ ╚═════╝╚══════╝╚═╝
 
 If we're talking behavior, I like Snapshot Isolation (SI) better
 than Read Committed Snapshot Isolation (RCSI), but it's sort of a pain.
@@ -1755,14 +1755,14 @@ than Read Committed Snapshot Isolation (RCSI), but it's sort of a pain.
 Every query has to ask for it:
  * SET TRANSACTION ISOLATION LEVEL SNAPSHOT;
 
-For some, this is attractive because they can test the behavior of specific 
+For some, this is attractive because they can test the behavior of specific
 queries under concurrency to see if they indeed have race conditions before
 enabling RCSI. This is a suitable arrangement for some long-term, too.
 
-Some ORMs/data connectors allow you to specify it, 
+Some ORMs/data connectors allow you to specify it,
 but it's not the default for anything in SQL Server
 
-Lots of people get confused, turn it on, never use it, 
+Lots of people get confused, turn it on, never use it,
 and wonder why they still have dumb blocking problems
 
 Both can fall victim to reading stale data from versioned rows
@@ -1785,7 +1785,7 @@ We're going to look at one important difference between the two
 /*Make sure nothing weird is open*/
 IF @@TRANCOUNT > 0
 BEGIN
-    SELECT 
+    SELECT
         tc = @@TRANCOUNT;
     ROLLBACK;
 END;
@@ -1802,7 +1802,7 @@ DROP TABLE IF EXISTS
 CREATE TABLE
     dbo.SnipSnap
 (
-    id integer 
+    id integer
        PRIMARY KEY CLUSTERED,
     a_date datetime NOT NULL,
     a_number bigint NOT NULL
@@ -1855,7 +1855,7 @@ BEGIN TRANSACTION;
     FROM dbo.SnipSnap AS ss;
 
     WAITFOR DELAY '00:00:10.000';
-    
+
     SELECT
         ss.id,
         ss.a_date,
@@ -1885,7 +1885,7 @@ BEGIN TRANSACTION;
     FROM dbo.SnipSnap AS ss;
 
     WAITFOR DELAY '00:00:10.000';
-    
+
     SELECT
         ss.id,
         ss.a_date,
@@ -1927,7 +1927,7 @@ SELECT
 Results:
  * Snapshot Isolation showed consistent results
    from when locks were first taken by a query
-* Read Committed Snapshot Isolation showed consistent 
+* Read Committed Snapshot Isolation showed consistent
   results from when each query started taking locks
 
 */
@@ -1946,19 +1946,19 @@ ALTER DATABASE Crap SET ALLOW_SNAPSHOT_ISOLATION OFF;
 
 
 /*
-██████╗  █████╗  ██████╗███████╗                                            
-██╔══██╗██╔══██╗██╔════╝██╔════╝                                            
-██████╔╝███████║██║     █████╗                                              
-██╔══██╗██╔══██║██║     ██╔══╝                                              
-██║  ██║██║  ██║╚██████╗███████╗                                            
-╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝                                            
-                                                                            
+██████╗  █████╗  ██████╗███████╗
+██╔══██╗██╔══██╗██╔════╝██╔════╝
+██████╔╝███████║██║     █████╗
+██╔══██╗██╔══██║██║     ██╔══╝
+██║  ██║██║  ██║╚██████╗███████╗
+╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝
+
  ██████╗ ██████╗ ███╗   ██╗██████╗ ██╗████████╗██╗ ██████╗ ███╗   ██╗██████╗
 ██╔════╝██╔═══██╗████╗  ██║██╔══██╗██║╚══██╔══╝██║██╔═══██╗████╗  ██║╚════██╗
 ██║     ██║   ██║██╔██╗ ██║██║  ██║██║   ██║   ██║██║   ██║██╔██╗ ██║  ▄███╔╝
 ██║     ██║   ██║██║╚██╗██║██║  ██║██║   ██║   ██║██║   ██║██║╚██╗██║  ▀▀══╝
-╚██████╗╚██████╔╝██║ ╚████║██████╔╝██║   ██║   ██║╚██████╔╝██║ ╚████║  ██╗  
- ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═════╝ ╚═╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝  ╚═╝  
+╚██████╗╚██████╔╝██║ ╚████║██████╔╝██║   ██║   ██║╚██████╔╝██║ ╚████║  ██╗
+ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═════╝ ╚═╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝  ╚═╝
 
 When you might *need* blocking to save yourself from race conditions
 
@@ -1970,7 +1970,7 @@ Let's go to dinner!
 /*Make sure nothing weird is open*/
 IF @@TRANCOUNT > 0
 BEGIN
-    SELECT 
+    SELECT
         tc = @@TRANCOUNT;
     ROLLBACK;
 END;
@@ -1993,7 +1993,7 @@ CREATE TABLE
        IDENTITY,
     name nvarchar(40) NULL,
     seat_number tinyint NULL,
-    is_free bit NOT NULL 
+    is_free bit NOT NULL
             DEFAULT 'false'
 );
 
@@ -2006,7 +2006,7 @@ INSERT
     is_free
 )
 SELECT TOP (6)
-    name = 
+    name =
         CASE m.message_id
              WHEN 21
              THEN NULL
@@ -2027,7 +2027,7 @@ SELECT TOP (6)
             ORDER BY
                 1/0
         ),
-    is_free = 
+    is_free =
         CASE m.severity
              WHEN 20
              THEN 1
@@ -2079,18 +2079,18 @@ BEGIN TRANSACTION;
      DECLARE
          @name nvarchar(40) = 'Erik'; /*Use in first session*/
          --@name nvarchar(40) = REVERSE('Erik'); /*Use in second session*/
-   
-    WITH 
+
+    WITH
         FirstFreeTable AS
     (
-        SELECT TOP (1) 
+        SELECT TOP (1)
             dp.id
         FROM dbo.DinnerPlans AS dp --WITH(READCOMMITTEDLOCK)
         WHERE dp.is_free = 1
     )
-    UPDATE 
+    UPDATE
         dp
-    SET 
+    SET
         dp.[name] = @name,
         dp.is_free = 0
     OUTPUT
@@ -2150,7 +2150,7 @@ There are other query patterns where it may not be work identically, too.
 
 Like I said before, it's unlikely that any isolation level is 100% correct
 for every nook and cranny of your workload, but optimistic ones tend to be
-the better choice for large portions of most workloads that I see. 
+the better choice for large portions of most workloads that I see.
 
 I mean that in the sense that they would be a better choice than Read Committed,
 the default database isolation level for SQL Server.
@@ -2163,9 +2163,9 @@ These are good ways to set reasonable guardrails for the majority of your worklo
 but you will probably always have queries that require different and special handling.
 
 When you consider the sheer amount of NOLOCK hints written to avoid Read Committed
-because of locking and blocking, it's obvious that it's not a good general choice. 
+because of locking and blocking, it's obvious that it's not a good general choice.
 
-Think about the number of people in the world who believe NOLOCK to be a 
+Think about the number of people in the world who believe NOLOCK to be a
 "best practice", even via a misunderstanding of what it means in reality.
 
 Even if you don't leave here aching to use an optimistic isolation level,
@@ -2185,12 +2185,12 @@ results even under pessimistic locking isolation levels without additional prote
 
 
 /*
- ██████╗ ██╗   ██╗███████╗███████╗████████╗██╗ ██████╗ ███╗   ██╗███████╗██████╗ 
+ ██████╗ ██╗   ██╗███████╗███████╗████████╗██╗ ██████╗ ███╗   ██╗███████╗██████╗
 ██╔═══██╗██║   ██║██╔════╝██╔════╝╚══██╔══╝██║██╔═══██╗████╗  ██║██╔════╝╚════██╗
 ██║   ██║██║   ██║█████╗  ███████╗   ██║   ██║██║   ██║██╔██╗ ██║███████╗  ▄███╔╝
-██║▄▄ ██║██║   ██║██╔══╝  ╚════██║   ██║   ██║██║   ██║██║╚██╗██║╚════██║  ▀▀══╝ 
-╚██████╔╝╚██████╔╝███████╗███████║   ██║   ██║╚██████╔╝██║ ╚████║███████║  ██╗   
- ╚══▀▀═╝  ╚═════╝ ╚══════╝╚══════╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝  ╚═╝   
+██║▄▄ ██║██║   ██║██╔══╝  ╚════██║   ██║   ██║██║   ██║██║╚██╗██║╚════██║  ▀▀══╝
+╚██████╔╝╚██████╔╝███████╗███████║   ██║   ██║╚██████╔╝██║ ╚████║███████║  ██╗
+ ╚══▀▀═╝  ╚═════╝ ╚══════╝╚══════╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝  ╚═╝
 
     W: erikdarling.com
     E: erik@erikdarling.com

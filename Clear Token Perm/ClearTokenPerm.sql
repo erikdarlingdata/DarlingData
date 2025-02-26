@@ -135,5 +135,5 @@ SELECT
 FROM dbo.ClearTokenPermLogging AS ctpl;
 
 /*Truncate a log*/
-TRUNCATE TABLE 
+TRUNCATE TABLE
     dbo.ClearTokenPermLogging;
