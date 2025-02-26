@@ -42,8 +42,8 @@ https://github.com/erikdarlingdata/DarlingData
 */
 
 
-IF OBJECT_ID('dbo.sp_PressureDetector') IS NULL
-    EXECUTE ('CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
+IF OBJECT_ID(N'dbo.sp_PressureDetector', N'P') IS NULL
+    EXECUTE (N'CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
 GO
 
 ALTER PROCEDURE
