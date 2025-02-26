@@ -45,9 +45,9 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL
+IF OBJECT_ID(N'dbo.sp_QuickieStore', N'P') IS NULL
    BEGIN
-       EXECUTE ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');
+       EXECUTE (N'CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');
    END;
 GO
 
