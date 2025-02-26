@@ -42,9 +42,9 @@ EXECUTE sp_LogHunter;
 
 */
 
-IF OBJECT_ID('dbo.sp_LogHunter') IS NULL
+IF OBJECT_ID(N'dbo.sp_LogHunter', N'P') IS NULL
    BEGIN
-       EXECUTE ('CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');
+       EXECUTE (N'CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');
    END;
 GO
 
@@ -170,12 +170,13 @@ BEGIN
         RETURN;
     END;
 
-    /*Check if we have sa permissisions*/
+    /*Check if we have sa permissisions, but not care in RDS*/
     IF
     (
         SELECT
             sa = ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0)
     ) = 0
+    AND OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NULL
     BEGIN
        RAISERROR(N'Current user is not a member of sysadmin, so we can''t read the error log', 11, 1) WITH NOWAIT;
        RETURN;
@@ -272,7 +273,7 @@ BEGIN
         @stopper bit = 0, /*stop loop execution safety*/
         @is_rds bit = 
             CASE 
-                WHEN OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log') IS NOT NULL 
+                WHEN OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NOT NULL 
                 THEN 1 
                 ELSE 0 
             END;
