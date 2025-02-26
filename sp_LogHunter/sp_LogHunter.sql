@@ -181,13 +181,6 @@ BEGIN
        RETURN;
     END;
 
-    /*Check if we're using RDS*/
-    IF OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log') IS NOT NULL
-    BEGIN
-       RAISERROR(N'This will not run on Amazon RDS with rdsadmin.dbo.rds_read_error_log because it doesn''t support search strings', 11, 1) WITH NOWAIT;
-       RETURN;
-    END;
-
     /*Check if we're unfortunate*/
     IF
     (
@@ -276,7 +269,13 @@ BEGIN
         @h_log integer = 0 /*high log file id*/,
         @t_searches integer = 0 /*total number of searches to run*/,
         @l_count integer = 1 /*loop count*/,
-        @stopper bit = 0 /*stop loop execution safety*/;
+        @stopper bit = 0, /*stop loop execution safety*/
+        @is_rds bit = 
+            CASE 
+                WHEN OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log') IS NOT NULL 
+                THEN 1 
+                ELSE 0 
+            END;
 
     /*temp tables for holding temporary things*/
     CREATE TABLE
@@ -546,9 +545,23 @@ BEGIN
         INTO @c;
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
-        WHILE @@FETCH_STATUS = 0 AND @stopper = 0
+        WHILE @@FETCH_STATUS = 0 
+        AND   @stopper = 0
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Entering cursor', 0, 1) WITH NOWAIT; END;
+
+            /*If using RDS, need to call a different procedure*/
+            IF @is_rds = 1
+            BEGIN
+                SELECT
+                    @c =
+                        REPLACE
+                        (
+                            @c,
+                            N'master.dbo.xp_readerrorlog',
+                            N'rdsadmin.dbo.rds_read_error_log'
+                        );
+            END;
             
             /*Replace the canary value with the log number we're working in*/
             SELECT
