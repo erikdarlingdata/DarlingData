@@ -1,4 +1,4 @@
--- Compile Date: 02/23/2025 15:21:15 UTC
+-- Compile Date: 02/26/2025 20:38:20 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -33,9 +33,9 @@ For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
 */
 
-IF OBJECT_ID('dbo.sp_HealthParser') IS NULL
+IF OBJECT_ID(N'dbo.sp_HealthParser', N'P') IS NULL
    BEGIN
-       EXECUTE ('CREATE PROCEDURE dbo.sp_HealthParser AS RETURN 138;');
+       EXECUTE (N'CREATE PROCEDURE dbo.sp_HealthParser AS RETURN 138;');
    END;
 GO
 
@@ -398,7 +398,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_os_wait_stats AS dows
         WHERE dows.wait_type IN
         (
-            N'ASYNC_NETWORK_IO', N'AZURE_IMDS_VERSIONS', N'BROKER_EVENTHANDLER', N'BROKER_RECEIVE_WAITFOR',
+            N'ASYNC_IO_COMPLETION', N'AZURE_IMDS_VERSIONS', N'BROKER_EVENTHANDLER', N'BROKER_RECEIVE_WAITFOR',
             N'BROKER_TASK_STOP', N'BROKER_TO_FLUSH', N'BROKER_TRANSMITTER', N'CHECKPOINT_QUEUE',
             N'CHKPT', N'CLR_AUTO_EVENT', N'CLR_MANUAL_EVENT', N'CLR_SEMAPHORE',
             N'DBMIRROR_DBM_EVENT', N'DBMIRROR_DBM_MUTEX', N'DBMIRROR_EVENTS_QUEUE', N'DBMIRROR_SEND',
@@ -2920,9 +2920,9 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-IF OBJECT_ID('dbo.sp_HumanEvents') IS NULL
+IF OBJECT_ID(N'dbo.sp_HumanEvents', N'P') IS NULL
    BEGIN
-       EXECUTE ('CREATE PROCEDURE dbo.sp_HumanEvents AS RETURN 138;');
+       EXECUTE (N'CREATE PROCEDURE dbo.sp_HumanEvents AS RETURN 138;');
    END;
 GO
 
@@ -7698,9 +7698,9 @@ For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
 */
 
-IF OBJECT_ID('dbo.sp_HumanEventsBlockViewer') IS NULL
+IF OBJECT_ID(N'dbo.sp_HumanEventsBlockViewer', N'P') IS NULL
    BEGIN
-       EXECUTE ('CREATE PROCEDURE dbo.sp_HumanEventsBlockViewer AS RETURN 138;');
+       EXECUTE (N'CREATE PROCEDURE dbo.sp_HumanEventsBlockViewer AS RETURN 138;');
    END;
 GO
 
@@ -12273,9 +12273,9 @@ EXECUTE sp_LogHunter;
 
 */
 
-IF OBJECT_ID('dbo.sp_LogHunter') IS NULL
+IF OBJECT_ID(N'dbo.sp_LogHunter', N'P') IS NULL
    BEGIN
-       EXECUTE ('CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');
+       EXECUTE (N'CREATE PROCEDURE dbo.sp_LogHunter AS RETURN 138;');
    END;
 GO
 
@@ -12401,21 +12401,15 @@ BEGIN
         RETURN;
     END;
 
-    /*Check if we have sa permissisions*/
+    /*Check if we have sa permissisions, but not care in RDS*/
     IF
     (
         SELECT
             sa = ISNULL(IS_SRVROLEMEMBER(N'sysadmin'), 0)
     ) = 0
+    AND OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NULL
     BEGIN
        RAISERROR(N'Current user is not a member of sysadmin, so we can''t read the error log', 11, 1) WITH NOWAIT;
-       RETURN;
-    END;
-
-    /*Check if we're using RDS*/
-    IF OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log') IS NOT NULL
-    BEGIN
-       RAISERROR(N'This will not run on Amazon RDS with rdsadmin.dbo.rds_read_error_log because it doesn''t support search strings', 11, 1) WITH NOWAIT;
        RETURN;
     END;
 
@@ -12507,7 +12501,13 @@ BEGIN
         @h_log integer = 0 /*high log file id*/,
         @t_searches integer = 0 /*total number of searches to run*/,
         @l_count integer = 1 /*loop count*/,
-        @stopper bit = 0 /*stop loop execution safety*/;
+        @stopper bit = 0, /*stop loop execution safety*/
+        @is_rds bit =
+            CASE
+                WHEN OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NOT NULL
+                THEN 1
+                ELSE 0
+            END;
 
     /*temp tables for holding temporary things*/
     CREATE TABLE
@@ -12777,9 +12777,23 @@ BEGIN
         INTO @c;
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
-        WHILE @@FETCH_STATUS = 0 AND @stopper = 0
+        WHILE @@FETCH_STATUS = 0
+        AND   @stopper = 0
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Entering cursor', 0, 1) WITH NOWAIT; END;
+
+            /*If using RDS, need to call a different procedure*/
+            IF @is_rds = 1
+            BEGIN
+                SELECT
+                    @c =
+                        REPLACE
+                        (
+                            @c,
+                            N'master.dbo.xp_readerrorlog',
+                            N'rdsadmin.dbo.rds_read_error_log'
+                        );
+            END;
 
             /*Replace the canary value with the log number we're working in*/
             SELECT
@@ -12998,8 +13012,8 @@ https://github.com/erikdarlingdata/DarlingData
 */
 
 
-IF OBJECT_ID('dbo.sp_PressureDetector') IS NULL
-    EXECUTE ('CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
+IF OBJECT_ID(N'dbo.sp_PressureDetector', N'P') IS NULL
+    EXECUTE (N'CREATE PROCEDURE dbo.sp_PressureDetector AS RETURN 138;');
 GO
 
 ALTER PROCEDURE
@@ -16110,9 +16124,9 @@ https://github.com/erikdarlingdata/DarlingData
 
 */
 
-IF OBJECT_ID('dbo.sp_QuickieStore') IS NULL
+IF OBJECT_ID(N'dbo.sp_QuickieStore', N'P') IS NULL
    BEGIN
-       EXECUTE ('CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');
+       EXECUTE (N'CREATE PROCEDURE dbo.sp_QuickieStore AS RETURN 138;');
    END;
 GO
 
