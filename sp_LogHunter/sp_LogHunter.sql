@@ -331,8 +331,8 @@ BEGIN
     CREATE TABLE
         #errors
     (
-        id integer 
-           PRIMARY KEY CLUSTERED 
+        id integer
+           PRIMARY KEY CLUSTERED
            IDENTITY,
         command nvarchar(4000) NOT NULL
     );
@@ -610,7 +610,7 @@ BEGIN
             END;
 
             IF @debug = 1 BEGIN RAISERROR('Fetching next', 0, 1) WITH NOWAIT; END;
-            
+
             /*Get the next search command*/
             FETCH NEXT
             FROM @cs
@@ -623,7 +623,7 @@ BEGIN
         END;
 
         IF @debug = 1 BEGIN RAISERROR('Getting next log', 0, 1) WITH NOWAIT; END;
-        
+
         /*Increment the log numbers*/
         SELECT
             @l_log = MIN(e.archive),
