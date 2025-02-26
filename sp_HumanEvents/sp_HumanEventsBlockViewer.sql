@@ -53,9 +53,9 @@ For support, head over to GitHub:
 https://github.com/erikdarlingdata/DarlingData
 */
 
-IF OBJECT_ID('dbo.sp_HumanEventsBlockViewer') IS NULL
+IF OBJECT_ID(N'dbo.sp_HumanEventsBlockViewer', N'P') IS NULL
    BEGIN
-       EXECUTE ('CREATE PROCEDURE dbo.sp_HumanEventsBlockViewer AS RETURN 138;');
+       EXECUTE (N'CREATE PROCEDURE dbo.sp_HumanEventsBlockViewer AS RETURN 138;');
    END;
 GO
 
