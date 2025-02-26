@@ -216,7 +216,7 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE 
+    CREATE TABLE
         dbo.Badges
     (
         Id bigint NULL,
@@ -240,7 +240,7 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE 
+    CREATE TABLE
         dbo.Comments
     (
         Id bigint NULL,
@@ -302,14 +302,14 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE 
+    CREATE TABLE
         dbo.PostTypes
     (
         Id integer IDENTITY(1, 1) NOT NULL,
         Type nvarchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
         CONSTRAINT PK_PostTypes__Id
             PRIMARY KEY CLUSTERED (Id ASC)
-            WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) 
+            WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)
             ON [PRIMARY]
     ) ON [PRIMARY];
 END;
@@ -328,7 +328,7 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE 
+    CREATE TABLE
         dbo.Users
     (
         Id bigint NULL,
@@ -361,7 +361,7 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE 
+    CREATE TABLE
         dbo.Votes
     (
         Id bigint NULL,
@@ -387,14 +387,14 @@ IF NOT EXISTS
     AND   type IN ( N'U' )
 )
 BEGIN
-    CREATE TABLE 
+    CREATE TABLE
         dbo.VoteTypes
     (
         Id int IDENTITY(1, 1) NOT NULL,
         Name varchar(50) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
         CONSTRAINT PK_VoteType__Id
             PRIMARY KEY CLUSTERED (Id ASC)
-            WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) 
+            WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON)
             ON [PRIMARY]
     ) ON [PRIMARY];
 END;

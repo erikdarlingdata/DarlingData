@@ -156,4 +156,4 @@ SELECT
             FOR XML PATH(N''), TYPE
         ).value('./text()[1]', 'nvarchar(max)')
     ) AS numbers_only;
-GO 
+GO

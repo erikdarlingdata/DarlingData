@@ -34,8 +34,8 @@ USE [msdb];
 See that @operator_name variable below?
 You're gonna wanna set that to one of these.
 */
-SELECT 
-    s.* 
+SELECT
+    s.*
 FROM msdb..sysoperators AS s;
 
 /*
@@ -48,7 +48,7 @@ https://social.technet.microsoft.com/wiki/contents/articles/51133.sql-server-ale
 Once you do that, you can get rid of this RETURN and F5 the whole script.
 */
 
-DECLARE 
+DECLARE
     @operator_name sysname  =  N'Who You Want To Notify';
 
 RETURN;

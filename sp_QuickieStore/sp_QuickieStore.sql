@@ -496,7 +496,7 @@ Hold plan_ids for ignored plans
 CREATE TABLE
     #ignore_plan_ids
 (
-    plan_id bigint PRIMARY KEY CLUSTERED 
+    plan_id bigint PRIMARY KEY CLUSTERED
                    WITH (IGNORE_DUP_KEY = ON)
 );
 
@@ -522,7 +522,7 @@ CREATE TABLE
             binary(8),
             query_hash_s,
             1
-        ) PERSISTED NOT NULL 
+        ) PERSISTED NOT NULL
           PRIMARY KEY CLUSTERED
 );
 
@@ -638,7 +638,7 @@ CREATE TABLE
             binary(8),
             plan_hash_s,
             1
-        ) PERSISTED NOT NULL 
+        ) PERSISTED NOT NULL
           PRIMARY KEY CLUSTERED
 );
 
@@ -655,7 +655,7 @@ CREATE TABLE
             binary(8),
             query_hash_s,
             1
-        ) PERSISTED NOT NULL 
+        ) PERSISTED NOT NULL
           PRIMARY KEY CLUSTERED
 );
 
@@ -672,7 +672,7 @@ CREATE TABLE
             binary(8),
             plan_hash_s,
             1
-        ) PERSISTED NOT NULL 
+        ) PERSISTED NOT NULL
           PRIMARY KEY CLUSTERED
 );
 
@@ -689,7 +689,7 @@ CREATE TABLE
             varbinary(64),
             sql_handle_s,
             1
-        ) PERSISTED NOT NULL 
+        ) PERSISTED NOT NULL
           PRIMARY KEY CLUSTERED
 );
 
@@ -706,7 +706,7 @@ CREATE TABLE
             varbinary(64),
             sql_handle_s,
             1
-        ) PERSISTED NOT NULL 
+        ) PERSISTED NOT NULL
           PRIMARY KEY CLUSTERED
 );
 
@@ -895,9 +895,9 @@ CREATE TABLE
                     database_id
                 )
             ),
-            CASE 
-                WHEN object_id > 0 
-                THEN N'Unknown object_id: ' + 
+            CASE
+                WHEN object_id > 0
+                THEN N'Unknown object_id: ' +
                      RTRIM(object_id)
                 ELSE N'Adhoc'
             END
@@ -1270,12 +1270,12 @@ BEGIN
 END;
 
 /*
-Attempt at overloading procedure name so it can 
+Attempt at overloading procedure name so it can
 accept a [schema].[procedure] pasted from results
 from other executions of sp_QuickieStore
 */
 IF
-(   
+(
       @procedure_name LIKE N'[[]%].[[]%]'
   AND @procedure_schema IS NULL
 )
@@ -1413,10 +1413,10 @@ Error out if the @regression parameters do not make sense.
 IF
 (
   @regression_baseline_start_date IS NULL
-  AND 
-  (   
-      @regression_baseline_end_date IS NOT NULL 
-   OR @regression_comparator IS NOT NULL 
+  AND
+  (
+      @regression_baseline_end_date IS NOT NULL
+   OR @regression_comparator IS NOT NULL
    OR @regression_direction IS NOT NULL
   )
 )
@@ -1438,7 +1438,7 @@ AND @regression_baseline_end_date IS NOT NULL
 AND @regression_baseline_start_date >= @regression_baseline_end_date
 )
 BEGIN
-    RAISERROR('@regression_baseline_start_date has been set greater than or equal to @regression_baseline_end_date. 
+    RAISERROR('@regression_baseline_start_date has been set greater than or equal to @regression_baseline_end_date.
 This does not make sense. Check that the values of both parameters are as you intended them to be.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
@@ -1484,8 +1484,8 @@ IF
 AND @sort_order = 'recent'
 )
 BEGIN
-    RAISERROR('Your @sort_order is ''recent'', but you are trying to compare metrics for two time periods. 
-If you can imagine a useful way to do that, then make a feature request. 
+    RAISERROR('Your @sort_order is ''recent'', but you are trying to compare metrics for two time periods.
+If you can imagine a useful way to do that, then make a feature request.
 Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
@@ -1500,9 +1500,9 @@ IF
 AND @sort_order = 'plan count by hashes'
 )
 BEGIN
-    RAISERROR('Your @sort_order is ''plan count by hashes'', but you are trying to compare metrics for two time periods. 
-This is probably not useful, since our method of comparing two time period relies on only checking query hashes that are in both time periods. 
-If you can imagine a useful way to do that, then make a feature request. 
+    RAISERROR('Your @sort_order is ''plan count by hashes'', but you are trying to compare metrics for two time periods.
+This is probably not useful, since our method of comparing two time period relies on only checking query hashes that are in both time periods.
+If you can imagine a useful way to do that, then make a feature request.
 Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
@@ -1520,10 +1520,10 @@ IF
 AND @regression_direction IN ('absolute', 'magnitude')
 )
 BEGIN
-    RAISERROR('Your @regression_comparator is ''relative'', but you have asked for an ''absolute'' or ''magnitude'' @regression_direction. This is probably a mistake. 
-Your @regression_direction tells us to take the absolute value of our result of comparing the metrics in the current time period to the baseline time period, 
-but your @regression_comparator is telling us to use division to compare the two time periods. This is unlikely to produce useful results. 
-If you can imagine a useful way to do that, then make a feature request. Otherwise, either change @regression_direction to another value 
+    RAISERROR('Your @regression_comparator is ''relative'', but you have asked for an ''absolute'' or ''magnitude'' @regression_direction. This is probably a mistake.
+Your @regression_direction tells us to take the absolute value of our result of comparing the metrics in the current time period to the baseline time period,
+but your @regression_comparator is telling us to use division to compare the two time periods. This is unlikely to produce useful results.
+If you can imagine a useful way to do that, then make a feature request. Otherwise, either change @regression_direction to another value
 (e.g. ''better'' or ''worse'') or change @regression_comparator to ''absolute''.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
@@ -2758,7 +2758,7 @@ These columns are only available in 2017+
 IF
 (
   (
-      @sort_order = 'tempdb' 
+      @sort_order = 'tempdb'
    OR @sort_order_is_a_wait = 1
   )
   AND @new = 0
@@ -5313,7 +5313,7 @@ BEGIN
         qsrs.plan_id,
         from_regression_baseline =
             CASE
-                WHEN qsrs.last_execution_time >= @start_date 
+                WHEN qsrs.last_execution_time >= @start_date
                 AND  qsrs.last_execution_time < @end_date
                 THEN ''No''
                 ELSE ''Yes''
@@ -5340,7 +5340,7 @@ OR
     GROUP
         BY qsrs.plan_id,
         CASE
-            WHEN qsrs.last_execution_time >= @start_date 
+            WHEN qsrs.last_execution_time >= @start_date
             AND  qsrs.last_execution_time < @end_date
             THEN ''No''
             ELSE ''Yes''
@@ -5438,7 +5438,7 @@ BEGIN
         qsrs.plan_id,
         from_regression_baseline =
             CASE
-                WHEN qsrs.last_execution_time >= @start_date 
+                WHEN qsrs.last_execution_time >= @start_date
                 AND   qsrs.last_execution_time < @end_date
                 THEN ''No''
                 ELSE ''Yes''
@@ -5484,7 +5484,7 @@ BEGIN
     GROUP
         BY qsrs.plan_id,
         CASE
-            WHEN qsrs.last_execution_time >= @start_date 
+            WHEN qsrs.last_execution_time >= @start_date
             AND   qsrs.last_execution_time < @end_date
             THEN ''No''
             ELSE ''Yes''
@@ -6187,7 +6187,7 @@ BEGIN
    SELECT
        @sql +=  N'
    CASE
-       WHEN qsrs_with_lasts.last_execution_time >= @start_date 
+       WHEN qsrs_with_lasts.last_execution_time >= @start_date
        AND  qsrs_with_lasts.last_execution_time < @end_date
        THEN ''No''
        ELSE ''Yes''
@@ -6374,7 +6374,7 @@ SELECT
                 @sql += N'
         JOIN #regression_changes AS regression
           ON qsrs.plan_id = regression.plan_id
-         AND regression.database_id = @database_id' 
+         AND regression.database_id = @database_id'
         END
         ELSE IF @sort_order = 'plan count by hashes'
         BEGIN
@@ -6417,7 +6417,7 @@ SELECT
           ELSE @where_clause
           END
       + N'
-    ORDER BY 
+    ORDER BY
         ' +
     CASE @regression_mode
     WHEN 1 THEN
@@ -6442,7 +6442,7 @@ SELECT
              WHEN 'executions' THEN N'qsrs.count_executions'
              WHEN 'recent' THEN N'qsrs.last_execution_time'
              WHEN 'rows' THEN N'qsrs.avg_rowcount'
-             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+             WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
                 hashes.query_hash'
              ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
         END
@@ -6472,16 +6472,16 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 IF @debug = 1
 BEGIN
     PRINT LEN(@sql);
-    
+
     IF LEN(@sql) > 7999
     BEGIN
         SELECT
-            query = 
+            query =
             (
-                SELECT 
-                    [processing-instruction(_)] = 
+                SELECT
+                    [processing-instruction(_)] =
                         @sql
-                FOR XML 
+                FOR XML
                     PATH(''),
                     TYPE
             );
@@ -8400,7 +8400,7 @@ FROM
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
                  WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
                     hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
@@ -8415,7 +8415,7 @@ FROM
         */
         + CASE
                WHEN @sort_order = 'plan count by hashes'
-               THEN N', 
+               THEN N',
                hashes.plan_hash_count_for_query_hash,
                query_hash_from_hash_counting = hashes.query_hash'
                WHEN @sort_order_is_a_wait = 1
@@ -8781,7 +8781,7 @@ FROM
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
                  WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
                     hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
@@ -8797,11 +8797,11 @@ FROM
         */
         + CASE
                WHEN @sort_order = 'plan count by hashes'
-               THEN N', 
+               THEN N',
                plan_hash_count_for_query_hash = FORMAT(hashes.plan_hash_count_for_query_hash, ''N0''),
                query_hash_from_hash_counting = hashes.query_hash'
                WHEN @sort_order_is_a_wait = 1
-               THEN N', 
+               THEN N',
                total_wait_time_from_sort_order_ms = FORMAT(waits.total_query_wait_time_ms, ''N0'')'
                ELSE N''
            END
@@ -9122,7 +9122,7 @@ FROM
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
                  WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
                     hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
@@ -9137,7 +9137,7 @@ FROM
         */
         + CASE
                WHEN @sort_order = 'plan count by hashes'
-               THEN N', 
+               THEN N',
                hashes.plan_hash_count_for_query_hash,
                query_hash_from_hash_counting = hashes.query_hash'
                WHEN @sort_order_is_a_wait = 1
@@ -9471,7 +9471,7 @@ FROM
                  WHEN 'executions' THEN N'qsrs.count_executions'
                  WHEN 'recent' THEN N'qsrs.last_execution_time'
                  WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC, 
+                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
                     hashes.query_hash'
                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
                  ELSE N'qsrs.avg_cpu_time' END
@@ -9487,11 +9487,11 @@ FROM
         */
         + CASE
                WHEN @sort_order = 'plan count by hashes'
-               THEN N', 
+               THEN N',
         plan_hash_count_for_query_hash = FORMAT(hashes.plan_hash_count_for_query_hash, ''N0''),
         query_hash_from_hash_counting = hashes.query_hash'
                WHEN @sort_order_is_a_wait = 1
-               THEN N', 
+               THEN N',
         total_wait_time_from_sort_order_ms = FORMAT(waits.total_query_wait_time_ms, ''N0'')'
                ELSE N''
            END
@@ -9721,8 +9721,8 @@ SELECT
         N'
 ) AS x
 ' + CASE WHEN @regression_mode = 1 THEN N' ' ELSE N'WHERE x.n = 1 ' END
-+ N' 
-ORDER BY 
++ N'
+ORDER BY
     ' +
     CASE @format_output
          WHEN 0
@@ -9754,7 +9754,7 @@ ORDER BY
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'rows' THEN N'x.avg_rowcount'
-                  WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC, 
+                  WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC,
     x.query_hash_from_hash_counting'
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time' END
              END END
@@ -9791,7 +9791,7 @@ ORDER BY
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'rows' THEN N'TRY_PARSE(x.avg_rowcount AS money)'
-                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC, 
+                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC,
     x.query_hash_from_hash_counting'
                   ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
              END END
