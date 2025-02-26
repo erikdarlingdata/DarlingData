@@ -271,11 +271,11 @@ BEGIN
         @t_searches integer = 0 /*total number of searches to run*/,
         @l_count integer = 1 /*loop count*/,
         @stopper bit = 0, /*stop loop execution safety*/
-        @is_rds bit = 
-            CASE 
-                WHEN OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NOT NULL 
-                THEN 1 
-                ELSE 0 
+        @is_rds bit =
+            CASE
+                WHEN OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NOT NULL
+                THEN 1
+                ELSE 0
             END;
 
     /*temp tables for holding temporary things*/
@@ -546,7 +546,7 @@ BEGIN
         INTO @c;
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
-        WHILE @@FETCH_STATUS = 0 
+        WHILE @@FETCH_STATUS = 0
         AND   @stopper = 0
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Entering cursor', 0, 1) WITH NOWAIT; END;
@@ -563,7 +563,7 @@ BEGIN
                             N'rdsadmin.dbo.rds_read_error_log'
                         );
             END;
-            
+
             /*Replace the canary value with the log number we're working in*/
             SELECT
                 @c =
