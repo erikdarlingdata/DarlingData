@@ -1,4 +1,3 @@
-
 /*
 EXEC sp_IndexCleanup
     @database_name = 'StackOverflow2013',
@@ -947,7 +946,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         SELECT
             table_name = '#index_analysis',
-            *
+            ia.*
         FROM #index_analysis AS ia;
     END;
 
@@ -1027,25 +1026,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SELECT
                             1/0
                         FROM CurrentIndexColumns cic
-                        WHERE NOT EXISTS
+                        WHERE cic.is_included_column = 0  -- Only check key columns
+                        AND NOT EXISTS
                         (
                             SELECT
                                 1/0
                             FROM OtherIndexColumns oic
                             WHERE oic.column_name = cic.column_name
-                            AND   oic.is_included_column = cic.is_included_column
-                            AND
+                            AND oic.is_included_column = 0  -- Must be in key columns
+                            AND oic.key_ordinal <= cic.key_ordinal  -- Check leading edge
+                        )
+                    )
+                    AND 
+                    (
+                        -- Check included columns separately since order doesn't matter
+                        NOT EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM CurrentIndexColumns cic
+                            WHERE cic.is_included_column = 1
+                            AND NOT EXISTS
                             (
-                                 oic.key_ordinal = cic.key_ordinal
-                              OR oic.is_included_column = 1
+                                SELECT
+                                    1/0
+                                FROM OtherIndexColumns oic
+                                WHERE oic.column_name = cic.column_name
+                                AND 
+                                (
+                                    oic.is_included_column = 1 
+                                    OR oic.is_included_column = 0  -- Include cols can be covered by key cols
+                                )
                             )
                         )
                     )
                     AND ISNULL(ia.filter_definition, '') = ISNULL(@c_filter_definition, '')
                     AND
                     (
-                         ia.is_unique = 0
-                      OR @c_is_unique = 1
+                        ia.is_unique = 0
+                     OR @c_is_unique = 1
                     )
                     THEN 1
                     ELSE 0
@@ -1057,21 +1076,37 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SELECT
                             1/0
                         FROM CurrentIndexColumns cic
-                        WHERE NOT EXISTS
+                        WHERE cic.is_included_column = 0  -- Only check key columns
+                        AND NOT EXISTS
                         (
                             SELECT
                                 1/0
                             FROM OtherIndexColumns oic
                             WHERE oic.column_name = cic.column_name
-                            AND
+                            AND oic.is_included_column = 0  -- Must be in key columns
+                            AND oic.key_ordinal <= cic.key_ordinal  -- Check leading edge
+                        )
+                    )
+                    AND 
+                    (
+                        -- Check included columns separately since order doesn't matter
+                        NOT EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM CurrentIndexColumns cic
+                            WHERE cic.is_included_column = 1
+                            AND NOT EXISTS
                             (
-                                oic.is_included_column = cic.is_included_column
-                             OR oic.is_included_column = 0
-                            )
-                            AND
-                            (
-                                oic.key_ordinal = cic.key_ordinal
-                             OR oic.is_included_column = 1
+                                SELECT
+                                    1/0
+                                FROM OtherIndexColumns oic
+                                WHERE oic.column_name = cic.column_name
+                                AND 
+                                (
+                                    oic.is_included_column = 1 
+                                    OR oic.is_included_column = 0  -- Include cols can be covered by key cols
+                                )
                             )
                         )
                     )
@@ -1211,12 +1246,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      N')' +
                      CASE
                          WHEN ISNULL(superseding.included_columns, ia.included_columns) IS NOT NULL
+                         OR ia.missing_columns IS NOT NULL
                          THEN N' INCLUDE (' +
-                              ISNULL(superseding.included_columns, ia.included_columns) +
+                              STUFF((
+                                  SELECT DISTINCT N',' + c.value('.', 'nvarchar(128)')
+                                  FROM (
+                                      SELECT CAST(N'<c>' + 
+                                          REPLACE(ISNULL(superseding.included_columns, ia.included_columns), N', ', N'</c><c>') 
+                                          + N'</c>' AS xml)
+                                  ) AS x(c)
+                                  FOR XML PATH('')
+                              ), 1, 1, '') +
                               CASE
                                   WHEN ia.missing_columns IS NOT NULL
-                                  THEN N', ' +
-                                  ia.missing_columns
+                                  THEN N', ' + ia.missing_columns
                                   ELSE N''
                               END +
                               N')'
