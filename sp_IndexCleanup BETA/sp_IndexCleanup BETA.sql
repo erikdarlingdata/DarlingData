@@ -1037,7 +1037,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             AND oic.key_ordinal <= cic.key_ordinal  -- Check leading edge
                         )
                     )
-                    AND 
+                    AND
                     (
                         -- Check included columns separately since order doesn't matter
                         NOT EXISTS
@@ -1052,9 +1052,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     1/0
                                 FROM OtherIndexColumns oic
                                 WHERE oic.column_name = cic.column_name
-                                AND 
+                                AND
                                 (
-                                    oic.is_included_column = 1 
+                                    oic.is_included_column = 1
                                     OR oic.is_included_column = 0  -- Include cols can be covered by key cols
                                 )
                             )
@@ -1087,7 +1087,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             AND oic.key_ordinal <= cic.key_ordinal  -- Check leading edge
                         )
                     )
-                    AND 
+                    AND
                     (
                         -- Check included columns separately since order doesn't matter
                         NOT EXISTS
@@ -1102,9 +1102,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     1/0
                                 FROM OtherIndexColumns oic
                                 WHERE oic.column_name = cic.column_name
-                                AND 
+                                AND
                                 (
-                                    oic.is_included_column = 1 
+                                    oic.is_included_column = 1
                                     OR oic.is_included_column = 0  -- Include cols can be covered by key cols
                                 )
                             )
@@ -1251,8 +1251,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                               STUFF((
                                   SELECT DISTINCT N',' + c.value('.', 'nvarchar(128)')
                                   FROM (
-                                      SELECT CAST(N'<c>' + 
-                                          REPLACE(ISNULL(superseding.included_columns, ia.included_columns), N', ', N'</c><c>') 
+                                      SELECT CAST(N'<c>' +
+                                          REPLACE(ISNULL(superseding.included_columns, ia.included_columns), N', ', N'</c><c>')
                                           + N'</c>' AS xml)
                                   ) AS x(c)
                                   FOR XML PATH('')
