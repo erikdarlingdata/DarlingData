@@ -206,7 +206,7 @@ BEGIN
         WHERE m.language_id = @language_id
     )
     BEGIN
-       RAISERROR(N'%i is not not a valid language_id in sys.messages.', 11, 1, @language_id) WITH NOWAIT;
+       RAISERROR(N'%i is not a valid language_id in sys.messages.', 11, 1, @language_id) WITH NOWAIT;
        RETURN;
     END;
 
