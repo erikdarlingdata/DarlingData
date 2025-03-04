@@ -9805,8 +9805,9 @@ OPTION(RECOMPILE);'
     BEGIN
         PRINT LEN(@sql);
         PRINT SUBSTRING(@sql, 0, 4000);
-        PRINT SUBSTRING(@sql, 4000, 8000);
-        PRINT SUBSTRING(@sql, 8000, 16000);
+        PRINT SUBSTRING(@sql, 4001, 8000);
+        PRINT SUBSTRING(@sql, 8001, 12000);
+        PRINT SUBSTRING(@sql, 12001, 16000);
     END;
 
     EXECUTE sys.sp_executesql
