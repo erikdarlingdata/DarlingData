@@ -1,4 +1,4 @@
--- Compile Date: 02/26/2025 20:38:20 UTC
+-- Compile Date: 03/04/2025 23:11:25 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -3512,7 +3512,7 @@ BEGIN
     END;
 END;
 
-RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Setting up some variables', 0, 1) WITH NOWAIT; END;
 
 /* Give sessions super unique names in case more than one person uses it at a time */
 IF @keep_alive = 0
@@ -3554,15 +3554,15 @@ BEGIN
             CONVERT
             (
                 bigint,
-                (max_memory * .10) * 1024
+                (rg.max_memory * .10) * 1024
             )
-    FROM sys.dm_user_db_resource_governance
-    WHERE UPPER(database_name) = UPPER(QUOTENAME(@database_name))
+    FROM sys.dm_user_db_resource_governance AS rg
+    WHERE UPPER(rg.database_name) = UPPER(QUOTENAME(@database_name))
     OR    @database_name = ''
     ORDER BY
         max_memory DESC;
 
-    RAISERROR(N'Setting lower max memory for ringbuffer due to Azure, setting to %m kb',  0, 1, @max_memory_kb) WITH NOWAIT;
+    IF @debug = 1 BEGIN RAISERROR(N'Setting lower max memory for ringbuffer due to Azure, setting to %m kb',  0, 1, @max_memory_kb) WITH NOWAIT; END;
 END;
 
 /* session create options */
@@ -3649,7 +3649,7 @@ SET @session_filter_blocking = @nc10 + N'         sqlserver.is_system = 1 ' + @n
 SET @session_filter_parameterization = @nc10 + N'            sqlserver.is_system = 0 ' + @nc10;
 
 
-RAISERROR(N'Checking for some event existence', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Checking for some event existence', 0, 1) WITH NOWAIT; END;
 /* Determines if we use the new event or the old event(s) to track compiles */
 IF EXISTS
 (
@@ -3677,7 +3677,7 @@ END;
 
 
 /* You know what I don't wanna deal with? NULLs. */
-RAISERROR(N'Nixing NULLs', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Nixing NULLs', 0, 1) WITH NOWAIT; END;
 SET @event_type            = ISNULL(@event_type, N'');
 SET @client_app_name       = ISNULL(@client_app_name, N'');
 SET @client_hostname       = ISNULL(@client_hostname, N'');
@@ -3702,7 +3702,7 @@ SET @fully_formed_babby =
         QUOTENAME(@object_name);
 
 /*Some sanity checking*/
-RAISERROR(N'Sanity checking event types', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Sanity checking event types', 0, 1) WITH NOWAIT; END;
 /* You can only do this right now. */
 IF LOWER(@event_type) NOT IN
         (
@@ -3733,7 +3733,7 @@ What on earth is %s?', 11, 1, @event_type) WITH NOWAIT;
 END;
 
 
-RAISERROR(N'Checking query sort order', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Checking query sort order', 0, 1) WITH NOWAIT; END;
 IF @query_sort_order NOT IN
 (
     N'cpu',
@@ -3755,7 +3755,7 @@ BEGIN
 END;
 
 
-RAISERROR(N'Parsing any supplied waits', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Parsing any supplied waits', 0, 1) WITH NOWAIT; END;
 SET @wait_type = UPPER(@wait_type);
 /* This will hold the CSV list of wait types someone passes in */
 
@@ -3812,7 +3812,7 @@ they're valid waits by checking them against what's available.
 */
 IF @wait_type <> N'ALL'
 BEGIN
-    RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT;
+    IF @debug = 1 BEGIN RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT; END;
 
     /* There's no THREADPOOL in XE map values, it gets registered as SOS_WORKER */
     SET @wait_type =
@@ -3857,7 +3857,7 @@ END;
 
 
 /* I just don't want anyone to be disappointed */
-RAISERROR(N'Avoiding disappointment', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Avoiding disappointment', 0, 1) WITH NOWAIT; END;
 IF
 (
         @wait_type <> N''
@@ -3871,7 +3871,7 @@ END;
 
 
 /* This is probably important, huh? */
-RAISERROR(N'Are we trying to filter for a blocking session?', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Are we trying to filter for a blocking session?', 0, 1) WITH NOWAIT; END;
 
 /* blocking events need a database name to resolve objects */
 IF
@@ -3898,7 +3898,7 @@ BEGIN
 END;
 
 /* no blocked process report, no love */
-RAISERROR(N'Validating if the Blocked Process Report is on, if the session is for blocking', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Validating if the Blocked Process Report is on, if the session is for blocking', 0, 1) WITH NOWAIT; END;
 IF @event_type LIKE N'%lock%'
 AND EXISTS
 (
@@ -3918,7 +3918,7 @@ BEGIN
 END;
 
 /* validatabase name */
-RAISERROR(N'If there''s a database filter, is the name valid?', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'If there''s a database filter, is the name valid?', 0, 1) WITH NOWAIT; END;
 IF @database_name <> N''
 BEGIN
     IF DB_ID(@database_name) IS NULL
@@ -3930,7 +3930,7 @@ END;
 
 
 /* session id has be be "sampled" or a number. */
-RAISERROR(N'If there''s a session id filter, is it valid?', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'If there''s a session id filter, is it valid?', 0, 1) WITH NOWAIT; END;
 IF
 (
         LOWER(@session_id) NOT LIKE N'%sample%'
@@ -3944,7 +3944,7 @@ END;
 
 
 /* some numbers won't be effective as sample divisors */
-RAISERROR(N'No dividing by zero', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'No dividing by zero', 0, 1) WITH NOWAIT; END;
 IF
 (
         @sample_divisor < 2
@@ -3961,7 +3961,7 @@ END;
 /* CH-CH-CH-CHECK-IT-OUT */
 
 /* check for existing session with the same name */
-RAISERROR(N'Make sure the session doesn''t exist already', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Make sure the session doesn''t exist already', 0, 1) WITH NOWAIT; END;
 
 IF @azure = 0
 BEGIN
@@ -3993,7 +3993,7 @@ BEGIN
         WHERE ses.name = @session_name
     )
     BEGIN
-        RAISERROR(N'A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT;
+        IF @debug = 1 BEGIN RAISERROR(N'A session with the name %s already exists. dropping.', 0, 1, @session_name) WITH NOWAIT; END;
 
         EXECUTE sys.sp_executesql
             @drop_sql;
@@ -4001,7 +4001,7 @@ BEGIN
 END;
 
 /* check that the output database exists */
-RAISERROR(N'Does the output database exist?', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Does the output database exist?', 0, 1) WITH NOWAIT; END;
 IF @output_database_name <> N''
 BEGIN
     IF DB_ID(@output_database_name) IS NULL
@@ -4013,7 +4013,7 @@ END;
 
 
 /* check that the output schema exists */
-RAISERROR(N'Does the output schema exist?', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Does the output schema exist?', 0, 1) WITH NOWAIT; END;
 IF @output_schema_name NOT IN (N'dbo', N'')
 BEGIN
     SELECT
@@ -4040,7 +4040,7 @@ END;
 
 
 /* we need an output schema and database */
-RAISERROR(N'Is output database OR schema filled in?', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Is output database OR schema filled in?', 0, 1) WITH NOWAIT; END;
 IF
 (
      LEN(@output_database_name + @output_schema_name) > 0
@@ -4064,7 +4064,7 @@ END;
 
 
 /* no goofballing in custom names */
-RAISERROR(N'Is custom name something stupid?', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Is custom name something stupid?', 0, 1) WITH NOWAIT; END;
 IF
 (
     PATINDEX(N'%[^a-zA-Z0-9]%', @custom_name) > 0
@@ -4079,17 +4079,17 @@ END;
 
 
 /* I'M LOOKING AT YOU */
-RAISERROR(N'Someone is going to try it.', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Someone is going to try it.', 0, 1) WITH NOWAIT; END;
 IF @delete_retention_days < 0
 BEGIN
     SET @delete_retention_days *= -1;
-    RAISERROR(N'Stay positive', 0, 1) WITH NOWAIT;
+    IF @debug = 1 BEGIN RAISERROR(N'Stay positive', 0, 1) WITH NOWAIT; END;
 END;
 
 /*
 We need to do some seconds math here, because WAITFOR is very stupid
 */
-RAISERROR(N'Wait For It! Wait For it!', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Wait For It! Wait For it!', 0, 1) WITH NOWAIT; END;
 IF @seconds_sample > 0
 BEGIN
     SELECT
@@ -4112,7 +4112,7 @@ If we're writing to a table, we don't want to do anything else
 Or anything else after this, really
 We want the session to get set up
 */
-RAISERROR(N'Do we skip to the GOTO and log tables?', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and log tables?', 0, 1) WITH NOWAIT; END;
 IF
 (
         @output_database_name <> N''
@@ -4120,14 +4120,14 @@ IF
     AND @cleanup = 0
 )
 BEGIN
-    RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT;
+    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT; END;
     GOTO output_results;
     RETURN;
 END;
 
 
 /* just finishing up the second coat now */
-RAISERROR(N'Do we skip to the GOTO and cleanup?', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and cleanup?', 0, 1) WITH NOWAIT; END;
 IF
 (
         @output_database_name <> N''
@@ -4135,14 +4135,14 @@ IF
     AND @cleanup = 1
 )
 BEGIN
-    RAISERROR(N'Skipping all the other stuff and going to cleanup', 0, 1) WITH NOWAIT;
+    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to cleanup', 0, 1) WITH NOWAIT; END;
     GOTO cleanup;
     RETURN;
 END;
 
 
 /* Start setting up individual filters */
-RAISERROR(N'Setting up individual filters', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Setting up individual filters', 0, 1) WITH NOWAIT; END;
 IF @query_duration_ms > 0
 BEGIN
     IF LOWER(@event_type) NOT LIKE N'%comp%' /* compile and recompile durations are tiny */
@@ -4329,7 +4329,7 @@ BEGIN
                 MIN(maps.map_key),
             maxkey =
                 MAX(maps.map_key)
-            FROM maps
+            FROM maps AS maps
             GROUP BY
                 maps.rn
     )
@@ -4389,7 +4389,7 @@ END;
 
 /* This section sets event-dependent filters */
 
-RAISERROR(N'Combining session filters', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Combining session filters', 0, 1) WITH NOWAIT; END;
 /* For full filter-able sessions */
 SET @session_filter +=
     (
@@ -4480,7 +4480,7 @@ SET @session_filter_parameterization +=
 
 
 /* This section sets up the event session definition */
-RAISERROR(N'Setting up the event session', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Setting up the event session', 0, 1) WITH NOWAIT; END;
 SET @session_sql +=
         CASE
             WHEN LOWER(@event_type) LIKE N'%lock%'
@@ -4588,10 +4588,13 @@ EXECUTE (@start_sql);
 /* bail out here if we want to keep the session */
 IF @keep_alive = 1
 BEGIN
-    RAISERROR(N'Session %s created, exiting.', 0, 1, @session_name) WITH NOWAIT;
-    RAISERROR(N'To collect data from it, run this proc from an agent job with an output database and schema name', 0, 1) WITH NOWAIT;
-    RAISERROR(N'Alternately, you can watch live data stream in by accessing the GUI', 0, 1) WITH NOWAIT;
-    RAISERROR(N'Just don''t forget to stop it when you''re done with it!', 0, 1) WITH NOWAIT;
+    IF @debug = 1
+    BEGIN
+        RAISERROR(N'Session %s created, exiting.', 0, 1, @session_name) WITH NOWAIT;
+        RAISERROR(N'To collect data from it, run this proc from an agent job with an output database and schema name', 0, 1) WITH NOWAIT;
+        RAISERROR(N'Alternately, you can watch live data stream in by accessing the GUI', 0, 1) WITH NOWAIT;
+        RAISERROR(N'Just don''t forget to stop it when you''re done with it!', 0, 1) WITH NOWAIT;
+    END;
     RETURN;
 END;
 
@@ -4652,7 +4655,7 @@ CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x);
 
 IF @debug = 1
 BEGIN
-    SELECT N'#human_events_xml' AS table_name, * FROM #human_events_xml AS hex;
+    SELECT N'#human_events_xml' AS table_name, hex.* FROM #human_events_xml AS hex;
 END;
 
 
@@ -4719,7 +4722,7 @@ BEGIN
     INTO #queries
     FROM queries AS q;
 
-    IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, * FROM #queries AS q; END;
+    IF @debug = 1 BEGIN SELECT N'#queries' AS table_name, q.* FROM #queries AS q; END;
 
     /* Add attribute StatementId to query plan if it is missing (versions before 2019) */
     IF @skip_plans = 0
@@ -5045,7 +5048,7 @@ BEGIN
 
         ALTER TABLE #compiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
 
-        IF @debug = 1 BEGIN SELECT N'#compiles_1' AS table_name, * FROM #compiles_1 AS c; END;
+        IF @debug = 1 BEGIN SELECT N'#compiles_1' AS table_name, c.* FROM #compiles_1 AS c; END;
 
         WITH
             cbq AS
@@ -5053,15 +5056,15 @@ BEGIN
             SELECT
                 statement_text_checksum,
                 total_compiles = COUNT_BIG(*),
-                total_compile_cpu_ms = SUM(compile_cpu_ms),
-                avg_compile_cpu_ms = AVG(compile_cpu_ms),
-                max_compile_cpu_ms = MAX(compile_cpu_ms),
-                total_compile_duration_ms = SUM(compile_duration_ms),
-                avg_compile_duration_ms = AVG(compile_duration_ms),
-                max_compile_duration_ms = MAX(compile_duration_ms)
-            FROM #compiles_1
+                total_compile_cpu_ms = SUM(c.compile_cpu_ms),
+                avg_compile_cpu_ms = AVG(c.compile_cpu_ms),
+                max_compile_cpu_ms = MAX(c.compile_cpu_ms),
+                total_compile_duration_ms = SUM(c.compile_duration_ms),
+                avg_compile_duration_ms = AVG(c.compile_duration_ms),
+                max_compile_duration_ms = MAX(c.compile_duration_ms)
+            FROM #compiles_1 AS c
             GROUP BY
-                statement_text_checksum
+                c.statement_text_checksum
         )
         SELECT
             pattern = N'total compiles',
@@ -5195,7 +5198,7 @@ BEGIN
         ORDER BY
             event_time;
 
-        IF @debug = 1 BEGIN SELECT N'#parameterization' AS table_name, * FROM #parameterization AS p; END;
+        IF @debug = 1 BEGIN SELECT N'#parameterization' AS table_name, p.* FROM #parameterization AS p; END;
 
         WITH
             cpq AS
@@ -5204,17 +5207,17 @@ BEGIN
                 database_name,
                 query_hash,
                 total_compiles = COUNT_BIG(*),
-                plan_count = COUNT_BIG(DISTINCT query_plan_hash),
-                total_compile_cpu_ms = SUM(compile_cpu_time_ms),
-                avg_compile_cpu_ms = AVG(compile_cpu_time_ms),
-                max_compile_cpu_ms = MAX(compile_cpu_time_ms),
-                total_compile_duration_ms = SUM(compile_duration_ms),
-                avg_compile_duration_ms = AVG(compile_duration_ms),
-                max_compile_duration_ms = MAX(compile_duration_ms)
-            FROM #parameterization
+                plan_count = COUNT_BIG(DISTINCT p.query_plan_hash),
+                total_compile_cpu_ms = SUM(p.compile_cpu_time_ms),
+                avg_compile_cpu_ms = AVG(p.compile_cpu_time_ms),
+                max_compile_cpu_ms = MAX(p.compile_cpu_time_ms),
+                total_compile_duration_ms = SUM(p.compile_duration_ms),
+                avg_compile_duration_ms = AVG(p.compile_duration_ms),
+                max_compile_duration_ms = MAX(p.compile_duration_ms)
+            FROM #parameterization AS p
             GROUP BY
-                database_name,
-                query_hash
+                p.database_name,
+                p.query_hash
            )
            SELECT
                pattern = N'parameterization opportunities',
@@ -5297,7 +5300,7 @@ IF @compile_events = 1
 
         ALTER TABLE #recompiles_1 ADD statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED;
 
-        IF @debug = 1 BEGIN SELECT N'#recompiles_1' AS table_name, * FROM #recompiles_1 AS r ORDER BY r.event_time; END;
+        IF @debug = 1 BEGIN SELECT N'#recompiles_1' AS table_name, r.* FROM #recompiles_1 AS r ORDER BY r.event_time; END;
 
         WITH
             cbq AS
@@ -5306,16 +5309,16 @@ IF @compile_events = 1
                 statement_text_checksum,
                 recompile_cause,
                 total_recompiles = COUNT_BIG(*),
-                total_recompile_cpu_ms = SUM(recompile_cpu_ms),
-                avg_recompile_cpu_ms = AVG(recompile_cpu_ms),
-                max_recompile_cpu_ms = MAX(recompile_cpu_ms),
-                total_recompile_duration_ms = SUM(recompile_duration_ms),
-                avg_recompile_duration_ms = AVG(recompile_duration_ms),
-                max_recompile_duration_ms = MAX(recompile_duration_ms)
-            FROM #recompiles_1
+                total_recompile_cpu_ms = SUM(r.recompile_cpu_ms),
+                avg_recompile_cpu_ms = AVG(r.recompile_cpu_ms),
+                max_recompile_cpu_ms = MAX(r.recompile_cpu_ms),
+                total_recompile_duration_ms = SUM(r.recompile_duration_ms),
+                avg_recompile_duration_ms = AVG(r.recompile_duration_ms),
+                max_recompile_duration_ms = MAX(r.recompile_duration_ms)
+            FROM #recompiles_1 AS r
             GROUP BY
-                statement_text_checksum,
-                recompile_cause
+                r.statement_text_checksum,
+                r.recompile_cause
         )
         SELECT
             pattern = N'total recompiles',
@@ -5765,29 +5768,29 @@ BEGIN
     ON #blocking
         (monitor_loop, blocked_desc);
 
-    IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, * FROM #blocking AS wa; END;
+    IF @debug = 1 BEGIN SELECT '#blocking' AS table_name, b.* FROM #blocking AS b; END;
 
     WITH
         hierarchy AS
     (
         SELECT
             b.monitor_loop,
-            blocking_desc,
-            blocked_desc,
+            b.blocking_desc,
+            b.blocked_desc,
             level = 0,
             sort_order =
                 CAST
                 (
-                    blocking_desc +
+                    b.blocking_desc +
                     ' <-- ' +
-                    blocked_desc AS varchar(400)
+                    b.blocked_desc AS varchar(400)
                 )
-        FROM #blocking b
+        FROM #blocking AS b
         WHERE NOT EXISTS
         (
             SELECT
                 1/0
-            FROM #blocking b2
+            FROM #blocking AS b2
             WHERE b2.monitor_loop = b.monitor_loop
             AND   b2.blocked_desc = b.blocking_desc
         )
@@ -5808,8 +5811,8 @@ BEGIN
                     ' <-- ' +
                     bg.blocked_desc AS varchar(400)
                 )
-        FROM hierarchy h
-        JOIN #blocking bg
+        FROM hierarchy AS h
+        JOIN #blocking AS bg
           ON  bg.monitor_loop = h.monitor_loop
           AND bg.blocking_desc = h.blocked_desc
     )
@@ -5818,8 +5821,8 @@ BEGIN
     SET
         blocking_level = h.level,
         sort_order = h.sort_order
-    FROM #blocked b
-    JOIN hierarchy h
+    FROM #blocked AS b
+    JOIN hierarchy AS h
       ON  h.monitor_loop = b.monitor_loop
       AND h.blocking_desc = b.blocking_desc
       AND h.blocked_desc = b.blocked_desc
@@ -5830,8 +5833,8 @@ BEGIN
     SET
         blocking_level = bd.blocking_level,
         sort_order = bd.sort_order
-    FROM #blocking bg
-    JOIN #blocked bd
+    FROM #blocking AS bg
+    JOIN #blocked AS bd
       ON  bd.monitor_loop = bg.monitor_loop
       AND bd.blocking_desc = bg.blocking_desc
       AND bd.blocked_desc = bg.blocked_desc
@@ -6272,7 +6275,7 @@ BEGIN
                 deqs.*,
                 query_plan =
                     TRY_CAST(deps.query_plan AS xml)
-            FROM #dm_exec_query_stats deqs
+            FROM #dm_exec_query_stats AS deqs
             OUTER APPLY sys.dm_exec_text_query_plan
             (
                 deqs.plan_handle,
@@ -6293,20 +6296,26 @@ END;
 
 IF @keep_alive = 0
 BEGIN
-    IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
-    RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
+    IF @debug = 1
+    BEGIN
+        RAISERROR(@stop_sql, 0, 1) WITH NOWAIT;
+        RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
+    END;
     EXECUTE (@stop_sql);
 
-    IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
-   RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
-   EXECUTE (@drop_sql);
+    IF @debug = 1
+    BEGIN
+        RAISERROR(@drop_sql, 0, 1) WITH NOWAIT;
+        RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
+    END;
+    EXECUTE (@drop_sql);
 END;
 RETURN;
 
 
 /*This section handles outputting data to tables*/
 output_results:
-RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT;
+IF @debug = 1 BEGIN RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT; END;
 
 WHILE 1 = 1
 BEGIN
@@ -6324,7 +6333,7 @@ BEGIN
             AND   dxs.create_time IS NOT NULL
         )
         BEGIN
-            RAISERROR(N'No matching active session names found starting with keeper_HumanEvents', 0, 1) WITH NOWAIT;
+            IF @debug = 1 BEGIN RAISERROR(N'No matching active session names found starting with keeper_HumanEvents', 0, 1) WITH NOWAIT; END;
         END;
 
         /*If we find any stopped sessions, turn them back on*/
@@ -6353,7 +6362,7 @@ BEGIN
             WHERE ses.name LIKE N'keeper_HumanEvents_%'
         )
         BEGIN
-            RAISERROR(N'No matching active session names found starting with keeper_HumanEvents', 0, 1) WITH NOWAIT;
+            IF @debug = 1 BEGIN RAISERROR(N'No matching active session names found starting with keeper_HumanEvents', 0, 1) WITH NOWAIT; END;
         END;
 
         /*If we find any stopped sessions, turn them back on*/
@@ -6371,8 +6380,11 @@ BEGIN
 
     IF LEN(@the_sleeper_must_awaken) > 0
     BEGIN
-     IF @debug = 1 BEGIN RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT; END;
-     RAISERROR(N'Starting keeper_HumanEvents... inactive sessions', 0, 1) WITH NOWAIT;
+     IF @debug = 1
+     BEGIN
+        RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT;
+        RAISERROR(N'Starting keeper_HumanEvents... inactive sessions', 0, 1) WITH NOWAIT;
+     END;
 
      EXECUTE sys.sp_executesql
          @the_sleeper_must_awaken;
@@ -6454,8 +6466,8 @@ BEGIN
            (
                SELECT
                    1/0
-               FROM #human_events_worker
-               WHERE event_type LIKE N'keeper_HumanEvents_compiles%'
+               FROM #human_events_worker AS hew
+               WHERE hew.event_type LIKE N'keeper_HumanEvents_compiles%'
            )
         BEGIN
             INSERT
@@ -6472,18 +6484,18 @@ BEGIN
                 output_table
             )
             SELECT
-                event_type +
+                hew.event_type +
                 N'_parameterization',
                 N'',
                 1,
                 0,
-                last_checked,
-                last_updated,
-                output_database,
-                output_schema,
-                output_table + N'_parameterization'
-            FROM #human_events_worker
-            WHERE event_type LIKE N'keeper_HumanEvents_compiles%';
+                hew.last_checked,
+                hew.last_updated,
+                hew.output_database,
+                hew.output_schema,
+                hew.output_table + N'_parameterization'
+            FROM #human_events_worker AS hew
+            WHERE hew.event_type LIKE N'keeper_HumanEvents_compiles%';
         END;
 
         /*Update this column for when we see if we need to create views.*/
@@ -6508,7 +6520,7 @@ BEGIN
         FROM #human_events_worker AS hew
         WHERE hew.event_type_short = N'';
 
-        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker; END;
+        IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, hew.* FROM #human_events_worker AS hew; END;
 
     END;
 
@@ -6521,7 +6533,7 @@ BEGIN
         WHERE hew.is_table_created = 0
     )
     BEGIN
-        RAISERROR(N'Sessions without tables found, starting loop.', 0, 1) WITH NOWAIT;
+        IF @debug = 1 BEGIN RAISERROR(N'Sessions without tables found, starting loop.', 0, 1) WITH NOWAIT; END;
 
         SELECT
             @min_id =
@@ -6531,7 +6543,7 @@ BEGIN
         FROM #human_events_worker AS hew
         WHERE hew.is_table_created = 0;
 
-        RAISERROR(N'While, while, while...', 0, 1) WITH NOWAIT;
+        IF @debug = 1 BEGIN RAISERROR(N'While, while, while...', 0, 1) WITH NOWAIT; END;
         WHILE @min_id <= @max_id
         BEGIN
             SELECT
@@ -6549,7 +6561,7 @@ BEGIN
 
             IF OBJECT_ID(@object_name_check) IS NULL
             BEGIN
-            RAISERROR(N'Generating create table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;
+                IF @debug = 1 BEGIN RAISERROR(N'Generating create table statement for %s', 0, 1, @event_type_check) WITH NOWAIT; END;
                 SELECT
                     @table_sql =
                         CASE
@@ -6603,7 +6615,7 @@ BEGIN
             EXECUTE sys.sp_executesql
                 @table_sql;
 
-            RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @event_type_check) WITH NOWAIT;
+            IF @debug = 1 BEGIN RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @event_type_check) WITH NOWAIT; END;
             UPDATE
                 #human_events_worker
             SET
@@ -6613,7 +6625,7 @@ BEGIN
 
             IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
 
-            RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
+            IF @debug = 1 BEGIN RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT; END ;
             SET @min_id =
             (
                 SELECT TOP (1)
@@ -6645,10 +6657,10 @@ OR
         o.modify_date
     FROM sys.all_objects AS o
     WHERE o.type = N'P'
-    AND   o.name = 'sp_HumanEvents'
+    AND   o.name = N'sp_HumanEvents'
 ) < DATEADD(HOUR, -1, SYSDATETIME())
 BEGIN
-    RAISERROR(N'Found views to create, beginning!', 0, 1) WITH NOWAIT;
+    IF @debug = 1 BEGIN RAISERROR(N'Found views to create, beginning!', 0, 1) WITH NOWAIT; END;
     IF
     (
         SELECT
@@ -6656,7 +6668,7 @@ BEGIN
         FROM #view_check AS vc
     ) = 0
     BEGIN
-        RAISERROR(N'#view_check was empty, creating and populating', 0, 1) WITH NOWAIT;
+        IF @debug = 1 BEGIN RAISERROR(N'#view_check was empty, creating and populating', 0, 1) WITH NOWAIT; END;
         /* These binary values are the view definitions. If I didn't do this, I would have been adding >50k lines of code in here. */
         INSERT #view_check (view_name, view_definition)
         SELECT N'HumanEvents_Blocking', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F0042006C006F0063006B0069006E0067000D000A00410053000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400370029000D000A0020002000200020006B006800650062002E006500760065006E0074005F00740069006D0065002C000D000A0020002000200020006B006800650062002E00640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020006B006800650062002E0063006F006E00740065006E00740069006F00750073005F006F0062006A006500630074002C000D000A0020002000200020006B006800650062002E00610063007400690076006900740079002C000D000A0020002000200020006B006800650062002E0073007000690064002C000D000A0020002000200020006B006800650062002E00710075006500720079005F0074006500780074002C000D000A0020002000200020006B006800650062002E0077006100690074005F00740069006D0065002C000D000A0020002000200020006B006800650062002E007300740061007400750073002C000D000A0020002000200020006B006800650062002E00690073006F006C006100740069006F006E005F006C006500760065006C002C000D000A0020002000200020006B006800650062002E006C006100730074005F007400720061006E00730061006300740069006F006E005F0073007400610072007400650064002C000D000A0020002000200020006B006800650062002E007400720061006E00730061006300740069006F006E005F006E0061006D0065002C000D000A0020002000200020006B006800650062002E006C006F0063006B005F006D006F00640065002C000D000A0020002000200020006B006800650062002E007000720069006F0072006900740079002C000D000A0020002000200020006B006800650062002E007400720061006E00730061006300740069006F006E005F0063006F0075006E0074002C000D000A0020002000200020006B006800650062002E0063006C00690065006E0074005F006100700070002C000D000A0020002000200020006B006800650062002E0068006F00730074005F006E0061006D0065002C000D000A0020002000200020006B006800650062002E006C006F00670069006E005F006E0061006D0065002C000D000A0020002000200020006B006800650062002E0062006C006F0063006B00650064005F00700072006F0063006500730073005F007200650070006F00720074000D000A00460052004F004D0020005B007200650070006C006100630065005F006D0065005D0020004100530020006B006800650062000D000A004F0052004400450052002000420059000D000A0020002000200020006B006800650062002E006500760065006E0074005F00740069006D0065002C000D000A00200020002000200043004100530045000D000A00200020002000200020002000200020005700480045004E0020006B006800650062002E006100630074006900760069007400790020003D002000270062006C006F0063006B0069006E00670027000D000A00200020002000200020002000200020005400480045004E00200031000D000A002000200020002000200020002000200045004C005300450020003900390039000D000A00200020002000200045004E0044003B00;
@@ -6700,14 +6712,14 @@ BEGIN
         SELECT N'HumanEvents_Recompiles_Legacy', 0x430052004500410054004500200056004900450057002000640062006F002E00480075006D0061006E004500760065006E00740073005F005200650063006F006D00700069006C00650073005F004C00650067006100630079000D000A00410053000D000A00530045004C00450043005400200054004F00500020002800320031003400370034003800330036003400380029000D000A0020002000200020006500760065006E0074005F00740069006D0065002C000D000A0020002000200020006500760065006E0074005F0074007900700065002C000D000A002000200020002000640061007400610062006100730065005F006E0061006D0065002C000D000A0020002000200020006F0062006A006500630074005F006E0061006D0065002C000D000A0020002000200020007200650063006F006D00700069006C0065005F00630061007500730065002C000D000A002000200020002000730074006100740065006D0065006E0074005F0074006500780074000D000A00460052004F004D0020005B007200650070006C006100630065005F006D0065005D000D000A004F00520044004500520020004200590020000D000A0020002000200020006500760065006E0074005F00740069006D0065003B00
         WHERE @compile_events = 0;
 
-        RAISERROR(N'Updating #view_check with output database (%s) and schema (%s)', 0, 1, @output_database_name, @output_schema_name) WITH NOWAIT;
+        IF @debug = 1 BEGIN RAISERROR(N'Updating #view_check with output database (%s) and schema (%s)', 0, 1, @output_database_name, @output_schema_name) WITH NOWAIT; END;
         UPDATE
             #view_check
         SET
             output_database = @output_database_name,
             output_schema = @output_schema_name;
 
-        RAISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT;
+        IF @debug = 1 BEGIN AISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT; END;
         UPDATE
             vc
         SET
@@ -6738,7 +6750,7 @@ BEGIN
         OR @view_tracker = 0
     )
     BEGIN
-        RAISERROR(N'Starting view creation loop', 0, 1) WITH NOWAIT;
+        IF @debug = 1 BEGIN RAISERROR(N'Starting view creation loop', 0, 1) WITH NOWAIT; END;
 
         SELECT
            @min_id = MIN(vc.id),
@@ -6797,7 +6809,7 @@ BEGIN
 
             IF OBJECT_ID(@object_name_check) IS NOT NULL
             BEGIN
-              RAISERROR(N'Uh oh, found a view', 0, 1) WITH NOWAIT;
+              IF @debug = 1 BEGIN RAISERROR(N'Uh oh, found a view', 0, 1) WITH NOWAIT; END;
               SET
                   @view_sql =
                       REPLACE
@@ -6829,12 +6841,14 @@ BEGIN
                 PRINT SUBSTRING(@view_sql, 36001, 40000);
             END;
 
-            RAISERROR(N'creating view %s', 0, 1, @event_type_check) WITH NOWAIT;
+            IF @debug = 1 BEGIN RAISERROR(N'creating view %s', 0, 1, @event_type_check) WITH NOWAIT; END;
             EXECUTE @spe @view_sql;
 
-            IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
-
-            RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
+            IF @debug = 1
+            BEGIN
+                RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT;
+                RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
+            END;
 
             SET @min_id =
             (
@@ -6873,7 +6887,7 @@ END;
         AND   hew.last_checked < DATEADD(SECOND, -5, SYSDATETIME())
     )
     BEGIN
-        RAISERROR(N'Sessions that need data found, starting loop.', 0, 1) WITH NOWAIT;
+        IF @debug = 1 BEGIN RAISERROR(N'Sessions that need data found, starting loop.', 0, 1) WITH NOWAIT; END;
 
         SELECT
             @min_id = MIN(hew.id),
@@ -6910,7 +6924,7 @@ END;
 
             IF OBJECT_ID(@object_name_check) IS NOT NULL
             BEGIN
-            RAISERROR(N'Generating insert table statement for %s', 0, 1, @event_type_check) WITH NOWAIT;
+                IF @debug = 1 BEGIN RAISERROR(N'Generating insert table statement for %s', 0, 1, @event_type_check) WITH NOWAIT; END;
                 SELECT
                     @table_sql = CONVERT
                                  (
@@ -7447,16 +7461,21 @@ ORDER BY
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id;
 
-            IF @debug = 1 BEGIN SELECT N'#human_events_worker' AS table_name, * FROM #human_events_worker AS hew; END;
-            IF @debug = 1 BEGIN SELECT N'#human_events_xml_internal' AS table_name, * FROM #human_events_xml_internal AS hew; END;
+            IF @debug = 1
+            BEGIN
+                SELECT N'#human_events_worker' AS table_name, hew.* FROM #human_events_worker AS hew;
+                SELECT N'#human_events_xml_internal' AS table_name, hew.* FROM #human_events_xml_internal AS hew;
+            END;
 
             /*Clear the table out between runs*/
             TRUNCATE TABLE #human_events_xml_internal;
             TRUNCATE TABLE #x;
 
-            IF @debug = 1 BEGIN RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; END;
-
-            RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
+            IF @debug = 1
+            BEGIN
+                RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT;
+                RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
+            END;
 
             SET @min_id =
             (
@@ -7531,7 +7550,7 @@ END;
 /*This section handles cleaning up stuff.*/
 cleanup:
 BEGIN
-    RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT;
+    IF @debug = 1 BEGIN RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT; END;
 
     SET @executer = QUOTENAME(@output_database_name) + N'.sys.sp_executesql ';
 
@@ -7554,7 +7573,7 @@ BEGIN
 
 
     /*Clean up tables*/
-    RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT;
+    IF @debug = 1 BEGIN RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT; END;
 
     SELECT
         @cleanup_tables += N'
@@ -7583,7 +7602,7 @@ BEGIN
     EXECUTE @executer @drop_holder;
 
     /*Cleanup views*/
-    RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT;
+    IF @debug = 1 BEGIN RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT; END;
 
     SET @drop_holder = N'';
 
@@ -7627,12 +7646,18 @@ BEGIN CATCH
             IF (@output_database_name = N''
                   AND @output_schema_name = N'')
             BEGIN
-                IF @debug = 1 BEGIN RAISERROR(@stop_sql, 0, 1) WITH NOWAIT; END;
-                RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
+                IF @debug = 1
+                BEGIN
+                    RAISERROR(@stop_sql, 0, 1) WITH NOWAIT;
+                    RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
+                END;
                 EXECUTE (@stop_sql);
 
-                IF @debug = 1 BEGIN RAISERROR(@drop_sql, 0, 1) WITH NOWAIT; END;
-                RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
+                IF @debug = 1
+                BEGIN
+                    RAISERROR(@drop_sql, 0, 1) WITH NOWAIT;
+                    RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
+                END;
                 EXECUTE (@drop_sql);
             END;
 
@@ -10618,7 +10643,6 @@ ORDER BY
 OPTION(RECOMPILE);
 END; --Final End
 GO
-
 /*
 EXEC sp_IndexCleanup
     @database_name = 'StackOverflow2013',
@@ -11567,7 +11591,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         SELECT
             table_name = '#index_analysis',
-            *
+            ia.*
         FROM #index_analysis AS ia;
     END;
 
@@ -11647,25 +11671,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SELECT
                             1/0
                         FROM CurrentIndexColumns cic
-                        WHERE NOT EXISTS
+                        WHERE cic.is_included_column = 0  -- Only check key columns
+                        AND NOT EXISTS
                         (
                             SELECT
                                 1/0
                             FROM OtherIndexColumns oic
                             WHERE oic.column_name = cic.column_name
-                            AND   oic.is_included_column = cic.is_included_column
-                            AND
+                            AND oic.is_included_column = 0  -- Must be in key columns
+                            AND oic.key_ordinal <= cic.key_ordinal  -- Check leading edge
+                        )
+                    )
+                    AND
+                    (
+                        -- Check included columns separately since order doesn't matter
+                        NOT EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM CurrentIndexColumns cic
+                            WHERE cic.is_included_column = 1
+                            AND NOT EXISTS
                             (
-                                 oic.key_ordinal = cic.key_ordinal
-                              OR oic.is_included_column = 1
+                                SELECT
+                                    1/0
+                                FROM OtherIndexColumns oic
+                                WHERE oic.column_name = cic.column_name
+                                AND
+                                (
+                                    oic.is_included_column = 1
+                                    OR oic.is_included_column = 0  -- Include cols can be covered by key cols
+                                )
                             )
                         )
                     )
                     AND ISNULL(ia.filter_definition, '') = ISNULL(@c_filter_definition, '')
                     AND
                     (
-                         ia.is_unique = 0
-                      OR @c_is_unique = 1
+                        ia.is_unique = 0
+                     OR @c_is_unique = 1
                     )
                     THEN 1
                     ELSE 0
@@ -11677,21 +11721,37 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SELECT
                             1/0
                         FROM CurrentIndexColumns cic
-                        WHERE NOT EXISTS
+                        WHERE cic.is_included_column = 0  -- Only check key columns
+                        AND NOT EXISTS
                         (
                             SELECT
                                 1/0
                             FROM OtherIndexColumns oic
                             WHERE oic.column_name = cic.column_name
-                            AND
+                            AND oic.is_included_column = 0  -- Must be in key columns
+                            AND oic.key_ordinal <= cic.key_ordinal  -- Check leading edge
+                        )
+                    )
+                    AND
+                    (
+                        -- Check included columns separately since order doesn't matter
+                        NOT EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM CurrentIndexColumns cic
+                            WHERE cic.is_included_column = 1
+                            AND NOT EXISTS
                             (
-                                oic.is_included_column = cic.is_included_column
-                             OR oic.is_included_column = 0
-                            )
-                            AND
-                            (
-                                oic.key_ordinal = cic.key_ordinal
-                             OR oic.is_included_column = 1
+                                SELECT
+                                    1/0
+                                FROM OtherIndexColumns oic
+                                WHERE oic.column_name = cic.column_name
+                                AND
+                                (
+                                    oic.is_included_column = 1
+                                    OR oic.is_included_column = 0  -- Include cols can be covered by key cols
+                                )
                             )
                         )
                     )
@@ -11831,12 +11891,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      N')' +
                      CASE
                          WHEN ISNULL(superseding.included_columns, ia.included_columns) IS NOT NULL
+                         OR ia.missing_columns IS NOT NULL
                          THEN N' INCLUDE (' +
-                              ISNULL(superseding.included_columns, ia.included_columns) +
+                              STUFF((
+                                  SELECT DISTINCT N',' + c.value('.', 'nvarchar(128)')
+                                  FROM (
+                                      SELECT CAST(N'<c>' +
+                                          REPLACE(ISNULL(superseding.included_columns, ia.included_columns), N', ', N'</c><c>')
+                                          + N'</c>' AS xml)
+                                  ) AS x(c)
+                                  FOR XML PATH('')
+                              ), 1, 1, '') +
                               CASE
                                   WHEN ia.missing_columns IS NOT NULL
-                                  THEN N', ' +
-                                  ia.missing_columns
+                                  THEN N', ' + ia.missing_columns
                                   ELSE N''
                               END +
                               N')'
@@ -12437,7 +12505,7 @@ BEGIN
         WHERE m.language_id = @language_id
     )
     BEGIN
-       RAISERROR(N'%i is not not a valid language_id in sys.messages.', 11, 1, @language_id) WITH NOWAIT;
+       RAISERROR(N'%i is not a valid language_id in sys.messages.', 11, 1, @language_id) WITH NOWAIT;
        RETURN;
     END;
 
@@ -14003,7 +14071,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF @debug = 1
         BEGIN
             PRINT SUBSTRING(@disk_check, 1, 4000);
-            PRINT SUBSTRING(@disk_check, 4000, 8000);
+            PRINT SUBSTRING(@disk_check, 4001, 8000);
         END;
 
         INSERT
@@ -15378,7 +15446,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF @debug = 1
         BEGIN
             PRINT SUBSTRING(@mem_sql, 1, 4000);
-            PRINT SUBSTRING(@mem_sql, 4000, 8000);
+            PRINT SUBSTRING(@mem_sql, 4001, 8000);
         END;
 
         EXECUTE sys.sp_executesql
@@ -15936,7 +16004,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             IF @debug = 1
             BEGIN
                 PRINT SUBSTRING(@cpu_sql, 0, 4000);
-                PRINT SUBSTRING(@cpu_sql, 4000, 8000);
+                PRINT SUBSTRING(@cpu_sql, 4001, 8000);
             END;
 
             EXECUTE sys.sp_executesql
@@ -25884,8 +25952,9 @@ OPTION(RECOMPILE);'
     BEGIN
         PRINT LEN(@sql);
         PRINT SUBSTRING(@sql, 0, 4000);
-        PRINT SUBSTRING(@sql, 4000, 8000);
-        PRINT SUBSTRING(@sql, 8000, 16000);
+        PRINT SUBSTRING(@sql, 4001, 8000);
+        PRINT SUBSTRING(@sql, 8001, 12000);
+        PRINT SUBSTRING(@sql, 12001, 16000);
     END;
 
     EXECUTE sys.sp_executesql
