@@ -1033,7 +1033,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF @debug = 1
         BEGIN
             PRINT SUBSTRING(@disk_check, 1, 4000);
-            PRINT SUBSTRING(@disk_check, 4000, 8000);
+            PRINT SUBSTRING(@disk_check, 4001, 8000);
         END;
 
         INSERT
@@ -2408,7 +2408,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF @debug = 1
         BEGIN
             PRINT SUBSTRING(@mem_sql, 1, 4000);
-            PRINT SUBSTRING(@mem_sql, 4000, 8000);
+            PRINT SUBSTRING(@mem_sql, 4001, 8000);
         END;
 
         EXECUTE sys.sp_executesql
@@ -2966,7 +2966,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             IF @debug = 1
             BEGIN
                 PRINT SUBSTRING(@cpu_sql, 0, 4000);
-                PRINT SUBSTRING(@cpu_sql, 4000, 8000);
+                PRINT SUBSTRING(@cpu_sql, 4001, 8000);
             END;
 
             EXECUTE sys.sp_executesql
