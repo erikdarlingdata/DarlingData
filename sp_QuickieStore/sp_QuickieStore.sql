@@ -1474,6 +1474,66 @@ VALUES
         NULL
     );
 
+/*  Create a table variable to define parameter processing */
+DECLARE 
+    @FilterParameters table 
+(
+    parameter_name nvarchar(100) NOT NULL,
+    parameter_value nvarchar(4000) NOT NULL,
+    temp_table_name sysname NOT NULL,
+    column_name sysname NOT NULL,
+    data_type sysname NOT NULL,
+    is_include bit NOT NULL,
+    requires_secondary_processing bit NOT NULL
+);
+
+/*  Populate with parameter definitions*/
+INSERT INTO 
+    @FilterParameters
+(
+    parameter_name,
+    parameter_value,
+    temp_table_name,
+    column_name,
+    data_type,
+    is_include,
+    requires_secondary_processing
+)
+SELECT 
+    v.parameter_name, 
+    v.parameter_value, 
+    v.temp_table_name, 
+    v.column_name, 
+    v.data_type, 
+    v.is_include, 
+    v.requires_secondary_processing 
+FROM 
+(
+    VALUES
+        /*  Include parameters */
+        ('include_plan_ids', @include_plan_ids, '#include_plan_ids', 'plan_id', 'bigint', 1, 0),
+        ('include_query_ids', @include_query_ids, '#include_query_ids', 'query_id', 'bigint', 1, 1),
+        ('include_query_hashes', @include_query_hashes, '#include_query_hashes', 'query_hash_s', 'varchar', 1, 1),
+        ('include_plan_hashes', @include_plan_hashes, '#include_plan_hashes', 'plan_hash_s', 'varchar', 1, 1),
+        ('include_sql_handles', @include_sql_handles, '#include_sql_handles', 'sql_handle_s', 'varchar', 1, 1),        
+        /*  Ignore parameters */
+        ('ignore_plan_ids', @ignore_plan_ids, '#ignore_plan_ids', 'plan_id', 'bigint', 0, 0),
+        ('ignore_query_ids', @ignore_query_ids, '#ignore_query_ids', 'query_id', 'bigint', 0, 1),
+        ('ignore_query_hashes', @ignore_query_hashes, '#ignore_query_hashes', 'query_hash_s', 'varchar', 0, 1),
+        ('ignore_plan_hashes', @ignore_plan_hashes, '#ignore_plan_hashes', 'plan_hash_s', 'varchar', 0, 1),
+        ('ignore_sql_handles', @ignore_sql_handles, '#ignore_sql_handles', 'sql_handle_s', 'varchar', 0, 1)
+    ) AS v
+    (
+        parameter_name, 
+        parameter_value, 
+        temp_table_name, 
+        column_name, 
+        data_type, 
+        is_include, 
+        requires_secondary_processing
+    )
+WHERE v.parameter_value IS NOT NULL;
+
 /*
 Try to be helpful by subbing in a database name if null
 */
@@ -1565,7 +1625,15 @@ DECLARE
     @regression_baseline_end_date_original datetimeoffset(7),
     @regression_mode bit,
     @regression_where_clause nvarchar(MAX),
-    @column_sql nvarchar(MAX);
+    @column_sql nvarchar(MAX),
+    @param_name nvarchar(100), 
+    @param_value nvarchar(4000), 
+    @temp_table sysname, 
+    @column_name sysname, 
+    @data_type sysname, 
+    @is_include bit,
+    @requires_secondary_processing bit,
+    @split_sql nvarchar(MAX);
 
 /*
 In cases where we are escaping @query_text_search and
@@ -1903,11 +1971,12 @@ DECLARE
     @database_cursor CURSOR;
 
 SET
-    @database_cursor = CURSOR
-    LOCAL
-    SCROLL
-    DYNAMIC
-    READ_ONLY
+    @database_cursor = 
+        CURSOR
+        LOCAL
+        SCROLL
+        DYNAMIC
+        READ_ONLY
 FOR
 SELECT
     d.database_name
@@ -3564,285 +3633,7 @@ IF
 OR @include_query_ids IS NOT NULL
 OR @ignore_plan_ids   IS NOT NULL
 OR @ignore_query_ids  IS NOT NULL
-)
-BEGIN
-    IF @include_plan_ids IS NOT NULL
-    BEGIN
-        SELECT
-            @include_plan_ids =
-                REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@include_plan_ids)),
-                 CHAR(10), N''),  CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
-
-        SELECT
-            @current_table = 'inserting #include_plan_ids';
-
-        INSERT
-            #include_plan_ids WITH(TABLOCK)
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_ints,
-          N'@ids nvarchar(4000)',
-            @include_plan_ids;
-
-        SELECT
-            @where_clause += N'AND   EXISTS
-      (
-         SELECT
-            1/0
-         FROM #include_plan_ids AS idi
-         WHERE idi.plan_id = qsrs.plan_id
-      )' + @nc10;
-    END; /*End include plan ids*/
-
-    IF @ignore_plan_ids IS NOT NULL
-    BEGIN
-        SELECT
-            @ignore_plan_ids =
-                REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@ignore_plan_ids)),
-                 CHAR(10), N''),  CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
-
-        SELECT
-            @current_table = 'inserting #ignore_plan_ids';
-
-        INSERT
-            #ignore_plan_ids WITH(TABLOCK)
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_ints,
-          N'@ids nvarchar(4000)',
-            @ignore_plan_ids;
-
-        SELECT
-            @where_clause += N'AND   NOT EXISTS
-      (
-         SELECT
-            1/0
-         FROM #ignore_plan_ids AS idi
-         WHERE idi.plan_id = qsrs.plan_id
-      )' + @nc10;
-    END; /*End ignore plan ids*/
-
-    IF @include_query_ids IS NOT NULL
-    BEGIN
-        SELECT
-            @include_query_ids =
-                REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@include_query_ids)),
-                 CHAR(10), N''),  CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
-        SELECT
-            @current_table = 'inserting #include_query_ids',
-            @sql = @isolation_level;
-
-        INSERT
-            #include_query_ids WITH(TABLOCK)
-        (
-            query_id
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_ints,
-          N'@ids nvarchar(4000)',
-            @include_query_ids;
-
-        SELECT
-            @current_table = 'inserting #include_plan_ids for included query ids';
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            EXECUTE sys.sp_executesql
-                @troubleshoot_insert,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            SET STATISTICS XML ON;
-        END;
-
-        SELECT
-            @sql += N'
-SELECT DISTINCT
-    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM #include_query_ids AS iqi
-          WHERE iqi.query_id = qsp.query_id
-      )
-OPTION(RECOMPILE);' + @nc10;
-
-        IF @debug = 1
-        BEGIN
-            PRINT LEN(@sql);
-            PRINT @sql;
-        END;
-
-        INSERT
-            #include_plan_ids
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @sql;
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_update,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_info,
-              N'@sql nvarchar(max),
-                @current_table nvarchar(100)',
-                @sql,
-                @current_table;
-        END;
-
-        /*
-        This section of code confused me when I came back to it,
-        so I'm going to add a note here about why I do this:
-
-        If @include_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter.
-
-        We need to do this because it's how we figure
-        out which plans to keep in the main query
-        */
-        IF @include_plan_ids IS NULL
-        BEGIN
-            SELECT
-                @where_clause += N'AND   EXISTS
-          (
-             SELECT
-                1/0
-             FROM #include_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
-        END;
-    END; /*End include query ids*/
-
-    IF @ignore_query_ids IS NOT NULL
-    BEGIN
-        SELECT
-            @ignore_query_ids =
-                REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@ignore_query_ids)),
-                 CHAR(10), N''),  CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
-        SELECT
-            @current_table = 'inserting #ignore_query_ids',
-            @sql = @isolation_level;
-
-        INSERT
-            #ignore_query_ids WITH(TABLOCK)
-        (
-            query_id
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_ints,
-          N'@ids nvarchar(4000)',
-            @ignore_query_ids;
-
-        SELECT
-            @current_table = 'inserting #ignore_plan_ids for ignored query ids';
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            EXECUTE sys.sp_executesql
-                @troubleshoot_insert,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            SET STATISTICS XML ON;
-        END;
-
-        SELECT
-            @sql += N'
-SELECT DISTINCT
-    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM #ignore_query_ids AS iqi
-          WHERE iqi.query_id = qsp.query_id
-      )
-OPTION(RECOMPILE);' + @nc10;
-
-        IF @debug = 1
-        BEGIN
-            PRINT LEN(@sql);
-            PRINT @sql;
-        END;
-
-        INSERT
-            #ignore_plan_ids
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @sql;
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_update,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_info,
-              N'@sql nvarchar(max),
-                @current_table nvarchar(100)',
-                @sql,
-                @current_table;
-        END;
-
-        /*
-        This section of code confused me when I came back to it,
-        so I'm going to add a note here about why I do this:
-
-        If @ignore_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter.
-
-        We need to do this because it's how we figure
-        out which plans to keep in the main query
-        */
-        IF @ignore_plan_ids IS NULL
-        BEGIN
-            SELECT
-                @where_clause += N'AND   NOT EXISTS
-          (
-             SELECT
-                1/0
-             FROM #ignore_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
-        END;
-    END; /*End ignore query ids*/
-END; /*End query and plan id filtering*/
-
-/*
-This section filters query or plan hashes
-*/
-IF
-(
-   @include_query_hashes IS NOT NULL
+OR @include_query_hashes IS NOT NULL
 OR @include_plan_hashes  IS NOT NULL
 OR @include_sql_handles  IS NOT NULL
 OR @ignore_query_hashes  IS NOT NULL
@@ -3850,672 +3641,319 @@ OR @ignore_plan_hashes   IS NOT NULL
 OR @ignore_sql_handles   IS NOT NULL
 )
 BEGIN
-    IF @include_query_hashes IS NOT NULL
+    DECLARE
+        @filter_cursor CURSOR;
+    
+    SET @filter_cursor = 
+        CURSOR 
+        LOCAL
+        FORWARD_ONLY
+        STATIC
+        READ_ONLY
+    FOR 
+    SELECT 
+        parameter_name, 
+        parameter_value, 
+        temp_table_name, 
+        column_name, 
+        data_type, 
+        is_include, 
+        requires_secondary_processing
+    FROM @FilterParameters AS fp;
+    
+    OPEN @filter_cursor;
+    
+    FETCH NEXT 
+    FROM @filter_cursor 
+    INTO 
+        @param_name, 
+        @param_value, 
+        @temp_table, 
+        @column_name, 
+        @data_type, 
+        @is_include, 
+        @requires_secondary_processing;
+    
+    WHILE @@FETCH_STATUS = 0
     BEGIN
-        SELECT
-            @include_query_hashes =
+        /*  Clean parameter value */
+        SELECT 
+            @param_value = 
                 REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@include_query_hashes)),
-                 CHAR(10), N''),  CHAR(13), N''),
+                LTRIM(RTRIM(@param_value)), 
+                CHAR(10), N''), CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
-
-        SELECT
-            @current_table = 'inserting #include_query_hashes',
-            @sql = @isolation_level;
-
-        INSERT
-            #include_query_hashes WITH(TABLOCK)
-        (
-            query_hash_s
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_strings,
-          N'@ids nvarchar(4000)',
-            @include_query_hashes;
-
-        SELECT
-            @current_table = 'inserting #include_plan_ids for included query hashes';
-
+            
+        /*  Log current operation if debugging */
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Processing %s with value %s', 0, 1, @param_name, @param_value) WITH NOWAIT;
+        END;
+    
+        /*  Set current table name for troubleshooting */
+        SELECT 
+            @current_table = 'inserting ' + @temp_table;
+        
+        /*  Choose appropriate string split function based on data type */
+        IF @data_type = N'bigint'
+        BEGIN
+            SELECT @split_sql = @string_split_ints;
+        END
+        ELSE
+        BEGIN
+            SELECT @split_sql = @string_split_strings;
+        END;
+        
+        /*  Execute the initial insert with troubleshooting if enabled */
         IF @troubleshoot_performance = 1
         BEGIN
             EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
-              N'@current_table nvarchar(100)',
+                N'@current_table nvarchar(100)',
                 @current_table;
-
+    
             SET STATISTICS XML ON;
         END;
-
-        SELECT
-            @sql += N'
-SELECT DISTINCT
-    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          WHERE qsq.query_id = qsp.query_id
-          AND   EXISTS
+        
+        /*  Execute the dynamic SQL to populate the temporary table */
+        DECLARE @dynamic_sql nvarchar(MAX) = N'
+        INSERT INTO 
+            ' + @temp_table + N' 
+        WITH
+            (TABLOCK)
+        (
+            ' + @column_name + 
+       N')
+        EXECUTE sys.sp_executesql
+            @split_sql,
+            N''@ids nvarchar(4000)'',
+            @param_value;';
+            
+        EXEC sys.sp_executesql 
+            @dynamic_sql, 
+          N'@split_sql nvarchar(max), 
+            @param_value nvarchar(4000)', 
+            @split_sql, 
+            @param_value;
+        
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+    
+            EXECUTE sys.sp_executesql
+                @troubleshoot_update,
+                N'@current_table nvarchar(100)',
+                @current_table;
+    
+            EXECUTE sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max), 
+                @current_table nvarchar(100)',
+                @split_sql,
+                @current_table;
+        END;
+        
+        /*  Secondary processing (for parameters that need to populate plan IDs) */
+        IF @requires_secondary_processing = 1
+        BEGIN
+            SELECT 
+                @current_table = 'inserting #include_plan_ids for ' + @param_name;
+            
+            /*  Build appropriate SQL based on parameter type */
+            DECLARE 
+                @secondary_sql nvarchar(MAX) = N'';
+            
+            IF @param_name = 'include_query_ids' 
+            OR @param_name = 'ignore_query_ids'
+            BEGIN
+                SELECT @secondary_sql = N'
+                SELECT DISTINCT
+                    qsp.plan_id
+                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+                WHERE EXISTS
+                      (
+                          SELECT
+                              1/0
+                          FROM #' + 
+                              CASE 
+                                  WHEN @is_include = 1 
+                                  THEN N'include' 
+                                  ELSE N'ignore' 
+                              END + 
+                              N'_query_ids AS iqi
+                          WHERE iqi.query_id = qsp.query_id
+                      )
+                OPTION(RECOMPILE);';
+            END;
+            ELSE 
+            IF @param_name = 'include_query_hashes' 
+            OR @param_name = 'ignore_query_hashes'
+            BEGIN
+                SELECT @secondary_sql = N'
+                SELECT DISTINCT
+                    qsp.plan_id
+                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+                WHERE EXISTS
+                      (
+                          SELECT
+                              1/0
+                          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                          WHERE qsq.query_id = qsp.query_id
+                          AND   EXISTS
+                                (
+                                    SELECT
+                                        1/0
+                                    FROM #' + 
+                                        CASE 
+                                            WHEN @is_include = 1 
+                                            THEN N'include' 
+                                            ELSE N'ignore' 
+                                         END + 
+                                         N'_query_hashes AS iqh
+                                    WHERE iqh.query_hash = qsq.query_hash
+                                )
+                      )
+                OPTION(RECOMPILE);';
+            END;
+            ELSE 
+            IF @param_name = 'include_plan_hashes' 
+            OR @param_name = 'ignore_plan_hashes'
+            BEGIN
+                SELECT @secondary_sql = N'
+                SELECT DISTINCT
+                    qsp.plan_id
+                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+                WHERE EXISTS
+                      (
+                          SELECT
+                              1/0
+                          FROM #' + 
+                              CASE 
+                                  WHEN @is_include = 1 
+                                  THEN N'include' 
+                                  ELSE N'ignore' 
+                              END + N'_plan_hashes AS iph
+                          WHERE iph.plan_hash = qsp.query_plan_hash
+                      )
+                OPTION(RECOMPILE);';
+            END;
+            ELSE 
+            IF 
+            @param_name = 'include_sql_handles' 
+            OR @param_name = 'ignore_sql_handles'
+            BEGIN
+                SELECT @secondary_sql = N'
+                SELECT DISTINCT
+                    qsp.plan_id
+                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+                WHERE EXISTS
+                      (
+                          SELECT
+                              1/0
+                          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                          WHERE qsp.query_id = qsq.query_id
+                          AND EXISTS
+                              (
+                                  SELECT
+                                      1/0
+                                  FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                                  WHERE qsqt.query_text_id = qsq.query_text_id
+                                  AND   EXISTS
+                                        (
+                                            SELECT
+                                                1/0
+                                            FROM #' + 
+                                                CASE 
+                                                    WHEN @is_include = 1 
+                                                    THEN N'include' 
+                                                    ELSE N'ignore' 
+                                                END + N'_sql_handles AS ish
+                                            WHERE ish.sql_handle = qsqt.statement_sql_handle
+                                        )
+                              )
+                      )
+                OPTION(RECOMPILE);';
+            END;
+            
+            /*  Process secondary sql if defined */
+            IF @secondary_sql IS NOT NULL
+            BEGIN
+                IF @troubleshoot_performance = 1
+                BEGIN
+                    EXECUTE sys.sp_executesql
+                        @troubleshoot_insert,
+                        N'@current_table nvarchar(100)',
+                        @current_table;
+    
+                    SET STATISTICS XML ON;
+                END;
+                
+                INSERT INTO 
+                    #include_plan_ids 
+                WITH
+                    (TABLOCK) 
                 (
-                    SELECT
-                        1/0
-                    FROM #include_query_hashes AS iqh
-                    WHERE iqh.query_hash = qsq.query_hash
+                    plan_id
                 )
-      )
-OPTION(RECOMPILE);' + @nc10;
-
-        IF @debug = 1
-        BEGIN
-            PRINT LEN(@sql);
-            PRINT @sql;
-        END;
-
-        INSERT
-            #include_plan_ids
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @sql;
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_update,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_info,
-              N'@sql nvarchar(max),
-                @current_table nvarchar(100)',
-                @sql,
-                @current_table;
-        END;
-
-        /*
-        This section of code confused me when I came back to it,
-        so I'm going to add a note here about why I do this:
-
-        If @include_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter.
-
-        We need to do this because it's how we figure
-        out which plans to keep in the main query
-        */
-        IF @include_plan_ids IS NULL
-        BEGIN
-            SELECT
-               @where_clause += N'AND   EXISTS
-          (
-             SELECT
-                1/0
-             FROM #include_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
-        END;
-    END; /*End include query hashes*/
-
-    IF @ignore_query_hashes IS NOT NULL
-    BEGIN
-        SELECT
-            @ignore_query_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@ignore_query_hashes)),
-                 CHAR(10), N''),  CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
-
-        SELECT
-            @current_table = 'inserting #ignore_query_hashes',
-            @sql = @isolation_level;
-
-        INSERT
-            #ignore_query_hashes WITH(TABLOCK)
-        (
-            query_hash_s
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_strings,
-          N'@ids nvarchar(4000)',
-            @ignore_query_hashes;
-
-        SELECT
-            @current_table = 'inserting #ignore_plan_ids for ignored query hashes';
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            EXECUTE sys.sp_executesql
-                @troubleshoot_insert,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            SET STATISTICS XML ON;
-        END;
-
-        SELECT
-            @sql += N'
-SELECT DISTINCT
-    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          WHERE qsq.query_id = qsp.query_id
-          AND   EXISTS
-                (
-                    SELECT
-                        1/0
-                    FROM #ignore_query_hashes AS iqh
-                    WHERE iqh.query_hash = qsq.query_hash
-                )
-      )
-OPTION(RECOMPILE);' + @nc10;
-
-        IF @debug = 1
-        BEGIN
-            PRINT LEN(@sql);
-            PRINT @sql;
-        END;
-
-        INSERT
-            #ignore_plan_ids
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @sql;
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_update,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_info,
-              N'@sql nvarchar(max),
-                @current_table nvarchar(100)',
-                @sql,
-                @current_table;
-        END;
-
-        /*
-        This section of code confused me when I came back to it,
-        so I'm going to add a note here about why I do this:
-
-        If @ignore_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter.
-
-        We need to do this because it's how we figure
-        out which plans to keep in the main query
-        */
-        IF @ignore_plan_ids IS NULL
-        BEGIN
-            SELECT
-               @where_clause += N'AND   NOT EXISTS
-          (
-             SELECT
-                1/0
-             FROM #ignore_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
-          END;
-    END; /*End ignore query hashes*/
-
-    IF @include_plan_hashes IS NOT NULL
-    BEGIN
-        SELECT
-            @include_plan_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@include_plan_hashes)),
-                 CHAR(10), N''),  CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
-
-        SELECT
-            @current_table = 'inserting #include_plan_hashes',
-            @sql = @isolation_level;
-
-        INSERT
-            #include_plan_hashes WITH(TABLOCK)
-        (
-            plan_hash_s
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_strings,
-          N'@ids nvarchar(4000)',
-            @include_plan_hashes;
-
-        SELECT
-            @current_table = 'inserting #include_plan_ids for included plan hashes';
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            EXECUTE sys.sp_executesql
-                @troubleshoot_insert,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            SET STATISTICS XML ON;
-        END;
-
-        SELECT
-            @sql += N'
-SELECT DISTINCT
-    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM #include_plan_hashes AS iph
-          WHERE iph.plan_hash = qsp.query_plan_hash
-      )
-OPTION(RECOMPILE);' + @nc10;
-
-        IF @debug = 1
-        BEGIN
-            PRINT LEN(@sql);
-            PRINT @sql;
-        END;
-
-        INSERT
-            #include_plan_ids
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @sql;
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_update,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_info,
-              N'@sql nvarchar(max),
-                @current_table nvarchar(100)',
-                @sql,
-                @current_table;
-        END;
-
-        /*
-        This section of code confused me when I came back to it,
-        so I'm going to add a note here about why I do this:
-
-        If @include_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter.
-
-        We need to do this because it's how we figure
-        out which plans to keep in the main query
-        */
-        IF @include_plan_ids IS NULL
-        BEGIN
-            SELECT
-               @where_clause += N'AND   EXISTS
-          (
-             SELECT
-                1/0
-             FROM #include_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
-        END;
-    END; /*End include plan hashes*/
-
-    IF @ignore_plan_hashes IS NOT NULL
-    BEGIN
-        SELECT
-            @ignore_plan_hashes =
-                REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@ignore_plan_hashes)),
-                 CHAR(10), N''),  CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
-
-        SELECT
-            @current_table = 'inserting #ignore_plan_hashes',
-            @sql = @isolation_level;
-
-        INSERT
-            #ignore_plan_hashes WITH(TABLOCK)
-        (
-            plan_hash_s
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_strings,
-          N'@ids nvarchar(4000)',
-            @ignore_plan_hashes;
-
-        SELECT
-            @current_table = 'inserting #ignore_plan_ids for ignored query hashes';
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            EXECUTE sys.sp_executesql
-                @troubleshoot_insert,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            SET STATISTICS XML ON;
-        END;
-
-        SELECT
-            @sql += N'
-SELECT DISTINCT
-    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM #ignore_plan_hashes AS iph
-          WHERE iph.plan_hash = qsp.query_plan_hash
-      )
-OPTION(RECOMPILE);' + @nc10;
-
-        IF @debug = 1
-        BEGIN
-            PRINT LEN(@sql);
-            PRINT @sql;
-        END;
-
-        INSERT
-            #ignore_plan_ids
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @sql;
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_update,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_info,
-              N'@sql nvarchar(max),
-                @current_table nvarchar(100)',
-                @sql,
-                @current_table;
-        END;
-
-        /*
-        This section of code confused me when I came back to it,
-        so I'm going to add a note here about why I do this:
-
-        If @ignore_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter.
-
-        We need to do this because it's how we figure
-        out which plans to keep in the main query
-        */
-        IF @ignore_plan_ids IS NULL
-        BEGIN
-            SELECT
-               @where_clause += N'AND   NOT EXISTS
-          (
-             SELECT
-                1/0
-             FROM #ignore_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
-          END;
-    END; /*End ignore plan hashes*/
-
-    IF @include_sql_handles IS NOT NULL
-    BEGIN
-        SELECT
-            @include_sql_handles =
-                REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@include_sql_handles)),
-                 CHAR(10), N''),  CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
-
-        SELECT
-            @current_table = 'inserting #include_sql_handles',
-            @sql = @isolation_level;
-
-        INSERT
-            #include_sql_handles WITH(TABLOCK)
-        (
-            sql_handle_s
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_strings,
-          N'@ids nvarchar(4000)',
-            @include_sql_handles;
-
-        SELECT
-            @current_table = 'inserting #include_sql_handles for included sql handles';
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_insert,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            SET STATISTICS XML ON;
-        END;
-
-        SELECT
-            @sql += N'
-SELECT DISTINCT
-    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          WHERE qsp.query_id = qsq.query_id
-          AND EXISTS
+                EXECUTE sys.sp_executesql 
+                    @secondary_sql;
+                
+                IF @troubleshoot_performance = 1
+                BEGIN
+                    SET STATISTICS XML OFF;
+    
+                    EXECUTE sys.sp_executesql
+                        @troubleshoot_update,
+                        N'@current_table nvarchar(100)',
+                        @current_table;
+    
+                    EXECUTE sys.sp_executesql
+                        @troubleshoot_info,
+                        N'@sql nvarchar(max), @current_table nvarchar(100)',
+                        @secondary_sql,
+                        @current_table;
+                END;
+            END;
+            
+            /*  Update where clause if needed */
+            DECLARE 
+                @temp_target_table nvarchar(100) = 
+                    CASE 
+                        WHEN @is_include = 1 
+                        THEN N'#include_plan_ids' 
+                        ELSE N'#ignore_plan_ids' 
+                    END,
+                @exist_or_not_exist nvarchar(20) = 
+                    CASE 
+                        WHEN @is_include = 1 
+                        THEN N'EXISTS' 
+                        ELSE N'NOT EXISTS' 
+                    END;
+            
+            SELECT 
+                @where_clause += 
+                N'AND   ' + 
+                @exist_or_not_exist + 
+                N'
               (
-                  SELECT
-                      1/0
-                  FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                  WHERE qsqt.query_text_id = qsq.query_text_id
-                  AND   EXISTS
-                        (
-                            SELECT
-                                1/0
-                            FROM #include_sql_handles AS ish
-                            WHERE ish.sql_handle = qsqt.statement_sql_handle
-                        )
-              )
-      )
-OPTION(RECOMPILE);' + @nc10;
-
-        IF @debug = 1
-        BEGIN
-            PRINT LEN(@sql);
-            PRINT @sql;
+                 SELECT
+                    1/0
+                 FROM ' + @temp_target_table + N' AS idi
+                 WHERE idi.plan_id = qsrs.plan_id
+              )' + @nc10;
         END;
-
-        INSERT
-            #include_plan_ids
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @sql;
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_update,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_info,
-              N'@sql nvarchar(max),
-                @current_table nvarchar(100)',
-                @sql,
-                @current_table;
-        END;
-
-        /*
-        This section of code confused me when I came back to it,
-        so I'm going to add a note here about why I do this:
-
-        If @include_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter.
-
-        We need to do this because it's how we figure
-        out which plans to keep in the main query
-        */
-        IF @include_plan_ids IS NULL
-        BEGIN
-            SELECT
-                @where_clause += N'AND   EXISTS
-          (
-             SELECT
-                1/0
-             FROM #include_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
-        END;
-    END; /*End include plan hashes*/
-
-    IF @ignore_sql_handles IS NOT NULL
-    BEGIN
-        SELECT
-            @ignore_sql_handles =
-                REPLACE(REPLACE(REPLACE(REPLACE(
-                    LTRIM(RTRIM(@ignore_sql_handles)),
-                 CHAR(10), N''),  CHAR(13), N''),
-                NCHAR(10), N''), NCHAR(13), N'');
-
-        SELECT
-            @current_table = 'inserting #ignore_sql_handles',
-            @sql = @isolation_level;
-
-        INSERT
-            #ignore_sql_handles WITH(TABLOCK)
-        (
-            sql_handle_s
-        )
-        EXECUTE sys.sp_executesql
-            @string_split_strings,
-          N'@ids nvarchar(4000)',
-            @ignore_sql_handles;
-
-        SELECT
-            @current_table = 'inserting #ignore_plan_ids for ignored sql handles';
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            EXECUTE sys.sp_executesql
-                @troubleshoot_insert,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            SET STATISTICS XML ON;
-        END;
-
-        SELECT
-            @sql += N'
-SELECT DISTINCT
-    qsp.plan_id
-FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-WHERE EXISTS
-      (
-          SELECT
-              1/0
-          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-          WHERE qsp.query_id = qsq.query_id
-          AND EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-                  WHERE qsqt.query_text_id = qsq.query_text_id
-                  AND   EXISTS
-                        (
-                            SELECT
-                                1/0
-                            FROM #ignore_sql_handles AS ish
-                            WHERE ish.sql_handle = qsqt.statement_sql_handle
-                        )
-              )
-      )
-OPTION(RECOMPILE);' + @nc10;
-
-        IF @debug = 1
-        BEGIN
-            PRINT LEN(@sql);
-            PRINT @sql;
-        END;
-
-        INSERT
-            #ignore_plan_ids
-        (
-            plan_id
-        )
-        EXECUTE sys.sp_executesql
-            @sql;
-
-        IF @troubleshoot_performance = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_update,
-              N'@current_table nvarchar(100)',
-                @current_table;
-
-            EXECUTE sys.sp_executesql
-                @troubleshoot_info,
-              N'@sql nvarchar(max),
-                @current_table nvarchar(100)',
-                @sql,
-                @current_table;
-        END;
-
-        /*
-        This section of code confused me when I came back to it,
-        so I'm going to add a note here about why I do this:
-
-        If @ignore_plan_ids is NULL at this point, it's because
-        the user didn't populate the parameter.
-
-        We need to do this because it's how we figure
-        out which plans to keep in the main query
-        */
-        IF @ignore_plan_ids IS NULL
-        BEGIN
-            SELECT
-                @where_clause += N'AND   NOT EXISTS
-          (
-             SELECT
-                1/0
-             FROM #ignore_plan_ids AS idi
-             WHERE idi.plan_id = qsrs.plan_id
-          )' + @nc10;
-          END;
-    END; /*End ignore plan hashes*/
+        
+        FETCH NEXT 
+        FROM @filter_cursor 
+        INTO 
+            @param_name, 
+            @param_value, 
+            @temp_table, 
+            @column_name, 
+            @data_type, 
+            @is_include, 
+            @requires_secondary_processing;
+    END;
 END; /*End hash and handle filtering*/
 
 IF @sql_2022_views = 1
@@ -8263,6 +7701,48 @@ BEGIN
 
     TRUNCATE TABLE
         #forced_plans_failures;
+
+    TRUNCATE TABLE 
+        #include_plan_ids;
+
+    TRUNCATE TABLE 
+        #include_query_ids;
+
+    TRUNCATE TABLE 
+        #include_query_hashes;
+
+    TRUNCATE TABLE 
+        #include_plan_hashes;
+
+    TRUNCATE TABLE 
+        #include_sql_handles;
+
+    TRUNCATE TABLE 
+        #ignore_plan_ids;
+
+    TRUNCATE TABLE 
+        #ignore_query_ids;
+
+    TRUNCATE TABLE 
+        #ignore_query_hashes;
+
+    TRUNCATE TABLE 
+        #ignore_plan_hashes;
+
+    TRUNCATE TABLE 
+        #ignore_sql_handles;
+
+    TRUNCATE TABLE 
+        #only_queries_with_hints;
+
+    TRUNCATE TABLE 
+        #only_queries_with_feedback;
+
+    TRUNCATE TABLE 
+        #only_queries_with_variants;
+
+    TRUNCATE TABLE 
+        #forced_plans_failures;
 END;
 
 FETCH NEXT
@@ -10332,7 +9812,25 @@ BEGIN
        work_start_utc =
            @work_start_utc,
        work_end_utc =
-           @work_end_utc;
+           @work_end_utc,
+       column_sql =
+           @column_sql,
+       param_name = 
+           @param_name, 
+       param_value = 
+           @param_value, 
+       temp_table = 
+           @temp_table, 
+       column_name = 
+           @column_name, 
+       data_type = 
+           @data_type, 
+       is_include = 
+           @is_include,
+       requires_secondary_processing = 
+           @requires_secondary_processing,
+       split_sql = 
+           @split_sql;
 
     IF EXISTS
        (
