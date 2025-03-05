@@ -839,12 +839,12 @@ CREATE TABLE
     database_id int NOT NULL,
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    all_plan_ids varchar(MAX),
+    all_plan_ids varchar(max),
     plan_group_id bigint NULL,
     engine_version nvarchar(32) NULL,
     compatibility_level smallint NOT NULL,
     query_plan_hash binary(8) NOT NULL,
-    query_plan nvarchar(MAX) NULL,
+    query_plan nvarchar(max) NULL,
     is_online_index_plan bit NOT NULL,
     is_trivial_plan bit NOT NULL,
     is_parallel_plan bit NOT NULL,
@@ -1154,7 +1154,7 @@ CREATE TABLE
     plan_feedback_id bigint,
     plan_id bigint,
     feature_desc nvarchar(120),
-    feedback_data nvarchar(MAX),
+    feedback_data nvarchar(max),
     state_desc nvarchar(120),
     create_time datetimeoffset(7),
     last_updated_time datetimeoffset(7)
@@ -1169,7 +1169,7 @@ CREATE TABLE
     database_id int NOT NULL,
     query_hint_id bigint,
     query_id bigint,
-    query_hint_text nvarchar(MAX),
+    query_hint_text nvarchar(max),
     last_query_hint_failure_reason_desc nvarchar(256),
     query_hint_failure_count bigint,
     source_desc nvarchar(256)
@@ -1242,6 +1242,238 @@ CREATE TABLE
     database_name sysname PRIMARY KEY CLUSTERED
 );
 
+/* Create a table variable to store ALL column definitions with logical ordering */
+DECLARE 
+    @ColumnDefinitions table
+(
+    column_id integer 
+        PRIMARY KEY CLUSTERED, /* Controls the ordering of columns in output */
+    metric_group nvarchar(50) NOT NULL, /* Grouping (duration, cpu, etc.) */
+    metric_type nvarchar(20) NOT NULL, /* Type within group (avg, total, last, min, max) */
+    column_name nvarchar(100) NOT NULL, /* Column name as it appears in output */
+    column_source nvarchar(max) NOT NULL, /* Source expression or formula */
+    is_conditional bit NOT NULL, /* Is this a conditional column (depends on a parameter) */
+    condition_param nvarchar(50) NULL, /* Parameter name this column depends on */
+    condition_value sql_variant NULL, /* Value the parameter must have */
+    expert_only bit NOT NULL, /* Only include in expert mode */
+    format_pattern nvarchar(20) NULL /* Format pattern (e.g., 'N0', 'P2', NULL for no formatting) */
+);
+
+/* Fill the table with ALL columns, including SQL 2022 views and regression columns */
+
+/* Basic metadata columns (still part of prefix, but in the table) */
+INSERT INTO 
+    @ColumnDefinitions 
+(
+    column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern
+)
+VALUES
+    (20, 'metadata', 'force_count', 'force_failure_count', 'qsp.force_failure_count', 0, NULL, NULL, 0, NULL),
+    (30, 'metadata', 'force_reason', 'last_force_failure_reason_desc', 'qsp.last_force_failure_reason_desc', 0, NULL, NULL, 0, NULL),
+    /* SQL 2022 specific columns */
+    (40, 'sql_2022', 'feedback', 'has_query_feedback', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
+    (50, 'sql_2022', 'hints', 'has_query_store_hints', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
+    (60, 'sql_2022', 'variants', 'has_plan_variants', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
+    (70, 'sql_2022', 'replay', 'has_compile_replay_script', 'qsp.has_compile_replay_script', 1, 'sql_2022_views', 1, 0, NULL),
+    (80, 'sql_2022', 'opt_forcing', 'is_optimized_plan_forcing_disabled', 'qsp.is_optimized_plan_forcing_disabled', 1, 'sql_2022_views', 1, 0, NULL),
+    (90, 'sql_2022', 'plan_type', 'plan_type_desc', 'qsp.plan_type_desc', 1, 'sql_2022_views', 1, 0, NULL),
+    /* New version features */
+    (95, 'new_features', 'forcing_type', 'plan_forcing_type_desc', 'qsp.plan_forcing_type_desc', 1, 'new', 1, 0, NULL),
+    (97, 'new_features', 'top_waits', 'top_waits', 'w.top_waits', 1, 'new', 1, 0, NULL),
+    /* Date/time columns (not conditional, always included) */
+    (100, 'execution_time', 'first', 'first_execution_time', 'CASE WHEN @timezone IS NULL THEN SWITCHOFFSET(qsrs.first_execution_time, @utc_offset_string) WHEN @timezone IS NOT NULL THEN qsrs.first_execution_time AT TIME ZONE @timezone END', 0, NULL, NULL, 0, NULL),
+    (110, 'execution_time', 'first_utc', 'first_execution_time_utc', 'qsrs.first_execution_time', 0, NULL, NULL, 0, NULL),
+    (120, 'execution_time', 'last', 'last_execution_time', 'CASE WHEN @timezone IS NULL THEN SWITCHOFFSET(qsrs.last_execution_time, @utc_offset_string) WHEN @timezone IS NOT NULL THEN qsrs.last_execution_time AT TIME ZONE @timezone END', 0, NULL, NULL, 0, NULL),
+    (130, 'execution_time', 'last_utc', 'last_execution_time_utc', 'qsrs.last_execution_time', 0, NULL, NULL, 0, NULL),
+    /* Regression mode columns */
+    (140, 'regression', 'baseline', 'from_regression_baseline_time_period', 'qsrs.from_regression_baseline', 1, 'regression_mode', 1, 0, NULL),
+    (150, 'regression', 'hash', 'query_hash_from_regression_checking', 'regression.query_hash', 1, 'regression_mode', 1, 0, NULL),
+    /* Execution columns */
+    (200, 'executions', 'count', 'count_executions', 'qsrs.count_executions', 0, NULL, NULL, 0, 'N0'),
+    (210, 'executions', 'per_second', 'executions_per_second', 'qsrs.executions_per_second', 0, NULL, NULL, 0, 'N0'),
+    /* Hash totals - conditionally added */
+    (215, 'executions', 'count_hash', 'count_executions_by_query_hash', 'SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    /* Duration metrics (group together avg, total, last, min, max) */
+    (300, 'duration', 'avg', 'avg_duration_ms', 'qsrs.avg_duration_ms', 0, NULL, NULL, 0, 'N0'),
+    (310, 'duration', 'total', 'total_duration_ms', 'qsrs.total_duration_ms', 0, NULL, NULL, 0, 'N0'),
+    (320, 'duration', 'last', 'last_duration_ms', 'qsrs.last_duration_ms', 0, NULL, NULL, 1, 'N0'),
+    (330, 'duration', 'min', 'min_duration_ms', 'qsrs.min_duration_ms', 0, NULL, NULL, 1, 'N0'),
+    (340, 'duration', 'max', 'max_duration_ms', 'qsrs.max_duration_ms', 0, NULL, NULL, 0, 'N0'),  
+    /* Hash totals for duration */
+    (315, 'duration', 'total_hash', 'total_duration_ms_by_query_hash', 'SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    /* CPU metrics */
+    (400, 'cpu', 'avg', 'avg_cpu_time_ms', 'qsrs.avg_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
+    (410, 'cpu', 'total', 'total_cpu_time_ms', 'qsrs.total_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
+    (420, 'cpu', 'last', 'last_cpu_time_ms', 'qsrs.last_cpu_time_ms', 0, NULL, NULL, 1, 'N0'),
+    (430, 'cpu', 'min', 'min_cpu_time_ms', 'qsrs.min_cpu_time_ms', 0, NULL, NULL, 1, 'N0'),
+    (440, 'cpu', 'max', 'max_cpu_time_ms', 'qsrs.max_cpu_time_ms', 0, NULL, NULL, 0, 'N0'), 
+    /* Hash totals for CPU */
+    (415, 'cpu', 'total_hash', 'total_cpu_time_ms_by_query_hash', 'SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    /* Logical IO Reads */
+    (500, 'logical_io_reads', 'avg', 'avg_logical_io_reads_mb', 'qsrs.avg_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
+    (510, 'logical_io_reads', 'total', 'total_logical_io_reads_mb', 'qsrs.total_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
+    (520, 'logical_io_reads', 'last', 'last_logical_io_reads_mb', 'qsrs.last_logical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
+    (530, 'logical_io_reads', 'min', 'min_logical_io_reads_mb', 'qsrs.min_logical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
+    (540, 'logical_io_reads', 'max', 'max_logical_io_reads_mb', 'qsrs.max_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'), 
+    /* Hash totals for logical reads */
+    (515, 'logical_io_reads', 'total_hash', 'total_logical_io_reads_mb_by_query_hash', 'SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    /* Logical IO Writes */
+    (600, 'logical_io_writes', 'avg', 'avg_logical_io_writes_mb', 'qsrs.avg_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
+    (610, 'logical_io_writes', 'total', 'total_logical_io_writes_mb', 'qsrs.total_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
+    (620, 'logical_io_writes', 'last', 'last_logical_io_writes_mb', 'qsrs.last_logical_io_writes_mb', 0, NULL, NULL, 1, 'N0'),
+    (630, 'logical_io_writes', 'min', 'min_logical_io_writes_mb', 'qsrs.min_logical_io_writes_mb', 0, NULL, NULL, 1, 'N0'),
+    (640, 'logical_io_writes', 'max', 'max_logical_io_writes_mb', 'qsrs.max_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
+    /* Hash totals for logical writes */
+    (615, 'logical_io_writes', 'total_hash', 'total_logical_io_writes_mb_by_query_hash', 'SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    /* Physical IO Reads */
+    (700, 'physical_io_reads', 'avg', 'avg_physical_io_reads_mb', 'qsrs.avg_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
+    (710, 'physical_io_reads', 'total', 'total_physical_io_reads_mb', 'qsrs.total_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
+    (720, 'physical_io_reads', 'last', 'last_physical_io_reads_mb', 'qsrs.last_physical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
+    (730, 'physical_io_reads', 'min', 'min_physical_io_reads_mb', 'qsrs.min_physical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
+    (740, 'physical_io_reads', 'max', 'max_physical_io_reads_mb', 'qsrs.max_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
+    /* Hash totals for physical reads */
+    (715, 'physical_io_reads', 'total_hash', 'total_physical_io_reads_mb_by_query_hash', 'SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),    
+    /* CLR Time */
+    (800, 'clr_time', 'avg', 'avg_clr_time_ms', 'qsrs.avg_clr_time_ms', 0, NULL, NULL, 0, 'N0'),
+    (810, 'clr_time', 'total', 'total_clr_time_ms', 'qsrs.total_clr_time_ms', 0, NULL, NULL, 0, 'N0'),
+    (820, 'clr_time', 'last', 'last_clr_time_ms', 'qsrs.last_clr_time_ms', 0, NULL, NULL, 1, 'N0'),
+    (830, 'clr_time', 'min', 'min_clr_time_ms', 'qsrs.min_clr_time_ms', 0, NULL, NULL, 1, 'N0'),
+    (840, 'clr_time', 'max', 'max_clr_time_ms', 'qsrs.max_clr_time_ms', 0, NULL, NULL, 0, 'N0'),  
+    /* Hash totals for CLR time */
+    (815, 'clr_time', 'total_hash', 'total_clr_time_ms_by_query_hash', 'SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),    
+    /* DOP (Degree of Parallelism) */
+    (900, 'dop', 'last', 'last_dop', 'qsrs.last_dop', 0, NULL, NULL, 1, NULL),
+    (910, 'dop', 'min', 'min_dop', 'qsrs.min_dop', 0, NULL, NULL, 0, NULL),
+    (920, 'dop', 'max', 'max_dop', 'qsrs.max_dop', 0, NULL, NULL, 0, NULL),  
+    /* Memory metrics */
+    (1000, 'memory', 'avg', 'avg_query_max_used_memory_mb', 'qsrs.avg_query_max_used_memory_mb', 0, NULL, NULL, 0, 'N0'),
+    (1010, 'memory', 'total', 'total_query_max_used_memory_mb', 'qsrs.total_query_max_used_memory_mb', 0, NULL, NULL, 0, 'N0'),
+    (1020, 'memory', 'last', 'last_query_max_used_memory_mb', 'qsrs.last_query_max_used_memory_mb', 0, NULL, NULL, 1, 'N0'),
+    (1030, 'memory', 'min', 'min_query_max_used_memory_mb', 'qsrs.min_query_max_used_memory_mb', 0, NULL, NULL, 1, 'N0'),
+    (1040, 'memory', 'max', 'max_query_max_used_memory_mb', 'qsrs.max_query_max_used_memory_mb', 0, NULL, NULL, 0, 'N0'), 
+    /* Hash totals for memory */
+    (1015, 'memory', 'total_hash', 'total_query_max_used_memory_mb_by_query_hash', 'SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),    
+    /* Row counts */
+    (1100, 'rowcount', 'avg', 'avg_rowcount', 'qsrs.avg_rowcount', 0, NULL, NULL, 0, 'N0'),
+    (1110, 'rowcount', 'total', 'total_rowcount', 'qsrs.total_rowcount', 0, NULL, NULL, 0, 'N0'),
+    (1120, 'rowcount', 'last', 'last_rowcount', 'qsrs.last_rowcount', 0, NULL, NULL, 1, 'N0'),
+    (1130, 'rowcount', 'min', 'min_rowcount', 'qsrs.min_rowcount', 0, NULL, NULL, 1, 'N0'),
+    (1140, 'rowcount', 'max', 'max_rowcount', 'qsrs.max_rowcount', 0, NULL, NULL, 0, 'N0'), 
+    /* Hash totals for row counts */
+    (1115, 'rowcount', 'total_hash', 'total_rowcount_by_query_hash', 'SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    /* New metrics for newer versions */
+    /* Physical IO Reads (for newer versions) */
+    (1200, 'num_physical_io_reads', 'avg', 'avg_num_physical_io_reads_mb', 'qsrs.avg_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
+    (1210, 'num_physical_io_reads', 'total', 'total_num_physical_io_reads_mb', 'qsrs.total_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
+    (1220, 'num_physical_io_reads', 'last', 'last_num_physical_io_reads_mb', 'qsrs.last_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
+    (1230, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads_mb', 'qsrs.min_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
+    (1240, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads_mb', 'qsrs.max_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),  
+    /* Hash totals for new physical IO reads */
+    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new', 1, 0, 'N0'),    
+    /* Finish adding the remaining columns (log bytes and tempdb usage) */
+    /* Log bytes used */
+    (1300, 'log_bytes', 'avg', 'avg_log_bytes_used_mb', 'qsrs.avg_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
+    (1310, 'log_bytes', 'total', 'total_log_bytes_used_mb', 'qsrs.total_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
+    (1320, 'log_bytes', 'last', 'last_log_bytes_used_mb', 'qsrs.last_log_bytes_used_mb', 1, 'new', 1, 1, 'N0'),
+    (1330, 'log_bytes', 'min', 'min_log_bytes_used_mb', 'qsrs.min_log_bytes_used_mb', 1, 'new', 1, 1, 'N0'),
+    (1340, 'log_bytes', 'max', 'max_log_bytes_used_mb', 'qsrs.max_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),    
+    /* Hash totals for log bytes */
+    (1315, 'log_bytes', 'total_hash', 'total_log_bytes_used_mb_by_query_hash', 'SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new', 1, 0, 'N0'),    
+    /* TempDB usage  */
+    (1400, 'tempdb', 'avg', 'avg_tempdb_space_used_mb', 'qsrs.avg_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
+    (1410, 'tempdb', 'total', 'total_tempdb_space_used_mb', 'qsrs.total_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
+    (1420, 'tempdb', 'last', 'last_tempdb_space_used_mb', 'qsrs.last_tempdb_space_used_mb', 1, 'new', 1, 1, 'N0'),
+    (1430, 'tempdb', 'min', 'min_tempdb_space_used_mb', 'qsrs.min_tempdb_space_used_mb', 1, 'new', 1, 1, 'N0'),
+    (1440, 'tempdb', 'max', 'max_tempdb_space_used_mb', 'qsrs.max_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),   
+    /* Hash totals for tempdb */
+    (1415, 'tempdb', 'total_hash', 'total_tempdb_space_used_mb_by_query_hash', 'SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new', 1, 0, 'N0'),        
+    /* Context settings and sorting columns  */
+    (1500, 'metadata', 'context', 'context_settings', 'qsrs.context_settings', 0, NULL, NULL, 0, NULL);
+    
+/* Add special sorting columns based on @sort_order */
+/* Plan hash count for 'plan count by hashes' sort */
+IF @sort_order = 'plan count by hashes'
+BEGIN
+    INSERT INTO 
+        @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
+    VALUES 
+        (1600, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
+        (1610, 'sort_order', 'query_hash', 'query_hash_from_hash_counting', 'hashes.query_hash', 0, NULL, NULL, 0, NULL);
+END    
+
+/* Dynamic regression change column based on formatting and comparator */
+IF @regression_baseline_start_date IS NOT NULL AND @regression_comparator = 'relative' AND @format_output = 1
+BEGIN
+    INSERT INTO 
+        @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
+    VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, 'P2');
+END
+ELSE IF @regression_baseline_start_date IS NOT NULL AND @format_output = 1
+BEGIN
+    INSERT INTO 
+        @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
+    VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, 'N2');
+END
+ELSE IF @regression_baseline_start_date IS NOT NULL
+BEGIN
+    INSERT INTO 
+        @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
+    VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, NULL);
+END
+    
+/* Wait time for wait-based sorting */
+IF LOWER(@sort_order) LIKE N'%waits'
+BEGIN
+    INSERT INTO 
+        @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
+    VALUES 
+        (1620, 'sort_order', 'wait_time', 'total_wait_time_from_sort_order_ms', 'waits.total_query_wait_time_ms', 0, NULL, NULL, 0, 'N0');
+END
+
+/* ROW_NUMBER window function for sorting */
+INSERT INTO 
+    @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
+VALUES 
+    (
+        2000, 
+        'metadata', 
+        'n', 
+        'n', 
+        'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY ' + 
+        CASE WHEN @regression_baseline_start_date IS NOT NULL THEN
+             /* As seen when populating #regression_changes */
+             CASE @regression_direction
+                  WHEN 'regressed' THEN 'regression.change_since_regression_time_period'
+                  WHEN 'worse' THEN 'regression.change_since_regression_time_period'
+                  WHEN 'improved' THEN 'regression.change_since_regression_time_period * -1.0'
+                  WHEN 'better' THEN 'regression.change_since_regression_time_period * -1.0'
+                  WHEN 'magnitude' THEN 'ABS(regression.change_since_regression_time_period)'
+                  WHEN 'absolute' THEN 'ABS(regression.change_since_regression_time_period)'
+             END
+        ELSE
+            CASE @sort_order
+                 WHEN 'cpu' THEN 'qsrs.avg_cpu_time_ms'
+                 WHEN 'logical reads' THEN 'qsrs.avg_logical_io_reads_mb'
+                 WHEN 'physical reads' THEN 'qsrs.avg_physical_io_reads_mb'
+                 WHEN 'writes' THEN 'qsrs.avg_logical_io_writes_mb'
+                 WHEN 'duration' THEN 'qsrs.avg_duration_ms'
+                 WHEN 'memory' THEN 'qsrs.avg_query_max_used_memory_mb'
+                 WHEN 'tempdb' THEN 'qsrs.avg_tempdb_space_used_mb' /*This gets validated later*/
+                 WHEN 'executions' THEN 'qsrs.count_executions'
+                 WHEN 'recent' THEN 'qsrs.last_execution_time'
+                 WHEN 'rows' THEN 'qsrs.avg_rowcount'
+                 WHEN 'plan count by hashes' THEN 'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
+                 ELSE CASE WHEN LOWER(@sort_order) LIKE N'%waits' THEN 'waits.total_query_wait_time_ms'
+                 ELSE 'qsrs.avg_cpu_time' END
+            END
+        END + ' DESC)', 
+        0, 
+        NULL, 
+        NULL, 
+        0, 
+        NULL
+    );
+
 /*
 Try to be helpful by subbing in a database name if null
 */
@@ -1297,13 +1529,13 @@ DECLARE
     @procedure_name_quoted nvarchar(1024),
     @collation sysname,
     @new bit,
-    @sql nvarchar(MAX),
-    @isolation_level nvarchar(MAX),
+    @sql nvarchar(max),
+    @isolation_level nvarchar(max),
     @parameters nvarchar(4000),
     @plans_top bigint,
     @queries_top bigint,
     @nc10 nvarchar(2),
-    @where_clause nvarchar(MAX),
+    @where_clause nvarchar(max),
     @query_text_search_original_value nvarchar(4000),
     @query_text_search_not_original_value nvarchar(4000),
     @procedure_exists bit,
@@ -1315,9 +1547,9 @@ DECLARE
     @string_split_ints nvarchar(1500),
     @string_split_strings nvarchar(1500),
     @current_table nvarchar(100),
-    @troubleshoot_insert nvarchar(MAX),
-    @troubleshoot_update nvarchar(MAX),
-    @troubleshoot_info nvarchar(MAX),
+    @troubleshoot_insert nvarchar(max),
+    @troubleshoot_update nvarchar(max),
+    @troubleshoot_info nvarchar(max),
     @rc bigint,
     @em tinyint,
     @fo tinyint,
@@ -1332,7 +1564,8 @@ DECLARE
     @regression_baseline_start_date_original datetimeoffset(7),
     @regression_baseline_end_date_original datetimeoffset(7),
     @regression_mode bit,
-    @regression_where_clause nvarchar(max);
+    @regression_where_clause nvarchar(max),
+    @column_sql NVARCHAR(max)
 
 /*
 In cases where we are escaping @query_text_search and
@@ -2727,7 +2960,7 @@ END;
 Checks if the sort order is for a wait.
 Cuts out a lot of repetition.
 */
-IF @sort_order IN
+IF LOWER(@sort_order) IN
    (
        'cpu waits',
        'lock waits',
@@ -2747,7 +2980,6 @@ IF @sort_order IN
        'total waits'
    )
 BEGIN
-
    SELECT
        @sort_order_is_a_wait = 1;
 END;
@@ -8056,56 +8288,32 @@ BEGIN
         @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
         N'
 SELECT
     x.*
 FROM
-('
-        );
-
-    /*
-    Expert mode returns more columns from runtime stats
-    */
-    IF
-    (
-        @expert_mode = 1
-    AND @format_output = 0
-    )
-    BEGIN
-        SELECT
-            @sql +=
-        CONVERT
-        (
-            nvarchar(MAX),
-            N'
+(
     SELECT
-        source =
-            ''runtime_stats'',
-        database_name =
-            DB_NAME(qsrs.database_id),
+        source = ''runtime_stats'',
+        database_name = DB_NAME(qsrs.database_id),
         qsp.query_id,
         qsrs.plan_id,
-        qsp.all_plan_ids,'
-        +
-            CASE
-                WHEN @include_plan_hashes IS NOT NULL
-                THEN
-        N'
+        qsp.all_plan_ids,' +
+        CASE
+            WHEN @include_plan_hashes IS NOT NULL
+            THEN N'
         qsp.query_plan_hash,'
-                WHEN @include_query_hashes IS NOT NULL
-                OR   @sort_order = 'plan count by hashes'
-                OR   @include_query_hash_totals = 1
-                THEN
-        N'
+            WHEN @include_query_hashes IS NOT NULL
+            OR   @sort_order = 'plan count by hashes'
+            OR   @include_query_hash_totals = 1
+            THEN N'
         qsq.query_hash,'
-                WHEN @include_sql_handles IS NOT NULL
-                THEN
-        N'
+            WHEN @include_sql_handles IS NOT NULL
+            THEN N'
         qsqt.statement_sql_handle,'
-                ELSE
-        N''
-            END + N'
+            ELSE N''
+        END + N'
         qsrs.execution_type_desc,
         qsq.object_name,
         qsqt.query_sql_text,
@@ -8118,9 +8326,9 @@ FROM
                      (
                          SELECT
                              [processing-instruction(query_plan)] =
-                                 N''-- '' + NCHAR(13) + NCHAR(10) +
-                                 N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
-                                 N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                 N''/* '' + NCHAR(13) + NCHAR(10) +
+                                 N''/* This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                 N''/* Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
@@ -8130,1374 +8338,84 @@ FROM
                      )
              END,
         qsp.compatibility_level,'
-        +
-            CASE @sql_2022_views
-                 WHEN 1
-                 THEN
-        N'
-        has_query_feedback =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END,
-        has_query_store_hints =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
-        has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
-        qsp.has_compile_replay_script,
-        qsp.is_optimized_plan_forcing_disabled,
-        qsp.plan_type_desc,'
-                 ELSE
-        N''
-                 END +
-        N'
-        qsp.force_failure_count,
-        qsp.last_force_failure_reason_desc,'
-        +
-        CONVERT
-        (
-            nvarchar(MAX),
-            CASE @new
-                 WHEN 1
-                 THEN
-        N'
-        qsp.plan_forcing_type_desc,
-        w.top_waits,'
-                 ELSE
-        N''
-            END
-        )
-        + N'
-        first_execution_time =
-            CASE
-                WHEN @timezone IS NULL
-                THEN
-                    SWITCHOFFSET
-                    (
-                        qsrs.first_execution_time,
-                        @utc_offset_string
-                    )
-                WHEN @timezone IS NOT NULL
-                THEN qsrs.first_execution_time AT TIME ZONE @timezone
-            END,
-        first_execution_time_utc =
-            qsrs.first_execution_time,
-        last_execution_time =
-            CASE
-                WHEN @timezone IS NULL
-                THEN
-                    SWITCHOFFSET
-                    (
-                        qsrs.last_execution_time,
-                        @utc_offset_string
-                    )
-                WHEN @timezone IS NOT NULL
-                THEN qsrs.last_execution_time AT TIME ZONE @timezone
-            END,
-        last_execution_time_utc =
-            qsrs.last_execution_time,
-        '
-        /*
-        Bolt any regression mode columns on, because we need them to
-        be in scope for sorting.
-        Has the helpful side-effect of making them visible
-        in the final output, because our SELECT is just x.*.
-
-        We bolt them on here because it makes a lot of sense to
-        put the column showing if something is from the baseline time
-        period right next to the columns showing the dates.
-        */
-        + CASE
-               WHEN @regression_mode = 1
-               THEN N' from_regression_baseline_time_period = qsrs.from_regression_baseline,
-        query_hash_from_regression_checking = regression.query_hash,
-        change_in_average_for_query_hash_since_regression_time_period = regression.change_since_regression_time_period,
-                     '
-               ELSE N''
-          END
-        + N'
-        qsrs.count_executions, '
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        count_executions_by_query_hash = SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.executions_per_second,
-        qsrs.avg_duration_ms,
-        qsrs.total_duration_ms,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_duration_by_query_hash = SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_duration_ms,
-        qsrs.min_duration_ms,
-        qsrs.max_duration_ms,
-        qsrs.avg_cpu_time_ms,
-        qsrs.total_cpu_time_ms,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_cpu_by_query_hash = SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_cpu_time_ms,
-        qsrs.min_cpu_time_ms,
-        qsrs.max_cpu_time_ms,
-        qsrs.avg_logical_io_reads_mb,
-        qsrs.total_logical_io_reads_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_logical_io_reads_mb_by_query_hash = SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_logical_io_reads_mb,
-        qsrs.min_logical_io_reads_mb,
-        qsrs.max_logical_io_reads_mb,
-        qsrs.avg_logical_io_writes_mb,
-        qsrs.total_logical_io_writes_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_logical_io_writes_mb_by_query_hash = SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_logical_io_writes_mb,
-        qsrs.min_logical_io_writes_mb,
-        qsrs.max_logical_io_writes_mb,
-        qsrs.avg_physical_io_reads_mb,
-        qsrs.total_physical_io_reads_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_physical_io_reads_mb_by_query_hash = SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_physical_io_reads_mb,
-        qsrs.min_physical_io_reads_mb,
-        qsrs.max_physical_io_reads_mb,
-        qsrs.avg_clr_time_ms,
-        qsrs.total_clr_time_ms,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_clr_time_ms_by_query_hash = SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_clr_time_ms,
-        qsrs.min_clr_time_ms,
-        qsrs.max_clr_time_ms,
-        qsrs.last_dop,
-        qsrs.min_dop,
-        qsrs.max_dop,
-        qsrs.avg_query_max_used_memory_mb,
-        qsrs.total_query_max_used_memory_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_query_max_used_memory_mb_by_query_hash = SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_query_max_used_memory_mb,
-        qsrs.min_query_max_used_memory_mb,
-        qsrs.max_query_max_used_memory_mb,
-        qsrs.avg_rowcount,
-        qsrs.total_rowcount,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_rowcount_by_query_hash = SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_rowcount,
-        qsrs.min_rowcount,
-        qsrs.max_rowcount,'
-        +
-            CASE @new
-                 WHEN 1
-                 THEN
-        N'
-        qsrs.avg_num_physical_io_reads_mb,
-        qsrs.total_num_physical_io_reads_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_num_physical_io_reads_mb_by_query_hash = SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_num_physical_io_reads_mb,
-        qsrs.min_num_physical_io_reads_mb,
-        qsrs.max_num_physical_io_reads_mb,
-        qsrs.avg_log_bytes_used_mb,
-        qsrs.total_log_bytes_used_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_log_bytes_used_mb_by_query_hash = SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_log_bytes_used_mb,
-        qsrs.min_log_bytes_used_mb,
-        qsrs.max_log_bytes_used_mb,
-        qsrs.avg_tempdb_space_used_mb,
-        qsrs.total_tempdb_space_used_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_tempdb_space_used_mb_by_query_hash = SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.last_tempdb_space_used_mb,
-        qsrs.min_tempdb_space_used_mb,
-        qsrs.max_tempdb_space_used_mb,'
-                 ELSE
-        N''
-            END +
-            CONVERT
-            (
-                nvarchar(MAX),
-                N'
-        qsrs.context_settings,
-        n =
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    qsrs.plan_id
-                ORDER BY
-                    '
-        +
-         CASE WHEN @regression_mode = 1 THEN
-             /* As seen when populating #regression_changes. */
-             CASE @regression_direction
-                  WHEN 'regressed' THEN N'regression.change_since_regression_time_period'
-                  WHEN 'worse' THEN N'regression.change_since_regression_time_period'
-                  WHEN 'improved' THEN N'regression.change_since_regression_time_period * -1.0'
-                  WHEN 'better' THEN N'regression.change_since_regression_time_period * -1.0'
-                  WHEN 'magnitude' THEN N'ABS(regression.change_since_regression_time_period)'
-                  WHEN 'absolute' THEN N'ABS(regression.change_since_regression_time_period)'
-             END
-        ELSE
-            CASE @sort_order
-                 WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-                 WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-                 WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-                 WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-                 WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-                 WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-                 WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-                 WHEN 'executions' THEN N'qsrs.count_executions'
-                 WHEN 'recent' THEN N'qsrs.last_execution_time'
-                 WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
-                    hashes.query_hash'
-                 ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
-                 ELSE N'qsrs.avg_cpu_time' END
-            END
-        END + N' DESC
-            )'
-        /*
-        Bolt any special sorting columns on, because we need them to
-        be in scope for sorting.
-        Has the helpful side-effect of making them visible
-        in the final output, because our SELECT is just x.*.
-        */
-        + CASE
-               WHEN @sort_order = 'plan count by hashes'
-               THEN N',
-               hashes.plan_hash_count_for_query_hash,
-               query_hash_from_hash_counting = hashes.query_hash'
-               WHEN @sort_order_is_a_wait = 1
-               THEN N', total_wait_time_from_sort_order_ms = waits.total_query_wait_time_ms'
-               ELSE N''
-           END
-            )
         );
-    END; /*End expert mode 1, format output 0 columns*/
 
-    /*
-    Do we want to format things?
-    */
-    IF
-    (
-        @expert_mode = 1
-    AND @format_output = 1
-    )
+    /* Build column list according to mode (expert vs. non-expert) and format_output */
+    SELECT 
+        @column_sql = 
+        (
+            SELECT 
+                CASE 
+                    /* Non-formatted columns */
+                    WHEN @format_output = 0 
+                    THEN
+                            '
+                        ' + 
+                        cd.column_name + 
+                        ' = ' + 
+                        cd.column_source + 
+                        ','
+                        /* Formatted columns with FORMAT function */
+                        ELSE
+                            '
+                        ' + 
+                        cd.column_name + 
+                        ' = ' + 
+                        CASE 
+                            WHEN cd.format_pattern IS NOT NULL 
+                            THEN 'FORMAT(' + 
+                                 cd.column_source + 
+                                 ', ''' + 
+                                 cd.format_pattern + 
+                                 ''')' 
+                            ELSE cd.column_source 
+                        END + 
+                        ','
+                END
+            FROM @ColumnDefinitions AS cd
+            WHERE (@expert_mode = 1 OR cd.expert_only = 0) /* Only include expert columns in expert mode */
+            AND 
+            (
+                cd.is_conditional = 0  /* Either non-conditional columns */
+                OR /* Or conditional columns where the condition is met */
+                (
+                   cd.is_conditional = 1 
+                   AND cd.condition_param IS NOT NULL 
+                   AND CASE 
+                           WHEN cd.condition_param = 'sql_2022_views' 
+                           THEN @sql_2022_views
+                           WHEN cd.condition_param = 'new' 
+                           THEN @new
+                           WHEN cd.condition_param = 'regression_mode' 
+                           THEN @regression_mode
+                           WHEN cd.condition_param = 'include_query_hash_totals' 
+                           THEN @include_query_hash_totals
+                           ELSE 0
+                       END = cd.condition_value
+                )
+            )
+            ORDER BY 
+                cd.column_id
+            FOR 
+                XML 
+                PATH(''), 
+                TYPE
+        ).value('.', 'nvarchar(max)');
+    
+    /* Remove the trailing comma */
+    IF LEN(@column_sql) > 0
     BEGIN
-        SELECT
-            @sql +=
-        CONVERT
-        (
-            nvarchar(MAX),
-            N'
-    SELECT
-        source =
-            ''runtime_stats'',
-        database_name =
-            DB_NAME(qsrs.database_id),
-        qsp.query_id,
-        qsrs.plan_id,
-        qsp.all_plan_ids,'
-        +
-            CASE
-                WHEN @include_plan_hashes IS NOT NULL
-                THEN
-        N'
-        qsp.query_plan_hash,'
-                WHEN @include_query_hashes IS NOT NULL
-                OR   @sort_order = 'plan count by hashes'
-                OR   @include_query_hash_totals = 1
-                THEN
-        N'
-        qsq.query_hash,'
-                WHEN @include_sql_handles IS NOT NULL
-                THEN
-        N'
-        qsqt.statement_sql_handle,'
-                ELSE
-        N''
-            END + N'
-        qsrs.execution_type_desc,
-        qsq.object_name,
-        qsqt.query_sql_text,
-        query_plan =
-             CASE
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS xml)
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
-                 THEN
-                     (
-                         SELECT
-                             [processing-instruction(query_plan)] =
-                                 N''-- '' + NCHAR(13) + NCHAR(10) +
-                                 N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
-                                 N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
-                                 NCHAR(13) + NCHAR(10) +
-                                 REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                                 NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML
-                             PATH(N''''),
-                             TYPE
-                     )
-             END,
-        qsp.compatibility_level,'
-        +
-            CASE @sql_2022_views
-                 WHEN 1
-                 THEN
-        N'
-        has_query_feedback =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END,
-        has_query_store_hints =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
-        has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
-        qsp.has_compile_replay_script,
-        qsp.is_optimized_plan_forcing_disabled,
-        qsp.plan_type_desc,'
-                 ELSE
-        N''
-                 END +
-        N'
-        qsp.force_failure_count,
-        qsp.last_force_failure_reason_desc,'
-        +
-        CONVERT
-        (
-            nvarchar(MAX),
-            CASE @new
-                 WHEN 1
-                 THEN
-        N'
-        qsp.plan_forcing_type_desc,
-        w.top_waits,'
-                 ELSE
-        N''
-            END
-        ) +
-        CONVERT
-        (
-            nvarchar(MAX),
-            N'
-        first_execution_time =
-            CASE
-                WHEN @timezone IS NULL
-                THEN
-                    SWITCHOFFSET
-                    (
-                        qsrs.first_execution_time,
-                        @utc_offset_string
-                    )
-                WHEN @timezone IS NOT NULL
-                THEN qsrs.first_execution_time AT TIME ZONE @timezone
-            END,
-        first_execution_time_utc =
-            qsrs.first_execution_time,
-        last_execution_time =
-            CASE
-                WHEN @timezone IS NULL
-                THEN
-                    SWITCHOFFSET
-                    (
-                        qsrs.last_execution_time,
-                        @utc_offset_string
-                    )
-                WHEN @timezone IS NOT NULL
-                THEN qsrs.last_execution_time AT TIME ZONE @timezone
-            END,
-        last_execution_time_utc =
-            qsrs.last_execution_time,
-        '
-        )
-        /*
-        Bolt any regression mode columns on, because we need them to
-        be in scope for sorting.
-        Has the helpful side-effect of making them visible
-        in the final output, because our SELECT is just x.*.
-
-        We bolt them on here because it makes a lot of sense to
-        put the column showing if something is from the baseline time
-        period right next to the columns showing the dates.
-        */
-        + CASE
-               WHEN @regression_mode = 1
-               THEN N' from_regression_baseline_time_period = qsrs.from_regression_baseline,
-        query_hash_from_regression_checking = regression.query_hash,
-                     '
-               ELSE N''
-          END
-        + CASE
-               /* Be extra nice and make the 'relative' version of regression mode appear as a percentage. */
-               WHEN @regression_mode = 1 AND @regression_comparator = 'relative'
-               THEN N' change_in_average_for_query_hash_since_regression_time_period = FORMAT(regression.change_since_regression_time_period, ''P2''),
-                    '
-               WHEN @regression_mode = 1
-               THEN N' change_in_average_for_query_hash_since_regression_time_period = FORMAT(regression.change_since_regression_time_period, ''N2''),
-                    '
-               ELSE N''
-          END
-        +
-        CONVERT
-        (
-            nvarchar(MAX),
-            N'
-        count_executions = FORMAT(qsrs.count_executions, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        count_executions_by_query_hash = FORMAT(SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
-        avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
-        total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_duration_ms_by_query_hash = FORMAT(SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_duration_ms = FORMAT(qsrs.last_duration_ms, ''N0''),
-        min_duration_ms = FORMAT(qsrs.min_duration_ms, ''N0''),
-        max_duration_ms = FORMAT(qsrs.max_duration_ms, ''N0''),
-        avg_cpu_time_ms = FORMAT(qsrs.avg_cpu_time_ms, ''N0''),
-        total_cpu_time_ms = FORMAT(qsrs.total_cpu_time_ms, ''N0''),
-        '
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_cpu_time_ms_by_query_hash = FORMAT(SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_cpu_time_ms = FORMAT(qsrs.last_cpu_time_ms, ''N0''),
-        min_cpu_time_ms = FORMAT(qsrs.min_cpu_time_ms, ''N0''),
-        max_cpu_time_ms = FORMAT(qsrs.max_cpu_time_ms, ''N0''),
-        avg_logical_io_reads_mb = FORMAT(qsrs.avg_logical_io_reads_mb, ''N0''),
-        total_logical_io_reads_mb = FORMAT(qsrs.total_logical_io_reads_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_logical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_logical_io_reads_mb = FORMAT(qsrs.last_logical_io_reads_mb, ''N0''),
-        min_logical_io_reads_mb = FORMAT(qsrs.min_logical_io_reads_mb, ''N0''),
-        max_logical_io_reads_mb = FORMAT(qsrs.max_logical_io_reads_mb, ''N0''),
-        avg_logical_io_writes_mb = FORMAT(qsrs.avg_logical_io_writes_mb, ''N0''),
-        total_logical_io_writes_mb = FORMAT(qsrs.total_logical_io_writes_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_logical_io_writes_mb_by_query_hash = FORMAT(SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_logical_io_writes_mb = FORMAT(qsrs.last_logical_io_writes_mb, ''N0''),
-        min_logical_io_writes_mb = FORMAT(qsrs.min_logical_io_writes_mb, ''N0''),
-        max_logical_io_writes_mb = FORMAT(qsrs.max_logical_io_writes_mb, ''N0''),
-        avg_physical_io_reads_mb = FORMAT(qsrs.avg_physical_io_reads_mb, ''N0''),
-        total_physical_io_reads_mb = FORMAT(qsrs.total_physical_io_reads_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_physical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_physical_io_reads_mb = FORMAT(qsrs.last_physical_io_reads_mb, ''N0''),
-        min_physical_io_reads_mb = FORMAT(qsrs.min_physical_io_reads_mb, ''N0''),
-        max_physical_io_reads_mb = FORMAT(qsrs.max_physical_io_reads_mb, ''N0''),
-        avg_clr_time_ms = FORMAT(qsrs.avg_clr_time_ms, ''N0''),
-        total_clr_time_ms = FORMAT(qsrs.total_clr_time_ms, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_clr_time_ms_by_query_hash = FORMAT(SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_clr_time_ms = FORMAT(qsrs.last_clr_time_ms, ''N0''),
-        min_clr_time_ms = FORMAT(qsrs.min_clr_time_ms, ''N0''),
-        max_clr_time_ms = FORMAT(qsrs.max_clr_time_ms, ''N0''),
-        qsrs.last_dop,
-        qsrs.min_dop,
-        qsrs.max_dop,
-        avg_query_max_used_memory_mb = FORMAT(qsrs.avg_query_max_used_memory_mb, ''N0''),
-        total_query_max_used_memory_mb = FORMAT(qsrs.total_query_max_used_memory_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_query_max_used_memory_mb_by_query_hash = FORMAT(SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_query_max_used_memory_mb = FORMAT(qsrs.last_query_max_used_memory_mb, ''N0''),
-        min_query_max_used_memory_mb = FORMAT(qsrs.min_query_max_used_memory_mb, ''N0''),
-        max_query_max_used_memory_mb = FORMAT(qsrs.max_query_max_used_memory_mb, ''N0''),
-        avg_rowcount = FORMAT(qsrs.avg_rowcount, ''N0''),
-        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_rowcount_by_query_hash = FORMAT(SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_rowcount = FORMAT(qsrs.last_rowcount, ''N0''),
-        min_rowcount = FORMAT(qsrs.min_rowcount, ''N0''),
-        max_rowcount = FORMAT(qsrs.max_rowcount, ''N0''),'
-        )
-        +
-            CASE @new
-                 WHEN 1
-                 THEN
-        N'
-        avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
-        total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_num_physical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_num_physical_io_reads_mb = FORMAT(qsrs.last_num_physical_io_reads_mb, ''N0''),
-        min_num_physical_io_reads_mb = FORMAT(qsrs.min_num_physical_io_reads_mb, ''N0''),
-        max_num_physical_io_reads_mb = FORMAT(qsrs.max_num_physical_io_reads_mb, ''N0''),
-        avg_log_bytes_used_mb = FORMAT(qsrs.avg_log_bytes_used_mb, ''N0''),
-        total_log_bytes_used_mb = FORMAT(qsrs.total_log_bytes_used_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_log_bytes_used_mb_by_query_hash = FORMAT(SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_log_bytes_used_mb = FORMAT(qsrs.last_log_bytes_used_mb, ''N0''),
-        min_log_bytes_used_mb = FORMAT(qsrs.min_log_bytes_used_mb, ''N0''),
-        max_log_bytes_used_mb = FORMAT(qsrs.max_log_bytes_used_mb, ''N0''),
-        avg_tempdb_space_used_mb = FORMAT(qsrs.avg_tempdb_space_used_mb, ''N0''),
-        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_tempdb_space_used_mb_by_query_hash = FORMAT(SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        last_tempdb_space_used_mb = FORMAT(qsrs.last_tempdb_space_used_mb, ''N0''),
-        min_tempdb_space_used_mb = FORMAT(qsrs.min_tempdb_space_used_mb, ''N0''),
-        max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
-                 ELSE
-        N''
-            END +
-            CONVERT
+        SET @column_sql = 
+            LEFT
             (
-                nvarchar(MAX),
-                N'
-        qsrs.context_settings,
-        n =
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    qsrs.plan_id
-                ORDER BY
-                    '
-        +
-         CASE WHEN @regression_mode = 1 THEN
-             /* As seen when populating #regression_changes. */
-             CASE @regression_direction
-                  WHEN 'regressed' THEN N'regression.change_since_regression_time_period'
-                  WHEN 'worse' THEN N'regression.change_since_regression_time_period'
-                  WHEN 'improved' THEN N'regression.change_since_regression_time_period * -1.0'
-                  WHEN 'better' THEN N'regression.change_since_regression_time_period * -1.0'
-                  WHEN 'magnitude' THEN N'ABS(regression.change_since_regression_time_period)'
-                  WHEN 'absolute' THEN N'ABS(regression.change_since_regression_time_period)'
-             END
-        ELSE
-            CASE @sort_order
-                 WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-                 WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-                 WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-                 WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-                 WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-                 WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-                 WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-                 WHEN 'executions' THEN N'qsrs.count_executions'
-                 WHEN 'recent' THEN N'qsrs.last_execution_time'
-                 WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
-                    hashes.query_hash'
-                 ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
-                 ELSE N'qsrs.avg_cpu_time' END
-            END
-        END + N' DESC
-            )'
-        /*
-        Bolt any special sorting columns on, because we need them to
-        be in scope for sorting.
-        Has the helpful side-effect of making them visible
-        in the final output, because our SELECT is just x.*.
-        However, we must format them where applicable.
-        */
-        + CASE
-               WHEN @sort_order = 'plan count by hashes'
-               THEN N',
-               plan_hash_count_for_query_hash = FORMAT(hashes.plan_hash_count_for_query_hash, ''N0''),
-               query_hash_from_hash_counting = hashes.query_hash'
-               WHEN @sort_order_is_a_wait = 1
-               THEN N',
-               total_wait_time_from_sort_order_ms = FORMAT(waits.total_query_wait_time_ms, ''N0'')'
-               ELSE N''
-           END
-            )
-        );
-    END; /*End expert mode = 1, format output = 1*/
-
-    /*
-    For non-experts only!
-    */
-    IF
-    (
-        @expert_mode = 0
-    AND @format_output = 0
-    )
-    BEGIN
-        SELECT
-            @sql +=
-        CONVERT
-        (
-            nvarchar(MAX),
-            N'
-    SELECT
-        source =
-            ''runtime_stats'',
-        database_name =
-            DB_NAME(qsrs.database_id),
-        qsp.query_id,
-        qsrs.plan_id,
-        qsp.all_plan_ids,'
-        +
-            CASE
-                WHEN @include_plan_hashes IS NOT NULL
-                THEN
-        N'
-        qsp.query_plan_hash,'
-                WHEN @include_query_hashes IS NOT NULL
-                OR   @sort_order = 'plan count by hashes'
-                OR   @include_query_hash_totals = 1
-                THEN
-        N'
-        qsq.query_hash,'
-                WHEN @include_sql_handles IS NOT NULL
-                THEN
-        N'
-        qsqt.statement_sql_handle,'
-                ELSE
-        N''
-            END + N'
-        qsrs.execution_type_desc,
-        qsq.object_name,
-        qsqt.query_sql_text,
-        query_plan =
-             CASE
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS xml)
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
-                 THEN
-                     (
-                         SELECT
-                             [processing-instruction(query_plan)] =
-                                 N''-- '' + NCHAR(13) + NCHAR(10) +
-                                 N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
-                                 N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
-                                 NCHAR(13) + NCHAR(10) +
-                                 REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                                 NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML
-                             PATH(N''''),
-                             TYPE
-                     )
-             END,
-        qsp.compatibility_level,'
-        +
-            CASE @sql_2022_views
-                 WHEN 1
-                 THEN
-        N'
-        has_query_feedback =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END,
-        has_query_store_hints =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
-        has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
-        qsp.has_compile_replay_script,
-        qsp.is_optimized_plan_forcing_disabled,
-        qsp.plan_type_desc,'
-                 ELSE
-        N''
-                 END +
-        N'
-        qsp.force_failure_count,
-        qsp.last_force_failure_reason_desc,'
-        +
-        CONVERT
-        (
-            nvarchar(MAX),
-            CASE @new
-                 WHEN 1
-                 THEN
-        N'
-        qsp.plan_forcing_type_desc,
-        w.top_waits,'
-                 ELSE
-        N''
-            END
-        )
-        + N'
-        first_execution_time =
-            CASE
-                WHEN @timezone IS NULL
-                THEN
-                    SWITCHOFFSET
-                    (
-                        qsrs.first_execution_time,
-                        @utc_offset_string
-                    )
-                WHEN @timezone IS NOT NULL
-                THEN qsrs.first_execution_time AT TIME ZONE @timezone
-            END,
-        first_execution_time_utc =
-            qsrs.first_execution_time,
-        last_execution_time =
-            CASE
-                WHEN @timezone IS NULL
-                THEN
-                    SWITCHOFFSET
-                    (
-                        qsrs.last_execution_time,
-                        @utc_offset_string
-                    )
-                WHEN @timezone IS NOT NULL
-                THEN qsrs.last_execution_time AT TIME ZONE @timezone
-            END,
-        last_execution_time_utc =
-            qsrs.last_execution_time,
-        '
-        /*
-        Bolt any regression mode columns on, because we need them to
-        be in scope for sorting.
-        Has the helpful side-effect of making them visible
-        in the final output, because our SELECT is just x.*.
-
-        We bolt them on here because it makes a lot of sense to
-        put the column showing if something is from the baseline time
-        period right next to the columns showing the dates.
-        */
-        + CASE
-               WHEN @regression_mode = 1
-               THEN N' from_regression_baseline_time_period = qsrs.from_regression_baseline,
-        query_hash_from_regression_checking = regression.query_hash,
-        change_in_average_for_query_hash_since_regression_time_period = regression.change_since_regression_time_period,
-                     '
-               ELSE N''
-          END
-        + N'
-        qsrs.count_executions,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        count_executions_by_query_hash = SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.executions_per_second,
-        qsrs.avg_duration_ms,
-        qsrs.total_duration_ms,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_duration_ms_by_query_hash = SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_duration_ms,
-        qsrs.avg_cpu_time_ms,
-        qsrs.total_cpu_time_ms,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_cpu_time_ms_by_query_hash = SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_cpu_time_ms,
-        qsrs.avg_logical_io_reads_mb,
-        qsrs.total_logical_io_reads_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_logical_io_reads_mb_by_query_hash = SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_logical_io_reads_mb,
-        qsrs.avg_logical_io_writes_mb,
-        qsrs.total_logical_io_writes_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_logical_io_writes_mb_by_query_hash = SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_logical_io_writes_mb,
-        qsrs.avg_physical_io_reads_mb,
-        qsrs.total_physical_io_reads_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_physical_io_reads_mb_by_query_hash = SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_physical_io_reads_mb,
-        qsrs.avg_clr_time_ms,
-        qsrs.total_clr_time_ms,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_clr_time_ms_by_query_hash = SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_clr_time_ms,
-        qsrs.min_dop,
-        qsrs.max_dop,
-        qsrs.avg_query_max_used_memory_mb,
-        qsrs.total_query_max_used_memory_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_query_max_used_memory_mb_by_query_hash = SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_query_max_used_memory_mb,
-        qsrs.avg_rowcount,
-        qsrs.total_rowcount,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_rowcount_by_query_hash = SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_rowcount,'
-        +
-            CASE @new
-                 WHEN 1
-                 THEN
-        N'
-        qsrs.avg_num_physical_io_reads_mb,
-        qsrs.total_num_physical_io_reads_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_num_physical_io_reads_mb_by_query_hash = SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_num_physical_io_reads_mb,
-        qsrs.avg_log_bytes_used_mb,
-        qsrs.total_log_bytes_used_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_log_bytes_used_mb_by_query_hash = SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_log_bytes_used_mb,
-        qsrs.avg_tempdb_space_used_mb,
-        qsrs.total_tempdb_space_used_mb,'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_tempdb_space_used_mb_by_query_hash = SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash),'
-                  ELSE N''
-            END +
-        '
-        qsrs.max_tempdb_space_used_mb,'
-                 ELSE
-        N''
-            END +
-            CONVERT
-            (
-                nvarchar(MAX),
-                N'
-        qsrs.context_settings,
-        n =
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    qsrs.plan_id
-                ORDER BY
-                    '
-        +
-         CASE WHEN @regression_mode = 1 THEN
-             /* As seen when populating #regression_changes. */
-             CASE @regression_direction
-                  WHEN 'regressed' THEN N'regression.change_since_regression_time_period'
-                  WHEN 'worse' THEN N'regression.change_since_regression_time_period'
-                  WHEN 'improved' THEN N'regression.change_since_regression_time_period * -1.0'
-                  WHEN 'better' THEN N'regression.change_since_regression_time_period * -1.0'
-                  WHEN 'magnitude' THEN N'ABS(regression.change_since_regression_time_period)'
-                  WHEN 'absolute' THEN N'ABS(regression.change_since_regression_time_period)'
-             END
-        ELSE
-            CASE @sort_order
-                 WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-                 WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-                 WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-                 WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-                 WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-                 WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-                 WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-                 WHEN 'executions' THEN N'qsrs.count_executions'
-                 WHEN 'recent' THEN N'qsrs.last_execution_time'
-                 WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
-                    hashes.query_hash'
-                 ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
-                 ELSE N'qsrs.avg_cpu_time' END
-            END
-        END + N' DESC
-            )'
-        /*
-        Bolt any special sorting columns on, because we need them to
-        be in scope for sorting.
-        Has the helpful side-effect of making them visible
-        in the final output, because our SELECT is just x.*.
-        */
-        + CASE
-               WHEN @sort_order = 'plan count by hashes'
-               THEN N',
-               hashes.plan_hash_count_for_query_hash,
-               query_hash_from_hash_counting = hashes.query_hash'
-               WHEN @sort_order_is_a_wait = 1
-               THEN N', total_wait_time_from_sort_order_ms = waits.total_query_wait_time_ms'
-               ELSE N''
-           END
-            )
-        );
-    END; /*End expert mode = 0, format output = 0*/
-
-    /*
-    Formatted but not still not expert output
-    */
-    IF
-    (
-        @expert_mode = 0
-    AND @format_output = 1
-    )
-    BEGIN
-        SELECT
-            @sql +=
-        CONVERT
-        (
-            nvarchar(MAX),
-            N'
-    SELECT
-        source =
-            ''runtime_stats'',
-        database_name =
-            DB_NAME(qsrs.database_id),
-        qsp.query_id,
-        qsrs.plan_id,
-        qsp.all_plan_ids,'
-        +
-            CASE
-                WHEN @include_plan_hashes IS NOT NULL
-                THEN
-        N'
-        qsp.query_plan_hash,'
-                WHEN @include_query_hashes IS NOT NULL
-                OR   @sort_order = 'plan count by hashes'
-                OR   @include_query_hash_totals = 1
-                THEN
-        N'
-        qsq.query_hash,'
-                WHEN @include_sql_handles IS NOT NULL
-                THEN
-        N'
-        qsqt.statement_sql_handle,'
-                ELSE
-        N''
-            END
-        + N'
-        qsrs.execution_type_desc,
-        qsq.object_name,
-        qsqt.query_sql_text,
-        query_plan =
-             CASE
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
-                 THEN TRY_CAST(qsp.query_plan AS xml)
-                 WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
-                 THEN
-                     (
-                         SELECT
-                             [processing-instruction(query_plan)] =
-                                 N''-- '' + NCHAR(13) + NCHAR(10) +
-                                 N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
-                                 N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
-                                 NCHAR(13) + NCHAR(10) +
-                                 REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
-                                 NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
-                         FOR XML
-                             PATH(N''''),
-                             TYPE
-                     )
-             END,
-        qsp.compatibility_level,'
-        +
-            CASE @sql_2022_views
-                 WHEN 1
-                 THEN
-        N'
-        has_query_feedback =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END,
-        has_query_store_hints =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
-        has_plan_variants =
-            CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END,
-        qsp.has_compile_replay_script,
-        qsp.is_optimized_plan_forcing_disabled,
-        qsp.plan_type_desc,'
-                 ELSE
-        N''
-                 END +
-        N'
-        qsp.force_failure_count,
-        qsp.last_force_failure_reason_desc,'
-        +
-        CONVERT
-        (
-            nvarchar(MAX),
-            CASE @new
-                 WHEN 1
-                 THEN
-        N'
-        qsp.plan_forcing_type_desc,
-        w.top_waits,'
-                 ELSE
-        N''
-            END
-        )
-        + N'
-        first_execution_time =
-            CASE
-                WHEN @timezone IS NULL
-                THEN
-                    SWITCHOFFSET
-                    (
-                        qsrs.first_execution_time,
-                        @utc_offset_string
-                    )
-                WHEN @timezone IS NOT NULL
-                THEN qsrs.first_execution_time AT TIME ZONE @timezone
-            END,
-        first_execution_time_utc =
-            qsrs.first_execution_time,
-        last_execution_time =
-            CASE
-                WHEN @timezone IS NULL
-                THEN
-                    SWITCHOFFSET
-                    (
-                        qsrs.last_execution_time,
-                        @utc_offset_string
-                    )
-                WHEN @timezone IS NOT NULL
-                THEN qsrs.last_execution_time AT TIME ZONE @timezone
-            END,
-        last_execution_time_utc =
-            qsrs.last_execution_time,
-        '
-        /*
-        Bolt any regression mode columns on, because we need them to
-        be in scope for sorting.
-        Has the helpful side-effect of making them visible
-        in the final output, because our SELECT is just x.*.
-
-        We bolt them on here because it makes a lot of sense to
-        put the column showing if something is from the baseline time
-        period right next to the columns showing the dates.
-        */
-        + CASE
-               WHEN @regression_mode = 1
-               THEN N' from_regression_baseline_time_period = qsrs.from_regression_baseline,
-        query_hash_from_regression_checking = regression.query_hash,
-                     '
-               ELSE N''
-          END
-        + CASE
-               /* Be extra nice and make the 'relative' version of regression mode appear as a percentage. */
-               WHEN @regression_mode = 1 AND @regression_comparator = 'relative'
-               THEN N' change_in_average_for_query_hash_since_regression_time_period = FORMAT(regression.change_since_regression_time_period, ''P2''),
-                    '
-               WHEN @regression_mode = 1
-               THEN N' change_in_average_for_query_hash_since_regression_time_period = FORMAT(regression.change_since_regression_time_period, ''N2''),
-                    '
-               ELSE N''
-          END
-        + N'
-        count_executions = FORMAT(qsrs.count_executions, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        count_executions_by_query_hash = FORMAT(SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        executions_per_second = FORMAT(qsrs.executions_per_second, ''N0''),
-        avg_duration_ms = FORMAT(qsrs.avg_duration_ms, ''N0''),
-        total_duration_ms = FORMAT(qsrs.total_duration_ms, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_duration_ms_by_query_hash = FORMAT(SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_duration_ms = FORMAT(qsrs.max_duration_ms, ''N0''),
-        avg_cpu_time_ms = FORMAT(qsrs.avg_cpu_time_ms, ''N0''),
-        total_cpu_time_ms = FORMAT(qsrs.total_cpu_time_ms, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_cpu_time_ms_by_query_hash = FORMAT(SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_cpu_time_ms = FORMAT(qsrs.max_cpu_time_ms, ''N0''),
-        avg_logical_io_reads_mb = FORMAT(qsrs.avg_logical_io_reads_mb, ''N0''),
-        total_logical_io_reads_mb = FORMAT(qsrs.total_logical_io_reads_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_logical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_logical_io_reads_mb = FORMAT(qsrs.max_logical_io_reads_mb, ''N0''),
-        avg_logical_io_writes_mb = FORMAT(qsrs.avg_logical_io_writes_mb, ''N0''),
-        total_logical_io_writes_mb = FORMAT(qsrs.total_logical_io_writes_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_logical_io_writes_mb_by_query_hash = FORMAT(SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_logical_io_writes_mb = FORMAT(qsrs.max_logical_io_writes_mb, ''N0''),
-        avg_physical_io_reads_mb = FORMAT(qsrs.avg_physical_io_reads_mb, ''N0''),
-        total_physical_io_reads_mb = FORMAT(qsrs.total_physical_io_reads_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_physical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_physical_io_reads_mb = FORMAT(qsrs.max_physical_io_reads_mb, ''N0''),
-        avg_clr_time_ms = FORMAT(qsrs.avg_clr_time_ms, ''N0''),
-        total_clr_time_ms = FORMAT(qsrs.total_clr_time_ms, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_clr_time_ms_by_query_hash = FORMAT(SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_clr_time_ms = FORMAT(qsrs.max_clr_time_ms, ''N0''),
-        min_dop = FORMAT(qsrs.min_dop, ''N0''),
-        max_dop = FORMAT(qsrs.max_dop, ''N0''),
-        avg_query_max_used_memory_mb = FORMAT(qsrs.avg_query_max_used_memory_mb, ''N0''),
-        total_query_max_used_memory_mb = FORMAT(qsrs.total_query_max_used_memory_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_query_max_used_memory_mb_by_query_hash = FORMAT(SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_query_max_used_memory_mb = FORMAT(qsrs.max_query_max_used_memory_mb, ''N0''),
-        avg_rowcount = FORMAT(qsrs.avg_rowcount, ''N0''),
-        total_rowcount = FORMAT(qsrs.total_rowcount, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_rowcount_by_query_hash = FORMAT(SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_rowcount = FORMAT(qsrs.max_rowcount, ''N0''),'
-        +
-            CASE @new
-                 WHEN 1
-                 THEN
-        N'
-        avg_num_physical_io_reads_mb = FORMAT(qsrs.avg_num_physical_io_reads_mb, ''N0''),
-        total_num_physical_io_reads_mb = FORMAT(qsrs.total_num_physical_io_reads_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_num_physical_io_reads_mb_by_query_hash = FORMAT(SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_num_physical_io_reads_mb = FORMAT(qsrs.max_num_physical_io_reads_mb, ''N0''),
-        avg_log_bytes_used_mb = FORMAT(qsrs.avg_log_bytes_used_mb, ''N0''),
-        total_log_bytes_used_mb = FORMAT(qsrs.total_log_bytes_used_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_log_bytes_used_mb_by_query_hash = FORMAT(SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_log_bytes_used_mb = FORMAT(qsrs.max_log_bytes_used_mb, ''N0''),
-        avg_tempdb_space_used_mb = FORMAT(qsrs.avg_tempdb_space_used_mb, ''N0''),
-        total_tempdb_space_used_mb = FORMAT(qsrs.total_tempdb_space_used_mb, ''N0''),'
-            + CASE
-                  WHEN @include_query_hash_totals = 1
-                  THEN N'
-        total_tempdb_space_used_mb_by_query_hash = FORMAT(SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash), ''N0''),'
-                  ELSE N''
-            END +
-        '
-        max_tempdb_space_used_mb = FORMAT(qsrs.max_tempdb_space_used_mb, ''N0''),'
-                 ELSE
-        N''
-            END +
-            CONVERT
-            (
-                nvarchar(MAX),
-                N'
-        qsrs.context_settings,
-        n =
-            ROW_NUMBER() OVER
-            (
-                PARTITION BY
-                    qsrs.plan_id
-                ORDER BY
-                    '
-        +
-         CASE WHEN @regression_mode = 1 THEN
-             /* As seen when populating #regression_changes. */
-             CASE @regression_direction
-                  WHEN 'regressed' THEN N'regression.change_since_regression_time_period'
-                  WHEN 'worse' THEN N'regression.change_since_regression_time_period'
-                  WHEN 'improved' THEN N'regression.change_since_regression_time_period * -1.0'
-                  WHEN 'better' THEN N'regression.change_since_regression_time_period * -1.0'
-                  WHEN 'magnitude' THEN N'ABS(regression.change_since_regression_time_period)'
-                  WHEN 'absolute' THEN N'ABS(regression.change_since_regression_time_period)'
-             END
-        ELSE
-            CASE @sort_order
-                 WHEN 'cpu' THEN N'qsrs.avg_cpu_time_ms'
-                 WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads_mb'
-                 WHEN 'physical reads' THEN N'qsrs.avg_physical_io_reads_mb'
-                 WHEN 'writes' THEN N'qsrs.avg_logical_io_writes_mb'
-                 WHEN 'duration' THEN N'qsrs.avg_duration_ms'
-                 WHEN 'memory' THEN N'qsrs.avg_query_max_used_memory_mb'
-                 WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'qsrs.avg_tempdb_space_used_mb' ELSE N'qsrs.avg_cpu_time' END
-                 WHEN 'executions' THEN N'qsrs.count_executions'
-                 WHEN 'recent' THEN N'qsrs.last_execution_time'
-                 WHEN 'rows' THEN N'qsrs.avg_rowcount'
-                 WHEN 'plan count by hashes' THEN N'hashes.plan_hash_count_for_query_hash DESC,
-                    hashes.query_hash'
-                 ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms'
-                 ELSE N'qsrs.avg_cpu_time' END
-            END
-        END + N' DESC
-            )'
-        /*
-        Bolt any special sorting columns on, because we need them to
-        be in scope for sorting.
-        Has the helpful side-effect of making them visible
-        in the final output, because our SELECT is just x.*.
-        However, we must format them where applicable.
-        */
-        + CASE
-               WHEN @sort_order = 'plan count by hashes'
-               THEN N',
-        plan_hash_count_for_query_hash = FORMAT(hashes.plan_hash_count_for_query_hash, ''N0''),
-        query_hash_from_hash_counting = hashes.query_hash'
-               WHEN @sort_order_is_a_wait = 1
-               THEN N',
-        total_wait_time_from_sort_order_ms = FORMAT(waits.total_query_wait_time_ms, ''N0'')'
-               ELSE N''
-           END
-            )
-        );
-    END; /*End expert mode = 0, format output = 1*/
+                @column_sql, 
+                LEN(@column_sql) - 1
+            );
+    END;
+    
+    /* Append the column SQL to the main SQL */
+    SELECT 
+        @sql += @column_sql;
 
     /*
     Add on the from and stuff
@@ -9506,7 +8424,7 @@ FROM
         @sql +=
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'
         FROM #query_store_runtime_stats AS qsrs'
     );
@@ -9552,7 +8470,7 @@ SELECT
     @sql +=
     CONVERT
     (
-        NVARCHAR(MAX),
+        NVARCHAR(max),
         N'
     CROSS APPLY
     (
@@ -9614,7 +8532,7 @@ SELECT
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
     CROSS APPLY
     (
@@ -9669,7 +8587,7 @@ SELECT
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
     CROSS APPLY
     (
@@ -9717,7 +8635,7 @@ SELECT
         @sql +=
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'
 ) AS x
 ' + CASE WHEN @regression_mode = 1 THEN N' ' ELSE N'WHERE x.n = 1 ' END
@@ -10344,7 +9262,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
         SELECT
             source =
@@ -10392,7 +9310,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
             dqso.size_based_cleanup_mode_desc
         FROM #database_query_store_options AS dqso
@@ -10968,7 +9886,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
         SELECT
             source =
