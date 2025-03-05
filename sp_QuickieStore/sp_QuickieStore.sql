@@ -839,12 +839,12 @@ CREATE TABLE
     database_id int NOT NULL,
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    all_plan_ids varchar(max),
+    all_plan_ids varchar(MAX),
     plan_group_id bigint NULL,
     engine_version nvarchar(32) NULL,
     compatibility_level smallint NOT NULL,
     query_plan_hash binary(8) NOT NULL,
-    query_plan nvarchar(max) NULL,
+    query_plan nvarchar(MAX) NULL,
     is_online_index_plan bit NOT NULL,
     is_trivial_plan bit NOT NULL,
     is_parallel_plan bit NOT NULL,
@@ -1154,7 +1154,7 @@ CREATE TABLE
     plan_feedback_id bigint,
     plan_id bigint,
     feature_desc nvarchar(120),
-    feedback_data nvarchar(max),
+    feedback_data nvarchar(MAX),
     state_desc nvarchar(120),
     create_time datetimeoffset(7),
     last_updated_time datetimeoffset(7)
@@ -1169,7 +1169,7 @@ CREATE TABLE
     database_id int NOT NULL,
     query_hint_id bigint,
     query_id bigint,
-    query_hint_text nvarchar(max),
+    query_hint_text nvarchar(MAX),
     last_query_hint_failure_reason_desc nvarchar(256),
     query_hint_failure_count bigint,
     source_desc nvarchar(256)
@@ -1251,7 +1251,7 @@ DECLARE
     metric_group nvarchar(50) NOT NULL, /* Grouping (duration, cpu, etc.) */
     metric_type nvarchar(20) NOT NULL, /* Type within group (avg, total, last, min, max) */
     column_name nvarchar(100) NOT NULL, /* Column name as it appears in output */
-    column_source nvarchar(max) NOT NULL, /* Source expression or formula */
+    column_source nvarchar(MAX) NOT NULL, /* Source expression or formula */
     is_conditional bit NOT NULL, /* Is this a conditional column (depends on a parameter) */
     condition_param nvarchar(50) NULL, /* Parameter name this column depends on */
     condition_value sql_variant NULL, /* Value the parameter must have */
@@ -1399,7 +1399,7 @@ BEGIN
     VALUES 
         (1600, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
         (1610, 'sort_order', 'query_hash', 'query_hash_from_hash_counting', 'hashes.query_hash', 0, NULL, NULL, 0, NULL);
-END    
+END;    
 
 /* Dynamic regression change column based on formatting and comparator */
 IF @regression_baseline_start_date IS NOT NULL AND @regression_comparator = 'relative' AND @format_output = 1
@@ -1407,19 +1407,19 @@ BEGIN
     INSERT INTO 
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, 'P2');
-END
+END;
 ELSE IF @regression_baseline_start_date IS NOT NULL AND @format_output = 1
 BEGIN
     INSERT INTO 
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, 'N2');
-END
+END;
 ELSE IF @regression_baseline_start_date IS NOT NULL
 BEGIN
     INSERT INTO 
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, NULL);
-END
+END;
     
 /* Wait time for wait-based sorting */
 IF LOWER(@sort_order) LIKE N'%waits'
@@ -1428,7 +1428,7 @@ BEGIN
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES 
         (1620, 'sort_order', 'wait_time', 'total_wait_time_from_sort_order_ms', 'waits.total_query_wait_time_ms', 0, NULL, NULL, 0, 'N0');
-END
+END;
 
 /* ROW_NUMBER window function for sorting */
 INSERT INTO 
@@ -1529,13 +1529,13 @@ DECLARE
     @procedure_name_quoted nvarchar(1024),
     @collation sysname,
     @new bit,
-    @sql nvarchar(max),
-    @isolation_level nvarchar(max),
+    @sql nvarchar(MAX),
+    @isolation_level nvarchar(MAX),
     @parameters nvarchar(4000),
     @plans_top bigint,
     @queries_top bigint,
     @nc10 nvarchar(2),
-    @where_clause nvarchar(max),
+    @where_clause nvarchar(MAX),
     @query_text_search_original_value nvarchar(4000),
     @query_text_search_not_original_value nvarchar(4000),
     @procedure_exists bit,
@@ -1547,9 +1547,9 @@ DECLARE
     @string_split_ints nvarchar(1500),
     @string_split_strings nvarchar(1500),
     @current_table nvarchar(100),
-    @troubleshoot_insert nvarchar(max),
-    @troubleshoot_update nvarchar(max),
-    @troubleshoot_info nvarchar(max),
+    @troubleshoot_insert nvarchar(MAX),
+    @troubleshoot_update nvarchar(MAX),
+    @troubleshoot_info nvarchar(MAX),
     @rc bigint,
     @em tinyint,
     @fo tinyint,
@@ -1564,8 +1564,8 @@ DECLARE
     @regression_baseline_start_date_original datetimeoffset(7),
     @regression_baseline_end_date_original datetimeoffset(7),
     @regression_mode bit,
-    @regression_where_clause nvarchar(max),
-    @column_sql NVARCHAR(max)
+    @regression_where_clause nvarchar(MAX),
+    @column_sql nvarchar(MAX);
 
 /*
 In cases where we are escaping @query_text_search and
@@ -1859,7 +1859,7 @@ BEGIN
     AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
     OPTION(RECOMPILE);
-END
+END;
 ELSE
 BEGIN
     INSERT
@@ -2380,7 +2380,7 @@ BEGIN
     BEGIN
         IF @debug = 1
         BEGIN
-            GOTO DEBUG
+            GOTO DEBUG;
         END;
         ELSE
         BEGIN
@@ -2401,7 +2401,7 @@ BEGIN
     RAISERROR('Not all Azure offerings are supported, please try avoiding memes', 11, 1) WITH NOWAIT;
     IF @debug = 1
     BEGIN
-        GOTO DEBUG
+        GOTO DEBUG;
     END;
     ELSE
     BEGIN
@@ -2428,7 +2428,7 @@ BEGIN
     RAISERROR('Azure databases in compatibility levels under 130 are not supported', 11, 1) WITH NOWAIT;
     IF @debug = 1
     BEGIN
-        GOTO DEBUG
+        GOTO DEBUG;
     END;
     ELSE
     BEGIN
@@ -2517,7 +2517,7 @@ BEGIN
     BEGIN
         IF @debug = 1
         BEGIN
-            GOTO DEBUG
+            GOTO DEBUG;
         END;
         ELSE
         BEGIN
@@ -2649,7 +2649,7 @@ BEGIN
     IF @procedure_schema IS NULL
     BEGIN
         SELECT
-            @procedure_schema = N'dbo'
+            @procedure_schema = N'dbo';
     END;
     SELECT
         @current_table = 'checking procedure existence',
@@ -2890,7 +2890,7 @@ Check that you spelled everything correctly and you''re in the right database',
         BEGIN
             IF @debug = 1
             BEGIN
-                GOTO DEBUG
+                GOTO DEBUG;
             END;
             ELSE
             BEGIN
@@ -3043,7 +3043,7 @@ BEGIN
     BEGIN
         IF @debug = 1
         BEGIN
-            GOTO DEBUG
+            GOTO DEBUG;
         END;
         ELSE
         BEGIN
@@ -3067,7 +3067,7 @@ BEGIN
     BEGIN
         IF @debug = 1
         BEGIN
-            GOTO DEBUG
+            GOTO DEBUG;
         END;
         ELSE
         BEGIN
@@ -3108,7 +3108,7 @@ BEGIN
     BEGIN
         IF @debug = 1
         BEGIN
-            GOTO DEBUG
+            GOTO DEBUG;
         END;
         ELSE
         BEGIN
@@ -3191,7 +3191,7 @@ OPTION(RECOMPILE);' + @nc10;
         IF @debug = 1
         BEGIN
             RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
-        END
+        END;
     END;
 END; /*End wait stats checks*/
 
@@ -3209,7 +3209,7 @@ BEGIN
            RAISERROR('The time zone you chose (%s) is not valid. Please check sys.time_zone_info for a valid list.', 10, 1, @timezone) WITH NOWAIT;
            IF @debug = 1
            BEGIN
-               GOTO DEBUG
+               GOTO DEBUG;
            END;
            ELSE
            BEGIN
@@ -3251,7 +3251,7 @@ BEGIN
                     ELSE 0
                 END
         OPTION(RECOMPILE);
-    END
+    END;
 END;
 
 /*
@@ -3409,12 +3409,12 @@ SELECT DISTINCT
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
    ON qsq.query_id = qsp.query_id
-WHERE '
+WHERE ';
 
 IF CHARINDEX(N'%', @procedure_name) = 0
 BEGIN
     SELECT
-        @sql += N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)'
+        @sql += N'qsq.object_id = OBJECT_ID(@procedure_name_quoted)';
 END;
 
 IF CHARINDEX(N'%', @procedure_name) > 0
@@ -3426,7 +3426,7 @@ BEGIN
          1/0
     FROM #procedure_object_ids AS poi
     WHERE poi.[object_id] = qsq.[object_id]
-)'
+)';
 END;
 
     SELECT
@@ -4565,7 +4565,7 @@ BEGIN
             plan_id
         )
         EXECUTE sys.sp_executesql
-            @sql
+            @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
@@ -4639,7 +4639,7 @@ BEGIN
             plan_id
         )
         EXECUTE sys.sp_executesql
-            @sql
+            @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
@@ -4713,7 +4713,7 @@ BEGIN
             plan_id
         )
         EXECUTE sys.sp_executesql
-            @sql
+            @sql;
 
         IF @troubleshoot_performance = 1
         BEGIN
@@ -4774,8 +4774,8 @@ IF @only_queries_with_forced_plan_failures = 1
 BEGIN
     SELECT
         @sql += N'
-AND   qsp.last_force_failure_reason > 0'
-END
+AND   qsp.last_force_failure_reason > 0';
+END;
 
     SELECT
         @sql += N'
@@ -4793,7 +4793,7 @@ OPTION(RECOMPILE);' + @nc10;
         plan_id
     )
     EXECUTE sys.sp_executesql
-        @sql
+        @sql;
 
     IF @troubleshoot_performance = 1
     BEGIN
@@ -6211,7 +6211,7 @@ BEGIN
     FROM #regression_changes
     WHERE database_id = @database_id
     OPTION(RECOMPILE);' + @nc10;
-END
+END;
 ELSE IF @sort_order = 'plan count by hashes'
 BEGIN
     SELECT
@@ -6221,7 +6221,7 @@ BEGIN
     FROM #plan_ids_with_query_hashes
     WHERE database_id = @database_id
     OPTION(RECOMPILE);' + @nc10;
-END
+END;
 ELSE IF @sort_order_is_a_wait = 1
 BEGIN
     SELECT
@@ -6231,7 +6231,7 @@ BEGIN
     FROM #plan_ids_with_total_waits
     WHERE database_id = @database_id
     OPTION(RECOMPILE);' + @nc10;
-END
+END;
 ELSE
 BEGIN
     SELECT
@@ -6424,7 +6424,7 @@ BEGIN
        THEN ''No''
        ELSE ''Yes''
    END,';
-END
+END;
 ELSE
 BEGIN
    SELECT
@@ -6580,14 +6580,14 @@ BEGIN
                     qsrs.runtime_stats_interval_id DESC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )';
-END
+END;
 
 IF @new = 0
 BEGIN
     SELECT
         @sql += N'
-        not_used = NULL'
-END
+        not_used = NULL';
+END;
 
 SELECT
     @sql += N'
@@ -6595,27 +6595,27 @@ SELECT
     CROSS APPLY
     (
         SELECT TOP (@queries_top)
-            qsrs.*'
+            qsrs.*';
 
     SELECT
         @sql += N'
-        FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs'
+        FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs';
         IF @regression_mode = 1
         BEGIN
             SELECT
                 @sql += N'
         JOIN #regression_changes AS regression
           ON qsrs.plan_id = regression.plan_id
-         AND regression.database_id = @database_id'
-        END
+         AND regression.database_id = @database_id';
+        END;
         ELSE IF @sort_order = 'plan count by hashes'
         BEGIN
             SELECT
                 @sql += N'
         JOIN #plan_ids_with_query_hashes AS hashes
           ON qsrs.plan_id = hashes.plan_id
-         AND hashes.database_id = @database_id'
-        END
+         AND hashes.database_id = @database_id';
+        END;
         ELSE IF @sort_order_is_a_wait = 1
         BEGIN
             /*
@@ -6629,7 +6629,7 @@ SELECT
                 @sql += N'
         JOIN #plan_ids_with_total_waits AS waits
           ON qsrs.plan_id = waits.plan_id
-         AND waits.database_id = @database_id'
+         AND waits.database_id = @database_id';
         END;
 
     SELECT
@@ -8288,7 +8288,7 @@ BEGIN
         @sql +=
         CONVERT
         (
-            nvarchar(max),
+            nvarchar(MAX),
         N'
 SELECT
     x.*
@@ -8424,7 +8424,7 @@ FROM
         @sql +=
     CONVERT
     (
-        nvarchar(max),
+        nvarchar(MAX),
         N'
         FROM #query_store_runtime_stats AS qsrs'
     );
@@ -8462,7 +8462,7 @@ FROM
         BEGIN
             SELECT
                 @sql += N'
-        AND qsrs.from_regression_baseline = waits.from_regression_baseline'
+        AND qsrs.from_regression_baseline = waits.from_regression_baseline';
         END;
     END;
 
@@ -8470,7 +8470,7 @@ SELECT
     @sql +=
     CONVERT
     (
-        NVARCHAR(max),
+        nvarchar(MAX),
         N'
     CROSS APPLY
     (
@@ -8532,7 +8532,7 @@ SELECT
             @sql +=
         CONVERT
         (
-            nvarchar(max),
+            nvarchar(MAX),
             N'
     CROSS APPLY
     (
@@ -8587,7 +8587,7 @@ SELECT
             @sql +=
         CONVERT
         (
-            nvarchar(max),
+            nvarchar(MAX),
             N'
     CROSS APPLY
     (
@@ -8635,7 +8635,7 @@ SELECT
         @sql +=
     CONVERT
     (
-        nvarchar(max),
+        nvarchar(MAX),
         N'
 ) AS x
 ' + CASE WHEN @regression_mode = 1 THEN N' ' ELSE N'WHERE x.n = 1 ' END
@@ -9262,7 +9262,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(max),
+            nvarchar(MAX),
             N'
         SELECT
             source =
@@ -9310,7 +9310,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(max),
+            nvarchar(MAX),
             N'
             dqso.size_based_cleanup_mode_desc
         FROM #database_query_store_options AS dqso
@@ -9405,7 +9405,7 @@ BEGIN
                 SELECT
                     result = '#query_store_plan_feedback is empty';
             END;
-        END
+        END;
 
         IF EXISTS
            (
@@ -9886,7 +9886,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(max),
+            nvarchar(MAX),
             N'
         SELECT
             source =
@@ -10416,7 +10416,7 @@ BEGIN
             poi.*
         FROM #procedure_object_ids AS poi
         ORDER BY
-            poi.[object_id]
+            poi.object_id
         OPTION(RECOMPILE);
     END;
     ELSE
