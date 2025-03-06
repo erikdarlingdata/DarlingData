@@ -388,6 +388,15 @@ SELECT
     @is_system_health_msg =
         CONVERT(nchar(1), @is_system_health);
 
+/*Change this here in case someone leave it NULL*/
+IF  @target_database IS NOT NULL 
+AND @target_schema IS NOT NULL 
+AND @target_table IS NOT NULL 
+AND @target_column IS NOT NULL
+BEGIN
+    SET @target_type = N'table';
+END;
+
 /* Check for table input early and validate */
 IF @target_type = N'table'
 BEGIN
@@ -486,7 +495,8 @@ BEGIN
     BEGIN
         RAISERROR(N''The specified @target_column %s must be of XML data type.'', 11, 1, @column) WITH NOWAIT;
         RETURN;
-    END;';
+    END;
+    ';
 
     /* Validate timestamp_column if specified */
     IF @timestamp_column IS NOT NULL
@@ -973,7 +983,7 @@ BEGIN
         blocked_process_report = bd.query('.')
     INTO #blocked_sh
     FROM #blocking_xml_sh AS bx
-    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(C)
+    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     WHERE bd.exist('process/@spid') = 1
     OPTION(RECOMPILE);
@@ -1030,7 +1040,7 @@ BEGIN
         blocked_process_report = bg.query('.')
     INTO #blocking_sh
     FROM #blocking_xml_sh AS bx
-    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(C)
+    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     WHERE bg.exist('process/@spid') = 1
     OPTION(RECOMPILE);
@@ -1282,7 +1292,7 @@ BEGIN
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks_sh AS b
-        CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(C)
+        CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.currentdbname = @database_name
                 OR @database_name IS NULL)
     ) AS B
@@ -1491,8 +1501,10 @@ BEGIN
     QUOTENAME(@target_schema) + 
     N'.' + 
     QUOTENAME(@target_table) + 
-    N'
-    CROSS APPLY x.x.nodes(''/event'') AS e(x)
+    N' AS x
+    CROSS APPLY x.' + 
+    QUOTENAME(@target_column) + 
+    N'.nodes(''/event'') AS e(x)
     WHERE e.x.exist(''@name[ .= "blocked_process_report"]'') = 1';
     
     /* Add timestamp filtering if specified*/
@@ -1503,13 +1515,13 @@ BEGIN
             IF @start_date IS NOT NULL
             BEGIN
                 SET @extract_sql = @extract_sql + N'
-    AND ' + QUOTENAME(@timestamp_column) + N' >= @start_date';
+    AND x.' + QUOTENAME(@timestamp_column) + N' >= @start_date';
             END;
             
             IF @end_date IS NOT NULL
             BEGIN
                 SET @extract_sql = @extract_sql + N'
-    AND ' + QUOTENAME(@timestamp_column) + N' < @end_date';
+    AND x.' + QUOTENAME(@timestamp_column) + N' < @end_date';
             END;
         END;
 
@@ -1605,7 +1617,7 @@ SELECT
     blocked_process_report = c.query('.')
 INTO #blocked
 FROM #blocking_xml AS bx
-OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(C)
+OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
@@ -1725,7 +1737,7 @@ SELECT
     blocked_process_report = c.query('.')
 INTO #blocking
 FROM #blocking_xml AS bx
-OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(C)
+OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
@@ -2217,7 +2229,7 @@ FROM
         stmtend =
             ISNULL(n.c.value('@stmtend', 'integer'), -1)
     FROM #blocks AS b
-    CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(C)
+    CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
     WHERE    
     (
         (b.database_name = @database_name
