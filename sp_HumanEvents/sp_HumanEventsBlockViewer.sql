@@ -62,23 +62,28 @@ GO
 ALTER PROCEDURE
     dbo.sp_HumanEventsBlockViewer
 (
-    @session_name nvarchar(256) = N'keeper_HumanEvents_blocking',
-    @target_type sysname = NULL,
-    @start_date datetime2 = NULL,
-    @end_date datetime2 = NULL,
-    @database_name sysname = NULL,
-    @object_name sysname = NULL,
-    @help bit = 0,
-    @debug bit = 0,
-    @version varchar(30) = NULL OUTPUT,
-    @version_date datetime = NULL OUTPUT
+    @session_name sysname = N'keeper_HumanEvents_blocking', /*Event session name*/
+    @target_type sysname = NULL, /*ring buffer, file, or table*/
+    @start_date datetime2 = NULL, /*when to start looking for blocking*/
+    @end_date datetime2 = NULL, /*when to stop looking for blocking*/
+    @database_name sysname = NULL, /*target a specific database*/
+    @object_name sysname = NULL, /*target a specific schema-prefixed table*/
+    @target_database sysname = NULL, /*database containing the table with BPR data*/
+    @target_schema sysname = NULL, /*schema of the table*/
+    @target_table sysname = NULL, /*table name*/
+    @target_column sysname = NULL, /*column containing XML data*/
+    @timestamp_column sysname = NULL, /*column containing timestamp (optional)*/
+    @help bit = 0, /*get help with this procedure*/
+    @debug bit = 0, /*print dynamic sql and select temp table contents*/
+    @version varchar(30) = NULL OUTPUT, /*check the version number*/
+    @version_date datetime = NULL OUTPUT /*check the version date*/
 )
 WITH RECOMPILE
 AS
 BEGIN
 SET STATISTICS XML OFF;
 SET NOCOUNT ON;
-SET XACT_ABORT ON;
+SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
@@ -105,11 +110,16 @@ BEGIN
         description =
             CASE ap.name
                  WHEN N'@session_name' THEN 'name of the extended event session to pull from'
-                 WHEN N'@target_type' THEN 'target of the extended event session'
+                 WHEN N'@target_type' THEN 'target type of the extended event session (ring buffer, file) or ''table'' to read from a table'
                  WHEN N'@start_date' THEN 'filter by date'
                  WHEN N'@end_date' THEN 'filter by date'
                  WHEN N'@database_name' THEN 'filter by database name'
                  WHEN N'@object_name' THEN 'filter by table name'
+                 WHEN N'@target_database' THEN 'database containing the table with blocked process report data'
+                 WHEN N'@target_schema' THEN 'schema of the table containing blocked process report data'
+                 WHEN N'@target_table' THEN 'table containing blocked process report data'
+                 WHEN N'@target_column' THEN 'column containing blocked process report XML'
+                 WHEN N'@timestamp_column' THEN 'column containing timestamp for filtering (optional)'
                  WHEN N'@help' THEN 'how you got here'
                  WHEN N'@debug' THEN 'dumps raw temp table contents'
                  WHEN N'@version' THEN 'OUTPUT; for support'
@@ -123,6 +133,11 @@ BEGIN
                  WHEN N'@end_date' THEN 'a reasonable date'
                  WHEN N'@database_name' THEN 'a database that exists on this server'
                  WHEN N'@object_name' THEN 'a schema-prefixed table name'
+                 WHEN N'@target_database' THEN 'a database that exists on this server'
+                 WHEN N'@target_schema' THEN 'a schema in the target database'
+                 WHEN N'@target_table' THEN 'a table in the target schema'
+                 WHEN N'@target_column' THEN 'an XML column containing blocked process report data'
+                 WHEN N'@timestamp_column' THEN 'a datetime column for filtering by date range'
                  WHEN N'@help' THEN '0 or 1'
                  WHEN N'@debug' THEN '0 or 1'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -136,6 +151,11 @@ BEGIN
                  WHEN N'@end_date' THEN 'NULL'
                  WHEN N'@database_name' THEN 'NULL'
                  WHEN N'@object_name' THEN 'NULL'
+                 WHEN N'@target_database' THEN 'NULL'
+                 WHEN N'@target_schema' THEN 'NULL'
+                 WHEN N'@target_table' THEN 'NULL'
+                 WHEN N'@target_column' THEN 'NULL'
+                 WHEN N'@timestamp_column' THEN 'NULL'
                  WHEN N'@help' THEN '0'
                  WHEN N'@debug' THEN '0'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -284,7 +304,9 @@ DECLARE
     @inputbuf_bom nvarchar(1) =
         CONVERT(nvarchar(1), 0x0a00, 0),
     @start_date_original datetime2 = @start_date,
-    @end_date_original datetime2 = @end_date;
+    @end_date_original datetime2 = @end_date,
+    @validation_sql nvarchar(MAX),
+    @extract_sql nvarchar(MAX);
 
 /*Use some sane defaults for input parameters*/
 IF @debug = 1
@@ -366,6 +388,172 @@ SELECT
     @is_system_health_msg =
         CONVERT(nchar(1), @is_system_health);
 
+/* Check for table input early and validate */
+IF @target_type = N'table'
+BEGIN
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Table source detected, validating parameters', 0, 1) WITH NOWAIT;
+    END;
+
+    /* Parameter validation  */
+    IF @target_database IS NULL 
+    OR @target_schema IS NULL 
+    OR @target_table IS NULL 
+    OR @target_column IS NULL
+    BEGIN
+        RAISERROR(N'When @target_type is ''table'', you must specify @target_database, @target_schema, @target_table, and @target_column.', 11, 1) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /* Check if target database exists */
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM sys.databases AS d
+        WHERE d.name = @target_database
+    )
+    BEGIN
+        RAISERROR(N'The specified @target_database ''%s'' does not exist.', 11, 1, @target_database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /* Use dynamic SQL to validate schema, table, and column existence */
+    SET @validation_sql = N'
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.schemas AS s
+        WHERE s.name = @schema
+    )
+    BEGIN
+        RAISERROR(N''The specified @target_schema %s does not exist in @database %s'', 11, 1, @schema, @database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.tables AS t
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE t.name = @table 
+        AND   s.name = @schema
+    )
+    BEGIN
+        RAISERROR(N''The specified @target_table %s does not exist in @schema %s in database %s'', 11, 1, @table, @schema, @database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+          ON c.object_id = t.object_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE c.name = @column 
+        AND   t.name = @table 
+        AND   s.name = @schema
+    )
+    BEGIN
+        RAISERROR(N''The specified @target_column %s does not exist in table %s.%s in database %s'', 11, 1, @column, @schema, @table, @database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /* Validate column is XML type */
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.types AS ty 
+          ON c.user_type_id = ty.user_type_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+          ON c.object_id = t.object_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE c.name = @column 
+        AND   t.name = @table 
+        AND   s.name = @schema
+        AND   ty.name = ''xml''
+    )
+    BEGIN
+        RAISERROR(N''The specified @target_column %s must be of XML data type.'', 11, 1, @column) WITH NOWAIT;
+        RETURN;
+    END;';
+
+    /* Validate timestamp_column if specified */
+    IF @timestamp_column IS NOT NULL
+    BEGIN
+        SET @validation_sql = @validation_sql + N'
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+          ON c.object_id = t.object_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE c.name = @timestamp_column 
+        AND   t.name = @table 
+        AND   s.name = @schema
+    )
+    BEGIN
+        RAISERROR(N''The specified @timestamp_column %s does not exist in table %s.%s in database %s'', 11, 1, @timestamp_column, @schema, @table, @database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /* Validate timestamp column is datetime type */
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.types AS ty 
+          ON c.user_type_id = ty.user_type_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+          ON c.object_id = t.object_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE c.name = @timestamp_column 
+        AND   t.name = @table 
+        AND   s.name = @schema
+        AND   ty.name LIKE N''%date%''
+    )
+    BEGIN
+        RAISERROR(N''The specified @timestamp_column %s must be of datetime data type.'', 11, 1, @timestamp_column) WITH NOWAIT;
+        RETURN;
+    END;';
+    END;
+
+    IF @debug = 1
+    BEGIN
+        PRINT @validation_sql;
+    END;
+
+    EXEC sys.sp_executesql 
+        @validation_sql, 
+        N'
+        @database sysname, 
+        @schema sysname, 
+        @table sysname, 
+        @column sysname, 
+        @timestamp_column sysname
+        ',
+        @target_database, 
+        @target_schema, 
+        @target_table, 
+        @target_column, 
+        @timestamp_column;
+END;
+
 /*Temp tables for staging results*/
 IF @debug = 1
 BEGIN
@@ -386,14 +574,20 @@ CREATE TABLE
 CREATE TABLE
     #block_findings
 (
-    id int IDENTITY PRIMARY KEY,
-    check_id int NOT NULL,
+    id integer IDENTITY PRIMARY KEY CLUSTERED,
+    check_id integer NOT NULL,
     database_name nvarchar(256) NULL,
     object_name nvarchar(1000) NULL,
     finding_group nvarchar(100) NULL,
     finding nvarchar(4000) NULL,
     sort_order bigint
 );
+
+IF @target_type = N'table'
+BEGIN
+    GOTO TableMode;
+    RETURN;
+END;
 
 /*Look to see if the session exists and is running*/
 IF @debug = 1
@@ -441,7 +635,8 @@ IF @debug = 1
 BEGIN
     RAISERROR('What kind of target does %s have?', 0, 1, @session_name) WITH NOWAIT;
 END;
-IF @target_type IS NULL AND @is_system_health = 0
+IF  @target_type IS NULL 
+AND @is_system_health = 0
 BEGIN
     IF @azure = 0
     BEGIN
@@ -471,7 +666,8 @@ BEGIN
 END;
 
 /* Dump whatever we got into a temp table */
-IF @target_type = N'ring_buffer' AND @is_system_health = 0
+IF  @target_type = N'ring_buffer' 
+AND @is_system_health = 0
 BEGIN
     IF @azure = 0
     BEGIN
@@ -520,7 +716,8 @@ BEGIN
     END;
 END;
 
-IF @target_type = N'event_file' AND @is_system_health = 0
+IF  @target_type = N'event_file' 
+AND @is_system_health = 0
 BEGIN
     IF @azure = 0
     BEGIN
@@ -635,7 +832,8 @@ BEGIN
 END;
 
 
-IF @target_type = N'ring_buffer' AND @is_system_health = 0
+IF  @target_type = N'ring_buffer' 
+AND @is_system_health = 0
 BEGIN
     IF @debug = 1
     BEGIN
@@ -643,20 +841,23 @@ BEGIN
     END;
 
     INSERT
-        #blocking_xml WITH(TABLOCKX)
+        #blocking_xml 
+    WITH
+        (TABLOCKX)
     (
         human_events_xml
     )
     SELECT
         human_events_xml = e.x.query('.')
     FROM #x AS x
-    CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
+    CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS E(x)
     WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
     AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
 END;
 
-IF @target_type = N'event_file' AND @is_system_health = 0
+IF  @target_type = N'event_file' 
+AND @is_system_health = 0
 BEGIN
     IF @debug = 1
     BEGIN
@@ -664,14 +865,16 @@ BEGIN
     END;
 
     INSERT
-        #blocking_xml WITH(TABLOCKX)
+        #blocking_xml 
+    WITH
+        (TABLOCKX)
     (
         human_events_xml
     )
     SELECT
         human_events_xml = e.x.query('.')
     FROM #x AS x
-    CROSS APPLY x.x.nodes('/event') AS e(x)
+    CROSS APPLY x.x.nodes('/event') AS E(x)
     WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
     AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
@@ -681,7 +884,8 @@ END;
 This section is special for the well-hidden and much less comprehensive blocked
 process report stored in the system health extended event session
 */
-IF @is_system_health = 1
+IF  @is_system_health = 1
+AND @target_type <> N'table'
 BEGIN
     IF @debug = 1
     BEGIN
@@ -699,7 +903,7 @@ BEGIN
         FROM sys.fn_xe_file_target_read_file(N'system_health*.xel', NULL, NULL, NULL) AS fx
         WHERE fx.object_name = N'sp_server_diagnostics_component_result'
     ) AS xml
-    CROSS APPLY xml.sp_server_diagnostics_component_result.nodes('/event') AS e(x)
+    CROSS APPLY xml.sp_server_diagnostics_component_result.nodes('/event') AS E(x)
     WHERE e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
     AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
@@ -748,16 +952,16 @@ BEGIN
     SELECT
         bx.event_time,
         currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-        spid = bd.value('(process/@spid)[1]', 'int'),
-        ecid = bd.value('(process/@ecid)[1]', 'int'),
+        spid = bd.value('(process/@spid)[1]', 'integer'),
+        ecid = bd.value('(process/@ecid)[1]', 'integer'),
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
         lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
         lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
         wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
         status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bd.value('(process/@priority)[1]', 'int'),
-        transaction_count = bd.value('(process/@trancount)[1]', 'int'),
+        priority = bd.value('(process/@priority)[1]', 'integer'),
+        transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
         client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
         host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
         login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -769,7 +973,7 @@ BEGIN
         blocked_process_report = bd.query('.')
     INTO #blocked_sh
     FROM #blocking_xml_sh AS bx
-    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(C)
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
     WHERE bd.exist('process/@spid') = 1
     OPTION(RECOMPILE);
@@ -805,16 +1009,16 @@ BEGIN
     SELECT
         bx.event_time,
         currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-        spid = bg.value('(process/@spid)[1]', 'int'),
-        ecid = bg.value('(process/@ecid)[1]', 'int'),
+        spid = bg.value('(process/@spid)[1]', 'integer'),
+        ecid = bg.value('(process/@ecid)[1]', 'integer'),
         query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
         wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
         last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
         last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
         wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
         status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bg.value('(process/@priority)[1]', 'int'),
-        transaction_count = bg.value('(process/@trancount)[1]', 'int'),
+        priority = bg.value('(process/@priority)[1]', 'integer'),
+        transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
         client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
         host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
         login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -826,7 +1030,7 @@ BEGIN
         blocked_process_report = bg.query('.')
     INTO #blocking_sh
     FROM #blocking_xml_sh AS bx
-    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+    OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(C)
     OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
     WHERE bg.exist('process/@spid') = 1
     OPTION(RECOMPILE);
@@ -1055,9 +1259,9 @@ BEGIN
             sql_handle =
                 CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
             stmtstart =
-                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+                ISNULL(n.c.value('@stmtstart', 'integer'), 0),
             stmtend =
-                ISNULL(n.c.value('@stmtend', 'int'), -1)
+                ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks_sh AS b
         CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.currentdbname = @database_name
@@ -1074,14 +1278,14 @@ BEGIN
             sql_handle =
                 CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
             stmtstart =
-                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+                ISNULL(n.c.value('@stmtstart', 'integer'), 0),
             stmtend =
-                ISNULL(n.c.value('@stmtend', 'int'), -1)
+                ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks_sh AS b
-        CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(C)
         WHERE (b.currentdbname = @database_name
                 OR @database_name IS NULL)
-    ) AS b
+    ) AS B
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -1159,7 +1363,8 @@ BEGIN
         FROM #available_plans_sh AS ap
         WHERE ap.sql_handle = deqs.sql_handle
     )
-    AND deqs.query_hash IS NOT NULL;
+    AND deqs.query_hash IS NOT NULL
+    OPTION(RECOMPILE);
 
     IF @debug = 1
     BEGIN
@@ -1259,6 +1464,87 @@ BEGIN
     /*End system health section, skips checks because most of them won't run*/
 END;
 
+TableMode:
+IF @target_type = N'table'
+BEGIN
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Extracting blocked process reports from table %s.%s.%s', 0, 1, @target_database, @target_schema, @target_table) WITH NOWAIT;
+    END;
+
+    /* Build dynamic SQL to extract the XML */ 
+    SET @extract_sql = N'
+    INSERT 
+        #blocking_xml 
+    WITH
+        (TABLOCKX)
+    (
+        human_events_xml
+    )
+    SELECT 
+        human_events_xml = ' + 
+        QUOTENAME(@target_column) + 
+        N'
+    FROM ' + 
+    QUOTENAME(@target_database) + 
+    N'.' + 
+    QUOTENAME(@target_schema) + 
+    N'.' + 
+    QUOTENAME(@target_table) + 
+    N'
+    CROSS APPLY x.x.nodes(''/event'') AS e(x)
+    WHERE e.x.exist(''@name[ .= "blocked_process_report"]'') = 1';
+    
+    /* Add timestamp filtering if specified*/
+    IF   (@start_date IS NOT NULL OR @end_date IS NOT NULL)
+    BEGIN
+        IF @timestamp_column IS NOT NULL 
+        BEGIN
+            IF @start_date IS NOT NULL
+            BEGIN
+                SET @extract_sql = @extract_sql + N'
+    AND ' + QUOTENAME(@timestamp_column) + N' >= @start_date';
+            END;
+            
+            IF @end_date IS NOT NULL
+            BEGIN
+                SET @extract_sql = @extract_sql + N'
+    AND ' + QUOTENAME(@timestamp_column) + N' < @end_date';
+            END;
+        END;
+
+        IF @timestamp_column IS NULL
+        BEGIN
+            IF @start_date IS NOT NULL
+            BEGIN
+                SET @extract_sql = @extract_sql + N'
+    AND ' + QUOTENAME(@target_column) + N'.exist(''@timestamp[. >= sql:variable("@start_date")]'') = 1';
+            END;
+            
+            IF @end_date IS NOT NULL
+            BEGIN
+                SET @extract_sql = @extract_sql + N'
+    AND ' + QUOTENAME(@target_column) + '.exist(''@timestamp[. < sql:variable("@end_date")]'') = 1';
+            END;
+        END;
+    END;
+
+    SET @extract_sql = @extract_sql + N'
+    OPTION(RECOMPILE);';
+    
+    IF @debug = 1
+    BEGIN
+        PRINT @extract_sql;
+    END;
+
+    /* Execute the dynamic SQL*/
+    EXECUTE sys.sp_executesql 
+        @extract_sql, 
+      N'@start_date datetime2, 
+        @end_date datetime2',
+        @start_date, 
+        @end_date;
+END;
 
 IF @debug = 1
 BEGIN
@@ -1284,16 +1570,16 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
-    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
-    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
+    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
     resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
-    monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
-    blocking_spid = bg.value('(process/@spid)[1]', 'int'),
-    blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
-    blocked_spid = bd.value('(process/@spid)[1]', 'int'),
-    blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
+    monitor_loop = c.value('(//@monitorLoop)[1]', 'integer'),
+    blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
+    blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
+    blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
+    blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
     query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
     wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
     transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(512)'),
@@ -1302,8 +1588,8 @@ SELECT
     wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
     lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
     status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-    priority = bd.value('(process/@priority)[1]', 'int'),
-    transaction_count = bd.value('(process/@trancount)[1]', 'int'),
+    priority = bd.value('(process/@priority)[1]', 'integer'),
+    transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
     client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
     host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
     login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -1312,14 +1598,14 @@ SELECT
     clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
     clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
     currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
-    currentdbid = bd.value('(process/@currentdb)[1]', 'int'),
+    currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
     sort_order = CAST('' AS varchar(400)),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
     blocked_process_report = c.query('.')
 INTO #blocked
 FROM #blocking_xml AS bx
-OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(C)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
@@ -1404,16 +1690,16 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
-    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
-    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
+    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
     resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
-    monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
-    blocking_spid = bg.value('(process/@spid)[1]', 'int'),
-    blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
-    blocked_spid = bd.value('(process/@spid)[1]', 'int'),
-    blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
+    monitor_loop = c.value('(//@monitorLoop)[1]', 'integer'),
+    blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
+    blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
+    blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
+    blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
     query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
     wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
     transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(512)'),
@@ -1422,8 +1708,8 @@ SELECT
     wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
     lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
     status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-    priority = bg.value('(process/@priority)[1]', 'int'),
-    transaction_count = bg.value('(process/@trancount)[1]', 'int'),
+    priority = bg.value('(process/@priority)[1]', 'integer'),
+    transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
     client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
     host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
     login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -1432,14 +1718,14 @@ SELECT
     clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
     clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
     currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-    currentdbid = bg.value('(process/@currentdb)[1]', 'int'),
+    currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
     sort_order = CAST('' AS varchar(400)),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
     blocked_process_report = c.query('.')
 INTO #blocking
 FROM #blocking_xml AS bx
-OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
+OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(C)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
 OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
 OPTION(RECOMPILE);
@@ -1523,15 +1809,15 @@ WITH
             CAST
             (
                 blocking_desc +
-                ' <-- ' +
+                ' </* ' +
                 blocked_desc AS varchar(400)
             )
-    FROM #blocking b
+    FROM #blocking AS b
     WHERE NOT EXISTS
     (
         SELECT
             1/0
-        FROM #blocking b2
+        FROM #blocking AS b2
         WHERE b2.monitor_loop = b.monitor_loop
         AND   b2.blocked_desc = b.blocking_desc
     )
@@ -1549,20 +1835,21 @@ WITH
                 h.sort_order +
                 ' ' +
                 bg.blocking_desc +
-                ' <-- ' +
+                ' </* ' +
                 bg.blocked_desc AS varchar(400)
             )
-    FROM hierarchy h
-    JOIN #blocking bg
+    FROM hierarchy AS h
+    JOIN #blocking AS bg
       ON  bg.monitor_loop = h.monitor_loop
       AND bg.blocking_desc = h.blocked_desc
 )
-UPDATE #blocked
+UPDATE 
+    #blocked
 SET
     blocking_level = h.level,
     sort_order = h.sort_order
-FROM #blocked b
-JOIN hierarchy h
+FROM #blocked AS b
+JOIN hierarchy AS h
   ON  h.monitor_loop = b.monitor_loop
   AND h.blocking_desc = b.blocking_desc
   AND h.blocked_desc = b.blocked_desc
@@ -1573,12 +1860,13 @@ BEGIN
     RAISERROR('Updating #blocking', 0, 1) WITH NOWAIT;
 END;
 
-UPDATE #blocking
+UPDATE 
+    #blocking
 SET
     blocking_level = bd.blocking_level,
     sort_order = bd.sort_order
-FROM #blocking bg
-JOIN #blocked bd
+FROM #blocking AS bg
+JOIN #blocked AS bd
   ON  bd.monitor_loop = bg.monitor_loop
   AND bd.blocking_desc = bg.blocking_desc
   AND bd.blocked_desc = bg.blocked_desc
@@ -1690,6 +1978,8 @@ FROM
     FROM #blocking AS bg
     WHERE (bg.database_name = @database_name
            OR @database_name IS NULL)
+    OR    (bg.currentdbname = @database_name
+           OR @database_name IS NULL)
 
     UNION ALL
 
@@ -1697,6 +1987,8 @@ FROM
         bd.*
     FROM #blocked AS bd
     WHERE (bd.database_name = @database_name
+           OR @database_name IS NULL)
+    OR    (bd.currentdbname = @database_name
            OR @database_name IS NULL)
 ) AS kheb
 OPTION(RECOMPILE);
@@ -1891,13 +2183,18 @@ FROM
         sql_handle =
             CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
         stmtstart =
-            ISNULL(n.c.value('@stmtstart', 'int'), 0),
+            ISNULL(n.c.value('@stmtstart', 'integer'), 0),
         stmtend =
-            ISNULL(n.c.value('@stmtend', 'int'), -1)
+            ISNULL(n.c.value('@stmtend', 'integer'), -1)
     FROM #blocks AS b
     CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-    WHERE (b.database_name = @database_name
+    WHERE
+    (
+        (b.database_name = @database_name
             OR @database_name IS NULL)
+     OR (b.currentdbname = @database_name
+            OR @database_name IS NULL)
+    )
     AND  (b.contentious_object = @object_name
             OR @object_name IS NULL)
 
@@ -1916,13 +2213,18 @@ FROM
         sql_handle =
             CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
         stmtstart =
-            ISNULL(n.c.value('@stmtstart', 'int'), 0),
+            ISNULL(n.c.value('@stmtstart', 'integer'), 0),
         stmtend =
-            ISNULL(n.c.value('@stmtend', 'int'), -1)
+            ISNULL(n.c.value('@stmtend', 'integer'), -1)
     FROM #blocks AS b
-    CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-    WHERE (b.database_name = @database_name
+    CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(C)
+    WHERE    
+    (
+        (b.database_name = @database_name
             OR @database_name IS NULL)
+     OR (b.currentdbname = @database_name
+            OR @database_name IS NULL)
+    )
     AND  (b.contentious_object = @object_name
             OR @object_name IS NULL)
 ) AS b
@@ -2003,7 +2305,8 @@ WHERE EXISTS
    FROM #available_plans AS ap
    WHERE ap.sql_handle = deqs.sql_handle
 )
-AND deqs.query_hash IS NOT NULL;
+AND deqs.query_hash IS NOT NULL
+OPTION(RECOMPILE);
 
 IF @debug = 1
 BEGIN
@@ -2679,7 +2982,7 @@ SELECT
     finding =
         N'There have been ' +
         CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' user transaction queries involved in blocking sessions in ' +
+        N' auto stats updates involved in blocking sessions in ' +
         b.database_name +
         N'.',
    sort_order =
