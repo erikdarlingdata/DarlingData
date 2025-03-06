@@ -860,7 +860,7 @@ BEGIN
     SELECT
         human_events_xml = e.x.query('.')
     FROM #x AS x
-    CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS E(x)
+    CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
     WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
     AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
@@ -884,7 +884,7 @@ BEGIN
     SELECT
         human_events_xml = e.x.query('.')
     FROM #x AS x
-    CROSS APPLY x.x.nodes('/event') AS E(x)
+    CROSS APPLY x.x.nodes('/event') AS e(x)
     WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
     AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
@@ -913,7 +913,7 @@ BEGIN
         FROM sys.fn_xe_file_target_read_file(N'system_health*.xel', NULL, NULL, NULL) AS fx
         WHERE fx.object_name = N'sp_server_diagnostics_component_result'
     ) AS xml
-    CROSS APPLY xml.sp_server_diagnostics_component_result.nodes('/event') AS E(x)
+    CROSS APPLY xml.sp_server_diagnostics_component_result.nodes('/event') AS e(x)
     WHERE e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
     AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
     OPTION(RECOMPILE);
@@ -1295,7 +1295,7 @@ BEGIN
         CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.currentdbname = @database_name
                 OR @database_name IS NULL)
-    ) AS B
+    ) AS b
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -1484,13 +1484,6 @@ BEGIN
 
     /* Build dynamic SQL to extract the XML */ 
     SET @extract_sql = N'
-    INSERT 
-        #blocking_xml 
-    WITH
-        (TABLOCKX)
-    (
-        human_events_xml
-    )
     SELECT 
         human_events_xml = ' + 
         QUOTENAME(@target_column) + 
@@ -1508,41 +1501,25 @@ BEGIN
     WHERE e.x.exist(''@name[ .= "blocked_process_report"]'') = 1';
     
     /* Add timestamp filtering if specified*/
-    IF   (@start_date IS NOT NULL OR @end_date IS NOT NULL)
+    IF @timestamp_column IS NOT NULL 
     BEGIN
-        IF @timestamp_column IS NOT NULL 
-        BEGIN
-            IF @start_date IS NOT NULL
-            BEGIN
-                SET @extract_sql = @extract_sql + N'
-    AND x.' + QUOTENAME(@timestamp_column) + N' >= @start_date';
-            END;
-            
-            IF @end_date IS NOT NULL
-            BEGIN
-                SET @extract_sql = @extract_sql + N'
-    AND x.' + QUOTENAME(@timestamp_column) + N' < @end_date';
-            END;
-        END;
+            SET @extract_sql = @extract_sql + N'
+    AND   x.' + QUOTENAME(@timestamp_column) + N' >= @start_date
+    AND   x.' + QUOTENAME(@timestamp_column) + N' < @end_date';
+    END;
 
-        IF @timestamp_column IS NULL
+    IF @timestamp_column IS NULL
+    BEGIN
         BEGIN
-            IF @start_date IS NOT NULL
-            BEGIN
-                SET @extract_sql = @extract_sql + N'
-    AND ' + QUOTENAME(@target_column) + N'.exist(''@timestamp[. >= sql:variable("@start_date")]'') = 1';
-            END;
-            
-            IF @end_date IS NOT NULL
-            BEGIN
-                SET @extract_sql = @extract_sql + N'
-    AND ' + QUOTENAME(@target_column) + '.exist(''@timestamp[. < sql:variable("@end_date")]'') = 1';
-            END;
+            SET @extract_sql = @extract_sql + N'
+    AND   e.x.exist(''@timestamp[. >= sql:variable("@start_date") and . < sql:variable("@end_date")]'') = 1';
         END;
     END;
 
+
     SET @extract_sql = @extract_sql + N'
-    OPTION(RECOMPILE);';
+    OPTION(RECOMPILE);
+    ';
     
     IF @debug = 1
     BEGIN
@@ -1550,6 +1527,13 @@ BEGIN
     END;
 
     /* Execute the dynamic SQL*/
+    INSERT 
+        #blocking_xml 
+    WITH
+        (TABLOCKX)
+    (
+        human_events_xml
+    )
     EXECUTE sys.sp_executesql 
         @extract_sql, 
       N'@start_date datetime2, 
