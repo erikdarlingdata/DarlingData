@@ -538,7 +538,7 @@ BEGIN
         PRINT @validation_sql;
     END;
 
-    EXEC sys.sp_executesql 
+    EXECUTE sys.sp_executesql 
         @validation_sql, 
         N'
         @database sysname, 
