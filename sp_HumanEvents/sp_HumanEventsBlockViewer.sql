@@ -398,11 +398,21 @@ BEGIN
 END;
 
 /* Check for table input early and validate */
-IF @target_type = N'table'
+IF LOWER(@target_type) = N'table'
 BEGIN
     IF @debug = 1
     BEGIN
         RAISERROR('Table source detected, validating parameters', 0, 1) WITH NOWAIT;
+    END;
+
+    IF @target_database IS NULL
+    BEGIN
+        SET @target_database = DB_NAME();
+    END;
+
+    IF @target_schema IS NULL
+    BEGIN
+        SET @target_schema = N'dbo'
     END;
 
     /* Parameter validation  */
@@ -593,7 +603,7 @@ CREATE TABLE
     sort_order bigint
 );
 
-IF @target_type = N'table'
+IF LOWER(@target_type) = N'table'
 BEGIN
     GOTO TableMode;
     RETURN;
@@ -676,7 +686,7 @@ BEGIN
 END;
 
 /* Dump whatever we got into a temp table */
-IF  @target_type = N'ring_buffer' 
+IF  LOWER(@target_type) = N'ring_buffer' 
 AND @is_system_health = 0
 BEGIN
     IF @azure = 0
@@ -726,7 +736,7 @@ BEGIN
     END;
 END;
 
-IF  @target_type = N'event_file' 
+IF  LOWER(@target_type) = N'event_file' 
 AND @is_system_health = 0
 BEGIN
     IF @azure = 0
@@ -842,7 +852,7 @@ BEGIN
 END;
 
 
-IF  @target_type = N'ring_buffer' 
+IF  LOWER(@target_type) = N'ring_buffer' 
 AND @is_system_health = 0
 BEGIN
     IF @debug = 1
@@ -866,7 +876,7 @@ BEGIN
     OPTION(RECOMPILE);
 END;
 
-IF  @target_type = N'event_file' 
+IF  LOWER(@target_type) = N'event_file' 
 AND @is_system_health = 0
 BEGIN
     IF @debug = 1
@@ -895,7 +905,7 @@ This section is special for the well-hidden and much less comprehensive blocked
 process report stored in the system health extended event session
 */
 IF  @is_system_health = 1
-AND @target_type <> N'table'
+AND LOWER(@target_type) <> N'table'
 BEGIN
     IF @debug = 1
     BEGIN
@@ -1475,7 +1485,7 @@ BEGIN
 END;
 
 TableMode:
-IF @target_type = N'table'
+IF LOWER(@target_type) = N'table'
 BEGIN
     IF @debug = 1
     BEGIN
