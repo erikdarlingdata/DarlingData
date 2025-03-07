@@ -442,11 +442,13 @@ AND   ca.utc_timestamp < @end_date';
     DECLARE 
         @collection_areas TABLE 
     (
+        id tinyint IDENTITY PRIMARY KEY CLUSTERED,
         area_name varchar(20) NOT NULL,
         object_name sysname NOT NULL,
         temp_table sysname NOT NULL,
         insert_list sysname NOT NULL,
-        should_collect bit NOT NULL DEFAULT 0
+        should_collect bit NOT NULL DEFAULT 0,
+        is_processed bit NOT NULL DEFAULT 0
     );
     
     INSERT INTO 
@@ -483,7 +485,7 @@ AND   ca.utc_timestamp < @end_date';
         ('cpu', 'scheduler_monitor_system_health', '#scheduler_monitor', 'scheduler_monitor'),
         ('disk', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('locking', 'xml_deadlock_report', '#xml_deadlock_report', 'xml_deadlock_report'),
-        ('locking', 'human_events_xml', '#sp_server_diagnostics_component_result', 'human_events_xml'),
+        ('locking', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('waits', 'wait_info', '#wait_info', 'wait_info'),
         ('system', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('system', 'error_reported', '#error_reported', 'error_reported'),
@@ -634,8 +636,10 @@ AND   ca.utc_timestamp < @end_date';
     -- Declare a cursor to process each collection area
     SET @collection_cursor = 
         CURSOR 
-        LOCAL 
-        FAST_FORWARD
+        LOCAL
+        SCROLL
+        DYNAMIC
+        READ_ONLY
     FOR 
     SELECT 
         ca.area_name, 
@@ -643,10 +647,10 @@ AND   ca.utc_timestamp < @end_date';
         ca.temp_table,
         ca.insert_list
     FROM @collection_areas AS ca
-    WHERE should_collect = 1
+    WHERE ca.should_collect = 1
+    AND   ca.is_processed = 0
     ORDER BY 
-        ca.area_name, 
-        ca.object_name;
+        ca.id;
         
     OPEN @collection_cursor;
     
@@ -679,10 +683,6 @@ AND   ca.utc_timestamp < @end_date';
                     '{insert_list}',
                     @insert_list
                 );
-        IF @temp_table = '#blocking_xml'
-        BEGIN
-            SET @collection_sql = REPLACE(@collection_sql, 'human_events_xml =', 'event_time, human_events_xml =')
-        END
         
         IF @debug = 1
         BEGIN
@@ -706,6 +706,13 @@ AND   ca.utc_timestamp < @end_date';
         BEGIN
             SET STATISTICS XML OFF;
         END;
+
+        UPDATE 
+            @collection_areas
+        SET 
+            is_processed = 1
+        WHERE temp_table = @temp_table
+        AND   should_collect = 1;
         
         FETCH NEXT 
         FROM @collection_cursor 
