@@ -216,7 +216,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @timestamp_utc_mode tinyint,
         @sql_template nvarchar(MAX) = N'',
         @time_filter nvarchar(MAX) = N'',
-        @cross_apply nvarchar(MAX) = N'';
+        @cross_apply nvarchar(MAX) = N'',
+        @collection_cursor CURSOR,
+        @area_name varchar(20),
+        @object_name sysname,
+        @temp_table sysname,
+        @insert_list sysname,
+        @collection_sql nvarchar(MAX);
         
     IF @azure = 1
     BEGIN
@@ -334,6 +340,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE 0
             END,
         @sql_template += N'
+INSERT INTO
+    {temp_table}
+WITH
+    (TABLOCK)
+(
+    {insert_list}
+)
 SELECT
     {object_name} =
         ISNULL
@@ -350,7 +363,8 @@ FROM
     WHERE fx.object_name = N''{object_name}'' {time_filter}
 ) AS xml
 {cross_apply}
-OPTION(RECOMPILE);';
+OPTION(RECOMPILE);
+';
 
     IF @timestamp_utc_mode = 0
     BEGIN
@@ -431,6 +445,7 @@ AND   ca.utc_timestamp < @end_date';
         area_name varchar(20) NOT NULL,
         object_name sysname NOT NULL,
         temp_table sysname NOT NULL,
+        insert_list sysname NOT NULL,
         should_collect bit NOT NULL DEFAULT 0
     );
     
@@ -440,12 +455,14 @@ AND   ca.utc_timestamp < @end_date';
         area_name, 
         object_name,
         temp_table,
+        insert_list,
         should_collect
     )
     SELECT
         v.area_name,
         v.object_name,
         v.temp_table,
+        v.insert_list,
         should_collect =
             CASE 
                 WHEN @what_to_check = 'all' 
@@ -463,16 +480,16 @@ AND   ca.utc_timestamp < @end_date';
     FROM
     (
     VALUES 
-        ('cpu', 'scheduler_monitor_system_health', '#scheduler_monitor'),
-        ('disk', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result'),
-        ('locking', 'xml_deadlock_report', '#xml_deadlock_report'),
-        ('locking', 'human_events_xml', '#blocking_xml'),
-        ('waits', 'wait_info', '#wait_info'),
-        ('system', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result'),
-        ('system', 'error_reported', '#error_reported'),
-        ('memory', 'memory_broker_ring_buffer_recorded', '#memory_broker'),
-        ('memory', 'memory_node_oom_ring_buffer_recorded', '#memory_node_oom')
-    ) AS v(area_name, object_name, temp_table);
+        ('cpu', 'scheduler_monitor_system_health', '#scheduler_monitor', 'scheduler_monitor'),
+        ('disk', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
+        ('locking', 'xml_deadlock_report', '#xml_deadlock_report', 'xml_deadlock_report'),
+        ('locking', 'human_events_xml', '#sp_server_diagnostics_component_result', 'human_events_xml'),
+        ('waits', 'wait_info', '#wait_info', 'wait_info'),
+        ('system', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
+        ('system', 'error_reported', '#error_reported', 'error_reported'),
+        ('memory', 'memory_broker_ring_buffer_recorded', '#memory_broker', 'memory_broker'),
+        ('memory', 'memory_node_oom_ring_buffer_recorded', '#memory_node_oom', 'memory_node_oom')
+    ) AS v(area_name, object_name, temp_table, insert_list);
 
     IF @debug = 1
     BEGIN
@@ -608,896 +625,101 @@ AND   ca.utc_timestamp < @end_date';
         OPTION(RECOMPILE);
     END;
 
-    /*
-    The column timestamp_utc is 2017+ only, but terribly broken:
-    https://dba.stackexchange.com/q/323147/32281
-    https://feedback.azure.com/d365community/idea/5f8e52d6-f3d2-ec11-a81b-6045bd7ac9f9
-
-    It is fixed in Azure Managed Instance, and will be fixed in the next major
-    SQL Server release, so we have to handle things a little bit differently
-    */
-    IF EXISTS
-    (
-        SELECT
-            1/0
-        FROM sys.all_columns AS ac
-        WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-        AND   ac.name = N'timestamp_utc'
-    )
-    AND @mi = 0
+    -- First, ensure we're working with the correct collection areas
+    IF @debug = 1
     BEGIN
-        /*Grab data from the wait info component*/
-        IF @what_to_check IN ('all', 'waits')
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking waits for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
-            END;
-
-            SELECT
-                @sql = N'
-            SELECT
-                wait_info =
-                    ISNULL
-                    (
-                        xml.wait_info,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    wait_info =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''wait_info''
-                AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-            ) AS xml
-            CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE);';
-
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-
-            INSERT INTO
-                #wait_info 
-            WITH 
-                (TABLOCKX)
-            (
-                wait_info
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-
-        /*Grab data from the sp_server_diagnostics_component_result component*/
-        SELECT
-            @sql = N'
-        SELECT
-            sp_server_diagnostics_component_result =
-                ISNULL
-                (
-                    xml.sp_server_diagnostics_component_result,
-                    CONVERT(xml, N''<event>event</event>'')
-                )
-        FROM
-        (
-            SELECT
-                sp_server_diagnostics_component_result =
-                    TRY_CAST(fx.event_data AS xml)
-            FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-            WHERE fx.object_name = N''sp_server_diagnostics_component_result''
-            AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-        ) AS xml
-        CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
-        OPTION(RECOMPILE);';
-
-        IF @debug = 1
-        BEGIN
-            PRINT @sql;
-            RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
-            SET STATISTICS XML ON;
-        END;
-
-        INSERT INTO
-            #sp_server_diagnostics_component_result 
-        WITH
-            (TABLOCKX)
-        (
-            sp_server_diagnostics_component_result
-        )
-        EXECUTE sys.sp_executesql
-            @sql,
-            @params,
-            @start_date,
-            @end_date;
-
-        IF @debug = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-        END;
-
-        /*Grab data from the xml_deadlock_report component*/
-        IF
-        (
-             @what_to_check IN ('all', 'locking')
-         AND @skip_locks = 0
-        )
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking locking for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
-            END;
-
-            SELECT
-                @sql = N'
-            SELECT
-                xml_deadlock_report =
-                    ISNULL
-                    (
-                        xml.xml_deadlock_report,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    xml_deadlock_report =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''xml_deadlock_report''
-                AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-            ) AS xml
-            CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE);';
-
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-
-            INSERT INTO
-                #xml_deadlock_report WITH(TABLOCKX)
-            (
-                xml_deadlock_report
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    END; /*End 2016+ data collection*/
-
-    IF NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM sys.all_columns AS ac
-        WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-        AND   ac.name = N'timestamp_utc'
-    )
-    AND @mi = 0
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Checking waits for not Managed Instance, up to 2016', 0, 1) WITH NOWAIT;
-        END;
-
-        /*Grab data from the wait info component*/
-        IF @what_to_check IN ('all', 'waits')
-        BEGIN
-           SELECT
-               @sql = N'
-           SELECT
-               wait_info =
-                   ISNULL
-                   (
-                       xml.wait_info,
-                       CONVERT(xml, N''<event>event</event>'')
-                   )
-           FROM
-           (
-               SELECT
-                   wait_info =
-                       TRY_CAST(fx.event_data AS xml)
-               FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-               WHERE fx.object_name = N''wait_info''
-           ) AS xml
-           CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
-           CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-           WHERE ca.utc_timestamp >= @start_date
-           AND   ca.utc_timestamp < @end_date
-           OPTION(RECOMPILE);';
-
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-
-           INSERT INTO
-               #wait_info 
-           WITH 
-               (TABLOCKX)
-           (
-               wait_info
-           )
-           EXECUTE sys.sp_executesql
-               @sql,
-               @params,
-               @start_date,
-               @end_date;
-
-           IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
-       END;
-
-        /*Grab data from the sp_server_diagnostics_component_result component*/
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Checking sp_server_diagnostics_component_result for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
-        END;
-
-        SELECT
-            @sql = N'
-        SELECT
-            sp_server_diagnostics_component_result =
-                ISNULL
-                (
-                    xml.sp_server_diagnostics_component_result,
-                    CONVERT(xml, N''<event>event</event>'')
-                )
-        FROM
-        (
-            SELECT
-                sp_server_diagnostics_component_result =
-                    TRY_CAST(fx.event_data AS xml)
-            FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-            WHERE fx.object_name = N''sp_server_diagnostics_component_result''
-        ) AS xml
-        CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
-        CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-        WHERE ca.utc_timestamp >= @start_date
-        AND   ca.utc_timestamp < @end_date
-        OPTION(RECOMPILE);';
-
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
-            PRINT @sql;
-            SET STATISTICS XML ON;
-        END;
-
-        INSERT INTO
-            #sp_server_diagnostics_component_result 
-        WITH
-            (TABLOCKX)
-        (
-            sp_server_diagnostics_component_result
-        )
-        EXECUTE sys.sp_executesql
-            @sql,
-            @params,
-            @start_date,
-            @end_date;
-
-        IF @debug = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-        END;
-
-        /*Grab data from the xml_deadlock_report component*/
-        IF
-        (
-             @what_to_check IN ('all', 'locking')
-         AND @skip_locks = 0
-        )
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking locking for not Managed Instance', 0, 1) WITH NOWAIT;
-            END;
-
-            SELECT
-                @sql = N'
-            SELECT
-                xml_deadlock_report =
-                    ISNULL
-                    (
-                        xml.xml_deadlock_report,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    xml_deadlock_report =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''xml_deadlock_report''
-            ) AS xml
-            CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
-            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-            WHERE ca.utc_timestamp >= @start_date
-            AND   ca.utc_timestamp < @end_date
-            OPTION(RECOMPILE);';
-
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-
-            INSERT INTO
-                #xml_deadlock_report 
-            WITH
-                (TABLOCKX)
-            (
-                xml_deadlock_report
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    END; /*End < 2017 collection*/
-
-    /*Scheduler monitor*/
-    IF @what_to_check IN ('all', 'system', 'cpu')
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Checking scheduler monitor system health', 0, 1) WITH NOWAIT;
-        END;
-    
-        /*2017+*/
-        IF EXISTS
-        (
-            SELECT
-                1/0
-            FROM sys.all_columns AS ac
-            WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-            AND   ac.name = N'timestamp_utc'
-        )
-        AND @mi = 0
-        BEGIN
-            SELECT
-                @sql = N'
-            SELECT
-                scheduler_monitor =
-                    ISNULL
-                    (
-                        xml.scheduler_monitor,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    scheduler_monitor =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''scheduler_monitor_system_health''
-                AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-            ) AS xml
-            CROSS APPLY xml.scheduler_monitor.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE);';
-    
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #scheduler_monitor', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-    
-            INSERT INTO
-                #scheduler_monitor 
-            WITH
-                (TABLOCKX)
-            (
-                scheduler_monitor
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-    
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    
-        -- For pre-2017 without timestamp_utc
-        IF NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM sys.all_columns AS ac
-            WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-            AND   ac.name = N'timestamp_utc'
-        )
-        AND @mi = 0
-        BEGIN
-            SELECT
-                @sql = N'
-            SELECT
-                scheduler_monitor =
-                    ISNULL
-                    (
-                        xml.scheduler_monitor,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    scheduler_monitor =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''scheduler_monitor_system_health''
-            ) AS xml
-            CROSS APPLY xml.scheduler_monitor.nodes(''/event'') AS e(x)
-            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-            WHERE ca.utc_timestamp >= @start_date
-            AND   ca.utc_timestamp < @end_date
-            OPTION(RECOMPILE);';
-    
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #scheduler_monitor', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-    
-            INSERT INTO
-                #scheduler_monitor 
-            WITH
-                (TABLOCKX)
-            (
-                scheduler_monitor
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-    
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
+        RAISERROR('Beginning collection loop for system_health data', 0, 1) WITH NOWAIT;
     END;
-
-    /*Memory broker*/
-    IF @what_to_check IN ('all', 'memory')
+    
+    -- Declare a cursor to process each collection area
+    SET @collection_cursor = 
+        CURSOR 
+        LOCAL 
+        FAST_FORWARD
+    FOR 
+    SELECT 
+        ca.area_name, 
+        ca.object_name, 
+        ca.temp_table,
+        ca.insert_list
+    FROM @collection_areas AS ca
+    WHERE should_collect = 1
+    ORDER BY 
+        ca.area_name, 
+        ca.object_name;
+        
+    OPEN @collection_cursor;
+    
+    FETCH NEXT 
+    FROM @collection_cursor 
+    INTO 
+        @area_name, 
+        @object_name, 
+        @temp_table,
+        @insert_list;
+    
+    WHILE @@FETCH_STATUS = 0
     BEGIN
-        /*Grab data from the memory_broker_ring_buffer component*/
+        -- Build the SQL statement for this collection area
+        SET 
+            @collection_sql = 
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @sql_template, 
+                            '{object_name}', 
+                            @object_name
+                        ), 
+                        '{temp_table}',
+                        @temp_table
+                    ),
+                    '{insert_list}',
+                    @insert_list
+                );
+        IF @temp_table = '#blocking_xml'
+        BEGIN
+            SET @collection_sql = REPLACE(@collection_sql, 'human_events_xml =', 'event_time, human_events_xml =')
+        END
+        
         IF @debug = 1
         BEGIN
-            RAISERROR('Checking memory broker ring buffer', 0, 1) WITH NOWAIT;
+            RAISERROR('Collecting data for area: %s, object: %s, target table: %s', 0, 1, @area_name, @object_name, @temp_table) WITH NOWAIT;
+            PRINT @collection_sql;
         END;
-    
-        /*
-        The column timestamp_utc is 2017+ only, but terribly broken:
-        https://dba.stackexchange.com/q/323147/32281
-        https://feedback.azure.com/d365community/idea/5f8e52d6-f3d2-ec11-a81b-6045bd7ac9f9
-        */
-        IF EXISTS
-        (
-            SELECT
-                1/0
-            FROM sys.all_columns AS ac
-            WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-            AND   ac.name = N'timestamp_utc'
-        )
-        AND @mi = 0
-        BEGIN
-            SELECT
-                @sql = N'
-            SELECT
-                memory_broker =
-                    ISNULL
-                    (
-                        xml.memory_broker,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    memory_broker =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''memory_broker_ring_buffer_recorded''
-                AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-            ) AS xml
-            CROSS APPLY xml.memory_broker.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE);';
-    
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #memory_broker', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-    
-            INSERT INTO
-                #memory_broker 
-            WITH
-                (TABLOCKX)
-            (
-                memory_broker
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-    
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    
-        IF NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM sys.all_columns AS ac
-            WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-            AND   ac.name = N'timestamp_utc'
-        )
-        AND @mi = 0
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking memory broker for not Managed Instance, up to 2016', 0, 1) WITH NOWAIT;
-            END;
-    
-            SELECT
-                @sql = N'
-            SELECT
-                memory_broker =
-                    ISNULL
-                    (
-                        xml.memory_broker,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    memory_broker =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''memory_broker_ring_buffer_recorded''
-            ) AS xml
-            CROSS APPLY xml.memory_broker.nodes(''/event'') AS e(x)
-            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-            WHERE ca.utc_timestamp >= @start_date
-            AND   ca.utc_timestamp < @end_date
-            OPTION(RECOMPILE);';
-    
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #memory_broker', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-    
-            INSERT INTO
-                #memory_broker 
-            WITH
-                (TABLOCKX)
-            (
-                memory_broker
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-    
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    END; /*End memory_broker data collection*/
-
-    IF @what_to_check IN ('all', 'system')
-    BEGIN
-        /*Grab data from the error_reported component*/
+        
         IF @debug = 1
         BEGIN
-            RAISERROR('Checking error_reported events', 0, 1) WITH NOWAIT;
+            RAISERROR('Executing collection SQL', 0, 1) WITH NOWAIT;
+            SET STATISTICS XML ON;
         END;
-    
-        /*
-        The column timestamp_utc is 2017+ only, but terribly broken:
-        https://dba.stackexchange.com/q/323147/32281
-        https://feedback.azure.com/d365community/idea/5f8e52d6-f3d2-ec11-a81b-6045bd7ac9f9
-        */
-        IF EXISTS
-        (
-            SELECT
-                1/0
-            FROM sys.all_columns AS ac
-            WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-            AND   ac.name = N'timestamp_utc'
-        )
-        AND @mi = 0
-        BEGIN
-            SELECT
-                @sql = N'
-            SELECT
-                error_reported =
-                    ISNULL
-                    (
-                        xml.error_reported,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    error_reported =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''error_reported''
-                AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-            ) AS xml
-            CROSS APPLY xml.error_reported.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE);';
-    
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #error_reported', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-    
-            INSERT INTO
-                #error_reported 
-            WITH
-                (TABLOCKX)
-            (
-                error_reported
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-    
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    
-        IF NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM sys.all_columns AS ac
-            WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-            AND   ac.name = N'timestamp_utc'
-        )
-        AND @mi = 0
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking error_reported for not Managed Instance, up to 2016', 0, 1) WITH NOWAIT;
-            END;
-    
-            SELECT
-                @sql = N'
-            SELECT
-                error_reported =
-                    ISNULL
-                    (
-                        xml.error_reported,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    error_reported =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''error_reported''
-            ) AS xml
-            CROSS APPLY xml.error_reported.nodes(''/event'') AS e(x)
-            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-            WHERE ca.utc_timestamp >= @start_date
-            AND   ca.utc_timestamp < @end_date
-            OPTION(RECOMPILE);';
-    
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #error_reported', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-    
-            INSERT INTO
-                #error_reported 
-            WITH
-                (TABLOCKX)
-            (
-                error_reported
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-    
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    END; /*End error_reported data collection*/
-
-    IF @what_to_check IN ('all', 'memory')
-    BEGIN
-        /*Grab data from the memory_node_oom component*/
+        
+        EXECUTE sp_executesql 
+            @collection_sql,
+            @params,
+            @start_date,
+            @end_date;
+        
         IF @debug = 1
         BEGIN
-            RAISERROR('Checking memory node OOM events', 0, 1) WITH NOWAIT;
+            SET STATISTICS XML OFF;
         END;
+        
+        FETCH NEXT 
+        FROM @collection_cursor 
+        INTO 
+            @area_name, 
+            @object_name, 
+            @temp_table,
+            @insert_list;
+    END;
     
-        /*
-        The column timestamp_utc is 2017+ only, but terribly broken:
-        https://dba.stackexchange.com/q/323147/32281
-        https://feedback.azure.com/d365community/idea/5f8e52d6-f3d2-ec11-a81b-6045bd7ac9f9
-        */
-        IF EXISTS
-        (
-            SELECT
-                1/0
-            FROM sys.all_columns AS ac
-            WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-            AND   ac.name = N'timestamp_utc'
-        )
-        AND @mi = 0
-        BEGIN
-            SELECT
-                @sql = N'
-            SELECT
-                memory_node_oom =
-                    ISNULL
-                    (
-                        xml.memory_node_oom,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    memory_node_oom =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''memory_node_oom_ring_buffer_recorded''
-                AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-            ) AS xml
-            CROSS APPLY xml.memory_node_oom.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE);';
-    
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #memory_node_oom', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-    
-            INSERT INTO
-                #memory_node_oom 
-            WITH
-                (TABLOCKX)
-            (
-                memory_node_oom
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-    
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    
-        IF NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM sys.all_columns AS ac
-            WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-            AND   ac.name = N'timestamp_utc'
-        )
-        AND @mi = 0
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking memory node OOM for not Managed Instance, up to 2016', 0, 1) WITH NOWAIT;
-            END;
-    
-            SELECT
-                @sql = N'
-            SELECT
-                memory_node_oom =
-                    ISNULL
-                    (
-                        xml.memory_node_oom,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    memory_node_oom =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''memory_node_oom_ring_buffer_recorded''
-            ) AS xml
-            CROSS APPLY xml.memory_node_oom.nodes(''/event'') AS e(x)
-            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-            WHERE ca.utc_timestamp >= @start_date
-            AND   ca.utc_timestamp < @end_date
-            OPTION(RECOMPILE);';
-    
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #memory_node_oom', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-    
-            INSERT INTO
-                #memory_node_oom 
-            WITH
-                (TABLOCKX)
-            (
-                memory_node_oom
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-    
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    END; /*End memory_node_oom data collection*/
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Data collection complete', 0, 1) WITH NOWAIT;
+    END;
 
     IF @mi = 1
     BEGIN
