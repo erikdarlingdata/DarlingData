@@ -1982,20 +1982,24 @@ FROM
     SELECT
         bg.*
     FROM #blocking AS bg
-    WHERE (bg.database_name = @database_name
-           OR @database_name IS NULL)
-    OR    (bg.currentdbname = @database_name
-           OR @database_name IS NULL)
+    WHERE 
+    (
+         @database_name IS NULL 
+      OR bg.database_name = @database_name 
+      OR bg.currentdbname = @database_name
+    )
 
     UNION ALL
 
     SELECT
         bd.*
     FROM #blocked AS bd
-    WHERE (bd.database_name = @database_name
-           OR @database_name IS NULL)
-    OR    (bd.currentdbname = @database_name
-           OR @database_name IS NULL)
+    WHERE 
+    (
+         @database_name IS NULL 
+      OR bd.database_name = @database_name 
+      OR bd.currentdbname = @database_name
+    )
 ) AS kheb
 OPTION(RECOMPILE);
 
