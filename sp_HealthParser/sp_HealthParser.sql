@@ -182,9 +182,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     DECLARE
-        @sql nvarchar(MAX) =
+        @sql nvarchar(max) =
             N'',
-        @params nvarchar(MAX) =
+        @params nvarchar(max) =
             N'@start_date datetimeoffset(7),
               @end_date datetimeoffset(7)',
         @azure bit  =
@@ -214,15 +214,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @dbid integer =
             DB_ID(@database_name),
         @timestamp_utc_mode tinyint,
-        @sql_template nvarchar(MAX) = N'',
-        @time_filter nvarchar(MAX) = N'',
-        @cross_apply nvarchar(MAX) = N'',
+        @sql_template nvarchar(max) = N'',
+        @time_filter nvarchar(max) = N'',
+        @cross_apply nvarchar(max) = N'',
         @collection_cursor CURSOR,
         @area_name varchar(20),
         @object_name sysname,
         @temp_table sysname,
         @insert_list sysname,
-        @collection_sql nvarchar(MAX);
+        @collection_sql nvarchar(max);
         
     IF @azure = 1
     BEGIN
@@ -368,16 +368,16 @@ OPTION(RECOMPILE);
 
     IF @timestamp_utc_mode = 0
     BEGIN
-        -- Pre-2017 handling
+        /* Pre-2017 handling */
         SET @time_filter = N'';
         SET @cross_apply = N'CROSS APPLY xml.{object_name}.nodes(''/event'') AS e(x)
 CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
 WHERE ca.utc_timestamp >= @start_date
 AND   ca.utc_timestamp < @end_date';
-    END
+    END;
     ELSE 
     BEGIN
-        -- 2017+ handling
+        /* 2017+ handling */
         SET @cross_apply = N'CROSS APPLY xml.{object_name}.nodes(''/event'') AS e(x)';
         
         IF @timestamp_utc_mode = 1
@@ -386,7 +386,7 @@ AND   ca.utc_timestamp < @end_date';
         ELSE
             SET @time_filter = '
     AND fx.timestamp_utc BETWEEN @start_date AND @end_date';
-    END
+    END;
 
     SET @sql_template = 
         REPLACE
@@ -428,7 +428,11 @@ AND   ca.utc_timestamp < @end_date';
                     WHEN @what_to_check = 'wait'
                     THEN 'waits'
                     WHEN @what_to_check IN
-                         ('blocking', 'blocks', 'deadlock', 'deadlocks', 'lock', 'locks')
+                         (
+                           'blocking', 'blocks', 
+                           'deadlock', 'deadlocks', 
+                           'lock', 'locks'
+                         )
                     THEN 'locking'
                     ELSE 'all'
                 END;
@@ -440,7 +444,7 @@ AND   ca.utc_timestamp < @end_date';
     END;
 
     DECLARE 
-        @collection_areas TABLE 
+        @collection_areas table 
     (
         id tinyint IDENTITY PRIMARY KEY CLUSTERED,
         area_name varchar(20) NOT NULL,
@@ -470,12 +474,12 @@ AND   ca.utc_timestamp < @end_date';
                 WHEN @what_to_check = 'all' 
                 THEN 
                     CASE
-                        WHEN area_name = 'locking'
+                        WHEN v.area_name = 'locking'
                         AND  @skip_locks = 1 
                         THEN 0
                         ELSE 1
                     END
-                WHEN @what_to_check = area_name 
+                WHEN @what_to_check = v.area_name 
                 THEN 1
                 ELSE 0
             END
@@ -499,6 +503,9 @@ AND   ca.utc_timestamp < @end_date';
             table_name = '@collection_areas',
             ca.*
         FROM @collection_areas AS ca
+        ORDER BY
+            ca.id
+        OPTION(RECOMPILE);
     END;
 
     CREATE TABLE
@@ -627,13 +634,13 @@ AND   ca.utc_timestamp < @end_date';
         OPTION(RECOMPILE);
     END;
 
-    -- First, ensure we're working with the correct collection areas
+    /* First, ensure we're working with the correct collection areas */
     IF @debug = 1
     BEGIN
         RAISERROR('Beginning collection loop for system_health data', 0, 1) WITH NOWAIT;
     END;
     
-    -- Declare a cursor to process each collection area
+    /* Declare a cursor to process each collection area */
     SET @collection_cursor = 
         CURSOR 
         LOCAL
@@ -664,7 +671,7 @@ AND   ca.utc_timestamp < @end_date';
     
     WHILE @@FETCH_STATUS = 0
     BEGIN
-        -- Build the SQL statement for this collection area
+        /* Build the SQL statement for this collection area */
         SET 
             @collection_sql = 
                 REPLACE
@@ -696,7 +703,7 @@ AND   ca.utc_timestamp < @end_date';
             SET STATISTICS XML ON;
         END;
         
-        EXECUTE sp_executesql 
+        EXECUTE sys.sp_executesql 
             @collection_sql,
             @params,
             @start_date,
@@ -779,12 +786,7 @@ AND   ca.utc_timestamp < @end_date';
         )
         SELECT
             x = e.x.query('.')
-        FROM
-        (
-            SELECT
-                x
-            FROM #x
-        ) AS x
+        FROM #x AS x
         CROSS APPLY x.x.nodes('//event') AS e(x)
         WHERE 1 = 1
         AND   e.x.exist('@timestamp[.>= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
@@ -822,26 +824,28 @@ AND   ca.utc_timestamp < @end_date';
             WHERE e.x.exist('@name[.= "wait_info"]') = 1
             OPTION(RECOMPILE);
         END;
-
-        IF @debug = 1
+        IF @what_to_check IN ('all', 'disk', 'locking', 'system', 'memory')
         BEGIN
-            RAISERROR('Checking Managed Instance sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
-            RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
+                RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
+            END;
+            
+            INSERT
+                #sp_server_diagnostics_component_result 
+            WITH
+                (TABLOCKX)
+            (
+                sp_server_diagnostics_component_result
+            )
+            SELECT
+                e.x.query('.')
+            FROM #ring_buffer AS rb
+            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+            WHERE e.x.exist('@name[.= "sp_server_diagnostics_component_result"]') = 1
+            OPTION(RECOMPILE);
         END;
-
-        INSERT
-            #sp_server_diagnostics_component_result 
-        WITH
-            (TABLOCKX)
-        (
-            sp_server_diagnostics_component_result
-        )
-        SELECT
-            e.x.query('.')
-        FROM #ring_buffer AS rb
-        CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-        WHERE e.x.exist('@name[.= "sp_server_diagnostics_component_result"]') = 1
-        OPTION(RECOMPILE);
 
         IF
         (
@@ -849,12 +853,12 @@ AND   ca.utc_timestamp < @end_date';
          AND @skip_locks = 0
         )
         BEGIN
-        IF @debug = 1
+            IF @debug = 1
             BEGIN
                 RAISERROR('Checking Managed Instance deadlocks', 0, 1) WITH NOWAIT;
                 RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
             END;
-
+            
             INSERT
                 #xml_deadlock_report 
             WITH
@@ -869,6 +873,79 @@ AND   ca.utc_timestamp < @end_date';
             WHERE e.x.exist('@name[.= "xml_deadlock_report"]') = 1
             OPTION(RECOMPILE);
         END;
+
+        /* Add scheduler_monitor collection for MI */
+        IF @what_to_check IN ('all', 'system', 'cpu')
+        BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance scheduler monitor', 0, 1) WITH NOWAIT;
+                RAISERROR('Inserting #scheduler_monitor', 0, 1) WITH NOWAIT;
+            END;
+        
+            INSERT
+                #scheduler_monitor 
+            WITH
+                (TABLOCKX)
+            (
+                scheduler_monitor
+            )
+            SELECT
+                e.x.query('.')
+            FROM #ring_buffer AS rb
+            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+            WHERE e.x.exist('@name[.= "scheduler_monitor_system_health"]') = 1
+            OPTION(RECOMPILE);
+        END;
+
+        /* Add error_reported collection for MI */
+        IF @what_to_check IN ('all', 'system')
+        BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance error reported events', 0, 1) WITH NOWAIT;
+                RAISERROR('Inserting #error_reported', 0, 1) WITH NOWAIT;
+            END;
+        
+            INSERT
+                #error_reported 
+            WITH
+                (TABLOCKX)
+            (
+                error_reported
+            )
+            SELECT
+                e.x.query('.')
+            FROM #ring_buffer AS rb
+            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+            WHERE e.x.exist('@name[.= "error_reported"]') = 1
+            OPTION(RECOMPILE);
+        END;
+
+        /* Add memory_broker collection for MI */
+        IF @what_to_check IN ('all', 'memory')
+        BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance memory broker events', 0, 1) WITH NOWAIT;
+                RAISERROR('Inserting #memory_broker', 0, 1) WITH NOWAIT;
+            END;
+        
+            INSERT
+                #memory_broker 
+            WITH
+                (TABLOCKX)
+            (
+                memory_broker
+            )
+            SELECT
+                e.x.query('.')
+            FROM #ring_buffer AS rb
+            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+            WHERE e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 1
+            OPTION(RECOMPILE);
+        END;
+                
     END; /*End Managed Instance collection*/
 
     IF @debug = 1
@@ -1859,7 +1936,7 @@ AND   ca.utc_timestamp < @end_date';
                              '.'
                         ELSE 'no memory pressure events found!'
                     END;
-        END
+        END;
         ELSE
         BEGIN
             SELECT
@@ -2041,7 +2118,7 @@ AND   ca.utc_timestamp < @end_date';
                              '.'
                         ELSE 'no memory node OOM events found!'
                     END;
-        END
+        END;
         ELSE
         BEGIN
             SELECT
@@ -2297,7 +2374,7 @@ AND   ca.utc_timestamp < @end_date';
                              '.'
                         ELSE 'no scheduler issues found!'
                     END;
-        END
+        END;
         ELSE
         BEGIN
             SELECT
@@ -2435,7 +2512,7 @@ AND   ca.utc_timestamp < @end_date';
             SELECT
                 'Error Number Ignored: ' + CONVERT(nvarchar(100), ie.error_number)
             FROM #ignore_errors AS ie;
-        END
+        END;
         ELSE
         BEGIN
             SELECT
@@ -2591,7 +2668,7 @@ AND   ca.utc_timestamp < @end_date';
             currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
             spid = bd.value('(process/@spid)[1]', 'integer'),
             ecid = bd.value('(process/@ecid)[1]', 'integer'),
-            query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+            query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
             wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
             lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
             lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
@@ -2652,7 +2729,7 @@ AND   ca.utc_timestamp < @end_date';
             currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
             spid = bg.value('(process/@spid)[1]', 'integer'),
             ecid = bg.value('(process/@ecid)[1]', 'integer'),
-            query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+            query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
             wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
             last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
             last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
@@ -2894,7 +2971,7 @@ AND   ca.utc_timestamp < @end_date';
                     ELSE +1
                 END
             OPTION(RECOMPILE);
-        END
+        END;
         ELSE
         BEGIN
             SELECT
@@ -2930,7 +3007,7 @@ AND   ca.utc_timestamp < @end_date';
                     'available plans for blocking',
                 b.currentdbname,
                 query_text =
-                    TRY_CAST(b.query_text AS nvarchar(MAX)),
+                    TRY_CAST(b.query_text AS nvarchar(max)),
                 sql_handle =
                     CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
                 stmtstart =
@@ -2949,7 +3026,7 @@ AND   ca.utc_timestamp < @end_date';
                     CONVERT(varchar(30), 'available plans for blocking'),
                 b.currentdbname,
                 query_text =
-                    TRY_CAST(b.query_text AS nvarchar(MAX)),
+                    TRY_CAST(b.query_text AS nvarchar(max)),
                 sql_handle =
                     CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
                 stmtstart =
@@ -3236,7 +3313,7 @@ AND   ca.utc_timestamp < @end_date';
                 dp.event_date,
                 is_victim
             OPTION(RECOMPILE);
-        END
+        END;
         ELSE
         BEGIN
             SELECT
@@ -3471,10 +3548,10 @@ AND   ca.utc_timestamp < @end_date';
             ORDER BY
                 aap.avg_worker_time_ms DESC
             OPTION(RECOMPILE);
-        END
+        END;
         ELSE
         BEGIN
-            -- Only show this message if we found blocking but no plans
+            /* Only show this message if we found blocking but no plans */
             IF EXISTS 
             (
                 SELECT 
@@ -3502,10 +3579,10 @@ AND   ca.utc_timestamp < @end_date';
             ORDER BY
                 aap.avg_worker_time_ms DESC
             OPTION(RECOMPILE);
-        END
+        END;
         ELSE
         BEGIN
-            -- Only show this message if we found deadlocks but no plans
+            /* Only show this message if we found deadlocks but no plans */
             IF EXISTS 
             (
                 SELECT 
