@@ -3839,7 +3839,7 @@ BEGIN
             output_database = @output_database_name,
             output_schema = @output_schema_name;
 
-        IF @debug = 1 BEGIN AISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT; END;
+        IF @debug = 1 BEGIN RAISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT; END;
         UPDATE
             vc
         SET
