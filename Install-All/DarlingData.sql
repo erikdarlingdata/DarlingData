@@ -1,4 +1,4 @@
--- Compile Date: 03/04/2025 23:11:25 UTC
+-- Compile Date: 03/08/2025 14:58:01 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -6719,7 +6719,7 @@ BEGIN
             output_database = @output_database_name,
             output_schema = @output_schema_name;
 
-        IF @debug = 1 BEGIN AISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT; END;
+        IF @debug = 1 BEGIN RAISERROR(N'Updating #view_check with table names', 0, 1) WITH NOWAIT; END;
         UPDATE
             vc
         SET
