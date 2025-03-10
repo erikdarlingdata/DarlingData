@@ -150,6 +150,7 @@ BEGIN
                     WHEN N'@log_database_name' THEN N'NULL (current database)'
                     WHEN N'@log_schema_name' THEN N'NULL (dbo)'
                     WHEN N'@log_table_name_prefix' THEN N'HealthParser'
+                    WHEN N'@log_retention_days' THEN N'30'
                     WHEN N'@version' THEN N'none; OUTPUT'
                     WHEN N'@version_date' THEN N'none; OUTPUT'
                     WHEN N'@help' THEN N'0'
@@ -1062,7 +1063,7 @@ AND   ca.utc_timestamp < @end_date';
         BEGIN            
             IF @debug = 1 
             BEGIN 
-                RAISERROR('Cleaning up log tables older than %i', 0, 1, @log_retention_days) WITH NOWAIT; 
+                RAISERROR('Cleaning up log tables older than %i days', 0, 1, @log_retention_days) WITH NOWAIT; 
             END;
 
             SET @cleanup_date = 
@@ -1110,7 +1111,10 @@ AND   ca.utc_timestamp < @end_date';
             
             IF @debug = 1 BEGIN PRINT @dsql; END;
             
-            EXECUTE sys.sp_executesql @dsql, N'@cleanup_date datetime2(7)', @cleanup_date;
+            EXECUTE sys.sp_executesql 
+                @dsql, 
+              N'@cleanup_date datetime2(7)', 
+                @cleanup_date;
             
             IF @debug = 1 
             BEGIN 
