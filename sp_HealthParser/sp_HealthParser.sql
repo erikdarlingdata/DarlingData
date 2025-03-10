@@ -1891,8 +1891,9 @@ AND   ca.utc_timestamp < @end_date';
                 
                 IF @debug = 1 BEGIN PRINT @insert_sql; END;
                 
-                EXECUTE sys.sp_executesql @insert_sql, 
-                    N'@max_event_time datetime2(7)', 
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
                     @max_event_time;
             END;
             
@@ -2145,8 +2146,9 @@ AND   ca.utc_timestamp < @end_date';
                 
                 IF @debug = 1 BEGIN PRINT @insert_sql; END;
                 
-                EXECUTE sys.sp_executesql @insert_sql, 
-                    N'@max_event_time datetime2(7)', 
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
                     @max_event_time;
             END;
             
@@ -2430,8 +2432,9 @@ AND   ca.utc_timestamp < @end_date';
                 
                 IF @debug = 1 BEGIN PRINT @insert_sql; END;
                 
-                EXECUTE sys.sp_executesql @insert_sql, 
-                    N'@max_event_time datetime2(7)', 
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
                     @max_event_time;
             END;
             
@@ -2643,8 +2646,9 @@ AND   ca.utc_timestamp < @end_date';
                 
                 IF @debug = 1 BEGIN PRINT @insert_sql; END;
                 
-                EXECUTE sys.sp_executesql @insert_sql, 
-                    N'@max_event_time datetime2(7)', 
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
                     @max_event_time;
             END;
             
@@ -2835,8 +2839,9 @@ END;
             
             IF @debug = 1 BEGIN PRINT @insert_sql; END;
             
-            EXECUTE sys.sp_executesql @insert_sql, 
-                N'@max_event_time datetime2(7)', 
+            EXECUTE sys.sp_executesql 
+                @insert_sql, 
+              N'@max_event_time datetime2(7)', 
                 @max_event_time;
         END;
         
@@ -3084,8 +3089,9 @@ END;
                 
                 IF @debug = 1 BEGIN PRINT @insert_sql; END;
                 
-                EXECUTE sys.sp_executesql @insert_sql, 
-                    N'@max_event_time datetime2(7)', 
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
                     @max_event_time;
             END;
             
@@ -3292,8 +3298,9 @@ BEGIN
         
         IF @debug = 1 BEGIN PRINT @insert_sql; END;
         
-        EXECUTE sys.sp_executesql @insert_sql, 
-            N'@max_event_time datetime2(7)', 
+        EXECUTE sys.sp_executesql 
+            @insert_sql, 
+          N'@max_event_time datetime2(7)', 
             @max_event_time;
     END;
     
@@ -3565,8 +3572,9 @@ END;
                 
                 IF @debug = 1 BEGIN PRINT @insert_sql; END;
                 
-                EXECUTE sys.sp_executesql @insert_sql, 
-                    N'@max_event_time datetime2(7)', 
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
                     @max_event_time;
             END;
             
@@ -3767,8 +3775,9 @@ END;
                 
                 IF @debug = 1 BEGIN PRINT @insert_sql; END;
                 
-                EXECUTE sys.sp_executesql @insert_sql, 
-                    N'@max_event_time datetime2(7)', 
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
                     @max_event_time;
             END;
             
@@ -3977,8 +3986,9 @@ END;
                 
                 IF @debug = 1 BEGIN PRINT @insert_sql; END;
                 
-                EXECUTE sys.sp_executesql @insert_sql, 
-                    N'@max_event_time datetime2(7)', 
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
                     @max_event_time;
             END;
             
@@ -4169,8 +4179,9 @@ END;
                 
                 IF @debug = 1 BEGIN PRINT @insert_sql; END;
                 
-                EXECUTE sys.sp_executesql @insert_sql, 
-                    N'@max_event_time datetime2(7)', 
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
                     @max_event_time;
             END;
             
