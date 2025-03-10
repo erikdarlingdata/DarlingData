@@ -61,6 +61,7 @@ ALTER PROCEDURE
     @log_database_name sysname = NULL, /*database to store logging tables*/
     @log_schema_name sysname = NULL, /*schema to store logging tables*/
     @log_table_name_prefix sysname = 'PressureDetector', /*prefix for all logging tables*/
+    @log_retention_days integer = 30, /*Number of days to keep logs, 0 = keep indefinitely*/
     @help bit = 0, /*how you got here*/
     @debug bit = 0, /*prints dynamic sql, displays parameter and variable values, and table contents*/
     @version varchar(5) = NULL OUTPUT, /*OUTPUT; for support*/
@@ -118,6 +119,7 @@ BEGIN
                 WHEN N'@log_database_name' THEN N'database to store logging tables'
                 WHEN N'@log_schema_name' THEN N'schema to store logging tables'
                 WHEN N'@log_table_name_prefix' THEN N'prefix for all logging tables'
+                WHEN N'@log_retention_days' THEN N'how many days of data to retain'
                 WHEN N'@help' THEN N'how you got here'
                 WHEN N'@debug' THEN N'prints dynamic sql, displays parameter and variable values, and table contents'
                 WHEN N'@version' THEN N'OUTPUT; for support'
@@ -138,6 +140,7 @@ BEGIN
                 WHEN N'@log_database_name' THEN N'any valid database name'
                 WHEN N'@log_schema_name' THEN N'any valid schema name'
                 WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
+                WHEN N'@log_retention_days' THEN N'a positive integer'
                 WHEN N'@help' THEN N'0 or 1'
                 WHEN N'@debug' THEN N'0 or 1'
                 WHEN N'@version' THEN N'none'
@@ -158,15 +161,16 @@ BEGIN
                 WHEN N'@log_database_name' THEN N'NULL (current database)'
                 WHEN N'@log_schema_name' THEN N'NULL (dbo)'
                 WHEN N'@log_table_name_prefix' THEN N'PressureDetector'
+                WHEN N'@log_retention_days' THEN N'30'
                 WHEN N'@help' THEN N'0'
                 WHEN N'@debug' THEN N'0'
                 WHEN N'@version' THEN N'none; OUTPUT'
                 WHEN N'@version_date' THEN N'none; OUTPUT'
             END
     FROM sys.all_parameters AS ap
-    INNER JOIN sys.all_objects AS o
+    JOIN sys.all_objects AS o
       ON ap.object_id = o.object_id
-    INNER JOIN sys.types AS t
+    JOIN sys.types AS t
       ON  ap.system_type_id = t.system_type_id
       AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_PressureDetector'
@@ -440,9 +444,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @log_table_memory_queries sysname,
         @log_table_cpu_queries sysname,
         @log_table_cpu_events sysname,
-        @check_sql nvarchar(max),
-        @create_sql nvarchar(max),
-        @insert_sql nvarchar(max),
+        @cleanup_date datetime2(7),
+        @check_sql nvarchar(max) = N'',
+        @create_sql nvarchar(max) = N'',
+        @insert_sql nvarchar(max) = N'',
+        @delete_sql nvarchar(max) = N'',
         @log_database_schema nvarchar(1024);
 
     /* Validate logging parameters */
@@ -931,7 +937,66 @@ OPTION(MAXDOP 1, RECOMPILE);',
             @debug bit', 
             @log_schema_name, 
             @log_table_name_prefix,
-            @debug;   
+            @debug;  
+            
+        /* Handle log retention if specified */
+        IF @log_to_table = 1 AND @log_retention_days > 0
+        BEGIN            
+            IF @debug = 1 
+            BEGIN 
+                RAISERROR('Cleaning up log tables older than %i days', 0, 1, @log_retention_days) WITH NOWAIT; 
+            END;
+
+            SET @cleanup_date = 
+                DATEADD
+                (
+                    DAY, 
+                    -@log_retention_days, 
+                    SYSDATETIME()
+                );
+            
+            /* Clean up each log table */
+            SET @delete_sql = N'
+            DELETE FROM ' + @log_table_waits + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_file_metrics + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_perfmon + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_memory + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_cpu + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_memory_consumers + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_memory_queries + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_cpu_queries + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_cpu_events + '
+            WHERE collection_time < @cleanup_date;';
+            
+            IF @debug = 1 BEGIN PRINT @delete_sql; END;
+            
+            EXECUTE sys.sp_executesql 
+                @delete_sql, 
+              N'@cleanup_date datetime2(7)', 
+                @cleanup_date;
+            
+            IF @debug = 1 
+            BEGIN 
+                RAISERROR('Log cleanup complete', 0, 1) WITH NOWAIT; 
+            END;
+        END;
+
     END; /*End log to tables validation checks here*/
 
     DECLARE
