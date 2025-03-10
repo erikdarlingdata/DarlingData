@@ -109,6 +109,7 @@ AS
 BEGIN
 SET STATISTICS XML OFF;
 SET NOCOUNT ON;
+SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN TRY
@@ -552,10 +553,10 @@ query hash has.
 CREATE TABLE
     #plan_ids_with_query_hashes
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
-    plan_hash_count_for_query_hash int NOT NULL,
+    plan_hash_count_for_query_hash integer NOT NULL,
     PRIMARY KEY  CLUSTERED (database_id, plan_id, query_hash)
 );
 
@@ -572,7 +573,7 @@ therefore every sp_executesql).
 CREATE TABLE
     #plan_ids_with_total_waits
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     plan_id bigint NOT NULL,
     from_regression_baseline varchar(3) NOT NULL,
     total_query_wait_time_ms bigint NOT NULL,
@@ -618,7 +619,7 @@ on to our final output.
 CREATE TABLE
     #regression_changes
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
     change_since_regression_time_period float NULL,
@@ -791,7 +792,7 @@ Query Store Setup
 CREATE TABLE
     #database_query_store_options
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     desired_state_desc nvarchar(60) NULL,
     actual_state_desc nvarchar(60) NULL,
     readonly_reason nvarchar(100) NULL,
@@ -802,10 +803,10 @@ CREATE TABLE
     stale_query_threshold_days bigint NULL,
     max_plans_per_query bigint NULL,
     query_capture_mode_desc nvarchar(60) NULL,
-    capture_policy_execution_count int NULL,
+    capture_policy_execution_count integer NULL,
     capture_policy_total_compile_cpu_time_ms bigint NULL,
     capture_policy_total_execution_cpu_time_ms bigint NULL,
-    capture_policy_stale_threshold_hours int NULL,
+    capture_policy_stale_threshold_hours integer NULL,
     size_based_cleanup_mode_desc nvarchar(60) NULL,
     wait_stats_capture_mode_desc nvarchar(60) NULL
 );
@@ -816,7 +817,7 @@ Query Store Trouble
 CREATE TABLE
     #query_store_trouble
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     desired_state_desc nvarchar(60) NULL,
     actual_state_desc nvarchar(60) NULL,
     readonly_reason nvarchar(100) NULL,
@@ -836,7 +837,7 @@ Plans and Plan information
 CREATE TABLE
     #query_store_plan
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
     all_plan_ids varchar(MAX),
@@ -870,7 +871,7 @@ Queries and Compile Information
 CREATE TABLE
     #query_store_query
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     query_id bigint NOT NULL,
     query_text_id bigint NOT NULL,
     context_settings_id bigint NOT NULL,
@@ -947,7 +948,7 @@ Query Text And Columns From sys.dm_exec_query_stats
 CREATE TABLE
     #query_store_query_text
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     query_text_id bigint NOT NULL,
     query_sql_text xml NULL,
     statement_sql_handle varbinary(64) NULL,
@@ -1010,7 +1011,7 @@ Runtime stats information
 CREATE TABLE
     #query_store_runtime_stats
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     runtime_stats_id bigint NOT NULL,
     plan_id bigint NOT NULL,
     runtime_stats_interval_id bigint NOT NULL,
@@ -1113,7 +1114,7 @@ Wait Stats, When Available (2017+)
 CREATE TABLE
     #query_store_wait_stats
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     plan_id bigint NOT NULL,
     wait_category_desc nvarchar(60) NOT NULL,
     total_query_wait_time_ms bigint NOT NULL,
@@ -1129,17 +1130,17 @@ Context is everything
 CREATE TABLE
     #query_context_settings
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     context_settings_id bigint NOT NULL,
     set_options varbinary(8) NULL,
     language_id smallint NOT NULL,
     date_format smallint NOT NULL,
     date_first tinyint NOT NULL,
     status varbinary(2) NULL,
-    required_cursor_options int NOT NULL,
-    acceptable_cursor_options int NOT NULL,
+    required_cursor_options integer NOT NULL,
+    acceptable_cursor_options integer NOT NULL,
     merge_action_type smallint NOT NULL,
-    default_schema_id int NOT NULL,
+    default_schema_id integer NOT NULL,
     is_replication_specific bit NOT NULL,
     is_contained varbinary(1) NULL
 );
@@ -1150,7 +1151,7 @@ Feed me Seymour
 CREATE TABLE
     #query_store_plan_feedback
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     plan_feedback_id bigint,
     plan_id bigint,
     feature_desc nvarchar(120),
@@ -1166,7 +1167,7 @@ America's Most Hinted
 CREATE TABLE
     #query_store_query_hints
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     query_hint_id bigint,
     query_id bigint,
     query_hint_text nvarchar(MAX),
@@ -1181,7 +1182,7 @@ Variant? Deviant? You decide!
 CREATE TABLE
     #query_store_query_variant
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     query_variant_query_id bigint,
     parent_query_id bigint,
     dispatcher_plan_id bigint
@@ -1193,7 +1194,7 @@ Replicants
 CREATE TABLE
     #query_store_replicas
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     replica_group_id bigint,
     role_type smallint,
     replica_name nvarchar(1288)
@@ -1205,7 +1206,7 @@ Location, location, location
 CREATE TABLE
     #query_store_plan_forcing_locations
 (
-    database_id int NOT NULL,
+    database_id integer NOT NULL,
     plan_forcing_location_id bigint,
     query_id bigint,
     plan_id bigint,
@@ -1233,6 +1234,24 @@ CREATE TABLE
             ),
             'N0'
         )
+);
+
+/*Gonna try gathering this based on*/
+CREATE TABLE 
+    #query_hash_totals
+(
+    database_id integer NOT NULL,
+    query_hash binary(8) NOT NULL,
+    total_executions bigint NOT NULL,
+    total_duration_ms decimal(19,2) NOT NULL,
+    total_cpu_time_ms decimal(19,2) NOT NULL,
+    total_logical_reads_mb decimal(19,2) NOT NULL,
+    total_physical_reads_mb decimal(19,2) NOT NULL,
+    total_logical_writes_mb decimal(19,2) NOT NULL,
+    total_clr_time_ms decimal(19,2) NOT NULL,
+    total_memory_mb decimal(19,2) NOT NULL,
+    total_rowcount decimal(19,2) NOT NULL,
+    PRIMARY KEY CLUSTERED(query_hash, database_id)
 );
 
 /*GET ALL THOSE DATABASES*/
@@ -1292,7 +1311,7 @@ VALUES
     (200, 'executions', 'count', 'count_executions', 'qsrs.count_executions', 0, NULL, NULL, 0, 'N0'),
     (210, 'executions', 'per_second', 'executions_per_second', 'qsrs.executions_per_second', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals - conditionally added */
-    (215, 'executions', 'count_hash', 'count_executions_by_query_hash', 'SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    (215, 'executions', 'count_hash', 'count_executions_by_query_hash', 'qht.total_executions', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Duration metrics (group together avg, total, last, min, max) */
     (300, 'duration', 'avg', 'avg_duration_ms', 'qsrs.avg_duration_ms', 0, NULL, NULL, 0, 'N0'),
     (310, 'duration', 'total', 'total_duration_ms', 'qsrs.total_duration_ms', 0, NULL, NULL, 0, 'N0'),
@@ -1300,7 +1319,7 @@ VALUES
     (330, 'duration', 'min', 'min_duration_ms', 'qsrs.min_duration_ms', 0, NULL, NULL, 1, 'N0'),
     (340, 'duration', 'max', 'max_duration_ms', 'qsrs.max_duration_ms', 0, NULL, NULL, 0, 'N0'),  
     /* Hash totals for duration */
-    (315, 'duration', 'total_hash', 'total_duration_ms_by_query_hash', 'SUM(qsrs.total_duration_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    (315, 'duration', 'total_hash', 'total_duration_ms_by_query_hash', 'qht.total_duration_ms', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* CPU metrics */
     (400, 'cpu', 'avg', 'avg_cpu_time_ms', 'qsrs.avg_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
     (410, 'cpu', 'total', 'total_cpu_time_ms', 'qsrs.total_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
@@ -1308,7 +1327,7 @@ VALUES
     (430, 'cpu', 'min', 'min_cpu_time_ms', 'qsrs.min_cpu_time_ms', 0, NULL, NULL, 1, 'N0'),
     (440, 'cpu', 'max', 'max_cpu_time_ms', 'qsrs.max_cpu_time_ms', 0, NULL, NULL, 0, 'N0'), 
     /* Hash totals for CPU */
-    (415, 'cpu', 'total_hash', 'total_cpu_time_ms_by_query_hash', 'SUM(qsrs.total_cpu_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    (415, 'cpu', 'total_hash', 'total_cpu_time_ms_by_query_hash', 'qht.total_cpu_time_ms', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Logical IO Reads */
     (500, 'logical_io_reads', 'avg', 'avg_logical_io_reads_mb', 'qsrs.avg_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
     (510, 'logical_io_reads', 'total', 'total_logical_io_reads_mb', 'qsrs.total_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
@@ -1316,7 +1335,7 @@ VALUES
     (530, 'logical_io_reads', 'min', 'min_logical_io_reads_mb', 'qsrs.min_logical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
     (540, 'logical_io_reads', 'max', 'max_logical_io_reads_mb', 'qsrs.max_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'), 
     /* Hash totals for logical reads */
-    (515, 'logical_io_reads', 'total_hash', 'total_logical_io_reads_mb_by_query_hash', 'SUM(qsrs.total_logical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    (515, 'logical_io_reads', 'total_hash', 'total_logical_io_reads_mb_by_query_hash', 'qht.total_logical_reads_mb', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Logical IO Writes */
     (600, 'logical_io_writes', 'avg', 'avg_logical_io_writes_mb', 'qsrs.avg_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
     (610, 'logical_io_writes', 'total', 'total_logical_io_writes_mb', 'qsrs.total_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
@@ -1324,7 +1343,7 @@ VALUES
     (630, 'logical_io_writes', 'min', 'min_logical_io_writes_mb', 'qsrs.min_logical_io_writes_mb', 0, NULL, NULL, 1, 'N0'),
     (640, 'logical_io_writes', 'max', 'max_logical_io_writes_mb', 'qsrs.max_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for logical writes */
-    (615, 'logical_io_writes', 'total_hash', 'total_logical_io_writes_mb_by_query_hash', 'SUM(qsrs.total_logical_io_writes_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    (615, 'logical_io_writes', 'total_hash', 'total_logical_io_writes_mb_by_query_hash', 'qht.total_logical_writes_mb', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Physical IO Reads */
     (700, 'physical_io_reads', 'avg', 'avg_physical_io_reads_mb', 'qsrs.avg_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
     (710, 'physical_io_reads', 'total', 'total_physical_io_reads_mb', 'qsrs.total_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
@@ -1332,7 +1351,7 @@ VALUES
     (730, 'physical_io_reads', 'min', 'min_physical_io_reads_mb', 'qsrs.min_physical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
     (740, 'physical_io_reads', 'max', 'max_physical_io_reads_mb', 'qsrs.max_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for physical reads */
-    (715, 'physical_io_reads', 'total_hash', 'total_physical_io_reads_mb_by_query_hash', 'SUM(qsrs.total_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),    
+    (715, 'physical_io_reads', 'total_hash', 'total_physical_io_reads_mb_by_query_hash', 'qht.total_physical_reads_mb', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* CLR Time */
     (800, 'clr_time', 'avg', 'avg_clr_time_ms', 'qsrs.avg_clr_time_ms', 0, NULL, NULL, 0, 'N0'),
     (810, 'clr_time', 'total', 'total_clr_time_ms', 'qsrs.total_clr_time_ms', 0, NULL, NULL, 0, 'N0'),
@@ -1340,7 +1359,7 @@ VALUES
     (830, 'clr_time', 'min', 'min_clr_time_ms', 'qsrs.min_clr_time_ms', 0, NULL, NULL, 1, 'N0'),
     (840, 'clr_time', 'max', 'max_clr_time_ms', 'qsrs.max_clr_time_ms', 0, NULL, NULL, 0, 'N0'),  
     /* Hash totals for CLR time */
-    (815, 'clr_time', 'total_hash', 'total_clr_time_ms_by_query_hash', 'SUM(qsrs.total_clr_time_ms) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),    
+    (815, 'clr_time', 'total_hash', 'total_clr_time_ms_by_query_hash', 'qht.total_clr_time_ms', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* DOP (Degree of Parallelism) */
     (900, 'dop', 'last', 'last_dop', 'qsrs.last_dop', 0, NULL, NULL, 1, NULL),
     (910, 'dop', 'min', 'min_dop', 'qsrs.min_dop', 0, NULL, NULL, 0, NULL),
@@ -1352,7 +1371,7 @@ VALUES
     (1030, 'memory', 'min', 'min_query_max_used_memory_mb', 'qsrs.min_query_max_used_memory_mb', 0, NULL, NULL, 1, 'N0'),
     (1040, 'memory', 'max', 'max_query_max_used_memory_mb', 'qsrs.max_query_max_used_memory_mb', 0, NULL, NULL, 0, 'N0'), 
     /* Hash totals for memory */
-    (1015, 'memory', 'total_hash', 'total_query_max_used_memory_mb_by_query_hash', 'SUM(qsrs.total_query_max_used_memory_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),    
+    (1015, 'memory', 'total_hash', 'total_query_max_used_memory_mb_by_query_hash', 'qht.total_memory_mb', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Row counts */
     (1100, 'rowcount', 'avg', 'avg_rowcount', 'qsrs.avg_rowcount', 0, NULL, NULL, 0, 'N0'),
     (1110, 'rowcount', 'total', 'total_rowcount', 'qsrs.total_rowcount', 0, NULL, NULL, 0, 'N0'),
@@ -1360,7 +1379,7 @@ VALUES
     (1130, 'rowcount', 'min', 'min_rowcount', 'qsrs.min_rowcount', 0, NULL, NULL, 1, 'N0'),
     (1140, 'rowcount', 'max', 'max_rowcount', 'qsrs.max_rowcount', 0, NULL, NULL, 0, 'N0'), 
     /* Hash totals for row counts */
-    (1115, 'rowcount', 'total_hash', 'total_rowcount_by_query_hash', 'SUM(qsrs.total_rowcount) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'include_query_hash_totals', 1, 0, 'N0'),
+    (1115, 'rowcount', 'total_hash', 'total_rowcount_by_query_hash', 'qht.total_rowcount', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* New metrics for newer versions */
     /* Physical IO Reads (for newer versions) */
     (1200, 'num_physical_io_reads', 'avg', 'avg_num_physical_io_reads_mb', 'qsrs.avg_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
@@ -1474,7 +1493,7 @@ VALUES
         NULL
     );
 
-/*  Create a table variable to define parameter processing */
+/* Create a table variable to define parameter processing */
 DECLARE 
     @FilterParameters table 
 (
@@ -1487,7 +1506,7 @@ DECLARE
     requires_secondary_processing bit NOT NULL
 );
 
-/*  Populate with parameter definitions*/
+/* Populate with parameter definitions*/
 INSERT INTO 
     @FilterParameters
 (
@@ -1510,13 +1529,13 @@ SELECT
 FROM 
 (
     VALUES
-        /*  Include parameters */
+        /* Include parameters */
         ('include_plan_ids', @include_plan_ids, '#include_plan_ids', 'plan_id', 'bigint', 1, 0),
         ('include_query_ids', @include_query_ids, '#include_query_ids', 'query_id', 'bigint', 1, 1),
         ('include_query_hashes', @include_query_hashes, '#include_query_hashes', 'query_hash_s', 'varchar', 1, 1),
         ('include_plan_hashes', @include_plan_hashes, '#include_plan_hashes', 'plan_hash_s', 'varchar', 1, 1),
         ('include_sql_handles', @include_sql_handles, '#include_sql_handles', 'sql_handle_s', 'varchar', 1, 1),        
-        /*  Ignore parameters */
+        /* Ignore parameters */
         ('ignore_plan_ids', @ignore_plan_ids, '#ignore_plan_ids', 'plan_id', 'bigint', 0, 0),
         ('ignore_query_ids', @ignore_query_ids, '#ignore_query_ids', 'query_id', 'bigint', 0, 1),
         ('ignore_query_hashes', @ignore_query_hashes, '#ignore_query_hashes', 'query_hash_s', 'varchar', 0, 1),
@@ -1905,7 +1924,9 @@ SELECT
 ) IN (5, 8)
 BEGIN
     INSERT INTO
-        #databases WITH(TABLOCK)
+        #databases 
+    WITH
+        (TABLOCK)
     (
         database_name
     )
@@ -1931,7 +1952,9 @@ END;
 ELSE
 BEGIN
     INSERT
-        #databases WITH(TABLOCK)
+        #databases 
+    WITH
+        (TABLOCK)
     (
         database_name
     )
@@ -2192,7 +2215,9 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         OPTION(RECOMPILE);',
     @troubleshoot_insert = N'
         INSERT
-            #troubleshoot_performance WITH(TABLOCK)
+            #troubleshoot_performance 
+        WITH
+            (TABLOCK)
         (
             current_table,
             start_time
@@ -2666,7 +2691,9 @@ BEGIN
 END;
 
 INSERT
-    #query_store_trouble WITH (TABLOCK)
+    #query_store_trouble 
+WITH 
+    (TABLOCK)
 (
     database_id,
     desired_state_desc,
@@ -2756,7 +2783,9 @@ AND   p.name LIKE @procedure_name;' + @nc10;
         END;
 
         INSERT
-            #procedure_object_ids WITH(TABLOCK)
+            #procedure_object_ids
+        WITH 
+            (TABLOCK)
         (
             [object_id]
         )
@@ -3509,7 +3538,9 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     INSERT
-        #procedure_plans WITH(TABLOCK)
+        #procedure_plans
+    WITH 
+        (TABLOCK)
     (
         plan_id
     )
@@ -3589,7 +3620,9 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     INSERT
-        #query_types WITH(TABLOCK)
+        #query_types
+    WITH 
+        (TABLOCK)
     (
         plan_id
     )
@@ -3676,7 +3709,7 @@ BEGIN
     
     WHILE @@FETCH_STATUS = 0
     BEGIN
-        /*  Clean parameter value */
+        /* Clean parameter value */
         SELECT 
             @param_value = 
                 REPLACE(REPLACE(REPLACE(REPLACE(
@@ -3684,17 +3717,17 @@ BEGIN
                 CHAR(10), N''), CHAR(13), N''),
                 NCHAR(10), N''), NCHAR(13), N'');
             
-        /*  Log current operation if debugging */
+        /* Log current operation if debugging */
         IF @debug = 1
         BEGIN
             RAISERROR('Processing %s with value %s', 0, 1, @param_name, @param_value) WITH NOWAIT;
         END;
     
-        /*  Set current table name for troubleshooting */
+        /* Set current table name for troubleshooting */
         SELECT 
             @current_table = 'inserting ' + @temp_table;
         
-        /*  Choose appropriate string split function based on data type */
+        /* Choose appropriate string split function based on data type */
         IF @data_type = N'bigint'
         BEGIN
             SELECT @split_sql = @string_split_ints;
@@ -3704,7 +3737,7 @@ BEGIN
             SELECT @split_sql = @string_split_strings;
         END;
         
-        /*  Execute the initial insert with troubleshooting if enabled */
+        /* Execute the initial insert with troubleshooting if enabled */
         IF @troubleshoot_performance = 1
         BEGIN
             EXECUTE sys.sp_executesql
@@ -3715,7 +3748,7 @@ BEGIN
             SET STATISTICS XML ON;
         END;
         
-        /*  Execute the dynamic SQL to populate the temporary table */
+        /* Execute the dynamic SQL to populate the temporary table */
         DECLARE @dynamic_sql nvarchar(MAX) = N'
         INSERT INTO 
             ' + @temp_table + N' 
@@ -3753,13 +3786,13 @@ BEGIN
                 @current_table;
         END;
         
-        /*  Secondary processing (for parameters that need to populate plan IDs) */
+        /* Secondary processing (for parameters that need to populate plan IDs) */
         IF @requires_secondary_processing = 1
         BEGIN
             SELECT 
                 @current_table = 'inserting #include_plan_ids for ' + @param_name;
             
-            /*  Build appropriate SQL based on parameter type */
+            /* Build appropriate SQL based on parameter type */
             DECLARE 
                 @secondary_sql nvarchar(MAX) = N'';
             
@@ -3875,7 +3908,7 @@ BEGIN
                 OPTION(RECOMPILE);';
             END;
             
-            /*  Process secondary sql if defined */
+            /* Process secondary sql if defined */
             IF @secondary_sql IS NOT NULL
             BEGIN
                 IF @troubleshoot_performance = 1
@@ -3915,7 +3948,7 @@ BEGIN
                 END;
             END;
             
-            /*  Update where clause if needed */
+            /* Update where clause if needed */
             DECLARE 
                 @temp_target_table nvarchar(100) = 
                     CASE 
@@ -3998,7 +4031,9 @@ BEGIN
         END;
 
         INSERT
-            #only_queries_with_hints WITH(TABLOCK)
+            #only_queries_with_hints
+        WITH 
+            (TABLOCK)
         (
             plan_id
         )
@@ -4072,7 +4107,9 @@ BEGIN
         END;
 
         INSERT
-            #only_queries_with_feedback WITH(TABLOCK)
+            #only_queries_with_feedback 
+        WITH
+            (TABLOCK)
         (
             plan_id
         )
@@ -4146,7 +4183,9 @@ BEGIN
         END;
 
         INSERT
-            #only_queries_with_variants WITH(TABLOCK)
+            #only_queries_with_variants 
+        WITH
+            (TABLOCK)
         (
             plan_id
         )
@@ -4226,7 +4265,9 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     INSERT
-        #forced_plans_failures WITH(TABLOCK)
+        #forced_plans_failures 
+    WITH
+        (TABLOCK)
     (
         plan_id
     )
@@ -4382,7 +4423,9 @@ END;
     END;
 
     INSERT
-        #query_text_search WITH(TABLOCK)
+        #query_text_search 
+    WITH
+        (TABLOCK)
     (
         plan_id
     )
@@ -4540,7 +4583,9 @@ END;
     END;
 
     INSERT
-        #query_text_search_not WITH(TABLOCK)
+        #query_text_search_not 
+    WITH
+        (TABLOCK)
     (
         plan_id
     )
@@ -4637,7 +4682,9 @@ OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
     END;
 
     INSERT
-        #wait_filter WITH(TABLOCK)
+        #wait_filter 
+    WITH
+        (TABLOCK)
     (
         plan_id
     )
@@ -4722,7 +4769,9 @@ BEGIN
 END;
 
 INSERT
-    #maintenance_plans WITH(TABLOCK)
+    #maintenance_plans 
+WITH
+    (TABLOCK)
 (
     plan_id
 )
@@ -4920,7 +4969,9 @@ BEGIN
     END;
 
     INSERT
-        #plan_ids_with_query_hashes WITH(TABLOCK)
+        #plan_ids_with_query_hashes 
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -5039,7 +5090,9 @@ OR
     END;
 
     INSERT
-        #plan_ids_with_total_waits WITH(TABLOCK)
+        #plan_ids_with_total_waits 
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -5183,7 +5236,9 @@ BEGIN
     END;
 
     INSERT
-        #plan_ids_with_total_waits WITH(TABLOCK)
+        #plan_ids_with_total_waits 
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -5293,7 +5348,9 @@ BEGIN
     END;
 
     INSERT
-        #regression_baseline_runtime_stats WITH(TABLOCK)
+        #regression_baseline_runtime_stats 
+    WITH
+        (TABLOCK)
     (
         query_hash,
         regression_metric_average
@@ -5392,7 +5449,9 @@ BEGIN
     END;
 
     INSERT
-        #regression_current_runtime_stats WITH(TABLOCK)
+        #regression_current_runtime_stats 
+    WITH
+        (TABLOCK)
     (
         query_hash,
         current_metric_average
@@ -5576,7 +5635,9 @@ BEGIN
     END;
 
     INSERT
-        #regression_changes WITH(TABLOCK)
+        #regression_changes 
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -5708,7 +5769,9 @@ BEGIN
 END;
 
 INSERT
-    #distinct_plans WITH(TABLOCK)
+    #distinct_plans 
+WITH
+    (TABLOCK)
 (
     plan_id
 )
@@ -6163,7 +6226,9 @@ BEGIN
 END;
 
 INSERT
-    #query_store_runtime_stats WITH(TABLOCK)
+    #query_store_runtime_stats 
+WITH
+    (TABLOCK)
 (
     database_id, runtime_stats_id, plan_id, runtime_stats_interval_id, execution_type_desc,
     first_execution_time, last_execution_time, count_executions,
@@ -6340,7 +6405,9 @@ BEGIN
 END;
 
 INSERT
-    #query_store_plan WITH(TABLOCK)
+    #query_store_plan 
+WITH
+    (TABLOCK)
 (
     database_id,
     plan_id,
@@ -6463,7 +6530,9 @@ BEGIN
 END;
 
 INSERT
-    #query_store_query WITH(TABLOCK)
+    #query_store_query 
+WITH
+    (TABLOCK)
 (
     database_id,
     query_id,
@@ -6517,6 +6586,100 @@ BEGIN
         @sql,
         @current_table;
 END; /*End getting query details*/
+
+
+IF @include_query_hash_totals = 1
+BEGIN
+    SELECT
+        @current_table = 'inserting #query_hash_totals for @include_query_hash_totals',
+        @sql = @isolation_level;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    SELECT 
+        @database_id,
+        qsq.query_hash,
+        SUM(qsrs.count_executions),
+        SUM(qsrs.count_executions * qsrs.avg_duration) / 1000.,
+        SUM(qsrs.count_executions * qsrs.avg_cpu_time) / 1000.,
+        SUM(qsrs.count_executions * (qsrs.avg_logical_io_reads * 8.)) / 1024.,
+        SUM(qsrs.count_executions * (qsrs.avg_physical_io_reads * 8.)) / 1024.,
+        SUM(qsrs.count_executions * (qsrs.avg_logical_io_writes * 8.)) / 1024.,
+        SUM(qsrs.count_executions * qsrs.avg_clr_time) / 1000.,
+        SUM(qsrs.count_executions * (qsrs.avg_query_max_used_memory * 8.)) / 1024.,
+        SUM(qsrs.count_executions * qsrs.avg_rowcount)
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+        ON qsrs.plan_id = qsp.plan_id
+    JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+        ON qsp.query_id = qsq.query_id
+    WHERE EXISTS
+    (
+        SELECT
+            1/0
+        FROM #query_store_query AS qsq2
+        WHERE qsq2.query_hash = qsq.query_hash
+    )
+    GROUP BY qsq.query_hash
+    OPTION(RECOMPILE);        
+'
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT INTO 
+        #query_hash_totals
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        query_hash,
+        total_executions,
+        total_duration_ms,
+        total_cpu_time_ms,
+        total_logical_reads_mb,
+        total_physical_reads_mb,
+        total_logical_writes_mb,
+        total_clr_time_ms,
+        total_memory_mb,
+        total_rowcount
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@database_id int',
+        @database_id;
+    
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+    
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+    
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+END;
+
 
 /*
 This gets the query text for them!
@@ -6577,7 +6740,9 @@ BEGIN
 END;
 
 INSERT
-    #query_store_query_text WITH(TABLOCK)
+    #query_store_query_text 
+WITH
+    (TABLOCK)
 (
     database_id,
     query_text_id,
@@ -6627,7 +6792,9 @@ BEGIN
 END;
 
 INSERT
-    #dm_exec_query_stats WITH(TABLOCK)
+    #dm_exec_query_stats 
+WITH
+    (TABLOCK)
 (
     statement_sql_handle,
     total_grant_mb,
@@ -6930,7 +7097,9 @@ BEGIN
 END;
 
 INSERT
-    #database_query_store_options WITH(TABLOCK)
+    #database_query_store_options 
+WITH
+    (TABLOCK)
 (
     database_id,
     desired_state_desc,
@@ -7067,7 +7236,9 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     INSERT
-        #query_store_wait_stats WITH(TABLOCK)
+        #query_store_wait_stats 
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_id,
@@ -7151,7 +7322,9 @@ WHERE EXISTS
 OPTION(RECOMPILE);';
 
 INSERT
-    #query_context_settings WITH(TABLOCK)
+    #query_context_settings 
+WITH
+    (TABLOCK)
 (
     database_id,
     context_settings_id,
@@ -7331,7 +7504,9 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     INSERT
-        #query_store_plan_feedback WITH(TABLOCK)
+        #query_store_plan_feedback 
+    WITH
+        (TABLOCK)
     (
         database_id,
         plan_feedback_id,
@@ -7404,7 +7579,9 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     INSERT
-        #query_store_query_variant WITH(TABLOCK)
+        #query_store_query_variant 
+    WITH
+        (TABLOCK)
     (
         database_id,
         query_variant_query_id,
@@ -7475,7 +7652,9 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     INSERT
-        #query_store_query_hints WITH(TABLOCK)
+        #query_store_query_hints 
+    WITH
+        (TABLOCK)
     (
         database_id,
         query_hint_id,
@@ -7550,7 +7729,9 @@ OPTION(RECOMPILE);' + @nc10;
         END;
 
         INSERT
-            #query_store_plan_forcing_locations WITH(TABLOCK)
+            #query_store_plan_forcing_locations 
+        WITH
+            (TABLOCK)
         (
             database_id,
             plan_forcing_location_id,
@@ -7619,7 +7800,9 @@ OPTION(RECOMPILE);' + @nc10;
         END;
 
         INSERT
-            #query_store_replicas WITH(TABLOCK)
+            #query_store_replicas 
+        WITH
+            (TABLOCK)
         (
             database_id,
             replica_group_id,
@@ -7743,6 +7926,9 @@ BEGIN
 
     TRUNCATE TABLE 
         #forced_plans_failures;
+
+    TRUNCATE TABLE 
+        #query_hash_totals;
 END;
 
 FETCH NEXT
@@ -7806,9 +7992,9 @@ FROM
                      (
                          SELECT
                              [processing-instruction(query_plan)] =
-                                 N''/* '' + NCHAR(13) + NCHAR(10) +
-                                 N''/* This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
-                                 N''/* Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
+                                 N''-- '' + NCHAR(13) + NCHAR(10) +
+                                 N''-- This is a huge query plan.'' + NCHAR(13) + NCHAR(10) +
+                                 N''-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.'' + NCHAR(13) + NCHAR(10) +
                                  NCHAR(13) + NCHAR(10) +
                                  REPLACE(qsp.query_plan, N''<RelOp'', NCHAR(13) + NCHAR(10) + N''<RelOp'') +
                                  NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
@@ -7817,7 +8003,8 @@ FROM
                              TYPE
                      )
              END,
-        qsp.compatibility_level,'
+        qsp.compatibility_level,
+'
         );
 
     /* Build column list according to mode (expert vs. non-expert) and format_output */
@@ -7829,28 +8016,28 @@ FROM
                     /* Non-formatted columns */
                     WHEN @format_output = 0 
                     THEN
-                            '
+                            N'
                         ' + 
                         cd.column_name + 
-                        ' = ' + 
+                        N' = ' + 
                         cd.column_source + 
-                        ','
+                        N','
                         /* Formatted columns with FORMAT function */
                         ELSE
-                            '
+                            N'
                         ' + 
                         cd.column_name + 
-                        ' = ' + 
+                        N' = ' + 
                         CASE 
                             WHEN cd.format_pattern IS NOT NULL 
-                            THEN 'FORMAT(' + 
+                            THEN N'FORMAT(' + 
                                  cd.column_source + 
-                                 ', ''' + 
+                                 N', ''' + 
                                  cd.format_pattern + 
-                                 ''')' 
+                                 N''')' 
                             ELSE cd.column_source 
                         END + 
-                        ','
+                        N','
                 END
             FROM @ColumnDefinitions AS cd
             WHERE (@expert_mode = 1 OR cd.expert_only = 0) /* Only include expert columns in expert mode */
@@ -7862,13 +8049,13 @@ FROM
                    cd.is_conditional = 1 
                    AND cd.condition_param IS NOT NULL 
                    AND CASE 
-                           WHEN cd.condition_param = 'sql_2022_views' 
+                           WHEN cd.condition_param = N'sql_2022_views' 
                            THEN @sql_2022_views
-                           WHEN cd.condition_param = 'new' 
+                           WHEN cd.condition_param = N'new' 
                            THEN @new
-                           WHEN cd.condition_param = 'regression_mode' 
+                           WHEN cd.condition_param = N'regression_mode' 
                            THEN @regression_mode
-                           WHEN cd.condition_param = 'include_query_hash_totals' 
+                           WHEN cd.condition_param = N'include_query_hash_totals' 
                            THEN @include_query_hash_totals
                            ELSE 0
                        END = cd.condition_value
@@ -7946,6 +8133,7 @@ FROM
         END;
     END;
 
+/*Get more stuff, like query plans and query text*/
 SELECT
     @sql +=
     CONVERT
@@ -8005,7 +8193,6 @@ SELECT
     IF
     (
         @new = 1
-    AND @format_output = 0
     )
     BEGIN
         SELECT
@@ -8024,7 +8211,11 @@ SELECT
                        SELECT TOP (5)
                             '', '' +
                             qsws.wait_category_desc +
-                            '' ('' +
+                            '' ('' + ' +
+                            CASE 
+                                @format_output 
+                                WHEN 0
+                                THEN N'
                             CONVERT
                             (
                                 varchar(20),
@@ -8036,50 +8227,8 @@ SELECT
                                         qsws.avg_query_wait_time_ms
                                     )
                                 )
-                            ) +
-                            '' ms)''
-                       FROM #query_store_wait_stats AS qsws
-                       WHERE qsws.plan_id = qsrs.plan_id
-                       AND   qsws.database_id = qsrs.database_id
-                       GROUP BY
-                           qsws.wait_category_desc
-                       ORDER BY
-                           SUM(qsws.avg_query_wait_time_ms) DESC
-                       FOR XML
-                           PATH(''''),
-                           TYPE
-                    ).value(''./text()[1]'', ''varchar(max)''),
-                    1,
-                    2,
-                    ''''
-                )
-    ) AS w'
-    );
-    END; /*End format output = 0 wait stats query*/
-
-    IF
-    (
-        @new = 1
-    AND @format_output = 1
-    )
-    BEGIN
-        SELECT
-            @sql +=
-        CONVERT
-        (
-            nvarchar(MAX),
-            N'
-    CROSS APPLY
-    (
-        SELECT TOP (1)
-            top_waits =
-                STUFF
-                (
-                    (
-                       SELECT TOP (5)
-                            '', '' +
-                            qsws.wait_category_desc +
-                            '' ('' +
+                            ) + '
+                                 ELSE N'
                             FORMAT
                             (
                                 SUM
@@ -8089,9 +8238,10 @@ SELECT
                                         bigint,
                                         qsws.avg_query_wait_time_ms
                                     )
-                                ), ''N0''
-                            ) +
-                            '' ms)''
+                                ), 
+                                ''N0''
+                            ) + '
+                            END + N' '' ms)''
                        FROM #query_store_wait_stats AS qsws
                        WHERE qsws.plan_id = qsrs.plan_id
                        AND   qsws.database_id = qsrs.database_id
@@ -8109,7 +8259,17 @@ SELECT
                 )
     ) AS w'
     );
-    END; /*End format output = 1 wait stats query*/
+    END; /*End wait stats query*/
+
+    /*Strap on the query hash totals table*/
+    IF @include_query_hash_totals = 1
+    BEGIN
+        SELECT
+            @sql += N'
+    JOIN #query_hash_totals AS qht
+        ON  qsq.query_hash = qht.query_hash
+        AND qsq.database_id = qht.database_id';
+    END;
 
     SELECT
         @sql +=
@@ -9596,17 +9756,24 @@ BEGIN CATCH
     */
     IF @current_table IS NOT NULL
     BEGIN
-        RAISERROR('error while %s with @expert mode = %i and format_output = %i', 11, 1, @current_table, @em, @fo) WITH NOWAIT;
+        RAISERROR('current dynamic activity', 10, 1) WITH NOWAIT;
+        RAISERROR('error while %s with @expert mode = %i and format_output = %i', 10, 1, @current_table, @em, @fo) WITH NOWAIT;
     END;
 
-        /*
-        Query that caused the error
-        */
+    /*
+    Query that caused the error
+    */
     IF @sql IS NOT NULL
     BEGIN
-        RAISERROR('offending query:', 10, 1) WITH NOWAIT;
+        RAISERROR('current dynamic sql:', 10, 1) WITH NOWAIT;
         RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
     END;
+    
+    /*
+    Unquote this if you want to short-circuit the THROW;
+    command and see the @debug = 1 output instead.
+    */
+    --GOTO DEBUG;
 
     /*
     This reliably throws the actual error from dynamic SQL
@@ -9831,6 +9998,21 @@ BEGIN
            @requires_secondary_processing,
        split_sql = 
            @split_sql;
+
+    SELECT
+        table_name = '@ColumnDefinitions',
+        cd.*
+    FROM @ColumnDefinitions AS cd
+    WHERE cd.column_id LIKE '%15'
+    ORDER BY
+        cd.column_id;
+
+    SELECT
+        table_name = '@FilterParameters',
+        fp.*
+    FROM @FilterParameters AS fp
+    ORDER BY
+        fp.parameter_name;
 
     IF EXISTS
        (
@@ -10819,6 +11001,28 @@ BEGIN
         SELECT
             result =
                 '#troubleshoot_performance is empty';
+    END;
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #query_hash_totals AS qht
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#query_hash_totals',
+            qht.*
+        FROM #query_hash_totals AS qht
+        ORDER BY
+            qht.database_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#query_hash_totals is empty';
     END;
     RETURN; /*Stop doing anything, I guess*/
 END; /*End debug*/
