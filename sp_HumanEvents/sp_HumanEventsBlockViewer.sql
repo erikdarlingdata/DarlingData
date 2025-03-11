@@ -446,8 +446,8 @@ SELECT
         CONVERT(nchar(1), @is_system_health);
 
 /*Change this here in case someone leave it NULL*/
-IF  @target_database IS NOT NULL 
-AND @target_schema IS NOT NULL 
+IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL 
+AND ISNULL(@target_schema, N'dbo') IS NOT NULL 
 AND @target_table IS NOT NULL 
 AND @target_column IS NOT NULL
 BEGIN
