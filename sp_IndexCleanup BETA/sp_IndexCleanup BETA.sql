@@ -30,6 +30,10 @@ ALTER PROCEDURE
     @database_name sysname = NULL,
     @schema_name sysname = NULL,
     @table_name sysname = NULL,
+    @min_reads bigint = 0,
+    @min_writes bigint = 0,
+    @min_size_gb decimal(10,2) = 0,
+    @min_rows bigint = 0,
     @help bit = 'false',
     @debug bit = 'true',
     @version varchar(20) = NULL OUTPUT,
@@ -155,28 +159,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RETURN;
     END;
 
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Declaring variables', 0, 0) WITH NOWAIT;
+    END;
+
     DECLARE
         /*general script variables*/
-        @sql nvarchar(MAX) = N'',
+        @sql nvarchar(max) = N'',
         @database_id integer = NULL,
         @object_id integer = NULL,
         @full_object_name nvarchar(768) = NULL,
-        @final_script nvarchar(MAX) = '',
+        @final_script nvarchar(max) = '',
         /*cursor variables*/
         @c_database_id integer,
         @c_schema_name sysname,
         @c_table_name sysname,
         @c_index_name sysname,
         @c_is_unique bit,
-        @c_filter_definition nvarchar(MAX),
+        @c_filter_definition nvarchar(max),
         /*print variables*/
         @helper integer = 0,
         @sql_len integer,
-        @sql_debug nvarchar(MAX) = N'';
+        @sql_debug nvarchar(max) = N'',
+        @online bit = 
+            CASE 
+                WHEN 
+                    CONVERT
+                    (
+                        integer, 
+                        SERVERPROPERTY('EngineEdition')
+                    ) IN (3, 5, 8) 
+                THEN 'true' /* Enterprise, Azure SQL DB, Managed Instance */
+                ELSE 'false'
+            END,
+        @uptime_days nvarchar(10) = 
+        (
+            SELECT
+                DATEDIFF
+                (
+                    DAY, 
+                    osi.sqlserver_start_time, 
+                    SYSDATETIME()
+                )
+            FROM sys.dm_os_sys_info AS osi
+        );
 
     /*
     Initial checks for object validity
     */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
+    END;
+
     IF  @database_name IS NULL
     AND DB_NAME() NOT IN
         (
@@ -228,9 +264,54 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
     END;
 
+    -- Parameter validation
+    IF @min_reads < 0
+    OR @min_reads IS NULL
+    BEGIN
+        RAISERROR('Parameter @min_reads cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
+        SET @min_reads = 0;
+    END;
+    
+    IF @min_writes < 0
+    OR @min_writes IS NULL
+    BEGIN
+        RAISERROR('Parameter @min_writes cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
+        SET @min_writes = 0;
+    END;
+    
+    IF @min_size_gb < 0
+    OR @min_size_gb IS NULL
+    BEGIN
+        RAISERROR('Parameter @min_size_gb cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
+        SET @min_size_gb = 0;
+    END;
+    
+    IF @min_rows < 0
+    OR @min_rows IS NULL
+    BEGIN
+        RAISERROR('Parameter @min_rows cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
+        SET @min_rows = 0;
+    END;
+
     /*
     Temp tables!
     */
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Creating temp tables', 0, 0) WITH NOWAIT;
+    END;
+
+    CREATE TABLE 
+        #filtered_objects
+    (
+        database_id integer,
+        object_id integer,
+        schema_name sysname,
+        table_name sysname,
+        PRIMARY KEY (database_id, object_id)
+    );
+
     CREATE TABLE
         #operational_stats
     (
@@ -290,7 +371,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_column_id integer NOT NULL,
         is_descending_key bit NOT NULL,
         is_included_column bit NULL,
-        filter_definition nvarchar(MAX) NULL,
+        filter_definition nvarchar(max) NULL,
         is_max_length integer NOT NULL,
         user_seeks bigint NOT NULL,
         user_scans bigint NOT NULL,
@@ -300,6 +381,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_scan datetime NULL,
         last_user_lookup datetime NULL,
         last_user_update datetime NULL,
+        is_eligible_for_dedupe bit NOT NULL
         PRIMARY KEY CLUSTERED(database_id, object_id, index_id, column_name)
     );
 
@@ -321,7 +403,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         data_compression_desc nvarchar(60) NULL,
         built_on sysname NULL,
         partition_function_name sysname NULL,
-        partition_columns nvarchar(MAX)
+        partition_columns nvarchar(max)
         PRIMARY KEY CLUSTERED(database_id, object_id, index_id, partition_id)
     );
 
@@ -333,13 +415,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name sysname NOT NULL,
         index_name sysname NOT NULL,
         is_unique bit NULL,
-        key_columns nvarchar(MAX) NULL,
-        included_columns nvarchar(MAX) NULL,
-        filter_definition nvarchar(MAX) NULL,
+        key_columns nvarchar(max) NULL,
+        included_columns nvarchar(max) NULL,
+        filter_definition nvarchar(max) NULL,
         is_redundant bit NULL,
         superseded_by sysname NULL,
-        missing_columns nvarchar(MAX) NULL,
-        action nvarchar(MAX) NULL,
+        missing_columns nvarchar(max) NULL,
+        action nvarchar(max) NULL,
         INDEX c CLUSTERED
             (database_id, schema_name, table_name, index_name)
     );
@@ -350,9 +432,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         database_name sysname NOT NULL,
         table_name sysname NOT NULL,
         index_name sysname NOT NULL,
-        action nvarchar(MAX) NULL,
-        cleanup_script nvarchar(MAX) NULL,
-        original_definition nvarchar(MAX) NULL,
+        action nvarchar(max) NULL,
+        cleanup_script nvarchar(max) NULL,
+        original_definition nvarchar(max) NULL,
         /*Usage details*/
         user_seeks bigint NULL,
         user_scans bigint NULL,
@@ -379,27 +461,147 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         database_name sysname NOT NULL,
         table_name sysname NOT NULL,
         index_name sysname NOT NULL,
-        action nvarchar(MAX) NOT NULL,
-        details nvarchar(MAX) NULL,
-        current_definition nvarchar(MAX) NOT NULL,
-        proposed_definition nvarchar(MAX) NULL,
-        usage_summary nvarchar(MAX) NULL,
-        operational_summary nvarchar(MAX) NULL
+        action nvarchar(max) NOT NULL,
+        details nvarchar(max) NULL,
+        current_definition nvarchar(max) NOT NULL,
+        proposed_definition nvarchar(max) NULL,
+        usage_summary nvarchar(max) NULL,
+        operational_summary nvarchar(max) NULL,
+        uptime_warning nvarchar(512) NULL
     );
 
     CREATE TABLE
         #final_index_actions
     (
-        database_name sysname NOT NULL,
-        table_name sysname NOT NULL,
-        index_name sysname NOT NULL,
-        action nvarchar(MAX) NOT NULL,
-        script nvarchar(MAX) NOT NULL
+        database_name sysname NOT NULL DEFAULT N'',
+        table_name sysname NOT NULL DEFAULT N'',
+        index_name sysname NOT NULL DEFAULT N'',
+        action nvarchar(max) NOT NULL DEFAULT N'',
+        script nvarchar(max) NOT NULL DEFAULT N''
     );
 
     /*
     Start insert queries
     */
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #filtered_object insert', 0, 0) WITH NOWAIT;
+    END;    
+    
+    SELECT
+        @sql = N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
+
+    SELECT
+        @sql = N'
+    SELECT DISTINCT
+        @database_id,
+        t.object_id,
+        s.name,
+        t.name
+    FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
+      ON t.schema_id = s.schema_id
+    LEFT JOIN ' + QUOTENAME(@database_name) + N'.sys.dm_db_index_usage_stats AS us
+      ON  t.object_id = us.object_id
+      AND us.database_id = @database_id
+    WHERE t.is_ms_shipped = 0
+    AND   t.type <> N''TF'''
+
+    IF @object_id IS NOT NULL
+    BEGIN
+        SELECT @sql += N'
+    AND   t.object_id = @object_id';
+    END;
+
+    SET @sql += N'
+    AND EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats AS ps
+        JOIN ' + QUOTENAME(@database_name) + N'.sys.allocation_units AS au
+          ON ps.partition_id = au.container_id
+        WHERE ps.object_id = t.object_id
+        GROUP 
+            BY ps.object_id
+        HAVING 
+            SUM(au.total_pages) * 8.0 / 1048576.0 >= @min_size_gb
+    )
+    AND EXISTS 
+    (
+        SELECT 
+            1/0
+        FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats AS ps
+        WHERE ps.object_id = t.object_id
+        AND ps.index_id IN (0, 1)
+        GROUP 
+            BY ps.object_id
+        HAVING 
+            SUM(ps.row_count) >= @min_rows
+    )    
+    AND EXISTS 
+    (
+        SELECT 
+            1/0
+        FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_index_usage_stats AS ius
+        WHERE ius.object_id = t.object_id
+        AND ius.database_id = @database_id
+        GROUP BY 
+            ius.object_id
+        HAVING 
+            SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) >= @min_reads
+        AND 
+            SUM(ius.user_updates) >= @min_writes
+    )
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        PRINT @sql;
+    END;
+      
+    INSERT
+        #filtered_objects
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        object_id,
+        schema_name,
+        table_name
+    )
+    EXEC sys.sp_executesql
+        @sql,
+      N'@database_id int,
+        @min_reads bigint,
+        @min_writes bigint,
+        @min_size_gb decimal(10,2),
+        @min_rows bigint,
+        @object_id integer',
+        @database_id,
+        @min_reads,
+        @min_writes,
+        @min_size_gb,
+        @min_rows,
+        @object_id;
+
+    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #filtered_objects', 0, 0) WITH NOWAIT END; END;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#filtered_objects',
+            fo.*
+        FROM #filtered_objects AS fo;
+    END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #operational_stats insert', 0, 0) WITH NOWAIT;
+    END;  
+
     SELECT
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
@@ -451,11 +653,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT
             1/0
-        FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
-        WHERE t.object_id = os.object_id
-        AND   t.is_ms_shipped = 0
+        FROM #filtered_objects fo
+        WHERE fo.database_id = os.database_id
+        AND   fo.object_id = os.object_id
     )
-    AND os.index_id > 1
     GROUP BY
         os.database_id,
         os.object_id,
@@ -513,6 +714,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @database_id,
         @object_id;
 
+    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #operational_stats', 0, 0) WITH NOWAIT END; END;
+
     IF @debug = 1
     BEGIN
         SELECT
@@ -520,6 +723,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             os.*
         FROM #operational_stats AS os;
     END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_details insert', 0, 0) WITH NOWAIT;
+    END;  
 
     SELECT
         @sql = N'
@@ -605,7 +813,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         us.last_user_seek,
         us.last_user_scan,
         us.last_user_lookup,
-        us.last_user_update
+        us.last_user_update,
+        is_eligible_for_dedupe = 
+            CASE
+                WHEN i.type = 2
+                THEN 1
+                WHEN i.type = 1
+                THEN 0
+            END
     FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
     JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
       ON t.schema_id = s.schema_id
@@ -622,9 +837,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND i.index_id = us.index_id
       AND us.database_id = @database_id
     WHERE t.is_ms_shipped = 0
-    AND   i.type = 2
+    AND   i.type IN (1, 2)
     AND   i.is_disabled = 0
-    AND   i.is_hypothetical = 0';
+    AND   i.is_hypothetical = 0
+    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #filtered_objects fo
+        WHERE fo.database_id = @database_id
+        AND   fo.object_id = t.object_id
+    )        
+    AND   EXISTS 
+    (
+        SELECT 
+            1/0
+        FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats ps
+        WHERE ps.object_id = t.object_id
+        AND   ps.index_id = 1
+        AND   ps.row_count >= @min_rows
+    )';
 
     IF @object_id IS NOT NULL
     BEGIN
@@ -641,13 +873,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           FROM ' + QUOTENAME(@database_name) + N'.sys.objects AS so
           WHERE i.object_id = so.object_id
           AND   so.is_ms_shipped = 0
-          AND   so.type = ''TF''
+          AND   so.type = N''TF''
     )
     OPTION(RECOMPILE);';
 
     IF @debug = 1
     BEGIN
-        PRINT @sql;
+        PRINT SUBSTRING(@sql, 1, 4000);
+        PRINT SUBSTRING(@sql, 4000, 8000);
     END;
 
     INSERT
@@ -681,14 +914,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_seek,
         last_user_scan,
         last_user_lookup,
-        last_user_update
+        last_user_update,
+        is_eligible_for_dedupe
     )
     EXEC sys.sp_executesql
         @sql,
       N'@database_id integer,
-        @object_id integer',
+        @object_id integer,
+        @min_rows integer',
         @database_id,
-        @object_id;
+        @object_id,
+        @min_rows;
+
+    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #index_details', 0, 0) WITH NOWAIT END; END;
 
     IF @debug = 1
     BEGIN
@@ -697,6 +935,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             *
         FROM #index_details AS id;
     END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #partition_stats insert', 0, 0) WITH NOWAIT;
+    END;  
 
     SELECT
         @sql = N'
@@ -754,8 +997,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           ON p.partition_id = a.container_id
         LEFT HASH JOIN ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats AS ps
           ON p.partition_id = ps.partition_id
-        WHERE t.type <> ''TF''
-        AND   i.type = 2';
+        WHERE t.type <> N''TF''
+        AND   i.type IN (1, 2)
+        AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #filtered_objects fo
+            WHERE fo.database_id = @database_id
+            AND   fo.object_id = t.object_id
+        )';
 
     IF @object_id IS NOT NULL
     BEGIN
@@ -815,7 +1066,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     FOR XML
                         PATH(''''),
                         TYPE
-                  ).value(''.'', ''nvarchar(MAX)''),
+                  ).value(''.'', ''nvarchar(max)''),
                   1,
                   2,
                   ''''
@@ -855,6 +1106,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @database_id,
         @object_id;
 
+    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #partition_stats', 0, 0) WITH NOWAIT END; END;
+
     IF @debug = 1
     BEGIN
         SELECT
@@ -862,6 +1115,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             *
         FROM #partition_stats AS ps;
     END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Performing #index_analysis insert', 0, 0) WITH NOWAIT;
+    END;  
 
     INSERT INTO
         #index_analysis
@@ -899,6 +1157,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHERE id2.object_id = id1.object_id
                 AND   id2.index_id = id1.index_id
                 AND   id2.is_included_column = 0
+                GROUP BY
+                    id2.column_name,
+                    id2.is_descending_key,
+                    id2.key_ordinal
                 ORDER BY
                     id2.key_ordinal
                 FOR XML
@@ -920,6 +1182,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHERE id2.object_id = id1.object_id
                 AND   id2.index_id = id1.index_id
                 AND   id2.is_included_column = 1
+                GROUP BY
+                    id2.column_name
                 ORDER BY
                     id2.column_name
                 FOR XML
@@ -932,6 +1196,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ),
         id1.filter_definition
     FROM #index_details id1
+    WHERE id1.is_eligible_for_dedupe = 1
     GROUP BY
         id1.schema_name,
         id1.table_name,
@@ -942,6 +1207,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id1.filter_definition
     OPTION(RECOMPILE);
 
+    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #index_analysis', 0, 0) WITH NOWAIT END; END;
+
     IF @debug = 1
     BEGIN
         SELECT
@@ -949,6 +1216,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ia.*
         FROM #index_analysis AS ia;
     END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Starting cursor', 0, 0) WITH NOWAIT;
+    END;  
 
     /*Analyze indexes*/
     DECLARE
@@ -986,6 +1258,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     WHILE @@FETCH_STATUS = 0
     BEGIN
+        
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Performing #index_analysis update', 0, 0) WITH NOWAIT;
+        END;          
+        
         WITH
             IndexColumns AS
         (
@@ -996,11 +1274,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 id.index_name,
                 id.column_name,
                 id.is_included_column,
-                id.key_ordinal
+                id.key_ordinal,
+                id.is_eligible_for_dedupe
             FROM #index_details id
             WHERE id.database_id = @c_database_id
             AND   id.schema_name = @c_schema_name
             AND   id.table_name = @c_table_name
+            AND   id.is_eligible_for_dedupe = 1
         ),
             CurrentIndexColumns AS
         (
@@ -1008,6 +1288,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ic.*
             FROM IndexColumns AS ic
             WHERE ic.index_name = @c_index_name
+            AND   ic.is_eligible_for_dedupe = 1
         ),
             OtherIndexColumns AS
         (
@@ -1015,6 +1296,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ic.*
             FROM IndexColumns AS ic
             WHERE ic.index_name <> @c_index_name
+            AND   ic.is_eligible_for_dedupe = 1
         )
         UPDATE
             ia
@@ -1026,20 +1308,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SELECT
                             1/0
                         FROM CurrentIndexColumns cic
-                        WHERE cic.is_included_column = 0  -- Only check key columns
+                        WHERE cic.is_included_column = 0  /* Only check key columns */
                         AND NOT EXISTS
                         (
                             SELECT
                                 1/0
                             FROM OtherIndexColumns oic
                             WHERE oic.column_name = cic.column_name
-                            AND oic.is_included_column = 0  -- Must be in key columns
-                            AND oic.key_ordinal <= cic.key_ordinal  -- Check leading edge
+                            AND oic.is_included_column = 0  /* Must be in key columns */
+                            AND oic.key_ordinal <= cic.key_ordinal   /* Check leading edge */
                         )
                     )
                     AND 
                     (
-                        -- Check included columns separately since order doesn't matter
+                        /* Check included columns separately since order doesn't matter */
                         NOT EXISTS
                         (
                             SELECT
@@ -1055,16 +1337,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 AND 
                                 (
                                     oic.is_included_column = 1 
-                                    OR oic.is_included_column = 0  -- Include cols can be covered by key cols
+                                    OR oic.is_included_column = 0  /* Include cols can be covered by key cols */
                                 )
                             )
                         )
                     )
-                    AND ISNULL(ia.filter_definition, '') = ISNULL(@c_filter_definition, '')
+                    AND ISNULL(REPLACE(REPLACE(REPLACE(ia.filter_definition, ' ', ''), '(', ''), ')', ''), '') = 
+                        ISNULL(REPLACE(REPLACE(REPLACE(@c_filter_definition, ' ', ''), '(', ''), ')', ''), '')
                     AND
                     (
                         ia.is_unique = 0
-                     OR @c_is_unique = 1
+                     OR 
+                     (
+                           ia.is_unique = 1 
+                       AND @c_is_unique = 1
+                     ) 
                     )
                     THEN 1
                     ELSE 0
@@ -1076,20 +1363,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SELECT
                             1/0
                         FROM CurrentIndexColumns cic
-                        WHERE cic.is_included_column = 0  -- Only check key columns
+                        WHERE cic.is_included_column = 0  /* Only check key columns */
                         AND NOT EXISTS
                         (
                             SELECT
                                 1/0
                             FROM OtherIndexColumns oic
                             WHERE oic.column_name = cic.column_name
-                            AND oic.is_included_column = 0  -- Must be in key columns
-                            AND oic.key_ordinal <= cic.key_ordinal  -- Check leading edge
+                            AND oic.is_included_column = 0  /* Must be in key columns */
+                            AND oic.key_ordinal <= cic.key_ordinal  /* Check leading edge */
                         )
                     )
                     AND 
                     (
-                        -- Check included columns separately since order doesn't matter
+                        /* Check included columns separately since order doesn't matter */
                         NOT EXISTS
                         (
                             SELECT
@@ -1105,7 +1392,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 AND 
                                 (
                                     oic.is_included_column = 1 
-                                    OR oic.is_included_column = 0  -- Include cols can be covered by key cols
+                                    OR oic.is_included_column = 0  /* Include cols can be covered by key cols */
                                 )
                             )
                         )
@@ -1123,7 +1410,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 STUFF
                 (
                   (
-                      SELECT
+                      SELECT DISTINCT
                           N', ' +
                           oic.column_name
                       FROM OtherIndexColumns oic
@@ -1137,7 +1424,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       FOR XML
                           PATH(''),
                           TYPE
-                  ).value('.', 'nvarchar(MAX)'),
+                  ).value('.', 'nvarchar(max)'),
                   1,
                   2,
                   ''
@@ -1158,6 +1445,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @c_is_unique,
             @c_filter_definition;
     END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Performing #index_analysis update after cursor', 0, 0) WITH NOWAIT;
+    END; 
 
     /*Determine actions*/
     UPDATE
@@ -1184,10 +1476,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#index_analysis',
+            table_name = '#index_analysis after update',
             ia.*
         FROM #index_analysis AS ia;
     END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Performing #index_cleanup_report insert', 0, 0) WITH NOWAIT;
+    END; 
 
     INSERT INTO
         #index_cleanup_report
@@ -1225,13 +1522,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         cleanup_script =
             CASE
                 WHEN ia.action = N'DROP'
-                THEN N'DROP INDEX ' +
+                THEN NCHAR(10) +
+                     N'DROP INDEX ' +
                      QUOTENAME(ia.index_name) +
                      N' ON ' +
+                     QUOTENAME(DB_NAME(ia.database_id)) +
+                     N'.' +
+                     QUOTENAME(ia.schema_name) +
+                     N'.' +
                      QUOTENAME(ia.table_name) +
                      N';'
                 WHEN ia.action LIKE N'MERGE INTO%'
-                THEN N'CREATE ' +
+                THEN NCHAR(10) +
+                     N'CREATE ' +
                      CASE
                          WHEN ia.is_unique = 1
                          THEN N'UNIQUE '
@@ -1239,65 +1542,207 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      END +
                      N'INDEX ' +
                      QUOTENAME(ia.superseded_by) +
-                     N' ON ' +
+                     NCHAR(10) +
+                     N'ON ' +
+                     QUOTENAME(DB_NAME(ia.database_id)) +
+                     N'.' +
+                     QUOTENAME(ia.schema_name) +
+                     N'.' +
                      QUOTENAME(ia.table_name) +
-                     N'(' +
+                     NCHAR(10) +
+                     N'    (' +
                      ISNULL(superseding.key_columns, ia.key_columns) +
                      N')' +
+                     NCHAR(10) +
                      CASE
-                         WHEN ISNULL(superseding.included_columns, ia.included_columns) IS NOT NULL
-                         OR ia.missing_columns IS NOT NULL
-                         THEN N' INCLUDE (' +
-                              STUFF((
-                                  SELECT DISTINCT N',' + c.value('.', 'nvarchar(128)')
-                                  FROM (
-                                      SELECT CAST(N'<c>' + 
-                                          REPLACE(ISNULL(superseding.included_columns, ia.included_columns), N', ', N'</c><c>') 
-                                          + N'</c>' AS xml)
-                                  ) AS x(c)
-                                  FOR XML PATH('')
-                              ), 1, 1, '') +
-                              CASE
-                                  WHEN ia.missing_columns IS NOT NULL
-                                  THEN N', ' + ia.missing_columns
-                                  ELSE N''
-                              END +
+                         WHEN 
+                         (
+                              superseding.included_columns IS NOT NULL 
+                           OR ia.included_columns IS NOT NULL
+                         )
+                         OR   ia.missing_columns IS NOT NULL
+                         THEN N' INCLUDE' +
+                              NCHAR(10) +
+                              N'    (' +
+                              -- Combine all INCLUDE columns with proper parsing
+                              STUFF
+                              (
+                                (
+                                  SELECT DISTINCT 
+                                      N', ' + 
+                                      column_value
+                                  FROM 
+                                  (
+                                      -- From superseding index
+                                      SELECT 
+                                          column_value = 
+                                              LTRIM(RTRIM(value.c.value('.', 'sysname')))
+                                      FROM 
+                                      (
+                                          SELECT 
+                                              Columns =
+                                                  CONVERT
+                                                  (
+                                                      xml, 
+                                                      '<c>' + 
+                                                      REPLACE
+                                                      (
+                                                          ISNULL
+                                                          (
+                                                              superseding.included_columns, 
+                                                              ''
+                                                           ), 
+                                                           ', ', 
+                                                           '</c><c>') + 
+                                                           '</c>'
+                                                  )
+                                      ) t
+                                      CROSS APPLY t.Columns.nodes('/c') AS value(c)
+                                      
+                                      UNION
+                                      
+                                      -- From current index
+                                      SELECT 
+                                          column_value = 
+                                              LTRIM(RTRIM(value.c.value('.', 'sysname')))
+                                      FROM 
+                                      (
+                                          SELECT 
+                                              Columns =
+                                                  CONVERT
+                                                  (
+                                                      xml, 
+                                                      '<c>' + 
+                                                      REPLACE
+                                                      (
+                                                          ISNULL
+                                                          (
+                                                              ia.included_columns, 
+                                                              ''
+                                                          ), 
+                                                          ', ', 
+                                                          '</c><c>'
+                                                      ) + 
+                                                      '</c>'
+                                                  )
+                                      ) t
+                                      CROSS APPLY t.Columns.nodes('/c') AS value(c)
+                                      
+                                      UNION
+                                      
+                                      -- From missing columns
+                                      SELECT 
+                                          column_value = 
+                                              LTRIM(RTRIM(value.c.value('.', 'sysname')))
+                                      FROM 
+                                      (
+                                          SELECT 
+                                          Columns = 
+                                              CONVERT
+                                              (
+                                                  xml, 
+                                                  '<c>' + 
+                                                  REPLACE
+                                                  (
+                                                      ISNULL
+                                                      (
+                                                          ia.missing_columns, 
+                                                          ''
+                                                      ), 
+                                                      ', ', 
+                                                      '</c><c>'
+                                                  ) + '</c>'
+                                              )
+                                      ) t
+                                      CROSS APPLY t.Columns.nodes('/c') AS value(c)
+                                  ) AS all_columns
+                                  WHERE LEN(column_value) > 0
+                                  FOR 
+                                      XML 
+                                      PATH(''), 
+                                      TYPE
+                              ).value('.', 'nvarchar(max)'), 
+                              1, 
+                              2, 
+                              ''
+                              ) +
                               N')'
                          ELSE N''
-                     END +
+                     END +                     
                      CASE
+                         /* Check for partitioning in the superseding index first */
+                         WHEN EXISTS 
+                         (
+                             SELECT 
+                                 1/0
+                             FROM #partition_stats ps_super
+                             WHERE ps_super.table_name = ia.table_name
+                             AND   ps_super.index_name = ia.superseded_by
+                             AND   ps_super.partition_function_name IS NOT NULL
+                         )
+                         THEN 
+                         (
+                             SELECT TOP (1) 
+                                 NCHAR(10) +
+                                 N' ON ' +
+                                 QUOTENAME(ps_super.partition_function_name) +
+                                 N'(' +
+                                 ps_super.partition_columns +
+                                 N')'
+                             FROM #partition_stats ps_super
+                             WHERE ps_super.table_name = ia.table_name
+                             AND   ps_super.index_name = ia.superseded_by
+                         )
+                         /* Fall back to the current index's partitioning if available */
                          WHEN ps.partition_function_name IS NOT NULL
-                         THEN N' ON ' +
+                         THEN NCHAR(10) +
+                              N' ON ' +
                               QUOTENAME(ps.partition_function_name) +
                               N'(' +
                               ps.partition_columns +
                               N')'
                          ELSE N''
-                     END +
+                     END +                     
                      CASE
                          WHEN ia.filter_definition IS NOT NULL
-                         THEN N' WHERE ' +
+                         THEN NCHAR(10) +
+                              N' WHERE ' +
                               ia.filter_definition
                          ELSE N''
                      END +
-                     N' WITH (DROP_EXISTING = ON' +
+                     NCHAR(10) +
+                     N' WITH ' +
+                     NCHAR(10) + 
+                     N'    (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+                     CASE 
+                         WHEN @online = 'true' /*Best effort at detecting online index abilities*/
+                         THEN N'ON'
+                         ELSE N'OFF'
+                     END +
                      CASE
                          WHEN ps.data_compression_desc <> N'NONE'
                          THEN N', DATA_COMPRESSION = ' +
                               ps.data_compression_desc
-                         ELSE N''
+                         ELSE N', DATA_COMPRESSION = PAGE'  /* Add PAGE compression by default for merged indexes */
                      END +
                      N');' +
-                     NCHAR(13) + NCHAR(10) +
+                     NCHAR(10) +
+                     NCHAR(10) +
                      N'ALTER INDEX ' +
                      QUOTENAME(ia.index_name) +
                      N' ON ' +
+                     QUOTENAME(DB_NAME(ia.database_id)) +
+                     N'.' +
+                     QUOTENAME(ia.schema_name) +
+                     N'.' +
                      QUOTENAME(ia.table_name) +
-                     N' DISABLE;'
+                     N' DISABLE'
                 ELSE N''
-            END,
+            END +
+            N';',
         original_definition =
-            N'CREATE ' +
+            NCHAR(10) +
+            N'        -- CREATE ' +
                 CASE
                     WHEN ia.is_unique = 1
                     THEN N'UNIQUE '
@@ -1305,21 +1750,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END +
                 N'INDEX ' +
                 QUOTENAME(ia.index_name) +
-                N' ON ' +
+                NCHAR(10) +                
+                N'        -- ON ' +
+                QUOTENAME(DB_NAME(ia.database_id)) +
+                N'.' +
+                QUOTENAME(ia.schema_name) +
+                N'.' +
                 QUOTENAME(ia.table_name) +
-                N'(' +
+                NCHAR(10) +
+                N'        --    (' +
                 ia.key_columns +
                 N')' +
                 CASE
                     WHEN ia.included_columns IS NOT NULL
-                    THEN N' INCLUDE (' +
+                    THEN NCHAR(10) +
+                         N'        -- INCLUDE' +
+                         NCHAR(10) +
+                         N'        --    (' +
                          ia.included_columns +
                          N')'
                     ELSE N''
                 END +
                 CASE
                     WHEN ps.partition_function_name IS NOT NULL
-                    THEN N' ON ' +
+                    THEN NCHAR(10) +
+                         N'        -- ON ' +
                          QUOTENAME(ps.partition_function_name) +
                          N'(' +
                          ps.partition_columns +
@@ -1328,10 +1783,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END +
                 CASE
                     WHEN ia.filter_definition IS NOT NULL
-                    THEN N' WHERE ' +
-                         ia.filter_definition
+                    THEN NCHAR(10) +
+                         N'        -- WHERE ' +
+                         QUOTENAME(ia.filter_definition, '()')
                     ELSE N''
-                END,
+                END +
+                N';' +
+                NCHAR(10),
         id.user_seeks,
         id.user_scans,
         id.user_lookups,
@@ -1360,7 +1818,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id.index_id = os.index_id
     LEFT JOIN #index_analysis superseding
       ON  ia.superseded_by = superseding.index_name
-      AND ia.table_name = superseding.table_name;
+      AND ia.table_name = superseding.table_name
+    OPTION(RECOMPILE);
+
+    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #index_cleanup_report', 0, 0) WITH NOWAIT END; END;
 
     IF @debug = 1
     BEGIN
@@ -1369,6 +1830,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             icr.*
         FROM #index_cleanup_report AS icr;
     END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Performing #index_cleanup_summary insert', 0, 0) WITH NOWAIT;
+    END; 
 
     INSERT INTO
         #index_cleanup_summary
@@ -1383,7 +1849,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         current_definition,
         proposed_definition,
         usage_summary,
-        operational_summary
+        operational_summary,
+        uptime_warning
     )
     SELECT
         icr.database_name,
@@ -1458,8 +1925,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N', Lookups: '   + CONVERT(nvarchar(20), icr.singleton_lookup_count) +
             N', Inserts: '   + CONVERT(nvarchar(20), icr.leaf_insert_count) +
             N', Updates: '   + CONVERT(nvarchar(20), icr.leaf_update_count) +
-            N', Deletes: '   + CONVERT(nvarchar(20), icr.leaf_delete_count)
-    FROM #index_cleanup_report AS icr;
+            N', Deletes: '   + CONVERT(nvarchar(20), icr.leaf_delete_count),
+        uptime_warning = 
+            CASE 
+                WHEN icr.user_seeks = 0 AND icr.user_scans = 0 AND icr.user_lookups = 0
+                THEN
+                    CASE
+                        WHEN TRY_PARSE(@uptime_days AS integer) < 7
+                        THEN N'WARNING: SQL Server has been running for only ' + 
+                             @uptime_days + 
+                             N' days. Usage statistics may not be reliable.'
+                        WHEN TRY_PARSE(@uptime_days AS integer) < 14
+                        THEN N'CAUTION: SQL Server has been running for only ' + 
+                             @uptime_days + 
+                             N' days. Usage statistics may be incomplete.'
+                        WHEN TRY_PARSE(@uptime_days AS integer) < 30
+                        THEN N'NOTE: SQL Server has been running for only ' + 
+                             @uptime_days + 
+                             N' days. Consider this when evaluating index usage.'
+                        ELSE N'NOTE: SQL Server has been up for ' +
+                             @uptime_days +
+                             N' days, which makes analysis good, but... Are you patching this thing?'
+                    END
+                ELSE NULL
+            END
+    FROM #index_cleanup_report AS icr
+    OPTION(RECOMPILE);
+
+    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #index_cleanup_summary', 0, 0) WITH NOWAIT END; END;
 
     IF @debug = 1
     BEGIN
@@ -1468,6 +1961,237 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ics.*
         FROM #index_cleanup_summary AS ics;
     END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Going into summary and reports', 0, 0) WITH NOWAIT;
+    END; 
+
+    /* Index Cleanup Summary Report */
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Index Cleanup Summary', 0, 0) WITH NOWAIT;
+    END; 
+
+    SELECT
+        summary_type = 
+            'Index Cleanup Summary',
+        total_indexes_analyzed = 
+            COUNT_BIG(DISTINCT icr.index_name),
+        indexes_to_drop = 
+            SUM
+            (   
+                CASE
+                    WHEN icr.action = 'DROP'
+                    THEN 1
+                    ELSE 0
+                END
+            ),
+        indexes_to_merge = 
+            SUM
+            (   
+                CASE
+                    WHEN icr.action LIKE 'MERGE INTO%'
+                    THEN 1
+                    ELSE 0
+                END
+            ),
+        unused_indexes = 
+        SUM
+        (   
+            CASE
+                WHEN icr.user_seeks = 0
+                AND  icr.user_scans = 0
+                AND  icr.user_lookups = 0
+                THEN 1
+                ELSE 0
+            END
+        ),
+        space_savings_gb = 
+        CONVERT
+        (   
+            decimal(10, 2),
+            (
+                SELECT
+                    SUM(ps_total.space_saved_mb) / 1024.0
+                FROM
+                (
+                    SELECT
+                        icr_distinct.index_name,
+                        icr_distinct.table_name,
+                        space_saved_mb = SUM(ps_inner.total_space_mb)
+                    FROM #index_cleanup_report AS icr_distinct
+                    JOIN #partition_stats AS ps_inner
+                      ON  ps_inner.table_name = icr_distinct.table_name
+                      AND ps_inner.index_name = icr_distinct.index_name
+                    WHERE icr_distinct.action = 'DROP'
+                    OR  icr_distinct.action LIKE 'MERGE INTO%'
+                    GROUP BY
+                        icr_distinct.index_name,
+                        icr_distinct.table_name
+                ) AS ps_total
+            )
+        ),
+        write_operations_avoided = 
+            SUM
+            (   
+                CASE
+                    WHEN icr.action = 'DROP'
+                    OR   icr.action LIKE 'MERGE INTO%'
+                    THEN ISNULL(icr.user_updates, 0)
+                    ELSE 0
+                END
+            )
+    FROM #index_cleanup_report AS icr
+    OPTION (RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Top tables by potential space savings', 0, 0) WITH NOWAIT;
+    END; 
+    
+    /* Top tables by potential space savings */
+    SELECT TOP (10)
+        icr.database_name,
+        icr.table_name,
+        indexes_affected = 
+            COUNT_BIG(DISTINCT icr.index_name),
+        space_savings_gb = 
+            CONVERT
+            (
+                decimal(10,2), 
+                (
+                    SELECT 
+                        SUM(ps_total.space_saved_mb) / 1024.0
+                    FROM 
+                    (
+                        SELECT 
+                            ps_inner.table_name,
+                            space_saved_mb = 
+                                SUM(ps_inner.total_space_mb)
+                        FROM #partition_stats AS ps_inner
+                        JOIN #index_cleanup_report AS icr_inner
+                          ON  ps_inner.table_name = icr_inner.table_name
+                          AND ps_inner.index_name = icr_inner.index_name
+                        WHERE icr_inner.table_name = icr.table_name
+                        AND 
+                        (
+                             icr_inner.action = 'DROP' 
+                          OR icr_inner.action LIKE 'MERGE INTO%'
+                        )
+                        GROUP BY 
+                            ps_inner.table_name
+                    ) AS ps_total
+                )
+              ),
+        write_operations_avoided = 
+            SUM(ISNULL(icr.user_updates, 0))
+    FROM #index_cleanup_report AS icr
+    WHERE 
+    (
+         icr.action = 'DROP' 
+      OR icr.action LIKE 'MERGE INTO%'
+    )
+    GROUP BY 
+        icr.database_name, 
+        icr.table_name
+    ORDER BY 
+        space_savings_gb DESC
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Page Compression Opportunity Summary', 0, 0) WITH NOWAIT;
+    END; 
+
+    /* Summary of non-compressed indexes */
+    SELECT
+        summary_type = 'Page Compression Opportunity Summary',
+        candidate_indexes = 
+            COUNT_BIG(*),
+        total_size_gb = 
+            SUM(ps.total_space_mb) / 1024.0,
+        estimated_savings_low_gb = 
+            (SUM(ps.total_space_mb) * 0.20) / 1024.0, /* Conservative estimate (20%) */
+        estimated_savings_typical_gb = 
+            (SUM(ps.total_space_mb) * 0.40) / 1024.0, /* Typical estimate (40%) */
+        estimated_savings_high_gb = 
+            (SUM(ps.total_space_mb) * 0.60) / 1024.0 /* Optimistic estimate (60%) */
+    FROM #partition_stats ps
+    WHERE ps.data_compression_desc = 'NONE'
+    AND NOT EXISTS
+    (
+        SELECT 
+            1/0
+        FROM #index_cleanup_report AS icr
+        WHERE icr.index_name = ps.index_name
+        AND 
+        (
+             icr.action = 'DROP' 
+          OR icr.action LIKE 'MERGE INTO%'
+        )
+    )
+    OPTION(RECOMPILE);
+    
+    -- Top candidates for page compression
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Top candidates for page compression', 0, 0) WITH NOWAIT;
+    END; 
+
+    SELECT TOP (20)
+        database_name = 
+            @database_name,
+        ps.schema_name,
+        ps.table_name,
+        ps.index_name,
+        index_type = 
+            CASE 
+                WHEN ps.index_id = 1 
+                THEN 'CLUSTERED' 
+                ELSE 'NONCLUSTERED' 
+            END,
+        size_gb = 
+            SUM(ps.total_space_mb) / 1024.0,
+        estimated_savings_low_gb = 
+            (SUM(ps.total_space_mb) * 0.20) / 1024.0, -- Conservative (20%)
+        estimated_savings_typical_gb = 
+            (SUM(ps.total_space_mb) * 0.40) / 1024.0, -- Typical (40%)
+        estimated_savings_high_gb = 
+            (SUM(ps.total_space_mb) * 0.60) / 1024.0, -- Optimistic (60%)
+        rebuild_script = 
+            N'ALTER INDEX ' + 
+            QUOTENAME(ps.index_name) + 
+            N' ON ' + 
+            QUOTENAME(ps.schema_name) + 
+            N'.' + 
+            QUOTENAME(ps.table_name) + 
+            N' REBUILD WITH 
+    (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            CASE 
+                WHEN @online = 'true'
+                THEN N'ON'
+                ELSE N'OFF'
+            END +
+            N', DATA_COMPRESSION = PAGE
+    );'
+    FROM #partition_stats ps
+    WHERE ps.data_compression_desc = N'NONE'
+    GROUP BY 
+        ps.schema_name, 
+        ps.table_name, 
+        ps.index_name, 
+        ps.index_id
+    ORDER BY 
+        SUM(ps.total_space_mb) DESC
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Select from #index_cleanup_summary', 0, 0) WITH NOWAIT;
+    END; 
 
     SELECT
         ics.database_name,
@@ -1478,7 +2202,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ics.current_definition,
         ics.proposed_definition,
         ics.usage_summary,
-        ics.operational_summary
+        ics.operational_summary,
+        ics.uptime_warning
     FROM #index_cleanup_summary AS ics
     ORDER BY
         CASE ics.action
@@ -1488,8 +2213,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
              ELSE 999
         END,
         ics.table_name,
-        ics.index_name;
+        ics.index_name
+    OPTION(RECOMPILE);
 
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Performing #final_index_actions insert', 0, 0) WITH NOWAIT;
+    END;     
+    
     WITH
         IndexActions AS
     (
@@ -1527,23 +2258,48 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         script
     )
     SELECT
-        database_name,
-        table_name,
-        index_name,
-        action,
-        CASE
-            WHEN action LIKE N'MERGE INTO%'
-            THEN cleanup_script
-            WHEN action = N'DROP'
-            THEN N'ALTER INDEX ' +
-                 QUOTENAME(index_name) +
-                 N' ON ' +
-                 QUOTENAME(table_name) +
-                 N' DISABLE;'
-            ELSE N'???'
-        END AS script
-    FROM IndexActions
-    WHERE n = 1;
+        ia.database_name,
+        ia.table_name,
+        ia.index_name,
+        ia.action,
+        script =
+            CASE
+                WHEN ia.action LIKE N'MERGE INTO%'
+                THEN ISNULL
+                     (
+                         ia.cleanup_script, 
+                         N'-- Unable to generate merge script for ' + 
+                         ia.index_name
+                     )
+                WHEN ia.action = N'DROP'
+                THEN N'ALTER INDEX ' +
+                     QUOTENAME(ia.index_name) +
+                     N' ON ' +
+                     QUOTENAME(ia.table_name) +
+                     N' DISABLE;'
+                ELSE N'???'
+            END
+    FROM IndexActions AS ia
+    WHERE ia.n = 1
+    AND 
+    (  
+         ia.cleanup_script IS NOT NULL 
+      OR action = N'DROP'
+    )
+    OPTION(RECOMPILE);
+
+    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #final_index_actions', 0, 0) WITH NOWAIT END; END;
+
+    IF @debug = 1
+    BEGIN
+
+        SELECT
+            table_name = '#final_index_actions',
+            fia.*
+        FROM #final_index_actions AS fia;
+
+        RAISERROR('Select from #final_index_actions', 0, 0) WITH NOWAIT;
+    END; 
 
     SELECT
         f.database_name,
@@ -1552,7 +2308,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         f.action,
         f.script,
         sort_order =
-            CASE action
+            CASE f.action
                 WHEN N'MERGE INTO' THEN 2
                 WHEN N'DROP' THEN 3
                 ELSE 999
@@ -1581,74 +2337,476 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   r.user_lookups = 0
     AND   r.user_updates = 0
     ORDER BY
-        table_name,
-        index_name,
-        sort_order;
+        f.table_name,
+        f.index_name,
+        sort_order
+    OPTION(RECOMPILE);
 
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating scripts', 0, 0) WITH NOWAIT;
+    END;
+
+    /*Merge into*/
     SELECT
-        @final_script += f.script + NCHAR(13) + NCHAR(10)
+        @final_script += 
+        N'
+        -- =============================================================================
+        -- MERGE INDEX: ' + 
+        QUOTENAME(f.index_name) + 
+        N' into ' +
+        QUOTENAME
+        (
+            SUBSTRING
+            (
+                f.action, 
+                12, 
+                CHARINDEX
+                (
+                    N' ', 
+                    f.action, 
+                    12
+                ) - 12
+            )
+        )+ 
+        N'
+        -- Reason: This index overlaps with another index and can be consolidated
+        -- Original definition: ' + 
+        NCHAR(10) +
+        (
+            SELECT 
+                MAX(ics.current_definition)
+            FROM #index_cleanup_summary AS ics 
+            WHERE ics.index_name = f.index_name 
+            AND   ics.table_name = f.table_name
+        ) + 
+        N'
+        -- Usage: Seeks: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        SUM(DISTINCT id.user_seeks)
+                    FROM #index_details AS id 
+                    WHERE id.table_name = f.table_name 
+                    AND   id.index_name = f.index_name
+                ), 
+                0
+            )
+        ) + 
+        N', Scans: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        SUM(DISTINCT id.user_scans)
+                    FROM #index_details AS id 
+                    WHERE id.table_name = f.table_name 
+                    AND   id.index_name = f.index_name
+                ), 
+                0
+            )
+        ) +
+        N', Lookups: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        SUM(DISTINCT id.user_lookups)
+                    FROM #index_details AS id 
+                    WHERE id.table_name = f.table_name 
+                    AND   id.index_name = f.index_name
+                ), 
+                0
+            )
+        ) +
+        N', Updates: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        SUM(DISTINCT id.user_updates)
+                    FROM #index_details AS id 
+                    WHERE id.table_name = f.table_name 
+                    AND   id.index_name = f.index_name
+                ), 
+                0
+            )
+        ) +
+        N'
+        -- Space saved: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        CONVERT
+                        (
+                            decimal(10,2), 
+                            SUM(ps.total_space_mb) / 1024.0
+                        )
+                    FROM #partition_stats AS ps
+                    WHERE ps.table_name = f.table_name 
+                    AND   ps.index_name = f.index_name
+                ), 
+                0
+            )
+        ) + N' GB
+        -- =============================================================================
+        ' + 
+        f.script + 
+        NCHAR(10) + 
+        NCHAR(10)
     FROM #final_index_actions AS f
     WHERE f.action LIKE N'MERGE INTO%'
     ORDER BY
         f.table_name,
         f.index_name;
-
+    
+    /*Drop indexes*/
     SELECT
-        @final_script += f.script + NCHAR(13) + NCHAR(10)
+        @final_script += N'
+        /*
+        -- =============================================================================
+        -- DROP INDEX: ' + 
+        QUOTENAME(f.index_name) + 
+        N'
+        -- Reason: This index is redundant with other indexes on the same table
+        -- Current usage: Seeks: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        SUM(DISTINCT id.user_seeks)
+                    FROM #index_details AS id 
+                    WHERE id.table_name = f.table_name 
+                    AND   id.index_name = f.index_name
+                ), 
+                0
+            )
+        ) + 
+        N', Scans: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        SUM(DISTINCT id.user_scans)
+                    FROM #index_details AS id 
+                    WHERE id.table_name = f.table_name 
+                    AND   id.index_name = f.index_name
+                ), 
+                0
+            )
+        ) +
+        N', Lookups: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        SUM(DISTINCT id.user_lookups) 
+                    FROM #index_details AS id 
+                    WHERE id.table_name = f.table_name 
+                    AND   id.index_name = f.index_name
+                ), 
+                0
+            )
+        ) +
+        N', Updates: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        SUM(DISTINCT id.user_updates)
+                    FROM #index_details AS id 
+                    WHERE id.table_name = f.table_name 
+                    AND   id.index_name = f.index_name
+                ), 
+                0
+            )
+        ) +
+        N'
+        -- Last used: ' + 
+        ISNULL
+        (
+            CONVERT
+            (
+                nvarchar(30), 
+                (
+                    SELECT 
+                        MAX
+                        (
+                            CASE 
+                                WHEN id.last_user_seek > id.last_user_scan 
+                                AND  id.last_user_seek > id.last_user_lookup 
+                                THEN id.last_user_seek
+                                WHEN id.last_user_scan > id.last_user_lookup
+                                THEN id.last_user_scan
+                                ELSE id.last_user_lookup
+                            END
+                        )
+                    FROM #index_details AS id 
+                    WHERE id.table_name = f.table_name 
+                    AND   id.index_name = f.index_name
+                ), 
+                120
+            ), 
+            'Never'
+        ) +
+        N'
+        -- Space reclaimed: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        CONVERT
+                        (
+                            decimal(10,2), 
+                            SUM(ps.total_space_mb) / 1024.0
+                        )
+                    FROM #partition_stats AS ps
+                    WHERE ps.table_name = f.table_name 
+                    AND   ps.index_name = f.index_name
+                ), 
+                0
+            )
+        ) + N' GB
+        -- =============================================================================
+        */' + 
+        f.script + 
+        NCHAR(10) + 
+        NCHAR(10)
     FROM #final_index_actions AS f
-    WHERE f.action IN
-          (
-              N'DROP',
-              N'MERGE INTO'
-          )
+    WHERE f.action = N'DROP'
     ORDER BY
         f.table_name,
         f.index_name;
-
+    
+    
+    
+    /*Unused indexes*/
     SELECT
-        @final_script +=
-            N'ALTER INDEX ' +
-            QUOTENAME(i.index_name) +
-            N' ON ' +
-            QUOTENAME(i.table_name) +
-            N' DISABLE;' +
-            NCHAR(13) + NCHAR(10)
-    FROM #index_cleanup_report AS i
-    WHERE i.user_seeks = 0
-    AND   i.user_scans = 0
-    AND   i.user_lookups = 0
-    AND   i.user_updates = 0
+        @final_script += N'
+        /*
+        -- =============================================================================
+        -- DISABLE UNUSED INDEX: ' + 
+        QUOTENAME(i.index_name) + 
+        N'
+        -- Reason: This index has never been used for reads but has been updated ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            i.user_updates
+        ) + 
+        N' times
+        -- Space reclaimed: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        CONVERT
+                        (
+                            decimal(10,2), 
+                            SUM(ps.total_space_mb) / 1024.0
+                        )
+                    FROM #partition_stats AS ps
+                    WHERE ps.table_name = i.table_name 
+                    AND   ps.index_name = i.index_name
+                ), 
+                0
+            )
+        ) + N' GB
+        -- Warning: Verify this index is truly not needed before dropping
+        -- =============================================================================
+        */' + 
+        NCHAR(10) +
+        N'ALTER INDEX ' + 
+        QUOTENAME(i.index_name) + 
+        N' ON ' + 
+        QUOTENAME(i.table_name) + 
+        N' DISABLE;' +  
+        NCHAR(10) +  
+        NCHAR(10)
+    FROM 
+    (
+        SELECT DISTINCT
+            icr.database_name,
+            icr.table_name,
+            icr.index_name,
+            icr.user_updates
+        FROM #index_cleanup_report AS icr
+        WHERE icr.user_seeks = 0
+        AND   icr.user_scans = 0
+        AND   icr.user_lookups = 0
+        AND   icr.user_updates = 0
+        AND   icr.action <> N'DROP'
+        AND   icr.action NOT LIKE N'MERGE INTO%'
+    ) AS i
     ORDER BY
         i.table_name,
         i.index_name;
-
-    PRINT N'----------------------';
-    PRINT N'Final script to review. DO NOT EXECUTE WITHOUT CAREFUL REVIEW.';
-    PRINT N'Implementation Script:';
-    PRINT N'----------------------';
+    
+    
+    /*Summary*/
     SELECT
-        @sql_len = LEN(@final_script);
+        @final_script += N'
+    -- =============================================================================
+    -- SUMMARY OF CHANGES
+    -- Total indexes analyzed: ' + 
+        CONVERT
+        (
+            nvarchar(10), 
+            (
+                SELECT 
+                    COUNT_BIG(*) 
+                FROM #index_cleanup_report AS icr
+            )
+        ) + 
+        N'
+    -- Indexes recommended for dropping: ' + 
+        CONVERT
+        (
+            nvarchar(10), 
+            (
+                SELECT 
+                    COUNT_BIG(*) 
+                FROM #index_cleanup_report AS icr 
+                WHERE icr.action = 'DROP'
+            )
+        ) + 
+        N'
+    -- Indexes recommended for merging: ' + 
+        CONVERT
+        (
+            nvarchar(10), 
+            (
+                SELECT 
+                    COUNT_BIG(*) 
+                FROM #index_cleanup_report AS icr 
+                WHERE icr.action LIKE 'MERGE INTO%'
+            )
+        ) + 
+        N'
+    -- Unused indexes found: ' + 
+        CONVERT
+        (
+            nvarchar(10), 
+            (
+                SELECT 
+                    COUNT_BIG(*) 
+                FROM #index_cleanup_report AS icr
+                WHERE icr.user_seeks = 0 
+                AND   icr.user_scans = 0 
+                AND   icr.user_lookups = 0
+            )
+        ) + 
+        N'
+    -- Estimated space savings: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        CONVERT
+                        (
+                            decimal(10,2), 
+                            SUM(ps.total_space_mb) / 1024.0
+                        )
+                    FROM #partition_stats AS ps
+                    JOIN #index_cleanup_report AS icr 
+                        ON ps.table_name = icr.table_name 
+                        AND ps.index_name = icr.index_name
+                    WHERE icr.action = 'DROP' 
+                        OR icr.action LIKE 'MERGE INTO%' 
+                        OR (icr.user_seeks = 0 AND icr.user_scans = 0 AND icr.user_lookups = 0)
+                ), 
+                0
+            )
+        ) + N' GB
+    -- Estimated write operations reduced: ' + 
+        CONVERT
+        (
+            nvarchar(20), 
+            ISNULL
+            (
+                (
+                    SELECT 
+                        SUM(icr.user_updates)
+                    FROM #index_cleanup_report AS icr
+                    WHERE icr.action = 'DROP' 
+                        OR icr.action LIKE 'MERGE INTO%' 
+                        OR (icr.user_seeks = 0 AND icr.user_scans = 0 AND icr.user_lookups = 0)
+                ), 
+                0
+            )
+        ) + N' operations
+    -- =============================================================================
+    ';
 
-    IF @sql_len < 4000
-    BEGIN
-        PRINT @sql;
-    END
-    ELSE
-    BEGIN
-        WHILE @helper <= @sql_len
-        BEGIN
-            SELECT
-                @sql_debug =
-                    SUBSTRING(@final_script, @helper + 1, 2000) + NCHAR(13) + NCHAR(10);
-
-            PRINT @sql_debug;
-            SET @helper += 2000;
-        END;
-    END;
+    SELECT 
+        [text()] = 
+            N'/* Index Cleanup Script for ' + 
+            @database_name +
+            N' */',
+        [text()] = 
+        (
+            SELECT 
+                NCHAR(10) +
+                N'        ----------------------' +
+                NCHAR(10) +
+                N'        -- Final script to review. DO NOT EXECUTE WITHOUT CAREFUL REVIEW.' +
+                NCHAR(10) +
+                N'        -- Implementation Script:' +
+                NCHAR(10) +
+                N'        ----------------------' +
+                NCHAR(10) +
+                @final_script 
+            FOR 
+                XML 
+                PATH(''), 
+                TYPE
+        ).value('(./text())[1]', 'nvarchar(max)')
+    FOR 
+        XML 
+        PATH(''), 
+        TYPE;
 
 END TRY
 BEGIN CATCH
-    PRINT N'Error occurred: ' + ERROR_MESSAGE();
+    THROW;
 END CATCH;
 END; /*Final End*/
 GO
