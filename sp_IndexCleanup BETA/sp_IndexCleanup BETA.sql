@@ -173,11 +173,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @final_script nvarchar(max) = '',
         /*cursor variables*/
         @c_database_id integer,
+        @c_database_name sysname,
+        @c_schema_id integer,
         @c_schema_name sysname,
+        @c_object_id integer,
         @c_table_name sysname,
+        @c_index_id integer,
         @c_index_name sysname,
         @c_is_unique bit,
         @c_filter_definition nvarchar(max),
+        @index_cursor CURSOR,
         /*print variables*/
         @helper integer = 0,
         @sql_len integer,
@@ -305,19 +310,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE 
         #filtered_objects
     (
-        database_id integer,
-        object_id integer,
-        schema_name sysname,
-        table_name sysname,
-        PRIMARY KEY (database_id, object_id)
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL, 
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NOT NULL
+        PRIMARY KEY 
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
         #operational_stats
     (
         database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
         object_id integer NOT NULL,
+        table_name sysname NOT NULL,
         index_id integer NOT NULL,
+        index_name sysname NOT NULL,
         range_scan_count bigint NULL,
         singleton_lookup_count bigint NULL,
         forwarded_fetch_count bigint NULL,
@@ -348,17 +363,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_io_latch_wait_in_ms bigint NULL,
         page_compression_attempt_count bigint NULL,
         page_compression_success_count bigint NULL,
-        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
         #index_details
     (
         database_id integer NOT NULL,
-        object_id integer NOT NULL,
-        index_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
         schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
         table_name sysname NOT NULL,
+        index_id integer NOT NULL,
         index_name sysname NULL,
         column_name sysname NOT NULL,
         is_primary_key bit NULL,
@@ -389,10 +407,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         #partition_stats
     (
         database_id integer NOT NULL,
-        object_id integer NOT NULL,
-        index_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
         schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
         table_name sysname NOT NULL,
+        index_id integer NOT NULL,
         index_name sysname NULL,
         partition_id bigint NOT NULL,
         partition_number int NOT NULL,
@@ -411,8 +431,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         #index_analysis
     (
         database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
         schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
         table_name sysname NOT NULL,
+        index_id integer NULL,
         index_name sysname NOT NULL,
         is_unique bit NULL,
         key_columns nvarchar(max) NULL,
@@ -429,8 +453,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE
         #index_cleanup_report
     (
+        database_id integer NOT NULL,
         database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
         table_name sysname NOT NULL,
+        index_id integer NOT NULL,
         index_name sysname NOT NULL,
         action nvarchar(max) NULL,
         cleanup_script nvarchar(max) NULL,
@@ -458,8 +487,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE
         #index_cleanup_summary
     (
+        database_id integer NOT NULL,
         database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
         table_name sysname NOT NULL,
+        index_id integer NOT NULL,
         index_name sysname NOT NULL,
         action nvarchar(max) NOT NULL,
         details nvarchar(max) NULL,
@@ -473,11 +507,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE
         #final_index_actions
     (
-        database_name sysname NOT NULL DEFAULT N'',
-        table_name sysname NOT NULL DEFAULT N'',
-        index_name sysname NOT NULL DEFAULT N'',
-        action nvarchar(max) NOT NULL DEFAULT N'',
-        script nvarchar(max) NOT NULL DEFAULT N''
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NOT NULL,
+        action nvarchar(max) NOT NULL,
+        script nvarchar(max) NOT NULL
     );
 
     /*
@@ -497,12 +536,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql = N'
     SELECT DISTINCT
         @database_id,
-        t.object_id,
-        s.name,
-        t.name
+        database_name = DB_NAME(@database_id),
+        schema_id = t.schema_id,
+        schema_name = s.name,
+        object_id = t.object_id,
+        table_name = t.name,
+        index_id = i.index_id,
+        index_name = i.name
     FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
     JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
       ON t.schema_id = s.schema_id
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.indexes AS i
+      ON t.object_id = i.object_id
     LEFT JOIN ' + QUOTENAME(@database_name) + N'.sys.dm_db_index_usage_stats AS us
       ON  t.object_id = us.object_id
       AND us.database_id = @database_id
@@ -568,9 +613,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (TABLOCK)
     (
         database_id,
-        object_id,
+        database_name,           
+        schema_id, 
         schema_name,
-        table_name
+        object_id,  
+        table_name,
+        index_id,
+        index_name
     )
     EXEC sys.sp_executesql
         @sql,
@@ -610,8 +659,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql += N'
     SELECT
         os.database_id,
+        database_name = DB_NAME(os.database_id),
+        schema_id = s.schema_id,
+        schema_name = s.name,
         os.object_id,
+        table_name = t.name,
         os.index_id,
+        index_name = i.name,
         range_scan_count = SUM(os.range_scan_count),
         singleton_lookup_count = SUM(os.singleton_lookup_count),
         forwarded_fetch_count = SUM(os.forwarded_fetch_count),
@@ -649,6 +703,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         NULL,
         NULL
     ) AS os
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.tables AS t
+      ON os.object_id = t.object_id
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
+      ON t.schema_id = s.schema_id
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.indexes AS i
+      ON  os.object_id = i.object_id
+      AND os.index_id = i.index_id
     WHERE EXISTS
     (
         SELECT
@@ -659,8 +720,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     GROUP BY
         os.database_id,
+        DB_NAME(os.database_id),
+        s.schema_id,
+        s.name,
         os.object_id,
-        os.index_id
+        t.name,
+        os.index_id,
+        i.name
     OPTION(RECOMPILE);';
 
     IF @debug = 1
@@ -674,8 +740,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (TABLOCK)
     (
         database_id,
+        database_name,
+        schema_id,
+        schema_name,
         object_id,
+        table_name,
         index_id,
+        index_name,
         range_scan_count,
         singleton_lookup_count,
         forwarded_fetch_count,
@@ -737,8 +808,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql += N'
     SELECT
         database_id = @database_id,
+        database_name = DB_NAME(@database_id),
         t.object_id,
         i.index_id,
+        s.schema_id,
         schema_name = s.name,
         table_name = t.name,
         index_name = i.name,
@@ -852,11 +925,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT 
             1/0
-        FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats ps
+        FROM ' + QUOTENAME(@database_name) + 
+        CONVERT
+        (
+            nvarchar(MAX), 
+            N'.sys.dm_db_partition_stats ps
         WHERE ps.object_id = t.object_id
         AND   ps.index_id = 1
         AND   ps.row_count >= @min_rows
-    )';
+    )'
+        );
 
     IF @object_id IS NOT NULL
     BEGIN
@@ -865,7 +943,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     SELECT
-        @sql += N'
+        @sql += CONVERT
+        (
+            nvarchar(max),
+            N'
     AND   NOT EXISTS
     (
           SELECT
@@ -875,7 +956,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND   so.is_ms_shipped = 0
           AND   so.type = N''TF''
     )
-    OPTION(RECOMPILE);';
+    OPTION(RECOMPILE);'
+        );
 
     IF @debug = 1
     BEGIN
@@ -889,8 +971,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (TABLOCK)
     (
         database_id,
+        database_name,
         object_id,
         index_id,
+        schema_id,
         schema_name,
         table_name,
         index_name,
@@ -949,8 +1033,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql += N'
     SELECT
         database_id = @database_id,
+        database_name = DB_NAME(@database_id),
         x.object_id,
         x.index_id,
+        x.schema_id,
         x.schema_name,
         x.table_name,
         x.index_name,
@@ -974,6 +1060,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             ps.object_id,
             ps.index_id,
+            s.schema_id,
             schema_name = s.name,
             table_name = t.name,
             index_name = i.name,
@@ -1020,6 +1107,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             t.name,
             i.name,
             i.data_space_id,
+            s.schema_id,
             s.name,
             p.partition_number,
             p.data_compression_desc,
@@ -1083,8 +1171,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         #partition_stats WITH(TABLOCK)
     (
         database_id,
+        database_name,
         object_id,
         index_id,
+        schema_id,
         schema_name,
         table_name,
         index_name,
@@ -1127,8 +1217,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (TABLOCK)
     (
         database_id,
+        database_name,
+        schema_id,
         schema_name,
         table_name,
+        object_id,
+        index_id,
         index_name,
         is_unique,
         key_columns,
@@ -1137,8 +1231,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     SELECT
         @database_id,
+        database_name = DB_NAME(@database_id),
+        id1.schema_id,
         id1.schema_name,
         id1.table_name,
+        id1.object_id,
+        id1.index_id,
         id1.index_name,
         id1.is_unique,
         key_columns =
@@ -1199,8 +1297,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE id1.is_eligible_for_dedupe = 1
     GROUP BY
         id1.schema_name,
+        id1.schema_id,
         id1.table_name,
         id1.index_name,
+        id1.index_id,
         id1.is_unique,
         id1.object_id,
         id1.index_id,
@@ -1223,9 +1323,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;  
 
     /*Analyze indexes*/
-    DECLARE
-        @index_cursor CURSOR;
-
     SET @index_cursor = CURSOR
         LOCAL
         STATIC
@@ -1234,8 +1331,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FOR
     SELECT DISTINCT
         ia.database_id,
+        ia.database_name,
+        ia.schema_id,
         ia.schema_name,
+        ia.object_id,
         ia.table_name,
+        ia.index_id,
         ia.index_name,
         ia.is_unique,
         ia.filter_definition
@@ -1250,8 +1351,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM @index_cursor
     INTO
         @c_database_id,
+        @c_database_name,
+        @c_schema_id,
         @c_schema_name,
+        @c_object_id,
         @c_table_name,
+        @c_index_id,
         @c_index_name,
         @c_is_unique,
         @c_filter_definition;
@@ -1268,26 +1373,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             IndexColumns AS
         (
             SELECT
-                id.database_id,
-                id.schema_name,
-                id.table_name,
-                id.index_name,
-                id.column_name,
-                id.is_included_column,
-                id.key_ordinal,
-                id.is_eligible_for_dedupe
+                id.*
             FROM #index_details id
             WHERE id.database_id = @c_database_id
-            AND   id.schema_name = @c_schema_name
-            AND   id.table_name = @c_table_name
-            AND   id.is_eligible_for_dedupe = 1
+           AND    id.object_id = @c_object_id
+           AND    id.is_eligible_for_dedupe = 1
         ),
             CurrentIndexColumns AS
         (
             SELECT
                 ic.*
             FROM IndexColumns AS ic
-            WHERE ic.index_name = @c_index_name
+            WHERE ic.index_id = @c_index_id
             AND   ic.is_eligible_for_dedupe = 1
         ),
             OtherIndexColumns AS
@@ -1295,7 +1392,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 ic.*
             FROM IndexColumns AS ic
-            WHERE ic.index_name <> @c_index_name
+            WHERE ic.index_id <> @c_index_id
             AND   ic.is_eligible_for_dedupe = 1
         )
         UPDATE
@@ -1439,8 +1536,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM @index_cursor
         INTO
             @c_database_id,
+            @c_database_name,
+            @c_schema_id,
             @c_schema_name,
+            @c_object_id,
             @c_table_name,
+            @c_index_id,
             @c_index_name,
             @c_is_unique,
             @c_filter_definition;
@@ -1491,8 +1592,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WITH
         (TABLOCK)
     (
+        database_id,
         database_name,
+        schema_id,
+        schema_name,
         table_name,
+        object_id,
+        index_id,
         index_name,
         action,
         cleanup_script,
@@ -1515,8 +1621,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_lock_wait_in_ms
     )
     SELECT
+        @database_id,
         @database_name,
+        ia.schema_id,
+        ia.schema_name,
         ia.table_name,
+        ia.object_id,
+        ia.index_id,
         ia.index_name,
         ia.action,
         cleanup_script =
@@ -1841,8 +1952,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WITH
         (TABLOCK)
     (
+        database_id,
         database_name,
+        schema_id,
+        schema_name,
         table_name,
+        object_id,
+        index_id,
         index_name,
         action,
         details,
@@ -1853,8 +1969,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         uptime_warning
     )
     SELECT
+        icr.database_id,
         icr.database_name,
+        icr.schema_id,
+        icr.schema_name,
         icr.table_name,
+        icr.object_id,
+        icr.index_id,
         icr.index_name,
         action =
             CASE
@@ -2221,72 +2342,326 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Performing #final_index_actions insert', 0, 0) WITH NOWAIT;
     END;     
     
-    WITH
-        IndexActions AS
+    -- Replace the existing INSERT into #final_index_actions for MERGE operations with this:
+    WITH 
+        MergeTargets AS 
     (
-        SELECT
-            icr.database_name,
-            icr.table_name,
-            icr.index_name,
-            icr.action,
-            icr.cleanup_script,
-            n = ROW_NUMBER() OVER
+        -- Get distinct target indexes for merges
+        SELECT DISTINCT
+            ia.database_id,
+            ia.database_name,
+            ia.schema_id,
+            ia.schema_name,
+            ia.object_id,
+            ia.table_name,
+            target_index = 
+                SUBSTRING
                 (
-                    PARTITION BY
-                        icr.table_name,
-                        icr.index_name
-                    ORDER BY
-                        CASE
-                            WHEN icr.action LIKE N'MERGE INTO%'
-                            THEN 1
-                            WHEN icr.action = N'DROP'
-                            THEN 2
-                            ELSE 3
-                        END
+                    ia.action, 
+                    12, 
+                    CHARINDEX
+                    (
+                        N' ', 
+                        ia.action + 
+                        N' ', 
+                        12
+                    ) - 12
                 )
-        FROM #index_cleanup_report icr
+        FROM #index_cleanup_report ia
+        WHERE ia.action LIKE N'MERGE INTO%'
     )
-    INSERT INTO
+    -- Insert a single CREATE INDEX statement for each target index
+    INSERT INTO 
         #final_index_actions
     WITH
         (TABLOCK)
     (
-        database_name,
-        table_name,
-        index_name,
-        action,
+        database_id, 
+        database_name, 
+        schema_id, 
+        schema_name, 
+        object_id, 
+        table_name, 
+        index_id, 
+        index_name, 
+        action, 
+        script
+    )
+    SELECT 
+        mt.database_id,
+        mt.database_name,
+        mt.schema_id,
+        mt.schema_name,
+        mt.object_id,
+        mt.table_name,
+        index_id = 
+            ISNULL
+            (
+                (
+                    SELECT TOP (1) 
+                        ia.index_id
+                    FROM #index_analysis ia
+                    WHERE ia.database_id = mt.database_id
+                    AND   ia.table_name = mt.table_name
+                    AND   ia.index_name = mt.target_index
+                ), 
+                0
+            ),
+        mt.target_index,
+        action =
+            N'MERGE CONSOLIDATED',
+        script = 
+            N'CREATE INDEX ' + 
+            QUOTENAME(mt.target_index) +
+            N' ON ' + 
+            QUOTENAME(mt.database_name) + 
+            N'.' + 
+            QUOTENAME(mt.schema_name) + 
+            N'.' + 
+            QUOTENAME(mt.table_name) +
+            N' (' +
+            -- Get key columns from one of the indexes being merged
+            (
+                SELECT TOP (1) 
+                    ia.key_columns
+                FROM #index_analysis ia
+                WHERE ia.database_id = mt.database_id
+                AND   ia.table_name = mt.table_name
+                AND   ia.index_name = mt.target_index
+            ) +
+            N')' +
+            -- Include all distinct columns from all indexes being merged into this target
+            CASE
+                WHEN EXISTS 
+                     (
+                         SELECT 
+                             1/0
+                         FROM #index_cleanup_report icr
+                         WHERE icr.database_id = mt.database_id
+                         AND   icr.table_name = mt.table_name
+                         AND   icr.action LIKE N'MERGE INTO ' + mt.target_index + N'%'
+                         AND 
+                         (
+                             EXISTS 
+                             (
+                                 SELECT 
+                                     1/0
+                                 FROM #index_analysis ia
+                                 WHERE ia.database_id = icr.database_id
+                                 AND   ia.table_name = icr.table_name
+                                 AND   ia.index_name = icr.index_name
+                                 AND   ia.included_columns IS NOT NULL
+                             )
+                             OR icr.action LIKE N'%ADD %'
+                         )
+                    )
+                THEN N' INCLUDE (' +
+                    STUFF
+                    (
+                      (
+                        SELECT DISTINCT 
+                            N', ' + 
+                            col
+                        FROM 
+                        (
+                            -- Get included columns from all source indexes
+                            SELECT 
+                                col = LTRIM(RTRIM(value.c.value('.', 'sysname')))
+                            FROM #index_cleanup_report icr
+                            CROSS APPLY 
+                            (
+                                SELECT 
+                                    ia.included_columns
+                                FROM #index_analysis ia
+                                WHERE ia.database_id = icr.database_id
+                                AND   ia.table_name = icr.table_name
+                                AND   ia.index_name = icr.index_name
+                            ) src
+                            CROSS APPLY 
+                            (
+                                SELECT 
+                                    cols =
+                                        CONVERT
+                                        (
+                                            xml,
+                                            '<c>' + 
+                                            REPLACE
+                                            (
+                                                ISNULL
+                                                (
+                                                    src.included_columns, 
+                                                    ''
+                                                ), 
+                                                ', ', 
+                                                '</c><c>') + 
+                                                '</c>'
+                                        )
+                            ) x
+                            CROSS APPLY x.cols.nodes('/c') AS value(c)
+                            WHERE icr.database_id = mt.database_id
+                            AND   icr.table_name = mt.table_name
+                            AND   icr.action LIKE N'MERGE INTO ' + mt.target_index + N'%'
+                            
+                            UNION
+                            
+                            -- Get missing columns which need to be added
+                            SELECT 
+                                col = 
+                                    LTRIM(RTRIM(value.c.value('.', 'sysname')))
+                            FROM #index_cleanup_report icr
+                            CROSS APPLY 
+                            (
+                                SELECT 
+                                    missing_cols =
+                                        SUBSTRING
+                                        (
+                                            icr.action,
+                                            CHARINDEX('ADD ', icr.action) + 4,
+                                            LEN(icr.action)
+                                        )
+                                WHERE icr.action LIKE N'%ADD %'
+                            ) mc
+                            CROSS APPLY 
+                            (
+                                SELECT 
+                                    cols =
+                                        CONVERT
+                                        (
+                                            xml, 
+                                            '<c>' + 
+                                            REPLACE
+                                            (
+                                                ISNULL
+                                                (
+                                                    mc.missing_cols, 
+                                                    ''
+                                                ), 
+                                                ', ', 
+                                                '</c><c>'
+                                            ) + '</c>'
+                                        )
+                            ) x
+                            CROSS APPLY x.cols.nodes('/c') AS value(c)
+                            WHERE icr.database_id = mt.database_id
+                            AND   icr.table_name = mt.table_name
+                            AND   icr.action LIKE N'MERGE INTO ' + mt.target_index + N'%'
+                            AND   icr.action LIKE N'%ADD %'
+                        ) AS all_columns
+                        WHERE DATALENGTH(col) > 0
+                        FOR 
+                            XML 
+                            PATH(''), 
+                            TYPE
+                      ).value('.', 'nvarchar(max)'), 
+                      1, 
+                      2, 
+                      ''
+                    ) +
+                    N')'
+                ELSE N''
+            END +
+            -- Add partitioning if needed
+            CASE
+                WHEN EXISTS 
+                (
+                    SELECT 
+                        1/0
+                    FROM #partition_stats ps
+                    WHERE ps.database_id = mt.database_id
+                    AND   ps.table_name = mt.table_name
+                    AND   ps.index_name = mt.target_index
+                    AND   ps.partition_function_name IS NOT NULL
+                )
+                THEN 
+                (
+                    SELECT TOP (1) 
+                        N' ON ' + 
+                        QUOTENAME(ps.partition_function_name) + 
+                        '(' + 
+                        ps.partition_columns + 
+                        ')'
+                    FROM #partition_stats ps
+                    WHERE ps.database_id = mt.database_id
+                    AND   ps.table_name = mt.table_name
+                    AND   ps.index_name = mt.target_index
+                    AND   ps.partition_function_name IS NOT NULL
+                )
+                ELSE N''
+            END +
+            -- Add filter definition if needed
+            CASE
+                WHEN EXISTS 
+                (
+                    SELECT 
+                        1/0
+                    FROM #index_analysis ia
+                    WHERE ia.database_id = mt.database_id
+                    AND   ia.table_name = mt.table_name
+                    AND   ia.index_name = mt.target_index
+                    AND   ia.filter_definition IS NOT NULL
+                )
+                THEN 
+                (
+                    SELECT TOP (1) 
+                        N' WHERE ' + 
+                        ia.filter_definition
+                    FROM #index_analysis ia
+                    WHERE ia.database_id = mt.database_id
+                    AND   ia.table_name = mt.table_name
+                    AND   ia.index_name = mt.target_index
+                    AND   ia.filter_definition IS NOT NULL
+                )
+                ELSE N''
+            END +
+            -- Add WITH options
+            N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            CASE 
+                WHEN @online = 'true'
+                THEN N'ON'
+                ELSE N'OFF'
+            END +
+        N', DATA_COMPRESSION = PAGE);'
+    FROM MergeTargets mt;
+    
+    -- Then add DISABLE statements for all source indexes
+    INSERT INTO 
+        #final_index_actions
+    WITH
+        (TABLOCK)
+    (
+        database_id, 
+        database_name, 
+        schema_id, 
+        schema_name, 
+        object_id, 
+        table_name, 
+        index_id, 
+        index_name, 
+        action, 
         script
     )
     SELECT
-        ia.database_name,
-        ia.table_name,
-        ia.index_name,
-        ia.action,
-        script =
-            CASE
-                WHEN ia.action LIKE N'MERGE INTO%'
-                THEN ISNULL
-                     (
-                         ia.cleanup_script, 
-                         N'-- Unable to generate merge script for ' + 
-                         ia.index_name
-                     )
-                WHEN ia.action = N'DROP'
-                THEN N'ALTER INDEX ' +
-                     QUOTENAME(ia.index_name) +
-                     N' ON ' +
-                     QUOTENAME(ia.table_name) +
-                     N' DISABLE;'
-                ELSE N'???'
-            END
-    FROM IndexActions AS ia
-    WHERE ia.n = 1
-    AND 
-    (  
-         ia.cleanup_script IS NOT NULL 
-      OR action = N'DROP'
-    )
-    OPTION(RECOMPILE);
+        icr.database_id,
+        icr.database_name,
+        icr.schema_id,
+        icr.schema_name,
+        icr.object_id,
+        icr.table_name,
+        icr.index_id,
+        icr.index_name,
+        action = N'DISABLE MERGED',
+        script = 
+            N'ALTER INDEX ' + 
+            QUOTENAME(icr.index_name) + 
+            N' ON ' + 
+            QUOTENAME(icr.database_name) + 
+            N'.' + 
+            QUOTENAME(icr.schema_name) + 
+            N'.' + 
+            QUOTENAME(icr.table_name) + 
+            N' DISABLE;'
+    FROM #index_cleanup_report icr
+    WHERE icr.action LIKE N'MERGE INTO%';
 
     IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #final_index_actions', 0, 0) WITH NOWAIT END; END;
 
@@ -2654,6 +3029,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         N'ALTER INDEX ' + 
         QUOTENAME(i.index_name) + 
         N' ON ' + 
+        QUOTENAME(i.database_name) +
+        N'.' +
+        QUOTENAME
+        (i.schema_name) +
+        N'.' +
         QUOTENAME(i.table_name) + 
         N' DISABLE;' +  
         NCHAR(10) +  
@@ -2662,6 +3042,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT DISTINCT
             icr.database_name,
+            icr.schema_name,
             icr.table_name,
             icr.index_name,
             icr.user_updates
