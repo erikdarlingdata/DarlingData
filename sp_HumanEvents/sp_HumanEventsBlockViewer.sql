@@ -473,12 +473,14 @@ BEGIN
     END;
 
     /* Parameter validation  */
-    IF @target_database IS NULL 
-    OR @target_schema IS NULL 
-    OR @target_table IS NULL 
+    IF @target_table IS NULL 
     OR @target_column IS NULL
     BEGIN
-        RAISERROR(N'When @target_type is ''table'', you must specify @target_database, @target_schema, @target_table, and @target_column.', 11, 1) WITH NOWAIT;
+        RAISERROR(N'
+        When @target_type is ''table'', you must specify @target_table and @target_column.
+        When @target_database or @target_schema is NULL, they default to DB_NAME() and dbo.
+        ', 
+        11, 1) WITH NOWAIT;
         RETURN;
     END;
 
@@ -1754,7 +1756,6 @@ BEGIN
     AND   e.x.exist(''@timestamp[. >= sql:variable("@start_date") and . < sql:variable("@end_date")]'') = 1';
         END;
     END;
-
 
     SET @extract_sql = @extract_sql + N'
     OPTION(RECOMPILE);
