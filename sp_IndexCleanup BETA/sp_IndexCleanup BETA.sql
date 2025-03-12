@@ -1351,8 +1351,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    AND   ia1.is_eligible_for_dedupe = 1
-    AND   ia2.is_eligible_for_dedupe = 1;
+    AND EXISTS (
+        SELECT 1/0 
+        FROM #index_details id1
+        WHERE id1.database_id = ia1.database_id
+        AND id1.object_id = ia1.object_id
+        AND id1.index_name = ia1.index_name
+        AND id1.is_eligible_for_dedupe = 1
+    )
+    AND EXISTS (
+        SELECT 1/0 
+        FROM #index_details id2
+        WHERE id2.database_id = ia2.database_id
+        AND id2.object_id = ia2.object_id
+        AND id2.index_name = ia2.index_name
+        AND id2.is_eligible_for_dedupe = 1
+    );
 
     /* Rule 3: Key duplicates - matching key columns, different includes */
     UPDATE 
@@ -1388,8 +1402,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    AND   ia1.is_eligible_for_dedupe = 1
-    AND   ia2.is_eligible_for_dedupe = 1;
+    AND EXISTS (
+        SELECT 1/0 
+        FROM #index_details id1
+        WHERE id1.database_id = ia1.database_id
+        AND id1.object_id = ia1.object_id
+        AND id1.index_name = ia1.index_name
+        AND id1.is_eligible_for_dedupe = 1
+    )
+    AND EXISTS (
+        SELECT 1/0 
+        FROM #index_details id2
+        WHERE id2.database_id = ia2.database_id
+        AND id2.object_id = ia2.object_id
+        AND id2.index_name = ia2.index_name
+        AND id2.is_eligible_for_dedupe = 1
+    );
     
     /* Rule 4: Superset/subset key columns */
     UPDATE 
@@ -1409,8 +1437,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    AND   ia1.is_eligible_for_dedupe = 1
-    AND   ia2.is_eligible_for_dedupe = 1;
+    AND EXISTS (
+        SELECT 1/0 
+        FROM #index_details id1
+        WHERE id1.database_id = ia1.database_id
+        AND id1.object_id = ia1.object_id
+        AND id1.index_name = ia1.index_name
+        AND id1.is_eligible_for_dedupe = 1
+    )
+    AND EXISTS (
+        SELECT 1/0 
+        FROM #index_details id2
+        WHERE id2.database_id = ia2.database_id
+        AND id2.object_id = ia2.object_id
+        AND id2.index_name = ia2.index_name
+        AND id2.is_eligible_for_dedupe = 1
+    );
 
 
     IF @debug = 1
