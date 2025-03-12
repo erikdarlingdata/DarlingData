@@ -478,12 +478,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         #compression_eligibility
     (
         database_id integer NOT NULL,
+        database_name sysname NOT NULL,
         schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
         object_id integer NOT NULL,
         table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NOT NULL,
         can_compress bit NOT NULL,
         reason nvarchar(200) NULL,
-        PRIMARY KEY (database_id, object_id)
+        PRIMARY KEY (database_id, object_id, index_id)
     );
 
     /*
@@ -622,17 +626,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     INSERT INTO #compression_eligibility
     (
         database_id,
+        database_name,
         schema_id,
+        schema_name,
         object_id,
         table_name,
+        index_id,
+        index_name,
         can_compress,
         reason
     )
-    SELECT DISTINCT
-        database_id,
-        schema_id,
-        object_id,
-        table_name,
+    SELECT 
+        fo.database_id,
+        fo.database_name,
+        fo.schema_id,
+        fo.schema_name,
+        fo.object_id,
+        fo.table_name,
+        fo.index_id,
+        fo.index_name,
         1, /* Default to compressible */
         NULL
     FROM #filtered_objects;
@@ -1712,8 +1724,9 @@ LEFT JOIN
     ia.object_id = ps.object_id AND
     ia.index_id = ps.index_id
 JOIN #compression_eligibility ce ON
-    ia.database_id = ce.database_id AND
-    ia.object_id = ce.object_id
+      ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id
 WHERE ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE')
 AND ce.can_compress = 1
 ORDER BY
@@ -1787,12 +1800,13 @@ LEFT JOIN
         ps.partition_function_name,
         ps.partition_columns
 ) ps ON
-    ia.database_id = ps.database_id AND
-    ia.object_id = ps.object_id AND
-    ia.index_id = ps.index_id
+      ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
 JOIN #compression_eligibility ce ON
-    ia.database_id = ce.database_id AND
-    ia.object_id = ce.object_id
+      ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id
 WHERE 
     /* Indexes that are not being disabled or merged */
     ia.action IS NULL OR ia.action = 'KEEP'
@@ -1881,12 +1895,13 @@ SELECT
         N', DATA_COMPRESSION = PAGE);'
 FROM #index_analysis ia
 JOIN #partition_stats ps ON
-    ia.database_id = ps.database_id AND
-    ia.object_id = ps.object_id AND
-    ia.index_id = ps.index_id
+      ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
 JOIN #compression_eligibility ce ON
-    ia.database_id = ce.database_id AND
-    ia.object_id = ce.object_id
+      ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id
 WHERE 
     /* Only partitioned indexes */
     ps.partition_function_name IS NOT NULL
@@ -1955,23 +1970,28 @@ SELECT
         END)
 FROM #index_analysis ia
 LEFT JOIN #partition_stats ps ON 
-    ia.database_id = ps.database_id AND
-    ia.object_id = ps.object_id AND
-    ia.index_id = ps.index_id
+      ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
 LEFT JOIN #compression_eligibility ce ON
-    ia.database_id = ce.database_id AND
-    ia.object_id = ce.object_id;
+      ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id;
 
 /* Report on tables that can't be compressed */
 SELECT
-    database_name = ce.database_name,
-    table_name = ce.table_name,
+    ce.database_name,
+    ce.schema_name,
+    ce.table_name,
+    ce.index_name,
     compression_ineligibility_reason = ce.reason
 FROM #compression_eligibility ce
 WHERE ce.can_compress = 0
 ORDER BY
     ce.database_name,
-    ce.table_name;
+    ce.schema_name,
+    ce.table_name,
+    ce.index_name;
 
 END TRY
 BEGIN CATCH
