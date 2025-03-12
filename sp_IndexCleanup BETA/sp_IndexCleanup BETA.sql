@@ -1818,7 +1818,7 @@ INSERT INTO #index_cleanup_results
 )
 SELECT 
     'HEADER',
-    9,
+    4, /* Just before merge scripts at sort_order 5 */
     'SEPARATOR',
     N'==================== INDEX SCRIPTS ====================';
 
@@ -1861,8 +1861,24 @@ SELECT
     MAX(ia.table_name),
     ia.key_columns,
     ISNULL(ia.filter_definition, ''),
-    /* Choose the first index by name as the winner (arbitrary but deterministic) */
-    MIN(ia.index_name),
+    /* Choose the index with most included columns as the winner (or first alphabetically if tied) */
+    (
+        SELECT TOP 1 candidate.index_name
+        FROM #index_analysis AS candidate
+        WHERE candidate.database_id = ia.database_id
+          AND candidate.object_id = ia.object_id
+          AND candidate.key_columns = ia.key_columns
+          AND ISNULL(candidate.filter_definition, '') = ISNULL(ia.filter_definition, '')
+          AND candidate.action = 'MERGE INCLUDES'
+          AND candidate.consolidation_rule = 'Key Duplicate'
+        ORDER BY 
+            /* First prefer indexes with "_Extended" in the name */
+            CASE WHEN candidate.index_name LIKE '%\_Extended%' ESCAPE '\' THEN 1 ELSE 0 END DESC,
+            /* Then prefer indexes with more included columns (by length as a proxy) */
+            LEN(ISNULL(candidate.included_columns, '')) DESC,
+            /* Then alphabetically for stability */
+            candidate.index_name
+    ),
     /* Build a list of other indexes in this group */
     STUFF((
         SELECT ', ' + inner_ia.index_name
