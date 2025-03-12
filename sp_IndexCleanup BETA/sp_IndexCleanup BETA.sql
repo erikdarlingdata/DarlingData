@@ -455,24 +455,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INDEX c CLUSTERED
             (database_id, schema_name, table_name, index_name)
     );
-
-    CREATE TABLE
-        #index_consolidation
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NOT NULL,
-        target_index_name sysname NULL,
-        consolidation_rule varchar(50) NULL,
-        index_priority integer NULL,
-        action varchar(50) NULL,
-        PRIMARY KEY (database_id, object_id, index_id)
-    );
     
     CREATE TABLE 
         #compression_eligibility
@@ -488,6 +470,48 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         can_compress bit NOT NULL,
         reason nvarchar(200) NULL,
         PRIMARY KEY (database_id, object_id, index_id)
+    );
+
+    CREATE TABLE 
+        #key_duplicate_dedupe
+    (
+        database_id integer NOT NULL,
+        object_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_name sysname NOT NULL,
+        table_name sysname NOT NULL,
+        base_key_columns nvarchar(max) NULL,
+        filter_definition nvarchar(max) NULL,
+        winning_index_name sysname NULL,
+        index_list nvarchar(max) NULL
+    );
+
+    CREATE TABLE 
+        #include_subset_dedupe
+    (
+        database_id integer NOT NULL,
+        object_id integer NOT NULL,
+        subset_index_name sysname NULL,
+        superset_index_name sysname NULL,
+        subset_included_columns nvarchar(max) NULL,
+        superset_included_columns nvarchar(max) NULL
+    );
+
+    CREATE TABLE 
+        #index_cleanup_results
+    (
+        result_type varchar(50) NOT NULL,  /* 'SUMMARY', 'MERGE', 'DISABLE', 'COMPRESS', etc. */
+        sort_order integer NOT NULL,       /* Keeps results in logical order */
+        database_name sysname NULL,
+        schema_name sysname NULL,
+        table_name sysname NULL,
+        index_name sysname NULL,
+        script_type nvarchar(50) NULL,     /* 'MERGE', 'DISABLE', 'COMPRESS', etc. */
+        consolidation_rule nvarchar(200) NULL,
+        target_index_name sysname NULL,
+        script nvarchar(max) NULL,
+        additional_info nvarchar(max) NULL, /* For stats, constraints, etc. */
+        superseded_info nvarchar(max) NULL  /* To store superseded_by information */
     );
 
     /*
@@ -1678,25 +1702,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating results', 0, 0) WITH NOWAIT;
     END;
 
-    /* 
-    Create a consolidated results table to hold all outputs in a single result set
-    This provides a more cohesive experience with summary information and scripts in one place
-    */
-    CREATE TABLE #index_cleanup_results
-    (
-        result_type varchar(50) NOT NULL,  /* 'SUMMARY', 'MERGE', 'DISABLE', 'COMPRESS', etc. */
-        sort_order integer NOT NULL,       /* Keeps results in logical order */
-        database_name sysname NULL,
-        schema_name sysname NULL,
-        table_name sysname NULL,
-        index_name sysname NULL,
-        script_type nvarchar(50) NULL,     /* 'MERGE', 'DISABLE', 'COMPRESS', etc. */
-        consolidation_rule nvarchar(200) NULL,
-        target_index_name sysname NULL,
-        script nvarchar(max) NULL,
-        additional_info nvarchar(max) NULL, /* For stats, constraints, etc. */
-        superseded_info nvarchar(max) NULL  /* To store superseded_by information */
-    );
 
 /* Insert summary statistics first */
 /* Add a separator row for the header */
@@ -1831,25 +1836,12 @@ SELECT
     'SEPARATOR',
     N'==================== END OF REPORT ====================';
 
-/* Find key duplicate groups that have multiple indexes with same action */
-IF OBJECT_ID('tempdb..#key_duplicate_dedup') IS NOT NULL
-    DROP TABLE #key_duplicate_dedup;
-
-CREATE TABLE #key_duplicate_dedup
-(
-    database_id int,
-    object_id int,
-    database_name sysname,
-    schema_name sysname,
-    table_name sysname,
-    base_key_columns nvarchar(max),
-    filter_definition nvarchar(max),
-    winning_index_name sysname,
-    index_list nvarchar(max)
-);
 
 /* Identify key duplicates where both indexes have MERGE INCLUDES action */
-INSERT INTO #key_duplicate_dedup
+INSERT INTO 
+    #key_duplicate_dedupe
+WITH
+    (TABLOCK)
 (
     database_id,
     object_id,
@@ -1901,7 +1893,7 @@ SET
     ia.target_index_name = kdd.winning_index_name,
     ia.superseded_by = NULL
 FROM #index_analysis AS ia
-JOIN #key_duplicate_dedup AS kdd
+JOIN #key_duplicate_dedupe AS kdd
   ON ia.database_id = kdd.database_id
   AND ia.object_id = kdd.object_id
   AND ia.key_columns = kdd.base_key_columns
@@ -1916,29 +1908,18 @@ SET
     ia.superseded_by = 'Supersedes ' + 
     REPLACE(kdd.index_list, ia.index_name + ', ', '') /* Remove self from list if present */
 FROM #index_analysis AS ia
-JOIN #key_duplicate_dedup AS kdd
+JOIN #key_duplicate_dedupe AS kdd
   ON ia.database_id = kdd.database_id
   AND ia.object_id = kdd.object_id
   AND ia.key_columns = kdd.base_key_columns
   AND ISNULL(ia.filter_definition, '') = kdd.filter_definition
 WHERE ia.index_name = kdd.winning_index_name;
 
-/* Handle included column subsets - find where one index's includes are a subset of another */
-IF OBJECT_ID('tempdb..#include_subset_dedup') IS NOT NULL
-    DROP TABLE #include_subset_dedup;
-
-CREATE TABLE #include_subset_dedup
-(
-    database_id int,
-    object_id int,
-    subset_index_name sysname,
-    superset_index_name sysname,
-    subset_included_columns nvarchar(max),
-    superset_included_columns nvarchar(max)
-);
-
 /* Find indexes with same key columns where one has includes that are a subset of another */
-INSERT INTO #include_subset_dedup
+INSERT INTO 
+    #include_subset_dedupe
+WITH
+    (TABLOCK)
 (
     database_id,
     object_id,
@@ -1983,7 +1964,7 @@ SET
     ia.target_index_name = isd.superset_index_name,
     ia.superseded_by = NULL
 FROM #index_analysis AS ia
-JOIN #include_subset_dedup AS isd
+JOIN #include_subset_dedupe AS isd
   ON ia.database_id = isd.database_id
   AND ia.object_id = isd.object_id
   AND ia.index_name = isd.subset_index_name;
@@ -1996,13 +1977,14 @@ SET
         ELSE ia.superseded_by + ', ' + isd.subset_index_name
     END
 FROM #index_analysis AS ia
-JOIN #include_subset_dedup AS isd
+JOIN #include_subset_dedupe AS isd
   ON ia.database_id = isd.database_id
   AND ia.object_id = isd.object_id
   AND ia.index_name = isd.superset_index_name;
 
 /* Insert merge scripts for indexes */
-INSERT INTO #index_cleanup_results
+INSERT INTO 
+    #index_cleanup_results
 (
     result_type,
     sort_order,
@@ -2126,7 +2108,8 @@ AND ce.can_compress = 1
 AND ia.target_index_name IS NULL;
 
 /* Insert disable scripts for unneeded indexes */
-INSERT INTO #index_cleanup_results
+INSERT INTO 
+    #index_cleanup_results
 (
     result_type,
     sort_order,
@@ -2178,7 +2161,8 @@ FROM #index_analysis AS ia
 WHERE ia.action = 'DISABLE';
 
 /* Insert compression scripts for remaining indexes */
-INSERT INTO #index_cleanup_results
+INSERT INTO 
+    #index_cleanup_results
 (
     result_type,
     sort_order,
@@ -2253,7 +2237,8 @@ WHERE
     AND ce.can_compress = 1;
 
 /* Insert disable scripts for unique constraints */
-INSERT INTO #index_cleanup_results
+INSERT INTO 
+    #index_cleanup_results
 (
     result_type,
     sort_order,
@@ -2292,8 +2277,10 @@ WHERE
     /* Only indexes that are being made unique */
     ia.action = 'MAKE UNIQUE'
     /* Find the constraint that matches the index being made unique */
-    AND EXISTS (
-        SELECT 1/0
+    AND EXISTS 
+    (
+        SELECT 
+            1/0
         FROM #index_details id_nc
         WHERE id_nc.database_id = ia.database_id
         AND id_nc.object_id = ia.object_id
@@ -2322,7 +2309,8 @@ WHERE
     );
 
 /* Insert per-partition compression scripts */
-INSERT INTO #index_cleanup_results
+INSERT INTO 
+    #index_cleanup_results
 (
     result_type,
     sort_order,
@@ -2388,7 +2376,10 @@ WHERE
 /* Space savings reporting has been moved to #index_cleanup_results table */
 
 /* Insert compression ineligible info */
-INSERT INTO #index_cleanup_results
+INSERT INTO 
+    #index_cleanup_results
+WITH
+    (TABLOCK)
 (
     result_type,
     sort_order,
