@@ -1831,6 +1831,176 @@ SELECT
     'SEPARATOR',
     N'==================== END OF REPORT ====================';
 
+/* Find key duplicate groups that have multiple indexes with same action */
+IF OBJECT_ID('tempdb..#key_duplicate_dedup') IS NOT NULL
+    DROP TABLE #key_duplicate_dedup;
+
+CREATE TABLE #key_duplicate_dedup
+(
+    database_id int,
+    object_id int,
+    database_name sysname,
+    schema_name sysname,
+    table_name sysname,
+    base_key_columns nvarchar(max),
+    filter_definition nvarchar(max),
+    winning_index_name sysname,
+    index_list nvarchar(max)
+);
+
+/* Identify key duplicates where both indexes have MERGE INCLUDES action */
+INSERT INTO #key_duplicate_dedup
+(
+    database_id,
+    object_id,
+    database_name,
+    schema_name,
+    table_name,
+    base_key_columns,
+    filter_definition,
+    winning_index_name,
+    index_list
+)
+SELECT
+    ia.database_id,
+    ia.object_id,
+    MAX(ia.database_name),
+    MAX(ia.schema_name),
+    MAX(ia.table_name),
+    ia.key_columns,
+    ISNULL(ia.filter_definition, ''),
+    /* Choose the first index by name as the winner (arbitrary but deterministic) */
+    MIN(ia.index_name),
+    /* Build a list of other indexes in this group */
+    STUFF((
+        SELECT ', ' + inner_ia.index_name
+        FROM #index_analysis AS inner_ia
+        WHERE inner_ia.database_id = ia.database_id
+          AND inner_ia.object_id = ia.object_id
+          AND inner_ia.key_columns = ia.key_columns
+          AND ISNULL(inner_ia.filter_definition, '') = ISNULL(ia.filter_definition, '')
+          AND inner_ia.action = 'MERGE INCLUDES'
+          AND inner_ia.consolidation_rule = 'Key Duplicate'
+        ORDER BY inner_ia.index_name
+        FOR XML PATH(''), TYPE
+    ).value('.', 'nvarchar(max)'), 1, 2, '')
+FROM #index_analysis AS ia
+WHERE ia.action = 'MERGE INCLUDES'
+  AND ia.consolidation_rule = 'Key Duplicate'
+GROUP BY
+    ia.database_id,
+    ia.object_id,
+    ia.key_columns,
+    ISNULL(ia.filter_definition, '')
+HAVING COUNT(*) > 1; /* Only groups with multiple MERGE INCLUDES */
+
+/* Update the index_analysis table to make only one index the winner in each group */
+UPDATE ia
+SET
+    ia.action = 'DISABLE',
+    ia.target_index_name = kdd.winning_index_name,
+    ia.superseded_by = NULL
+FROM #index_analysis AS ia
+JOIN #key_duplicate_dedup AS kdd
+  ON ia.database_id = kdd.database_id
+  AND ia.object_id = kdd.object_id
+  AND ia.key_columns = kdd.base_key_columns
+  AND ISNULL(ia.filter_definition, '') = kdd.filter_definition
+WHERE ia.index_name <> kdd.winning_index_name
+  AND ia.action = 'MERGE INCLUDES'
+  AND ia.consolidation_rule = 'Key Duplicate';
+
+/* Update the winning index's superseded_by to list all other indexes */
+UPDATE ia
+SET
+    ia.superseded_by = 'Supersedes ' + 
+    REPLACE(kdd.index_list, ia.index_name + ', ', '') /* Remove self from list if present */
+FROM #index_analysis AS ia
+JOIN #key_duplicate_dedup AS kdd
+  ON ia.database_id = kdd.database_id
+  AND ia.object_id = kdd.object_id
+  AND ia.key_columns = kdd.base_key_columns
+  AND ISNULL(ia.filter_definition, '') = kdd.filter_definition
+WHERE ia.index_name = kdd.winning_index_name;
+
+/* Handle included column subsets - find where one index's includes are a subset of another */
+IF OBJECT_ID('tempdb..#include_subset_dedup') IS NOT NULL
+    DROP TABLE #include_subset_dedup;
+
+CREATE TABLE #include_subset_dedup
+(
+    database_id int,
+    object_id int,
+    subset_index_name sysname,
+    superset_index_name sysname,
+    subset_included_columns nvarchar(max),
+    superset_included_columns nvarchar(max)
+);
+
+/* Find indexes with same key columns where one has includes that are a subset of another */
+INSERT INTO #include_subset_dedup
+(
+    database_id,
+    object_id,
+    subset_index_name,
+    superset_index_name,
+    subset_included_columns,
+    superset_included_columns
+)
+SELECT
+    ia1.database_id,
+    ia1.object_id,
+    ia1.index_name AS subset_index_name,
+    ia2.index_name AS superset_index_name,
+    ia1.included_columns AS subset_included_columns,
+    ia2.included_columns AS superset_included_columns
+FROM #index_analysis AS ia1
+JOIN #index_analysis AS ia2
+  ON ia1.database_id = ia2.database_id
+  AND ia1.object_id = ia2.object_id
+  AND ia1.key_columns = ia2.key_columns
+  AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')
+  AND ia1.index_name <> ia2.index_name
+  AND ia1.action = 'MERGE INCLUDES'
+  AND ia2.action = 'MERGE INCLUDES'
+  AND ia1.consolidation_rule = 'Key Duplicate'
+  AND ia2.consolidation_rule = 'Key Duplicate'
+  /* Find where subset's includes are contained within superset's includes */
+  AND (
+    ia1.included_columns IS NULL OR 
+    CHARINDEX(ia1.included_columns, ia2.included_columns) > 0
+  )
+  /* Don't match if lengths are the same (would be exact duplicates) */
+  AND (
+    ia1.included_columns IS NULL OR ia2.included_columns IS NULL OR
+    LEN(ia1.included_columns) < LEN(ia2.included_columns)
+  );
+
+/* Update the subset indexes to be disabled, since supersets already contain their columns */
+UPDATE ia
+SET
+    ia.action = 'DISABLE',
+    ia.target_index_name = isd.superset_index_name,
+    ia.superseded_by = NULL
+FROM #index_analysis AS ia
+JOIN #include_subset_dedup AS isd
+  ON ia.database_id = isd.database_id
+  AND ia.object_id = isd.object_id
+  AND ia.index_name = isd.subset_index_name;
+
+/* Update the superset indexes to indicate they supersede the subset indexes */
+UPDATE ia
+SET
+    ia.superseded_by = CASE
+        WHEN ia.superseded_by IS NULL THEN 'Supersedes ' + isd.subset_index_name
+        ELSE ia.superseded_by + ', ' + isd.subset_index_name
+    END
+FROM #index_analysis AS ia
+JOIN #include_subset_dedup AS isd
+  ON ia.database_id = isd.database_id
+  AND ia.object_id = isd.object_id
+  AND ia.index_name = isd.superset_index_name;
+
 /* Insert merge scripts for indexes */
 INSERT INTO #index_cleanup_results
 (
