@@ -170,6 +170,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @database_id integer = NULL,
         @object_id integer = NULL,
         @full_object_name nvarchar(768) = NULL,
+        @uptime_warning bit = 0, /* Will set after @uptime_days is calculated */
         /*print variables*/
         @online bit = 
             CASE 
@@ -182,6 +183,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 'true' /* Enterprise, Azure SQL DB, Managed Instance */
                 ELSE 'false'
             END,
+        /* Compression variables */
+        @can_compress bit = 
+            CASE 
+                WHEN CONVERT(int, SERVERPROPERTY('EngineEdition')) IN (3, 5, 8) 
+                    OR (CONVERT(int, SERVERPROPERTY('EngineEdition')) = 2 
+                        AND CONVERT(int, SUBSTRING(CONVERT(varchar(20), SERVERPROPERTY('ProductVersion')), 1, 2)) >= 13)
+                THEN 1
+                ELSE 0
+            END,
         @uptime_days nvarchar(10) = 
         (
             SELECT
@@ -193,6 +203,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 )
             FROM sys.dm_os_sys_info AS osi
         );
+        
+    /* Set uptime warning flag after @uptime_days is calculated */
+    SELECT 
+        @uptime_warning = 
+            CASE 
+                WHEN CONVERT(integer, @uptime_days) < 14 
+                THEN 1 
+                ELSE 0 
+            END;
 
     /*
     Initial checks for object validity
@@ -440,19 +459,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE
         #index_consolidation
     (
-        database_id int NOT NULL,
+        database_id integer NOT NULL,
         database_name sysname NOT NULL,
-        schema_id int NOT NULL,
+        schema_id integer NOT NULL,
         schema_name sysname NOT NULL,
-        object_id int NOT NULL,
+        object_id integer NOT NULL,
         table_name sysname NOT NULL,
-        index_id int NOT NULL,
+        index_id integer NOT NULL,
         index_name sysname NOT NULL,
         target_index_name sysname NULL,
         consolidation_rule varchar(50) NULL,
-        index_priority int NULL,
+        index_priority integer NULL,
         action varchar(50) NULL,
         PRIMARY KEY (database_id, object_id, index_id)
+    );
+    
+    CREATE TABLE 
+        #compression_eligibility
+    (
+        database_id integer NOT NULL,
+        schema_id integer NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        can_compress bit NOT NULL,
+        reason nvarchar(200) NULL,
+        PRIMARY KEY (database_id, object_id)
     );
 
     /*
@@ -580,6 +611,74 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#filtered_objects',
             fo.*
         FROM #filtered_objects AS fo;
+    END;
+    
+    /* Populate compression eligibility table */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Populating #compression_eligibility', 0, 0) WITH NOWAIT;
+    END;  
+    
+    INSERT INTO #compression_eligibility
+    (
+        database_id,
+        schema_id,
+        object_id,
+        table_name,
+        can_compress,
+        reason
+    )
+    SELECT DISTINCT
+        database_id,
+        schema_id,
+        object_id,
+        table_name,
+        1, /* Default to compressible */
+        NULL
+    FROM #filtered_objects;
+    
+    /* If SQL Server edition doesn't support compression, mark all as ineligible */
+    IF @can_compress = 0
+    BEGIN
+        UPDATE #compression_eligibility
+        SET 
+            can_compress = 0,
+            reason = 'SQL Server edition or version does not support compression'
+        WHERE can_compress = 1;
+    END;
+    
+    /* Check for sparse columns or incompatible data types */
+    IF @can_compress = 1
+    BEGIN
+        SELECT
+            @sql = N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+        
+        UPDATE ce
+        SET 
+            can_compress = 0,
+            reason = ''Table contains sparse columns or incompatible data types''
+        FROM #compression_eligibility ce
+        WHERE EXISTS 
+        (
+            SELECT 1/0
+            FROM ' + QUOTENAME(@database_name) + N'.sys.columns c
+            JOIN ' + QUOTENAME(@database_name) + N'.sys.types t 
+              ON c.user_type_id = t.user_type_id
+            WHERE c.object_id = ce.object_id
+            AND (c.is_sparse = 1 OR t.name IN (N''text'', N''ntext'', N''image''))
+        );
+        ';
+        
+        EXEC sys.sp_executesql @sql;
+    END;
+    
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#compression_eligibility',
+            ce.*
+        FROM #compression_eligibility AS ce;
     END;
 
     IF @debug = 1
@@ -1305,7 +1404,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     UPDATE 
         #index_analysis
     SET 
-        consolidation_rule = 'Unused Index',
+        consolidation_rule = 
+            CASE 
+                WHEN @uptime_warning = 1 
+                THEN 'Unused Index (WARNING: Server uptime < 14 days)'
+                ELSE 'Unused Index' 
+            END,
         action = 'DISABLE'
     WHERE EXISTS 
     (
@@ -1465,6 +1569,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.index_name = ia2.index_name
         AND   id2.is_eligible_for_dedupe = 1
     );
+    
+    /* Rule 5: Unique constraint vs. nonclustered index handling */
+    UPDATE 
+        ia1
+    SET 
+        ia1.consolidation_rule = 'Unique Constraint Replacement',
+        ia1.action = 
+            CASE 
+                WHEN ia1.is_unique = 0 
+                THEN 'MAKE UNIQUE'  /* Convert to unique index */
+                ELSE 'KEEP'  /* Already unique, so just keep it */
+            END
+    FROM #index_analysis ia1
+    WHERE ia1.consolidation_rule IS NULL /* Not already processed */
+    AND EXISTS 
+    (
+        /* Find nonclustered indexes */
+        SELECT 
+            1/0 
+        FROM #index_details id1
+        WHERE id1.database_id = ia1.database_id
+        AND   id1.object_id = ia1.object_id
+        AND   id1.index_name = ia1.index_name
+        AND   id1.is_eligible_for_dedupe = 1
+    )
+    AND EXISTS 
+    (
+        /* Find unique constraints with matching key columns */
+        SELECT 
+            1/0
+        FROM #index_details id2
+        WHERE id2.database_id = ia1.database_id
+        AND   id2.object_id = ia1.object_id
+        AND   id2.is_unique_constraint = 1
+        AND NOT EXISTS 
+        (
+            /* Verify key columns match between index and unique constraint */
+            SELECT 
+                id2_inner.column_name 
+            FROM #index_details id2_inner
+            WHERE id2_inner.database_id = id2.database_id
+            AND   id2_inner.object_id = id2.object_id
+            AND   id2_inner.index_id = id2.index_id
+            AND   id2_inner.is_included_column = 0
+            EXCEPT
+            SELECT 
+                id1_inner.column_name
+            FROM #index_details id1_inner
+            WHERE id1_inner.database_id = ia1.database_id
+            AND   id1_inner.object_id = ia1.object_id
+            AND   id1_inner.index_name = ia1.index_name
+            AND   id1_inner.is_included_column = 0
+        )
+    );
 
 
     IF @debug = 1
@@ -1482,43 +1640,234 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 /* Generate index merge scripts with compression and drop_existing */
 SELECT
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    target_index_name,
-    consolidation_rule,
+    ia.database_name,
+    ia.schema_name,
+    ia.table_name,
+    ia.index_name,
+    ia.target_index_name,
+    ia.consolidation_rule,
     merge_script =
-        'CREATE INDEX ' + QUOTENAME(index_name) +
-        ' ON ' + QUOTENAME(database_name) + '.' + QUOTENAME(schema_name) + '.' + QUOTENAME(table_name) +
-        ' (' + key_columns + ')' +
-        CASE WHEN included_columns IS NOT NULL AND LEN(included_columns) > 0
-             THEN ' INCLUDE (' + included_columns + ')'
-             ELSE ''
+        N'CREATE ' +
+        CASE WHEN ia.action = 'MAKE UNIQUE' THEN N'UNIQUE ' ELSE N'' END +
+        N'INDEX ' +
+        QUOTENAME(ia.index_name) +
+        N' ON ' +
+        QUOTENAME(ia.database_name) +
+        N'.' +
+        QUOTENAME(ia.schema_name) +
+        N'.' +
+        QUOTENAME(ia.table_name) +
+        N' (' +
+        ia.key_columns +
+        N')' +
+        CASE 
+            WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
+            THEN N' INCLUDE (' +
+                 ia.included_columns +
+                 N')'
+            ELSE N''
         END +
-        CASE WHEN filter_definition IS NOT NULL
-             THEN ' WHERE ' + filter_definition
-             ELSE ''
+        CASE 
+            WHEN ia.filter_definition IS NOT NULL
+            THEN N' WHERE ' +
+                 ia.filter_definition
+            ELSE N''
         END +
-        ' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ON, DATA_COMPRESSION = PAGE);'
-FROM #index_analysis
-WHERE action = 'MERGE INCLUDES'
-ORDER BY table_name, index_name;
+        CASE 
+            WHEN ps.partition_function_name IS NOT NULL
+            THEN N' ON ' +
+                 QUOTENAME(ps.partition_function_name) +
+                 N'(' +
+                 ISNULL(ps.partition_columns, N'') +
+                 N')'
+            WHEN ps.built_on IS NOT NULL
+            THEN N' ON ' +
+                 QUOTENAME(ps.built_on)
+            ELSE N''
+        END +
+        N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+        CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
+        N', DATA_COMPRESSION = PAGE);'
+FROM #index_analysis ia
+LEFT JOIN 
+(
+    /* Get the partition info for each index */
+    SELECT 
+        ps.database_id,
+        ps.object_id,
+        ps.index_id,
+        ps.built_on,
+        ps.partition_function_name,
+        ps.partition_columns
+    FROM #partition_stats ps
+    GROUP BY
+        ps.database_id,
+        ps.object_id,
+        ps.index_id,
+        ps.built_on,
+        ps.partition_function_name,
+        ps.partition_columns
+) ps ON
+    ia.database_id = ps.database_id AND
+    ia.object_id = ps.object_id AND
+    ia.index_id = ps.index_id
+JOIN #compression_eligibility ce ON
+    ia.database_id = ce.database_id AND
+    ia.object_id = ce.object_id
+WHERE ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE')
+AND ce.can_compress = 1
+ORDER BY
+    ia.table_name,
+    ia.index_name;
 
 /* Generate disable scripts for unneeded indexes */
 SELECT
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    consolidation_rule,
+    ia.database_name,
+    ia.schema_name,
+    ia.table_name,
+    ia.index_name,
+    ia.consolidation_rule,
     disable_script =
-        'ALTER INDEX ' + QUOTENAME(index_name) +
-        ' ON ' + QUOTENAME(database_name) + '.' + QUOTENAME(schema_name) + '.' + QUOTENAME(table_name) +
-        ' DISABLE;'
-FROM #index_analysis
-WHERE action = 'DISABLE'
-ORDER BY table_name, index_name;
+        N'ALTER INDEX ' +
+        QUOTENAME(ia.index_name) +
+        N' ON ' +
+        QUOTENAME(ia.database_name) +
+        N'.' +
+        QUOTENAME(ia.schema_name) +
+        N'.' +
+        QUOTENAME(ia.table_name) +
+        N' DISABLE;'
+FROM #index_analysis ia
+WHERE ia.action = 'DISABLE'
+ORDER BY
+    ia.table_name,
+    ia.index_name;
+
+/* Generate compression scripts for remaining indexes */
+SELECT
+    ia.database_name,
+    ia.schema_name,
+    ia.table_name,
+    ia.index_name,
+    compression_script =
+        N'ALTER INDEX ' +
+        QUOTENAME(ia.index_name) +
+        N' ON ' +
+        QUOTENAME(ia.database_name) +
+        N'.' +
+        QUOTENAME(ia.schema_name) +
+        N'.' +
+        QUOTENAME(ia.table_name) +
+        CASE 
+            WHEN ps.partition_function_name IS NOT NULL
+            THEN N' REBUILD PARTITION = ALL' 
+            ELSE N' REBUILD' 
+        END +
+        N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+        CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
+        N', DATA_COMPRESSION = PAGE);'
+FROM #index_analysis ia
+LEFT JOIN 
+(
+    /* Get the partition info for each index */
+    SELECT 
+        ps.database_id,
+        ps.object_id,
+        ps.index_id,
+        ps.built_on,
+        ps.partition_function_name,
+        ps.partition_columns
+    FROM #partition_stats ps
+    GROUP BY
+        ps.database_id,
+        ps.object_id,
+        ps.index_id,
+        ps.built_on,
+        ps.partition_function_name,
+        ps.partition_columns
+) ps ON
+    ia.database_id = ps.database_id AND
+    ia.object_id = ps.object_id AND
+    ia.index_id = ps.index_id
+JOIN #compression_eligibility ce ON
+    ia.database_id = ce.database_id AND
+    ia.object_id = ce.object_id
+WHERE 
+    /* Indexes that are not being disabled or merged */
+    ia.action IS NULL OR ia.action = 'KEEP'
+    /* Only indexes eligible for compression */
+    AND ce.can_compress = 1
+ORDER BY
+    ia.table_name,
+    ia.index_name;
+
+/* Generate index statistics and reporting */
+SELECT
+    report_title = N'Index Cleanup Summary',
+    tables_analyzed = COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
+    total_indexes = COUNT(*),
+    indexes_to_disable = SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END),
+    indexes_to_merge = SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END),
+    avg_indexes_per_table = CONVERT(DECIMAL(10,2), COUNT(*) * 1.0 / NULLIF(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 0))
+FROM #index_analysis ia;
+
+/* Generate estimated space savings report */
+SELECT
+    report_title = N'Estimated Space Savings',
+    space_saved_from_cleanup_mb = 
+        SUM(CASE 
+            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+            THEN ps.total_space_mb 
+            ELSE 0 
+        END),
+    estimated_min_compression_savings_mb = 
+        SUM(CASE 
+            WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
+            THEN ps.total_space_mb * 0.20 /* Conservative estimate - 20% compression ratio */
+            ELSE 0 
+        END),
+    estimated_max_compression_savings_mb = 
+        SUM(CASE 
+            WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
+            THEN ps.total_space_mb * 0.60 /* Optimistic estimate - 60% compression ratio */
+            ELSE 0 
+        END),
+    total_min_estimated_savings_mb = 
+        SUM(CASE 
+            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+            THEN ps.total_space_mb
+            WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
+            THEN ps.total_space_mb * 0.20
+            ELSE 0 
+        END),
+    total_max_estimated_savings_mb = 
+        SUM(CASE 
+            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+            THEN ps.total_space_mb
+            WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
+            THEN ps.total_space_mb * 0.60
+            ELSE 0 
+        END)
+FROM #index_analysis ia
+LEFT JOIN #partition_stats ps ON 
+    ia.database_id = ps.database_id AND
+    ia.object_id = ps.object_id AND
+    ia.index_id = ps.index_id
+LEFT JOIN #compression_eligibility ce ON
+    ia.database_id = ce.database_id AND
+    ia.object_id = ce.object_id;
+
+/* Report on tables that can't be compressed */
+SELECT
+    database_name = ce.database_name,
+    table_name = ce.table_name,
+    compression_ineligibility_reason = ce.reason
+FROM #compression_eligibility ce
+WHERE ce.can_compress = 0
+ORDER BY
+    ce.database_name,
+    ce.table_name;
+
 END TRY
 BEGIN CATCH
     THROW;
