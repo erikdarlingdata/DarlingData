@@ -1349,66 +1349,68 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia1.key_columns = ia2.key_columns  /* Exact key match */
       AND ISNULL(ia1.included_columns, '') = ISNULL(ia2.included_columns, '')  /* Exact includes match */
       AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
-    WHERE 
-        ia1.consolidation_rule IS NULL  /* Not already processed */
-        AND ia2.consolidation_rule IS NULL  /* Not already processed */
-        AND ia1.is_eligible_for_dedupe = 1
-        AND ia2.is_eligible_for_dedupe = 1;
+    WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
+    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    AND   ia1.is_eligible_for_dedupe = 1
+    AND   ia2.is_eligible_for_dedupe = 1;
 
-/* Rule 3: Key duplicates (matching key columns, different includes) */
-UPDATE ia1
-SET
-    ia1.consolidation_rule = 'Key Duplicate',
-    ia1.target_index_name =
-        CASE
-            /* If one is unique and the other isn't, prefer the unique one */
-            WHEN ia1.is_unique = 1 AND ia2.is_unique = 0 THEN NULL
-            WHEN ia1.is_unique = 0 AND ia2.is_unique = 1 THEN ia2.index_name
-            /* Otherwise use priority */
-            WHEN ia1.index_priority >= ia2.index_priority THEN NULL
-            ELSE ia2.index_name
-        END,
-    ia1.action =
-        CASE
-            WHEN (ia1.is_unique = 1 AND ia2.is_unique = 0) OR
-                 (ia1.index_priority >= ia2.index_priority AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1))
-            THEN 'MERGE INCLUDES'  /* Keep this index but merge includes */
-            ELSE 'DISABLE'  /* Other index is keeper, disable this one */
-        END
-FROM #index_analysis ia1
-JOIN #index_analysis ia2 ON
-    ia1.database_id = ia2.database_id
-    AND ia1.object_id = ia2.object_id
-    AND ia1.index_name <> ia2.index_name
-    AND ia1.key_columns = ia2.key_columns  /* Exact key match */
-    AND ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')  /* Different includes */
-    AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
-WHERE
-    ia1.consolidation_rule IS NULL  /* Not already processed */
-    AND ia2.consolidation_rule IS NULL  /* Not already processed */
-    AND ia1.is_eligible_for_dedupe = 1
-    AND ia2.is_eligible_for_dedupe = 1;
-
-/* Rule 4: Superset/subset key columns */
-UPDATE ia1
-SET
-    ia1.consolidation_rule = 'Key Subset',
-    ia1.target_index_name = ia2.index_name,
-    ia1.action = 'DISABLE'  /* The narrower index gets disabled */
-FROM #index_analysis ia1
-JOIN #index_analysis ia2 ON
-    ia1.database_id = ia2.database_id
+    /* Rule 3: Key duplicates - matching key columns, different includes */
+    UPDATE 
+        ia1
+    SET 
+        ia1.consolidation_rule = 'Key Duplicate',
+        ia1.target_index_name = 
+            CASE 
+                /* If one is unique and the other isn't, prefer the unique one */
+                WHEN ia1.is_unique = 1 AND ia2.is_unique = 0 
+                THEN NULL
+                WHEN ia1.is_unique = 0 AND ia2.is_unique = 1 
+                THEN ia2.index_name
+                /* Otherwise use priority */
+                WHEN ia1.index_priority >= ia2.index_priority 
+                THEN NULL
+                ELSE ia2.index_name
+            END,
+        ia1.action = 
+            CASE 
+                WHEN (ia1.is_unique = 1 AND ia2.is_unique = 0) OR
+                     (ia1.index_priority >= ia2.index_priority AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1))
+                THEN 'MERGE INCLUDES'  /* Keep this index but merge includes */
+                ELSE 'DISABLE'  /* Other index is keeper, disable this one */
+            END
+    FROM #index_analysis ia1
+    JOIN #index_analysis ia2 
+      ON  ia1.database_id = ia2.database_id
+      AND ia1.object_id = ia2.object_id
+      AND ia1.index_name <> ia2.index_name
+      AND ia1.key_columns = ia2.key_columns  /* Exact key match */
+      AND ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')  /* Different includes */
+      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+    WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
+    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    AND   ia1.is_eligible_for_dedupe = 1
+    AND   ia2.is_eligible_for_dedupe = 1;
+    
+    /* Rule 4: Superset/subset key columns */
+    UPDATE 
+        ia1
+    SET 
+        ia1.consolidation_rule = 'Key Subset',
+        ia1.target_index_name = ia2.index_name,
+        ia1.action = 'DISABLE'  /* The narrower index gets disabled */
+    FROM #index_analysis ia1
+    JOIN #index_analysis ia2 
+    ON  ia1.database_id = ia2.database_id
     AND ia1.object_id = ia2.object_id
     AND ia1.index_name <> ia2.index_name
     AND ia2.key_columns LIKE (ia1.key_columns + '%')  /* ia2 has wider key that starts with ia1's key */
     AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
     /* Exception: If narrower index is unique and wider is not, they should not be merged */
     AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
-WHERE
-    ia1.consolidation_rule IS NULL  /* Not already processed */
-    AND ia2.consolidation_rule IS NULL  /* Not already processed */
-    AND ia1.is_eligible_for_dedupe = 1
-    AND ia2.is_eligible_for_dedupe = 1;
+    WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
+    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    AND   ia1.is_eligible_for_dedupe = 1
+    AND   ia2.is_eligible_for_dedupe = 1;
 
 
     IF @debug = 1
