@@ -52,7 +52,7 @@ BEGIN TRY
     SELECT
         warning = N'Read the messages pane carefully!'
 
-    PRINT '
+    PRINT N'
 -------------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------------
 -------------------------------------------------------------------------------------------
@@ -643,7 +643,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         UPDATE #compression_eligibility
         SET 
             can_compress = 0,
-            reason = 'SQL Server edition or version does not support compression'
+            reason = N'SQL Server edition or version does not support compression'
         WHERE can_compress = 1;
     END;
     
