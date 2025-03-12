@@ -352,6 +352,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     );
 
     CREATE TABLE
+        #partition_stats
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NULL,
+        partition_id bigint NOT NULL,
+        partition_number int NOT NULL,
+        total_rows bigint NULL,
+        total_space_mb decimal(38, 2) NULL,
+        reserved_lob_mb decimal(38, 2) NULL,
+        reserved_row_overflow_mb decimal(38, 2) NULL,
+        data_compression_desc nvarchar(60) NULL,
+        built_on sysname NULL,
+        partition_function_name sysname NULL,
+        partition_columns nvarchar(max)
+        PRIMARY KEY CLUSTERED(database_id, object_id, index_id, partition_id)
+    );
+
+    CREATE TABLE
         #index_details
     (
         database_id integer NOT NULL,
@@ -385,30 +409,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_update datetime NULL,
         is_eligible_for_dedupe bit NOT NULL
         PRIMARY KEY CLUSTERED(database_id, object_id, index_id, column_name)
-    );
-
-    CREATE TABLE
-        #partition_stats
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NULL,
-        partition_id bigint NOT NULL,
-        partition_number int NOT NULL,
-        total_rows bigint NULL,
-        total_space_mb decimal(38, 2) NULL,
-        reserved_lob_mb decimal(38, 2) NULL,
-        reserved_row_overflow_mb decimal(38, 2) NULL,
-        data_compression_desc nvarchar(60) NULL,
-        built_on sysname NULL,
-        partition_function_name sysname NULL,
-        partition_columns nvarchar(max)
-        PRIMARY KEY CLUSTERED(database_id, object_id, index_id, partition_id)
     );
 
     CREATE TABLE
