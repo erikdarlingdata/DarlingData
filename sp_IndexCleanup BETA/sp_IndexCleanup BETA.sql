@@ -1849,7 +1849,9 @@ INSERT INTO #index_cleanup_results
 )
 SELECT
     'MERGE',
-    10,
+    /* Put merge target indexes higher in sort order (5) so they appear before 
+       indexes that will be disabled (20) */
+    5,
     ia.database_name,
     ia.schema_name,
     ia.table_name,
@@ -1950,7 +1952,8 @@ JOIN #compression_eligibility AS ce
   AND ia.index_id = ce.index_id
 WHERE ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE')
 AND ce.can_compress = 1
-AND ia.target_index_name IS NULL  /* Only create merge scripts for the "winning" indexes */;
+/* Only create merge scripts for the indexes that should remain after merging */
+AND ia.target_index_name IS NULL;
 
 /* Insert disable scripts for unneeded indexes */
 INSERT INTO #index_cleanup_results
@@ -1995,6 +1998,8 @@ SELECT
             THEN N'This index has the same keys as: ' + ISNULL(ia.target_index_name, N'(unknown)')
         WHEN ia.consolidation_rule LIKE 'Unused Index%' 
             THEN ia.consolidation_rule
+        WHEN ia.action = 'DISABLE'
+            THEN N'This index is redundant and will be disabled'
         ELSE N'This index is redundant'
     END,
     ia.target_index_name,  /* Include the target index name */
@@ -2240,12 +2245,15 @@ WHERE ce.can_compress = 0;
 Return the consolidated results in a single result set
 Results are ordered by:
 1. Summary information (overall stats, savings estimates)
-2. Merge scripts (includes merges and unique conversions)
-3. Disable scripts (for redundant indexes)
+2. Merge scripts (includes merges and unique conversions) - sort_order 5
+3. Disable scripts (for redundant indexes) - sort_order 20
 4. Constraint scripts (for unique constraints to disable)
 5. Compression scripts (for tables eligible for compression)
 6. Partition-specific compression scripts
 7. Ineligible objects (tables that can't be compressed)
+
+Note: Merge target scripts are sorted higher in the results (sort_order 5)
+so that new merged indexes are created before subset indexes are disabled.
 */
 SELECT
     /* First, show the information needed to understand the script */
