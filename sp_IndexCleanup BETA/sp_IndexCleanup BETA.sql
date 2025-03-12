@@ -623,7 +623,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Populating #compression_eligibility', 0, 0) WITH NOWAIT;
     END;  
     
-    INSERT INTO #compression_eligibility
+    INSERT INTO 
+        #compression_eligibility
+    WITH
+        (TABLOCK)
     (
         database_id,
         database_name,
@@ -647,7 +650,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         fo.index_name,
         1, /* Default to compressible */
         NULL
-    FROM #filtered_objects;
+    FROM #filtered_objects AS fo;
     
     /* If SQL Server edition doesn't support compression, mark all as ineligible */
     IF @can_compress = 0
@@ -1552,13 +1555,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia1.action = 'DISABLE'  /* The narrower index gets disabled */
     FROM #index_analysis ia1
     JOIN #index_analysis ia2 
-    ON  ia1.database_id = ia2.database_id
-    AND ia1.object_id = ia2.object_id
-    AND ia1.index_name <> ia2.index_name
-    AND ia2.key_columns LIKE (ia1.key_columns + '%')  /* ia2 has wider key that starts with ia1's key */
-    AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
-    /* Exception: If narrower index is unique and wider is not, they should not be merged */
-    AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
+      ON  ia1.database_id = ia2.database_id
+      AND ia1.object_id = ia2.object_id
+      AND ia1.index_name <> ia2.index_name
+      AND ia2.key_columns LIKE (ia1.key_columns + '%')  /* ia2 has wider key that starts with ia1's key */
+      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+      /* Exception: If narrower index is unique and wider is not, they should not be merged */
+      AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
     AND EXISTS 
@@ -1719,14 +1722,14 @@ LEFT JOIN
         ps.built_on,
         ps.partition_function_name,
         ps.partition_columns
-) ps ON
-    ia.database_id = ps.database_id AND
-    ia.object_id = ps.object_id AND
-    ia.index_id = ps.index_id
-JOIN #compression_eligibility ce ON
-      ia.database_id = ce.database_id
-      AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id
+) ps 
+  ON  ia.database_id = ps.database_id 
+  AND ia.object_id = ps.object_id
+  AND ia.index_id = ps.index_id
+JOIN #compression_eligibility ce 
+  ON  ia.database_id = ce.database_id
+  AND ia.object_id = ce.object_id
+  AND ia.index_id = ce.index_id
 WHERE ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE')
 AND ce.can_compress = 1
 ORDER BY
@@ -1799,14 +1802,14 @@ LEFT JOIN
         ps.built_on,
         ps.partition_function_name,
         ps.partition_columns
-) ps ON
-      ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
-JOIN #compression_eligibility ce ON
-      ia.database_id = ce.database_id
-      AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id
+) ps 
+  ON  ia.database_id = ps.database_id
+  AND ia.object_id = ps.object_id
+  AND ia.index_id = ps.index_id
+JOIN #compression_eligibility ce 
+  ON  ia.database_id = ce.database_id
+  AND ia.object_id = ce.object_id
+  AND ia.index_id = ce.index_id
 WHERE 
     /* Indexes that are not being disabled or merged */
     ia.action IS NULL OR ia.action = 'KEEP'
@@ -1834,10 +1837,10 @@ SELECT
         QUOTENAME(id.index_name) +
         N';'
 FROM #index_analysis ia
-JOIN #index_details id ON
-    id.database_id = ia.database_id AND
-    id.object_id = ia.object_id AND
-    id.is_unique_constraint = 1
+JOIN #index_details id 
+  ON  id.database_id = ia.database_id
+  AND id.object_id = ia.object_id
+  AND id.is_unique_constraint = 1
 WHERE 
     /* Only indexes that are being made unique */
     ia.action = 'MAKE UNIQUE'
@@ -1849,20 +1852,25 @@ WHERE
         AND id_nc.object_id = ia.object_id
         AND id_nc.index_name = ia.index_name
         /* Matching key columns */
-        AND NOT EXISTS (
-            SELECT id.column_name 
+        AND NOT EXISTS 
+        (
+            SELECT 
+                id.column_name 
             FROM #index_details id_inner
             WHERE id_inner.database_id = id.database_id
-            AND id_inner.object_id = id.object_id
-            AND id_inner.index_id = id.index_id
-            AND id_inner.is_included_column = 0
+            AND   id_inner.object_id = id.object_id
+            AND   id_inner.index_id = id.index_id
+            AND   id_inner.is_included_column = 0
+            
             EXCEPT
-            SELECT id_nc_inner.column_name
+            
+            SELECT 
+                id_nc_inner.column_name
             FROM #index_details id_nc_inner
             WHERE id_nc_inner.database_id = id_nc.database_id
-            AND id_nc_inner.object_id = id_nc.object_id
-            AND id_nc_inner.index_name = id_nc.index_name
-            AND id_nc_inner.is_included_column = 0
+            AND   id_nc_inner.object_id = id_nc.object_id
+            AND   id_nc_inner.index_name = id_nc.index_name
+            AND   id_nc_inner.is_included_column = 0
         )
     )
 ORDER BY
@@ -1894,14 +1902,14 @@ SELECT
         CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
         N', DATA_COMPRESSION = PAGE);'
 FROM #index_analysis ia
-JOIN #partition_stats ps ON
-      ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
-JOIN #compression_eligibility ce ON
-      ia.database_id = ce.database_id
-      AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id
+JOIN #partition_stats ps 
+  ON  ia.database_id = ps.database_id
+  AND ia.object_id = ps.object_id
+  AND ia.index_id = ps.index_id
+JOIN #compression_eligibility ce 
+  ON  ia.database_id = ce.database_id
+  AND ia.object_id = ce.object_id
+  AND ia.index_id = ce.index_id
 WHERE 
     /* Only partitioned indexes */
     ps.partition_function_name IS NOT NULL
@@ -1969,14 +1977,14 @@ SELECT
             ELSE 0 
         END)
 FROM #index_analysis ia
-LEFT JOIN #partition_stats ps ON 
-      ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
-LEFT JOIN #compression_eligibility ce ON
-      ia.database_id = ce.database_id
-      AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id;
+LEFT JOIN #partition_stats ps 
+  ON  ia.database_id = ps.database_id
+  AND ia.object_id = ps.object_id
+  AND ia.index_id = ps.index_id
+LEFT JOIN #compression_eligibility ce 
+  ON  ia.database_id = ce.database_id
+  AND ia.object_id = ce.object_id
+  AND ia.index_id = ce.index_id;
 
 /* Report on tables that can't be compressed */
 SELECT
