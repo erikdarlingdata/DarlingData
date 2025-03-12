@@ -450,7 +450,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         missing_columns nvarchar(max) NULL,
         action nvarchar(max) NULL,
         target_index_name sysname NULL,
-        consolidation_rule varchar(50) NULL,
+        consolidation_rule varchar(512) NULL,
         index_priority int NULL,
         INDEX c CLUSTERED
             (database_id, schema_name, table_name, index_name)
