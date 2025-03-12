@@ -384,9 +384,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         partition_id bigint NOT NULL,
         partition_number int NOT NULL,
         total_rows bigint NULL,
-        total_space_mb decimal(38, 2) NULL,
-        reserved_lob_mb decimal(38, 2) NULL,
-        reserved_row_overflow_mb decimal(38, 2) NULL,
+        total_space_gb decimal(38, 4) NULL, /* Using 4 decimal places for GB to maintain precision */
+        reserved_lob_gb decimal(38, 4) NULL, /* Using 4 decimal places for GB to maintain precision */
+        reserved_row_overflow_gb decimal(38, 4) NULL, /* Using 4 decimal places for GB to maintain precision */
         data_compression_desc nvarchar(60) NULL,
         built_on sysname NULL,
         partition_function_name sysname NULL,
@@ -673,12 +673,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SET 
             can_compress = 0,
             reason = ''Table contains sparse columns or incompatible data types''
-        FROM #compression_eligibility ce
+        FROM #compression_eligibility AS ce
         WHERE EXISTS 
         (
             SELECT 1/0
-            FROM ' + QUOTENAME(@database_name) + N'.sys.columns c
-            JOIN ' + QUOTENAME(@database_name) + N'.sys.types t 
+            FROM ' + QUOTENAME(@database_name) + N'.sys.columns AS c
+            JOIN ' + QUOTENAME(@database_name) + N'.sys.types AS t 
               ON c.user_type_id = t.user_type_id
             WHERE c.object_id = ce.object_id
             AND (c.is_sparse = 1 OR t.name IN (N''text'', N''ntext'', N''image''))
@@ -764,7 +764,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT
             1/0
-        FROM #filtered_objects fo
+        FROM #filtered_objects AS fo
         WHERE fo.database_id = os.database_id
         AND   fo.object_id = os.object_id
     )
@@ -967,7 +967,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT
             1/0
-        FROM #filtered_objects fo
+        FROM #filtered_objects AS fo
         WHERE fo.database_id = @database_id
         AND   fo.object_id = t.object_id
     )        
@@ -1117,9 +1117,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.partition_id,
             p.partition_number,
             total_rows = SUM(ps.row_count),
-            total_space_mb = SUM(a.total_pages) * 8 / 1024.0,
-            reserved_lob_mb = SUM(ps.lob_reserved_page_count) * 8. / 1024.,
-            reserved_row_overflow_mb = SUM(ps.row_overflow_reserved_page_count) * 8. / 1024.,
+            total_space_gb = SUM(a.total_pages) * 8 / 1024.0 / 1024.0, /* Convert directly to GB */
+            reserved_lob_gb = SUM(ps.lob_reserved_page_count) * 8. / 1024. / 1024.0, /* Convert directly to GB */
+            reserved_row_overflow_gb = SUM(ps.row_overflow_reserved_page_count) * 8. / 1024. / 1024.0, /* Convert directly to GB */
             p.data_compression_desc,
             i.data_space_id
         FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
@@ -1140,7 +1140,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
             SELECT
                 1/0
-            FROM #filtered_objects fo
+            FROM #filtered_objects AS fo
             WHERE fo.database_id = @database_id
             AND   fo.object_id = t.object_id
         )';
@@ -1231,9 +1231,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         partition_id,
         partition_number,
         total_rows,
-        total_space_mb,
-        reserved_lob_mb,
-        reserved_row_overflow_mb,
+        total_space_gb,
+        reserved_lob_gb,
+        reserved_row_overflow_gb,
         data_compression_desc,
         built_on,
         partition_function_name,
@@ -1460,8 +1460,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 'KEEP'  /* This index is the keeper */
                 ELSE 'DISABLE'  /* Other index gets disabled */
             END
-    FROM #index_analysis ia1
-    JOIN #index_analysis ia2 
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2 
       ON  ia1.database_id = ia2.database_id
       AND ia1.object_id = ia2.object_id
       AND ia1.index_name <> ia2.index_name
@@ -1523,8 +1523,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 'Supersedes ' + ia2.index_name
                 ELSE NULL
             END
-    FROM #index_analysis ia1
-    JOIN #index_analysis ia2 
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2 
       ON  ia1.database_id = ia2.database_id
       AND ia1.object_id = ia2.object_id
       AND ia1.index_name <> ia2.index_name
@@ -1561,8 +1561,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia1.consolidation_rule = 'Key Subset',
         ia1.target_index_name = ia2.index_name,
         ia1.action = 'DISABLE'  /* The narrower index gets disabled */
-    FROM #index_analysis ia1
-    JOIN #index_analysis ia2 
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2 
       ON  ia1.database_id = ia2.database_id
       AND ia1.object_id = ia2.object_id
       AND ia1.index_name <> ia2.index_name
@@ -1598,8 +1598,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia2
     SET 
         ia2.superseded_by = 'Supersedes ' + ia1.index_name
-    FROM #index_analysis ia1
-    JOIN #index_analysis ia2 
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2 
       ON  ia1.database_id = ia2.database_id
       AND ia1.object_id = ia2.object_id
       AND ia1.index_name <> ia2.index_name
@@ -1621,7 +1621,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 'MAKE UNIQUE'  /* Convert to unique index */
                 ELSE 'KEEP'  /* Already unique, so just keep it */
             END
-    FROM #index_analysis ia1
+    FROM #index_analysis AS ia1
     WHERE ia1.consolidation_rule IS NULL /* Not already processed */
     AND EXISTS 
     (
@@ -1694,7 +1694,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         consolidation_rule nvarchar(200) NULL,
         target_index_name sysname NULL,
         script nvarchar(max) NULL,
-        additional_info nvarchar(max) NULL /* For stats, constraints, etc. */
+        additional_info nvarchar(max) NULL, /* For stats, constraints, etc. */
+        superseded_info nvarchar(max) NULL  /* To store superseded_by information */
     );
 
 /* Insert summary statistics first */
@@ -1725,7 +1726,7 @@ SELECT
     1,
     'Index Cleanup Summary',
     N'Server uptime: ' + 
-    CAST(@uptime_days AS nvarchar(10)) + 
+    CONVERT(nvarchar(10), @uptime_days) + 
     N' days' +
     CASE 
         WHEN @uptime_warning = 1 
@@ -1733,17 +1734,17 @@ SELECT
         ELSE N'' 
     END +
     N' | Tables analyzed: ' + 
-    CAST(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)) AS nvarchar(10)) +
+    CONVERT(nvarchar(10), COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id))) +
     N' | Total indexes: ' + 
-    CAST(COUNT(*) AS nvarchar(10)) +
+    CONVERT(nvarchar(10), COUNT(*)) +
     N' | Indexes to disable: ' + 
-    CAST(SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END) AS nvarchar(10)) +
+    CONVERT(nvarchar(10), SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END)) +
     N' | Indexes to merge: ' + 
-    CAST(SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END) AS nvarchar(10)) +
+    CONVERT(nvarchar(10), SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END)) +
     N' | Avg indexes per table: ' + 
-    CAST(CONVERT(decimal(10,2), COUNT(*) * 1.0 / 
-         NULLIF(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 0)) AS nvarchar(10))
-FROM #index_analysis ia;
+    CONVERT(nvarchar(10), CONVERT(decimal(10,2), COUNT(*) * 1.0 / 
+         NULLIF(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 0)))
+FROM #index_analysis AS ia;
 
 /* Insert space savings estimates */
 INSERT INTO #index_cleanup_results
@@ -1758,46 +1759,46 @@ SELECT
     2,
     'Estimated Space Savings',
     N'Space saved from cleanup: ' + 
-    CAST(CONVERT(decimal(10,2), SUM(CASE 
+    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
         WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-        THEN ps.total_space_mb 
+        THEN ps.total_space_gb 
         ELSE 0 
-    END)) AS nvarchar(20)) + 
-    N' MB | Compression savings estimate: ' + 
-    CAST(CONVERT(decimal(10,2), SUM(CASE 
+    END))) + 
+    N' GB | Compression savings estimate: ' + 
+    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
         WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-        THEN ps.total_space_mb * 0.20 /* Conservative estimate - 20% compression ratio */
+        THEN ps.total_space_gb * 0.20 /* Conservative estimate - 20% compression ratio */
         ELSE 0 
-    END)) AS nvarchar(20)) + 
+    END))) + 
     N' - ' + 
-    CAST(CONVERT(decimal(10,2), SUM(CASE 
+    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
         WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-        THEN ps.total_space_mb * 0.60 /* Optimistic estimate - 60% compression ratio */
+        THEN ps.total_space_gb * 0.60 /* Optimistic estimate - 60% compression ratio */
         ELSE 0 
-    END)) AS nvarchar(20)) + 
-    N' MB | Total estimated savings: ' + 
-    CAST(CONVERT(decimal(10,2), SUM(CASE 
+    END))) + 
+    N' GB | Total estimated savings: ' + 
+    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
         WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-        THEN ps.total_space_mb
+        THEN ps.total_space_gb
         WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-        THEN ps.total_space_mb * 0.20
+        THEN ps.total_space_gb * 0.20
         ELSE 0 
-    END)) AS nvarchar(20)) + 
+    END))) + 
     N' - ' + 
-    CAST(CONVERT(decimal(10,2), SUM(CASE 
+    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
         WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-        THEN ps.total_space_mb
+        THEN ps.total_space_gb
         WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-        THEN ps.total_space_mb * 0.60
+        THEN ps.total_space_gb * 0.60
         ELSE 0 
-    END)) AS nvarchar(20)) + 
-    N' MB'
-FROM #index_analysis ia
-LEFT JOIN #partition_stats ps ON
+    END))) + 
+    N' GB'
+FROM #index_analysis AS ia
+LEFT JOIN #partition_stats AS ps ON
       ia.database_id = ps.database_id
       AND ia.object_id = ps.object_id
       AND ia.index_id = ps.index_id
-LEFT JOIN #compression_eligibility ce ON
+LEFT JOIN #compression_eligibility AS ce ON
       ia.database_id = ce.database_id
       AND ia.object_id = ce.object_id
       AND ia.index_id = ce.index_id;
@@ -1843,7 +1844,8 @@ INSERT INTO #index_cleanup_results
     consolidation_rule,
     target_index_name,
     script,
-    additional_info
+    additional_info,
+    superseded_info
 )
 SELECT
     'MERGE',
@@ -1916,8 +1918,10 @@ CREATE '
         WHEN ia.action = 'MERGE INCLUDES' THEN N'This index will absorb includes from duplicate indexes'
         WHEN ia.action = 'MAKE UNIQUE' THEN N'This index will replace a unique constraint'
         ELSE NULL
-    END
-FROM #index_analysis ia
+    END,
+    /* Add superseded_by information if available */
+    ia.superseded_by
+FROM #index_analysis AS ia
 LEFT JOIN 
 (
     /* Get the partition info for each index */
@@ -1936,11 +1940,11 @@ LEFT JOIN
         ps.built_on,
         ps.partition_function_name,
         ps.partition_columns
-) ps 
+) AS ps 
   ON  ia.database_id = ps.database_id 
   AND ia.object_id = ps.object_id
   AND ia.index_id = ps.index_id
-JOIN #compression_eligibility ce 
+JOIN #compression_eligibility AS ce 
   ON  ia.database_id = ce.database_id
   AND ia.object_id = ce.object_id
   AND ia.index_id = ce.index_id
@@ -1960,7 +1964,9 @@ INSERT INTO #index_cleanup_results
     script_type,
     consolidation_rule,
     script,
-    additional_info
+    additional_info,
+    target_index_name,
+    superseded_info
 )
 SELECT
     'DISABLE',
@@ -1990,8 +1996,10 @@ SELECT
         WHEN ia.consolidation_rule LIKE 'Unused Index%' 
             THEN ia.consolidation_rule
         ELSE N'This index is redundant'
-    END
-FROM #index_analysis ia
+    END,
+    ia.target_index_name,  /* Include the target index name */
+    NULL  /* Don't need superseded_by info for disabled indexes */
+FROM #index_analysis AS ia
 WHERE ia.action = 'DISABLE';
 
 /* Insert compression scripts for remaining indexes */
@@ -2005,7 +2013,9 @@ INSERT INTO #index_cleanup_results
     index_name,
     script_type,
     script,
-    additional_info
+    additional_info,
+    target_index_name,
+    superseded_info
 )
 SELECT
     'COMPRESS',
@@ -2031,8 +2041,10 @@ SELECT
         N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
         CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
         N', DATA_COMPRESSION = PAGE);',
-    N'Compression type: All Partitions'
-FROM #index_analysis ia
+    N'Compression type: All Partitions',
+    NULL, /* No target index for compression scripts */
+    ia.superseded_by /* Include superseded_by info for compression scripts */
+FROM #index_analysis AS ia
 LEFT JOIN 
 (
     /* Get the partition info for each index */
@@ -2096,8 +2108,8 @@ SELECT
     N' NOCHECK CONSTRAINT ' +
     QUOTENAME(id.index_name) +
     N';'
-FROM #index_analysis ia
-JOIN #index_details id 
+FROM #index_analysis AS ia
+JOIN #index_details AS id 
   ON  id.database_id = ia.database_id
   AND id.object_id = ia.object_id
   AND id.is_unique_constraint = 1
@@ -2145,7 +2157,9 @@ INSERT INTO #index_cleanup_results
     index_name,
     script_type,
     script,
-    additional_info
+    additional_info,
+    target_index_name,
+    superseded_info
 )
 SELECT
     'COMPRESS_PARTITION',
@@ -2164,23 +2178,23 @@ SELECT
     N'.' +
     QUOTENAME(ia.table_name) +
     N' REBUILD PARTITION = ' +
-    CAST(ps.partition_number AS nvarchar(20)) +
+    CONVERT(nvarchar(20), ps.partition_number) +
     N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
     CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
     N', DATA_COMPRESSION = PAGE);',
     N'Compression type: Per Partition | Partition: ' + 
-    CAST(ps.partition_number AS nvarchar(20)) +
+    CONVERT(nvarchar(20), ps.partition_number) +
     N' | Rows: ' +
-    CAST(ps.total_rows AS nvarchar(20)) +
+    CONVERT(nvarchar(20), ps.total_rows) +
     N' | Size: ' +
-    CAST(CONVERT(decimal(10,2), ps.total_space_mb) AS nvarchar(20)) + 
-    N' MB'
-FROM #index_analysis ia
-JOIN #partition_stats ps 
+    CONVERT(nvarchar(20), CONVERT(decimal(10,4), ps.total_space_gb)) + 
+    N' GB'
+FROM #index_analysis AS ia
+JOIN #partition_stats AS ps 
   ON  ia.database_id = ps.database_id
   AND ia.object_id = ps.object_id
   AND ia.index_id = ps.index_id
-JOIN #compression_eligibility ce 
+JOIN #compression_eligibility AS ce 
   ON  ia.database_id = ce.database_id
   AND ia.object_id = ce.object_id
   AND ia.index_id = ce.index_id
@@ -2217,7 +2231,7 @@ SELECT
     ce.index_name,
     'INELIGIBLE FOR COMPRESSION',
     ce.reason
-FROM #compression_eligibility ce
+FROM #compression_eligibility AS ce
 WHERE ce.can_compress = 0;
 
 /* 
@@ -2233,22 +2247,22 @@ Results are ordered by:
 */
 SELECT
     /* First, show the information needed to understand the script */
-    script_type,
-    additional_info,
+    ir.script_type,
+    ir.additional_info,
     /* Then show identifying information for the index */
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
+    ir.database_name,
+    ir.schema_name,
+    ir.table_name,
+    ir.index_name,
     /* Then show relationship information */
-    consolidation_rule,
-    target_index_name,
+    ir.consolidation_rule,
+    ir.target_index_name,
     /* Include superseded_by info for winning indexes */
-    CASE WHEN ia.superseded_by IS NOT NULL THEN ia.superseded_by ELSE NULL END AS superseded_info,
+    CASE WHEN ia.superseded_by IS NOT NULL THEN ia.superseded_by ELSE ir.superseded_info END AS superseded_info,
     /* Finally show the actual script */
-    script
-FROM #index_cleanup_results ir
-LEFT JOIN #index_analysis ia
+    ir.script
+FROM #index_cleanup_results AS ir
+LEFT JOIN #index_analysis AS ia
     ON ir.database_name = ia.database_name
     AND ir.schema_name = ia.schema_name
     AND ir.table_name = ia.table_name
