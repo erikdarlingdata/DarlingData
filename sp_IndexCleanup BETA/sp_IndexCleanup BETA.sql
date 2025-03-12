@@ -2730,20 +2730,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         -- MERGE INDEX: ' + 
         QUOTENAME(f.index_name) + 
         N' into ' +
-        QUOTENAME
-        (
-            SUBSTRING
-            (
-                f.action, 
-                12, 
-                CHARINDEX
-                (
-                    N' ', 
-                    f.action, 
-                    12
-                ) - 12
-            )
-        )+ 
+        CASE
+            WHEN f.action = 'MERGE CONSOLIDATED'
+            THEN QUOTENAME(f.index_name)
+            ELSE 'Unknown Target'
+        END +
         N'
         -- Reason: This index overlaps with another index and can be consolidated
         -- Original definition: ' + 
@@ -2847,7 +2838,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         NCHAR(10) + 
         NCHAR(10)
     FROM #final_index_actions AS f
-    WHERE f.action LIKE N'MERGE INTO%'
+    WHERE f.action = N'MERGE CONSOLIDATED'
+    ORDER BY
+        f.table_name,
+        f.index_name;
+
+    /*Disable merged indexes*/
+    SELECT
+        @final_script += N'
+        /*
+        -- =============================================================================
+        -- DISABLE MERGED INDEX: ' + 
+        QUOTENAME(f.index_name) + 
+        N'
+        -- Reason: This index has been merged into another index
+        -- =============================================================================
+        */' + 
+        NCHAR(10) +
+        f.script + 
+        NCHAR(10) + 
+        NCHAR(10)
+    FROM #final_index_actions AS f
+    WHERE f.action = N'DISABLE MERGED'
     ORDER BY
         f.table_name,
         f.index_name;
@@ -2984,9 +2996,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY
         f.table_name,
         f.index_name;
-    
-    
-    
+       
     /*Unused indexes*/
     SELECT
         @final_script += N'
@@ -3053,6 +3063,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   icr.user_updates = 0
         AND   icr.action <> N'DROP'
         AND   icr.action NOT LIKE N'MERGE INTO%'
+        AND   NOT EXISTS 
+        (
+            SELECT 
+                1/0
+            FROM #final_index_actions AS fia
+            WHERE fia.index_name = icr.index_name
+            AND   fia.table_name = icr.table_name
+            AND   fia.action IN (N'MERGE CONSOLIDATED', N'DISABLE MERGED')
+        )
     ) AS i
     ORDER BY
         i.table_name,
@@ -3128,11 +3147,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         )
                     FROM #partition_stats AS ps
                     JOIN #index_cleanup_report AS icr 
-                        ON ps.table_name = icr.table_name 
-                        AND ps.index_name = icr.index_name
+                      ON ps.table_name = icr.table_name 
+                      AND ps.index_name = icr.index_name
                     WHERE icr.action = 'DROP' 
-                        OR icr.action LIKE 'MERGE INTO%' 
-                        OR (icr.user_seeks = 0 AND icr.user_scans = 0 AND icr.user_lookups = 0)
+                    OR    icr.action LIKE 'MERGE INTO%' 
+                    OR    
+                    (
+                          icr.user_seeks = 0 
+                      AND icr.user_scans = 0 
+                      AND icr.user_lookups = 0
+                    )
                 ), 
                 0
             )
@@ -3148,8 +3172,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SUM(icr.user_updates)
                     FROM #index_cleanup_report AS icr
                     WHERE icr.action = 'DROP' 
-                        OR icr.action LIKE 'MERGE INTO%' 
-                        OR (icr.user_seeks = 0 AND icr.user_scans = 0 AND icr.user_lookups = 0)
+                    OR    icr.action LIKE 'MERGE INTO%' 
+                    OR 
+                    (
+                          icr.user_seeks = 0 
+                      AND icr.user_scans = 0 
+                      AND icr.user_lookups = 0
+                    )
                 ), 
                 0
             )
