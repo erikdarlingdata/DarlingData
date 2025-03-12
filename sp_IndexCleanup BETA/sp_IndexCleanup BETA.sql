@@ -568,7 +568,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ius.object_id
         HAVING 
             SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) >= @min_reads
-        AND 
+        OR 
             SUM(ius.user_updates) >= @min_writes
     )
     OPTION(RECOMPILE);';
