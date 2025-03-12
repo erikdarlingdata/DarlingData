@@ -170,23 +170,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @database_id integer = NULL,
         @object_id integer = NULL,
         @full_object_name nvarchar(768) = NULL,
-        @final_script nvarchar(max) = '',
-        /*cursor variables*/
-        @c_database_id integer,
-        @c_database_name sysname,
-        @c_schema_id integer,
-        @c_schema_name sysname,
-        @c_object_id integer,
-        @c_table_name sysname,
-        @c_index_id integer,
-        @c_index_name sysname,
-        @c_is_unique bit,
-        @c_filter_definition nvarchar(max),
-        @index_cursor CURSOR,
         /*print variables*/
-        @helper integer = 0,
-        @sql_len integer,
-        @sql_debug nvarchar(max) = N'',
         @online bit = 
             CASE 
                 WHEN 
@@ -269,7 +253,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
     END;
 
-    -- Parameter validation
+    /* Parameter validation */
     IF @min_reads < 0
     OR @min_reads IS NULL
     BEGIN
@@ -314,7 +298,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         database_name sysname NOT NULL,
         schema_id integer NOT NULL,
         schema_name sysname NOT NULL,
-        object_id integer NOT NULL, 
+        object_id integer NOT NULL,
         table_name sysname NOT NULL,
         index_id integer NOT NULL,
         index_name sysname NOT NULL
@@ -446,77 +430,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by sysname NULL,
         missing_columns nvarchar(max) NULL,
         action nvarchar(max) NULL,
+        target_index_name sysname NULL,
+        consolidation_rule varchar(50) NULL,
+        index_priority int NULL,
         INDEX c CLUSTERED
             (database_id, schema_name, table_name, index_name)
     );
 
     CREATE TABLE
-        #index_cleanup_report
+        #index_consolidation
     (
-        database_id integer NOT NULL,
+        database_id int NOT NULL,
         database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
+        schema_id int NOT NULL,
         schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
+        object_id int NOT NULL,
         table_name sysname NOT NULL,
-        index_id integer NOT NULL,
+        index_id int NOT NULL,
         index_name sysname NOT NULL,
-        action nvarchar(max) NULL,
-        cleanup_script nvarchar(max) NULL,
-        original_definition nvarchar(max) NULL,
-        /*Usage details*/
-        user_seeks bigint NULL,
-        user_scans bigint NULL,
-        user_lookups bigint NULL,
-        user_updates bigint NULL,
-        last_user_seek datetime NULL,
-        last_user_scan datetime NULL,
-        last_user_lookup datetime NULL,
-        last_user_update datetime NULL,
-        /*Operational stats*/
-        range_scan_count bigint NULL,
-        singleton_lookup_count bigint NULL,
-        leaf_insert_count bigint NULL,
-        leaf_update_count bigint NULL,
-        leaf_delete_count bigint NULL,
-        page_lock_count bigint NULL,
-        page_lock_wait_count bigint NULL,
-        page_lock_wait_in_ms bigint NULL
-    );
-
-    CREATE TABLE
-        #index_cleanup_summary
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NOT NULL,
-        action nvarchar(max) NOT NULL,
-        details nvarchar(max) NULL,
-        current_definition nvarchar(max) NOT NULL,
-        proposed_definition nvarchar(max) NULL,
-        usage_summary nvarchar(max) NULL,
-        operational_summary nvarchar(max) NULL,
-        uptime_warning nvarchar(512) NULL
-    );
-
-    CREATE TABLE
-        #final_index_actions
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NOT NULL,
-        action nvarchar(max) NOT NULL,
-        script nvarchar(max) NOT NULL
+        target_index_name sysname NULL,
+        consolidation_rule varchar(50) NULL,
+        index_priority int NULL,
+        action varchar(50) NULL,
+        PRIMARY KEY (database_id, object_id, index_id)
     );
 
     /*
@@ -613,10 +549,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (TABLOCK)
     (
         database_id,
-        database_name,           
-        schema_id, 
+        database_name,          
+        schema_id,
         schema_name,
-        object_id,  
+        object_id, 
         table_name,
         index_id,
         index_name
@@ -1319,260 +1255,161 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     IF @debug = 1
     BEGIN
-        RAISERROR('Starting cursor', 0, 0) WITH NOWAIT;
-    END;  
-
-    /*Analyze indexes*/
-    SET @index_cursor = CURSOR
-        LOCAL
-        STATIC
-        FORWARD_ONLY
-        READ_ONLY
-    FOR
-    SELECT DISTINCT
-        ia.database_id,
-        ia.database_name,
-        ia.schema_id,
-        ia.schema_name,
-        ia.object_id,
-        ia.table_name,
-        ia.index_id,
-        ia.index_name,
-        ia.is_unique,
-        ia.filter_definition
-    FROM #index_analysis AS ia
-    ORDER BY
-        ia.table_name,
-        ia.index_name;
-
-    OPEN @index_cursor;
-
-    FETCH NEXT
-    FROM @index_cursor
-    INTO
-        @c_database_id,
-        @c_database_name,
-        @c_schema_id,
-        @c_schema_name,
-        @c_object_id,
-        @c_table_name,
-        @c_index_id,
-        @c_index_name,
-        @c_is_unique,
-        @c_filter_definition;
-
-    WHILE @@FETCH_STATUS = 0
-    BEGIN
-        
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Performing #index_analysis update', 0, 0) WITH NOWAIT;
-        END;          
-        
-        WITH
-            IndexColumns AS
-        (
-            SELECT
-                id.*
-            FROM #index_details id
-            WHERE id.database_id = @c_database_id
-           AND    id.object_id = @c_object_id
-           AND    id.is_eligible_for_dedupe = 1
-        ),
-            CurrentIndexColumns AS
-        (
-            SELECT
-                ic.*
-            FROM IndexColumns AS ic
-            WHERE ic.index_id = @c_index_id
-            AND   ic.is_eligible_for_dedupe = 1
-        ),
-            OtherIndexColumns AS
-        (
-            SELECT
-                ic.*
-            FROM IndexColumns AS ic
-            WHERE ic.index_id <> @c_index_id
-            AND   ic.is_eligible_for_dedupe = 1
-        )
-        UPDATE
-            ia
-        SET
-            ia.is_redundant =
-                CASE
-                    WHEN NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM CurrentIndexColumns cic
-                        WHERE cic.is_included_column = 0  /* Only check key columns */
-                        AND NOT EXISTS
-                        (
-                            SELECT
-                                1/0
-                            FROM OtherIndexColumns oic
-                            WHERE oic.column_name = cic.column_name
-                            AND oic.is_included_column = 0  /* Must be in key columns */
-                            AND oic.key_ordinal <= cic.key_ordinal   /* Check leading edge */
-                        )
-                    )
-                    AND 
-                    (
-                        /* Check included columns separately since order doesn't matter */
-                        NOT EXISTS
-                        (
-                            SELECT
-                                1/0
-                            FROM CurrentIndexColumns cic
-                            WHERE cic.is_included_column = 1
-                            AND NOT EXISTS
-                            (
-                                SELECT
-                                    1/0
-                                FROM OtherIndexColumns oic
-                                WHERE oic.column_name = cic.column_name
-                                AND 
-                                (
-                                    oic.is_included_column = 1 
-                                    OR oic.is_included_column = 0  /* Include cols can be covered by key cols */
-                                )
-                            )
-                        )
-                    )
-                    AND ISNULL(REPLACE(REPLACE(REPLACE(ia.filter_definition, ' ', ''), '(', ''), ')', ''), '') = 
-                        ISNULL(REPLACE(REPLACE(REPLACE(@c_filter_definition, ' ', ''), '(', ''), ')', ''), '')
-                    AND
-                    (
-                        ia.is_unique = 0
-                     OR 
-                     (
-                           ia.is_unique = 1 
-                       AND @c_is_unique = 1
-                     ) 
-                    )
-                    THEN 1
-                    ELSE 0
-                END,
-            ia.superseded_by =
-                CASE
-                    WHEN NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM CurrentIndexColumns cic
-                        WHERE cic.is_included_column = 0  /* Only check key columns */
-                        AND NOT EXISTS
-                        (
-                            SELECT
-                                1/0
-                            FROM OtherIndexColumns oic
-                            WHERE oic.column_name = cic.column_name
-                            AND oic.is_included_column = 0  /* Must be in key columns */
-                            AND oic.key_ordinal <= cic.key_ordinal  /* Check leading edge */
-                        )
-                    )
-                    AND 
-                    (
-                        /* Check included columns separately since order doesn't matter */
-                        NOT EXISTS
-                        (
-                            SELECT
-                                1/0
-                            FROM CurrentIndexColumns cic
-                            WHERE cic.is_included_column = 1
-                            AND NOT EXISTS
-                            (
-                                SELECT
-                                    1/0
-                                FROM OtherIndexColumns oic
-                                WHERE oic.column_name = cic.column_name
-                                AND 
-                                (
-                                    oic.is_included_column = 1 
-                                    OR oic.is_included_column = 0  /* Include cols can be covered by key cols */
-                                )
-                            )
-                        )
-                    )
-                    AND ISNULL(ia.filter_definition, '') = ISNULL(@c_filter_definition, '')
-                    AND
-                    (
-                        ia.is_unique = 0
-                     OR @c_is_unique = 1
-                    )
-                    THEN @c_index_name
-                    ELSE ia.superseded_by
-                END,
-            ia.missing_columns =
-                STUFF
-                (
-                  (
-                      SELECT DISTINCT
-                          N', ' +
-                          oic.column_name
-                      FROM OtherIndexColumns oic
-                      WHERE NOT EXISTS
-                      (
-                          SELECT
-                              1/0
-                          FROM CurrentIndexColumns cic
-                          WHERE cic.column_name = oic.column_name
-                      )
-                      FOR XML
-                          PATH(''),
-                          TYPE
-                  ).value('.', 'nvarchar(max)'),
-                  1,
-                  2,
-                  ''
-                )
-        FROM #index_analysis ia
-        WHERE ia.database_id = @c_database_id
-        AND   ia.schema_name = @c_schema_name
-        AND   ia.table_name = @c_table_name
-        AND   ia.index_name <> @c_index_name;
-
-        FETCH NEXT
-        FROM @index_cursor
-        INTO
-            @c_database_id,
-            @c_database_name,
-            @c_schema_id,
-            @c_schema_name,
-            @c_object_id,
-            @c_table_name,
-            @c_index_id,
-            @c_index_name,
-            @c_is_unique,
-            @c_filter_definition;
+        RAISERROR('Starting updates', 0, 0) WITH NOWAIT;
     END;
 
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Performing #index_analysis update after cursor', 0, 0) WITH NOWAIT;
-    END; 
-
-    /*Determine actions*/
-    UPDATE
+    /* Calculate index priority scores based on actual columns that exist */
+    UPDATE 
         #index_analysis
-    SET
-        action =
-            CASE
-                WHEN is_redundant = 1
-                THEN N'DROP'
-                WHEN superseded_by IS NOT NULL
-                AND  missing_columns IS NULL
-                THEN N'MERGE INTO ' +
-                     superseded_by
-                WHEN superseded_by IS NOT NULL
-                AND  missing_columns IS NOT NULL
-                THEN N'MERGE INTO ' +
-                     superseded_by +
-                     N' (ADD ' +
-                     missing_columns +
-                     N')'
-                ELSE N'KEEP'
-            END;
+    SET 
+        index_priority = 
+            CASE 
+                WHEN index_id = 1 
+                THEN 1000  /* Clustered indexes get highest priority */
+                ELSE 0
+            END 
+            + 
+            CASE 
+                WHEN is_unique = 1 
+                THEN 500 
+                ELSE 0 
+            END  /* Unique indexes get high priority */
+            + 
+            CASE 
+                WHEN EXISTS 
+                (
+                    SELECT 
+                        1/0 
+                    FROM #index_details id 
+                    WHERE id.index_name = #index_analysis.index_name
+                    AND   id.table_name = #index_analysis.table_name
+                    AND   id.user_seeks > 0
+                ) THEN 200 
+                ELSE 0 
+            END  /* Indexes with seeks get priority */
+            + 
+            CASE 
+                WHEN EXISTS 
+                (
+                    SELECT 
+                        1/0 
+                    FROM #index_details id 
+                    WHERE id.index_name = #index_analysis.index_name
+                    AND   id.table_name = #index_analysis.table_name
+                    AND   id.user_scans > 0
+                ) THEN 50 ELSE 0 
+            END;  /* Indexes with scans get some priority */
+
+
+    /* Rule 1: Identify unused indexes */
+    UPDATE 
+        #index_analysis
+    SET 
+        consolidation_rule = 'Unused Index',
+        action = 'DISABLE'
+    WHERE EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM #index_details id
+        WHERE id.database_id = #index_analysis.database_id
+        AND   id.object_id = #index_analysis.object_id
+        AND   id.index_name = #index_analysis.index_name
+        AND   id.user_seeks = 0
+        AND   id.user_scans = 0
+        AND   id.user_lookups = 0
+        AND   id.is_primary_key = 0  /* Don't disable primary keys */
+        AND   id.is_unique_constraint = 0  /* Don't disable unique constraints */
+        AND   id.is_eligible_for_dedupe = 1 /* Only eligible indexes */
+    )
+    AND #index_analysis.index_id <> 1;  /* Don't disable clustered indexes */
+
+    /* Rule 2: Exact duplicates - matching key columns and includes */
+    UPDATE 
+        ia1
+    SET 
+        ia1.consolidation_rule = 'Exact Duplicate',
+        ia1.target_index_name = 
+            CASE 
+                WHEN ia1.index_priority >= ia2.index_priority 
+                THEN NULL  /* This index is the keeper */
+                ELSE ia2.index_name  /* Other index is the keeper */
+            END,
+        ia1.action = 
+            CASE 
+                WHEN ia1.index_priority >= ia2.index_priority 
+                THEN 'KEEP'  /* This index is the keeper */
+                ELSE 'DISABLE'  /* Other index gets disabled */
+            END
+    FROM #index_analysis ia1
+    JOIN #index_analysis ia2 
+      ON  ia1.database_id = ia2.database_id
+      AND ia1.object_id = ia2.object_id
+      AND ia1.index_name <> ia2.index_name
+      AND ia1.key_columns = ia2.key_columns  /* Exact key match */
+      AND ISNULL(ia1.included_columns, '') = ISNULL(ia2.included_columns, '')  /* Exact includes match */
+      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+    WHERE 
+        ia1.consolidation_rule IS NULL  /* Not already processed */
+        AND ia2.consolidation_rule IS NULL  /* Not already processed */
+        AND ia1.is_eligible_for_dedupe = 1
+        AND ia2.is_eligible_for_dedupe = 1;
+
+/* Rule 3: Key duplicates (matching key columns, different includes) */
+UPDATE ia1
+SET
+    ia1.consolidation_rule = 'Key Duplicate',
+    ia1.target_index_name =
+        CASE
+            /* If one is unique and the other isn't, prefer the unique one */
+            WHEN ia1.is_unique = 1 AND ia2.is_unique = 0 THEN NULL
+            WHEN ia1.is_unique = 0 AND ia2.is_unique = 1 THEN ia2.index_name
+            /* Otherwise use priority */
+            WHEN ia1.index_priority >= ia2.index_priority THEN NULL
+            ELSE ia2.index_name
+        END,
+    ia1.action =
+        CASE
+            WHEN (ia1.is_unique = 1 AND ia2.is_unique = 0) OR
+                 (ia1.index_priority >= ia2.index_priority AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1))
+            THEN 'MERGE INCLUDES'  /* Keep this index but merge includes */
+            ELSE 'DISABLE'  /* Other index is keeper, disable this one */
+        END
+FROM #index_analysis ia1
+JOIN #index_analysis ia2 ON
+    ia1.database_id = ia2.database_id
+    AND ia1.object_id = ia2.object_id
+    AND ia1.index_name <> ia2.index_name
+    AND ia1.key_columns = ia2.key_columns  /* Exact key match */
+    AND ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')  /* Different includes */
+    AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+WHERE
+    ia1.consolidation_rule IS NULL  /* Not already processed */
+    AND ia2.consolidation_rule IS NULL  /* Not already processed */
+    AND ia1.is_eligible_for_dedupe = 1
+    AND ia2.is_eligible_for_dedupe = 1;
+
+/* Rule 4: Superset/subset key columns */
+UPDATE ia1
+SET
+    ia1.consolidation_rule = 'Key Subset',
+    ia1.target_index_name = ia2.index_name,
+    ia1.action = 'DISABLE'  /* The narrower index gets disabled */
+FROM #index_analysis ia1
+JOIN #index_analysis ia2 ON
+    ia1.database_id = ia2.database_id
+    AND ia1.object_id = ia2.object_id
+    AND ia1.index_name <> ia2.index_name
+    AND ia2.key_columns LIKE (ia1.key_columns + '%')  /* ia2 has wider key that starts with ia1's key */
+    AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+    /* Exception: If narrower index is unique and wider is not, they should not be merged */
+    AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
+WHERE
+    ia1.consolidation_rule IS NULL  /* Not already processed */
+    AND ia2.consolidation_rule IS NULL  /* Not already processed */
+    AND ia1.is_eligible_for_dedupe = 1
+    AND ia2.is_eligible_for_dedupe = 1;
+
 
     IF @debug = 1
     BEGIN
@@ -1584,1636 +1421,48 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     IF @debug = 1
     BEGIN
-        RAISERROR('Performing #index_cleanup_report insert', 0, 0) WITH NOWAIT;
-    END; 
-
-    INSERT INTO
-        #index_cleanup_report
-    WITH
-        (TABLOCK)
-    (
-        database_id,
-        database_name,
-        schema_id,
-        schema_name,
-        table_name,
-        object_id,
-        index_id,
-        index_name,
-        action,
-        cleanup_script,
-        original_definition,
-        user_seeks,
-        user_scans,
-        user_lookups,
-        user_updates,
-        last_user_seek,
-        last_user_scan,
-        last_user_lookup,
-        last_user_update,
-        range_scan_count,
-        singleton_lookup_count,
-        leaf_insert_count,
-        leaf_update_count,
-        leaf_delete_count,
-        page_lock_count,
-        page_lock_wait_count,
-        page_lock_wait_in_ms
-    )
-    SELECT
-        @database_id,
-        @database_name,
-        ia.schema_id,
-        ia.schema_name,
-        ia.table_name,
-        ia.object_id,
-        ia.index_id,
-        ia.index_name,
-        ia.action,
-        cleanup_script =
-            CASE
-                WHEN ia.action = N'DROP'
-                THEN NCHAR(10) +
-                     N'DROP INDEX ' +
-                     QUOTENAME(ia.index_name) +
-                     N' ON ' +
-                     QUOTENAME(DB_NAME(ia.database_id)) +
-                     N'.' +
-                     QUOTENAME(ia.schema_name) +
-                     N'.' +
-                     QUOTENAME(ia.table_name) +
-                     N';'
-                WHEN ia.action LIKE N'MERGE INTO%'
-                THEN NCHAR(10) +
-                     N'CREATE ' +
-                     CASE
-                         WHEN ia.is_unique = 1
-                         THEN N'UNIQUE '
-                         ELSE N''
-                     END +
-                     N'INDEX ' +
-                     QUOTENAME(ia.superseded_by) +
-                     NCHAR(10) +
-                     N'ON ' +
-                     QUOTENAME(DB_NAME(ia.database_id)) +
-                     N'.' +
-                     QUOTENAME(ia.schema_name) +
-                     N'.' +
-                     QUOTENAME(ia.table_name) +
-                     NCHAR(10) +
-                     N'    (' +
-                     ISNULL(superseding.key_columns, ia.key_columns) +
-                     N')' +
-                     NCHAR(10) +
-                     CASE
-                         WHEN 
-                         (
-                              superseding.included_columns IS NOT NULL 
-                           OR ia.included_columns IS NOT NULL
-                         )
-                         OR   ia.missing_columns IS NOT NULL
-                         THEN N' INCLUDE' +
-                              NCHAR(10) +
-                              N'    (' +
-                              -- Combine all INCLUDE columns with proper parsing
-                              STUFF
-                              (
-                                (
-                                  SELECT DISTINCT 
-                                      N', ' + 
-                                      column_value
-                                  FROM 
-                                  (
-                                      -- From superseding index
-                                      SELECT 
-                                          column_value = 
-                                              LTRIM(RTRIM(value.c.value('.', 'sysname')))
-                                      FROM 
-                                      (
-                                          SELECT 
-                                              Columns =
-                                                  CONVERT
-                                                  (
-                                                      xml, 
-                                                      '<c>' + 
-                                                      REPLACE
-                                                      (
-                                                          ISNULL
-                                                          (
-                                                              superseding.included_columns, 
-                                                              ''
-                                                           ), 
-                                                           ', ', 
-                                                           '</c><c>') + 
-                                                           '</c>'
-                                                  )
-                                      ) t
-                                      CROSS APPLY t.Columns.nodes('/c') AS value(c)
-                                      
-                                      UNION
-                                      
-                                      -- From current index
-                                      SELECT 
-                                          column_value = 
-                                              LTRIM(RTRIM(value.c.value('.', 'sysname')))
-                                      FROM 
-                                      (
-                                          SELECT 
-                                              Columns =
-                                                  CONVERT
-                                                  (
-                                                      xml, 
-                                                      '<c>' + 
-                                                      REPLACE
-                                                      (
-                                                          ISNULL
-                                                          (
-                                                              ia.included_columns, 
-                                                              ''
-                                                          ), 
-                                                          ', ', 
-                                                          '</c><c>'
-                                                      ) + 
-                                                      '</c>'
-                                                  )
-                                      ) t
-                                      CROSS APPLY t.Columns.nodes('/c') AS value(c)
-                                      
-                                      UNION
-                                      
-                                      -- From missing columns
-                                      SELECT 
-                                          column_value = 
-                                              LTRIM(RTRIM(value.c.value('.', 'sysname')))
-                                      FROM 
-                                      (
-                                          SELECT 
-                                          Columns = 
-                                              CONVERT
-                                              (
-                                                  xml, 
-                                                  '<c>' + 
-                                                  REPLACE
-                                                  (
-                                                      ISNULL
-                                                      (
-                                                          ia.missing_columns, 
-                                                          ''
-                                                      ), 
-                                                      ', ', 
-                                                      '</c><c>'
-                                                  ) + '</c>'
-                                              )
-                                      ) t
-                                      CROSS APPLY t.Columns.nodes('/c') AS value(c)
-                                  ) AS all_columns
-                                  WHERE LEN(column_value) > 0
-                                  FOR 
-                                      XML 
-                                      PATH(''), 
-                                      TYPE
-                              ).value('.', 'nvarchar(max)'), 
-                              1, 
-                              2, 
-                              ''
-                              ) +
-                              N')'
-                         ELSE N''
-                     END +                     
-                     CASE
-                         /* Check for partitioning in the superseding index first */
-                         WHEN EXISTS 
-                         (
-                             SELECT 
-                                 1/0
-                             FROM #partition_stats ps_super
-                             WHERE ps_super.table_name = ia.table_name
-                             AND   ps_super.index_name = ia.superseded_by
-                             AND   ps_super.partition_function_name IS NOT NULL
-                         )
-                         THEN 
-                         (
-                             SELECT TOP (1) 
-                                 NCHAR(10) +
-                                 N' ON ' +
-                                 QUOTENAME(ps_super.partition_function_name) +
-                                 N'(' +
-                                 ps_super.partition_columns +
-                                 N')'
-                             FROM #partition_stats ps_super
-                             WHERE ps_super.table_name = ia.table_name
-                             AND   ps_super.index_name = ia.superseded_by
-                         )
-                         /* Fall back to the current index's partitioning if available */
-                         WHEN ps.partition_function_name IS NOT NULL
-                         THEN NCHAR(10) +
-                              N' ON ' +
-                              QUOTENAME(ps.partition_function_name) +
-                              N'(' +
-                              ps.partition_columns +
-                              N')'
-                         ELSE N''
-                     END +                     
-                     CASE
-                         WHEN ia.filter_definition IS NOT NULL
-                         THEN NCHAR(10) +
-                              N' WHERE ' +
-                              ia.filter_definition
-                         ELSE N''
-                     END +
-                     NCHAR(10) +
-                     N' WITH ' +
-                     NCHAR(10) + 
-                     N'    (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-                     CASE 
-                         WHEN @online = 'true' /*Best effort at detecting online index abilities*/
-                         THEN N'ON'
-                         ELSE N'OFF'
-                     END +
-                     CASE
-                         WHEN ps.data_compression_desc <> N'NONE'
-                         THEN N', DATA_COMPRESSION = ' +
-                              ps.data_compression_desc
-                         ELSE N', DATA_COMPRESSION = PAGE'  /* Add PAGE compression by default for merged indexes */
-                     END +
-                     N');' +
-                     NCHAR(10) +
-                     NCHAR(10) +
-                     N'ALTER INDEX ' +
-                     QUOTENAME(ia.index_name) +
-                     N' ON ' +
-                     QUOTENAME(DB_NAME(ia.database_id)) +
-                     N'.' +
-                     QUOTENAME(ia.schema_name) +
-                     N'.' +
-                     QUOTENAME(ia.table_name) +
-                     N' DISABLE'
-                ELSE N''
-            END +
-            N';',
-        original_definition =
-            NCHAR(10) +
-            N'        -- CREATE ' +
-                CASE
-                    WHEN ia.is_unique = 1
-                    THEN N'UNIQUE '
-                    ELSE N''
-                END +
-                N'INDEX ' +
-                QUOTENAME(ia.index_name) +
-                NCHAR(10) +                
-                N'        -- ON ' +
-                QUOTENAME(DB_NAME(ia.database_id)) +
-                N'.' +
-                QUOTENAME(ia.schema_name) +
-                N'.' +
-                QUOTENAME(ia.table_name) +
-                NCHAR(10) +
-                N'        --    (' +
-                ia.key_columns +
-                N')' +
-                CASE
-                    WHEN ia.included_columns IS NOT NULL
-                    THEN NCHAR(10) +
-                         N'        -- INCLUDE' +
-                         NCHAR(10) +
-                         N'        --    (' +
-                         ia.included_columns +
-                         N')'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN ps.partition_function_name IS NOT NULL
-                    THEN NCHAR(10) +
-                         N'        -- ON ' +
-                         QUOTENAME(ps.partition_function_name) +
-                         N'(' +
-                         ps.partition_columns +
-                         N')'
-                    ELSE N''
-                END +
-                CASE
-                    WHEN ia.filter_definition IS NOT NULL
-                    THEN NCHAR(10) +
-                         N'        -- WHERE ' +
-                         QUOTENAME(ia.filter_definition, '()')
-                    ELSE N''
-                END +
-                N';' +
-                NCHAR(10),
-        id.user_seeks,
-        id.user_scans,
-        id.user_lookups,
-        id.user_updates,
-        id.last_user_seek,
-        id.last_user_scan,
-        id.last_user_lookup,
-        id.last_user_update,
-        os.range_scan_count,
-        os.singleton_lookup_count,
-        os.leaf_insert_count,
-        os.leaf_update_count,
-        os.leaf_delete_count,
-        os.page_lock_count,
-        os.page_lock_wait_count,
-        os.page_lock_wait_in_ms
-    FROM #index_analysis ia
-    LEFT JOIN #partition_stats ps
-      ON  ia.table_name = ps.table_name
-      AND ia.index_name = ps.index_name
-    LEFT JOIN #index_details id
-      ON  ia.table_name = id.table_name
-      AND ia.index_name = id.index_name
-    LEFT JOIN #operational_stats os
-      ON  id.object_id = os.object_id
-      AND id.index_id = os.index_id
-    LEFT JOIN #index_analysis superseding
-      ON  ia.superseded_by = superseding.index_name
-      AND ia.table_name = superseding.table_name
-    OPTION(RECOMPILE);
-
-    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #index_cleanup_report', 0, 0) WITH NOWAIT END; END;
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#index_cleanup_report',
-            icr.*
-        FROM #index_cleanup_report AS icr;
+        RAISERROR('Generating results', 0, 0) WITH NOWAIT;
     END;
 
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Performing #index_cleanup_summary insert', 0, 0) WITH NOWAIT;
-    END; 
-
-    INSERT INTO
-        #index_cleanup_summary
-    WITH
-        (TABLOCK)
-    (
-        database_id,
-        database_name,
-        schema_id,
-        schema_name,
-        table_name,
-        object_id,
-        index_id,
-        index_name,
-        action,
-        details,
-        current_definition,
-        proposed_definition,
-        usage_summary,
-        operational_summary,
-        uptime_warning
-    )
-    SELECT
-        icr.database_id,
-        icr.database_name,
-        icr.schema_id,
-        icr.schema_name,
-        icr.table_name,
-        icr.object_id,
-        icr.index_id,
-        icr.index_name,
-        action =
-            CASE
-                 WHEN icr.action = N'KEEP'
-                 THEN N'Keep'
-                 WHEN icr.action = N'DROP'
-                 THEN N'Drop'
-                 WHEN icr.action LIKE N'MERGE INTO%'
-                 THEN N'Merge'
-                 ELSE N'???'
-            END,
-        details =
-            CASE
-                 WHEN icr.action = N'KEEP'
-                 THEN N'No action needed'
-                 WHEN icr.action = N'DROP'
-                 THEN N'Index is redundant and can be safely dropped'
-                 WHEN icr.action LIKE N'MERGE INTO%'
-                 THEN N'Merge into index: ' +
-                      SUBSTRING
-                      (
-                          icr.action,
-                          12,
-                          CHARINDEX(N' ', icr.action, 12) - 12
-                      )
-                 ELSE N'???'
-            END,
-        current_definition = icr.original_definition,
-        proposed_definition =
-            CASE
-                 WHEN icr.action LIKE N'MERGE INTO%'
-                 THEN icr.cleanup_script
-                 ELSE NULL
-            END,
-        usage_summary =
-            N'Seeks: '     + CONVERT(nvarchar(20), icr.user_seeks) +
-            N', Scans: '   + CONVERT(nvarchar(20), icr.user_scans) +
-            N', Lookups: ' + CONVERT(nvarchar(20), icr.user_lookups) +
-            N', Updates: ' + CONVERT(nvarchar(20), icr.user_updates) +
-            N', Last used: ' +
-            ISNULL
-            (
-                 CONVERT
-                 (
-                     nvarchar(30),
-                     NULLIF
-                     (
-                         DATEADD
-                         (
-                             SECOND,
-                             -1,
-                             CASE
-                                  WHEN icr.last_user_seek > icr.last_user_scan
-                                  AND  icr.last_user_seek > icr.last_user_lookup
-                                  THEN icr.last_user_seek
-                                  WHEN icr.last_user_scan > icr.last_user_lookup
-                                  THEN icr.last_user_scan
-                                  ELSE icr.last_user_lookup
-                             END
-                         ),
-                         N'1900-01-01'
-                     ), 120
-                 ),
-                 N'Unknown'
-            ),
-        operational_summary =
-            N'Range scans: ' + CONVERT(nvarchar(20), icr.range_scan_count) +
-            N', Lookups: '   + CONVERT(nvarchar(20), icr.singleton_lookup_count) +
-            N', Inserts: '   + CONVERT(nvarchar(20), icr.leaf_insert_count) +
-            N', Updates: '   + CONVERT(nvarchar(20), icr.leaf_update_count) +
-            N', Deletes: '   + CONVERT(nvarchar(20), icr.leaf_delete_count),
-        uptime_warning = 
-            CASE 
-                WHEN icr.user_seeks = 0 AND icr.user_scans = 0 AND icr.user_lookups = 0
-                THEN
-                    CASE
-                        WHEN TRY_PARSE(@uptime_days AS integer) < 7
-                        THEN N'WARNING: SQL Server has been running for only ' + 
-                             @uptime_days + 
-                             N' days. Usage statistics may not be reliable.'
-                        WHEN TRY_PARSE(@uptime_days AS integer) < 14
-                        THEN N'CAUTION: SQL Server has been running for only ' + 
-                             @uptime_days + 
-                             N' days. Usage statistics may be incomplete.'
-                        WHEN TRY_PARSE(@uptime_days AS integer) < 30
-                        THEN N'NOTE: SQL Server has been running for only ' + 
-                             @uptime_days + 
-                             N' days. Consider this when evaluating index usage.'
-                        ELSE N'NOTE: SQL Server has been up for ' +
-                             @uptime_days +
-                             N' days, which makes analysis good, but... Are you patching this thing?'
-                    END
-                ELSE NULL
-            END
-    FROM #index_cleanup_report AS icr
-    OPTION(RECOMPILE);
-
-    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #index_cleanup_summary', 0, 0) WITH NOWAIT END; END;
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#index_cleanup_summary',
-            ics.*
-        FROM #index_cleanup_summary AS ics;
-    END;
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Going into summary and reports', 0, 0) WITH NOWAIT;
-    END; 
-
-    /* Index Cleanup Summary Report */
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Index Cleanup Summary', 0, 0) WITH NOWAIT;
-    END; 
-
-    SELECT
-        summary_type = 
-            'Index Cleanup Summary',
-        total_indexes_analyzed = 
-            COUNT_BIG(DISTINCT icr.index_name),
-        indexes_to_drop = 
-            SUM
-            (   
-                CASE
-                    WHEN icr.action = 'DROP'
-                    THEN 1
-                    ELSE 0
-                END
-            ),
-        indexes_to_merge = 
-            SUM
-            (   
-                CASE
-                    WHEN icr.action LIKE 'MERGE INTO%'
-                    THEN 1
-                    ELSE 0
-                END
-            ),
-        unused_indexes = 
-        SUM
-        (   
-            CASE
-                WHEN icr.user_seeks = 0
-                AND  icr.user_scans = 0
-                AND  icr.user_lookups = 0
-                THEN 1
-                ELSE 0
-            END
-        ),
-        space_savings_gb = 
-        CONVERT
-        (   
-            decimal(10, 2),
-            (
-                SELECT
-                    SUM(ps_total.space_saved_mb) / 1024.0
-                FROM
-                (
-                    SELECT
-                        icr_distinct.index_name,
-                        icr_distinct.table_name,
-                        space_saved_mb = SUM(ps_inner.total_space_mb)
-                    FROM #index_cleanup_report AS icr_distinct
-                    JOIN #partition_stats AS ps_inner
-                      ON  ps_inner.table_name = icr_distinct.table_name
-                      AND ps_inner.index_name = icr_distinct.index_name
-                    WHERE icr_distinct.action = 'DROP'
-                    OR  icr_distinct.action LIKE 'MERGE INTO%'
-                    GROUP BY
-                        icr_distinct.index_name,
-                        icr_distinct.table_name
-                ) AS ps_total
-            )
-        ),
-        write_operations_avoided = 
-            SUM
-            (   
-                CASE
-                    WHEN icr.action = 'DROP'
-                    OR   icr.action LIKE 'MERGE INTO%'
-                    THEN ISNULL(icr.user_updates, 0)
-                    ELSE 0
-                END
-            )
-    FROM #index_cleanup_report AS icr
-    OPTION (RECOMPILE);
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Top tables by potential space savings', 0, 0) WITH NOWAIT;
-    END; 
-    
-    /* Top tables by potential space savings */
-    SELECT TOP (10)
-        icr.database_name,
-        icr.table_name,
-        indexes_affected = 
-            COUNT_BIG(DISTINCT icr.index_name),
-        space_savings_gb = 
-            CONVERT
-            (
-                decimal(10,2), 
-                (
-                    SELECT 
-                        SUM(ps_total.space_saved_mb) / 1024.0
-                    FROM 
-                    (
-                        SELECT 
-                            ps_inner.table_name,
-                            space_saved_mb = 
-                                SUM(ps_inner.total_space_mb)
-                        FROM #partition_stats AS ps_inner
-                        JOIN #index_cleanup_report AS icr_inner
-                          ON  ps_inner.table_name = icr_inner.table_name
-                          AND ps_inner.index_name = icr_inner.index_name
-                        WHERE icr_inner.table_name = icr.table_name
-                        AND 
-                        (
-                             icr_inner.action = 'DROP' 
-                          OR icr_inner.action LIKE 'MERGE INTO%'
-                        )
-                        GROUP BY 
-                            ps_inner.table_name
-                    ) AS ps_total
-                )
-              ),
-        write_operations_avoided = 
-            SUM(ISNULL(icr.user_updates, 0))
-    FROM #index_cleanup_report AS icr
-    WHERE 
-    (
-         icr.action = 'DROP' 
-      OR icr.action LIKE 'MERGE INTO%'
-    )
-    GROUP BY 
-        icr.database_name, 
-        icr.table_name
-    ORDER BY 
-        space_savings_gb DESC
-    OPTION(RECOMPILE);
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Page Compression Opportunity Summary', 0, 0) WITH NOWAIT;
-    END; 
-
-    /* Summary of non-compressed indexes */
-    SELECT
-        summary_type = 'Page Compression Opportunity Summary',
-        candidate_indexes = 
-            COUNT_BIG(*),
-        total_size_gb = 
-            SUM(ps.total_space_mb) / 1024.0,
-        estimated_savings_low_gb = 
-            (SUM(ps.total_space_mb) * 0.20) / 1024.0, /* Conservative estimate (20%) */
-        estimated_savings_typical_gb = 
-            (SUM(ps.total_space_mb) * 0.40) / 1024.0, /* Typical estimate (40%) */
-        estimated_savings_high_gb = 
-            (SUM(ps.total_space_mb) * 0.60) / 1024.0 /* Optimistic estimate (60%) */
-    FROM #partition_stats ps
-    WHERE ps.data_compression_desc = 'NONE'
-    AND NOT EXISTS
-    (
-        SELECT 
-            1/0
-        FROM #index_cleanup_report AS icr
-        WHERE icr.index_name = ps.index_name
-        AND 
-        (
-             icr.action = 'DROP' 
-          OR icr.action LIKE 'MERGE INTO%'
-        )
-    )
-    OPTION(RECOMPILE);
-    
-    -- Top candidates for page compression
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Top candidates for page compression', 0, 0) WITH NOWAIT;
-    END; 
-
-    SELECT TOP (20)
-        database_name = 
-            @database_name,
-        ps.schema_name,
-        ps.table_name,
-        ps.index_name,
-        index_type = 
-            CASE 
-                WHEN ps.index_id = 1 
-                THEN 'CLUSTERED' 
-                ELSE 'NONCLUSTERED' 
-            END,
-        size_gb = 
-            SUM(ps.total_space_mb) / 1024.0,
-        estimated_savings_low_gb = 
-            (SUM(ps.total_space_mb) * 0.20) / 1024.0, -- Conservative (20%)
-        estimated_savings_typical_gb = 
-            (SUM(ps.total_space_mb) * 0.40) / 1024.0, -- Typical (40%)
-        estimated_savings_high_gb = 
-            (SUM(ps.total_space_mb) * 0.60) / 1024.0, -- Optimistic (60%)
-        rebuild_script = 
-            N'ALTER INDEX ' + 
-            QUOTENAME(ps.index_name) + 
-            N' ON ' + 
-            QUOTENAME(ps.schema_name) + 
-            N'.' + 
-            QUOTENAME(ps.table_name) + 
-            N' REBUILD WITH 
-    (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-            CASE 
-                WHEN @online = 'true'
-                THEN N'ON'
-                ELSE N'OFF'
-            END +
-            N', DATA_COMPRESSION = PAGE
-    );'
-    FROM #partition_stats ps
-    WHERE ps.data_compression_desc = N'NONE'
-    GROUP BY 
-        ps.schema_name, 
-        ps.table_name, 
-        ps.index_name, 
-        ps.index_id
-    ORDER BY 
-        SUM(ps.total_space_mb) DESC
-    OPTION(RECOMPILE);
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Select from #index_cleanup_summary', 0, 0) WITH NOWAIT;
-    END; 
-
-    SELECT
-        ics.database_name,
-        ics.table_name,
-        ics.index_name,
-        ics.action,
-        ics.details,
-        ics.current_definition,
-        ics.proposed_definition,
-        ics.usage_summary,
-        ics.operational_summary,
-        ics.uptime_warning
-    FROM #index_cleanup_summary AS ics
-    ORDER BY
-        CASE ics.action
-             WHEN N'Drop' THEN 1
-             WHEN N'Merge' THEN 2
-             WHEN N'Keep' THEN 3
-             ELSE 999
-        END,
-        ics.table_name,
-        ics.index_name
-    OPTION(RECOMPILE);
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Performing #final_index_actions insert', 0, 0) WITH NOWAIT;
-    END;     
-    
-    -- Replace the existing INSERT into #final_index_actions for MERGE operations with this:
-    WITH 
-        MergeTargets AS 
-    (
-        -- Get distinct target indexes for merges
-        SELECT DISTINCT
-            ia.database_id,
-            ia.database_name,
-            ia.schema_id,
-            ia.schema_name,
-            ia.object_id,
-            ia.table_name,
-            target_index = 
-                SUBSTRING
-                (
-                    ia.action, 
-                    12, 
-                    CHARINDEX
-                    (
-                        N' ', 
-                        ia.action + 
-                        N' ', 
-                        12
-                    ) - 12
-                )
-        FROM #index_cleanup_report ia
-        WHERE ia.action LIKE N'MERGE INTO%'
-    )
-    -- Insert a single CREATE INDEX statement for each target index
-    INSERT INTO 
-        #final_index_actions
-    WITH
-        (TABLOCK)
-    (
-        database_id, 
-        database_name, 
-        schema_id, 
-        schema_name, 
-        object_id, 
-        table_name, 
-        index_id, 
-        index_name, 
-        action, 
-        script
-    )
-    SELECT 
-        mt.database_id,
-        mt.database_name,
-        mt.schema_id,
-        mt.schema_name,
-        mt.object_id,
-        mt.table_name,
-        index_id = 
-            ISNULL
-            (
-                (
-                    SELECT TOP (1) 
-                        ia.index_id
-                    FROM #index_analysis ia
-                    WHERE ia.database_id = mt.database_id
-                    AND   ia.table_name = mt.table_name
-                    AND   ia.index_name = mt.target_index
-                ), 
-                0
-            ),
-        mt.target_index,
-        action =
-            N'MERGE CONSOLIDATED',
-        script = 
-            N'CREATE INDEX ' + 
-            QUOTENAME(mt.target_index) +
-            N' ON ' + 
-            QUOTENAME(mt.database_name) + 
-            N'.' + 
-            QUOTENAME(mt.schema_name) + 
-            N'.' + 
-            QUOTENAME(mt.table_name) +
-            N' (' +
-            -- Get key columns from one of the indexes being merged
-            (
-                SELECT TOP (1) 
-                    ia.key_columns
-                FROM #index_analysis ia
-                WHERE ia.database_id = mt.database_id
-                AND   ia.table_name = mt.table_name
-                AND   ia.index_name = mt.target_index
-            ) +
-            N')' +
-            -- Include all distinct columns from all indexes being merged into this target
-            CASE
-                WHEN EXISTS 
-                     (
-                         SELECT 
-                             1/0
-                         FROM #index_cleanup_report icr
-                         WHERE icr.database_id = mt.database_id
-                         AND   icr.table_name = mt.table_name
-                         AND   icr.action LIKE N'MERGE INTO ' + mt.target_index + N'%'
-                         AND 
-                         (
-                             EXISTS 
-                             (
-                                 SELECT 
-                                     1/0
-                                 FROM #index_analysis ia
-                                 WHERE ia.database_id = icr.database_id
-                                 AND   ia.table_name = icr.table_name
-                                 AND   ia.index_name = icr.index_name
-                                 AND   ia.included_columns IS NOT NULL
-                             )
-                             OR icr.action LIKE N'%ADD %'
-                         )
-                    )
-                THEN N' INCLUDE (' +
-                    STUFF
-                    (
-                      (
-                        SELECT DISTINCT 
-                            N', ' + 
-                            col
-                        FROM 
-                        (
-                            -- Get included columns from all source indexes
-                            SELECT 
-                                col = LTRIM(RTRIM(value.c.value('.', 'sysname')))
-                            FROM #index_cleanup_report icr
-                            CROSS APPLY 
-                            (
-                                SELECT 
-                                    ia.included_columns
-                                FROM #index_analysis ia
-                                WHERE ia.database_id = icr.database_id
-                                AND   ia.table_name = icr.table_name
-                                AND   ia.index_name = icr.index_name
-                            ) src
-                            CROSS APPLY 
-                            (
-                                SELECT 
-                                    cols =
-                                        CONVERT
-                                        (
-                                            xml,
-                                            '<c>' + 
-                                            REPLACE
-                                            (
-                                                ISNULL
-                                                (
-                                                    src.included_columns, 
-                                                    ''
-                                                ), 
-                                                ', ', 
-                                                '</c><c>') + 
-                                                '</c>'
-                                        )
-                            ) x
-                            CROSS APPLY x.cols.nodes('/c') AS value(c)
-                            WHERE icr.database_id = mt.database_id
-                            AND   icr.table_name = mt.table_name
-                            AND   icr.action LIKE N'MERGE INTO ' + mt.target_index + N'%'
-                            
-                            UNION
-                            
-                            -- Get missing columns which need to be added
-                            SELECT 
-                                col = 
-                                    LTRIM(RTRIM(value.c.value('.', 'sysname')))
-                            FROM #index_cleanup_report icr
-                            CROSS APPLY 
-                            (
-                                SELECT 
-                                    missing_cols =
-                                        SUBSTRING
-                                        (
-                                            icr.action,
-                                            CHARINDEX('ADD ', icr.action) + 4,
-                                            LEN(icr.action)
-                                        )
-                                WHERE icr.action LIKE N'%ADD %'
-                            ) mc
-                            CROSS APPLY 
-                            (
-                                SELECT 
-                                    cols =
-                                        CONVERT
-                                        (
-                                            xml, 
-                                            '<c>' + 
-                                            REPLACE
-                                            (
-                                                ISNULL
-                                                (
-                                                    mc.missing_cols, 
-                                                    ''
-                                                ), 
-                                                ', ', 
-                                                '</c><c>'
-                                            ) + '</c>'
-                                        )
-                            ) x
-                            CROSS APPLY x.cols.nodes('/c') AS value(c)
-                            WHERE icr.database_id = mt.database_id
-                            AND   icr.table_name = mt.table_name
-                            AND   icr.action LIKE N'MERGE INTO ' + mt.target_index + N'%'
-                            AND   icr.action LIKE N'%ADD %'
-                        ) AS all_columns
-                        WHERE DATALENGTH(col) > 0
-                        FOR 
-                            XML 
-                            PATH(''), 
-                            TYPE
-                      ).value('.', 'nvarchar(max)'), 
-                      1, 
-                      2, 
-                      ''
-                    ) +
-                    N')'
-                ELSE N''
-            END +
-            -- Add partitioning if needed
-            CASE
-                WHEN EXISTS 
-                (
-                    SELECT 
-                        1/0
-                    FROM #partition_stats ps
-                    WHERE ps.database_id = mt.database_id
-                    AND   ps.table_name = mt.table_name
-                    AND   ps.index_name = mt.target_index
-                    AND   ps.partition_function_name IS NOT NULL
-                )
-                THEN 
-                (
-                    SELECT TOP (1) 
-                        N' ON ' + 
-                        QUOTENAME(ps.partition_function_name) + 
-                        '(' + 
-                        ps.partition_columns + 
-                        ')'
-                    FROM #partition_stats ps
-                    WHERE ps.database_id = mt.database_id
-                    AND   ps.table_name = mt.table_name
-                    AND   ps.index_name = mt.target_index
-                    AND   ps.partition_function_name IS NOT NULL
-                )
-                ELSE N''
-            END +
-            -- Add filter definition if needed
-            CASE
-                WHEN EXISTS 
-                (
-                    SELECT 
-                        1/0
-                    FROM #index_analysis ia
-                    WHERE ia.database_id = mt.database_id
-                    AND   ia.table_name = mt.table_name
-                    AND   ia.index_name = mt.target_index
-                    AND   ia.filter_definition IS NOT NULL
-                )
-                THEN 
-                (
-                    SELECT TOP (1) 
-                        N' WHERE ' + 
-                        ia.filter_definition
-                    FROM #index_analysis ia
-                    WHERE ia.database_id = mt.database_id
-                    AND   ia.table_name = mt.table_name
-                    AND   ia.index_name = mt.target_index
-                    AND   ia.filter_definition IS NOT NULL
-                )
-                ELSE N''
-            END +
-            -- Add WITH options
-            N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-            CASE 
-                WHEN @online = 'true'
-                THEN N'ON'
-                ELSE N'OFF'
-            END +
-        N', DATA_COMPRESSION = PAGE);'
-    FROM MergeTargets mt;
-    
-    -- Then add DISABLE statements for all source indexes
-    INSERT INTO 
-        #final_index_actions
-    WITH
-        (TABLOCK)
-    (
-        database_id, 
-        database_name, 
-        schema_id, 
-        schema_name, 
-        object_id, 
-        table_name, 
-        index_id, 
-        index_name, 
-        action, 
-        script
-    )
-    SELECT
-        icr.database_id,
-        icr.database_name,
-        icr.schema_id,
-        icr.schema_name,
-        icr.object_id,
-        icr.table_name,
-        icr.index_id,
-        icr.index_name,
-        action = N'DISABLE MERGED',
-        script = 
-            N'ALTER INDEX ' + 
-            QUOTENAME(icr.index_name) + 
-            N' ON ' + 
-            QUOTENAME(icr.database_name) + 
-            N'.' + 
-            QUOTENAME(icr.schema_name) + 
-            N'.' + 
-            QUOTENAME(icr.table_name) + 
-            N' DISABLE;'
-    FROM #index_cleanup_report icr
-    WHERE icr.action LIKE N'MERGE INTO%';
-
-    IF ROWCOUNT_BIG() = 0 BEGIN IF @debug = 1 BEGIN RAISERROR('No rows inserted into #final_index_actions', 0, 0) WITH NOWAIT END; END;
-
-    IF @debug = 1
-    BEGIN
-
-        SELECT
-            table_name = '#final_index_actions',
-            fia.*
-        FROM #final_index_actions AS fia;
-
-        RAISERROR('Select from #final_index_actions', 0, 0) WITH NOWAIT;
-    END; 
-
-    SELECT
-        f.database_name,
-        f.table_name,
-        f.index_name,
-        f.action,
-        f.script,
-        sort_order =
-            CASE f.action
-                WHEN N'MERGE INTO' THEN 2
-                WHEN N'DROP' THEN 3
-                ELSE 999
-            END
-    FROM #final_index_actions AS f
-    WHERE f.action <> N'KEEP'
-
-    UNION ALL
-
-    SELECT
-        r.database_name,
-        r.table_name,
-        r.index_name,
-        action =
-            N'DISABLE (Unused)',
-        script =
-            N'ALTER INDEX ' +
-            QUOTENAME(r.index_name) +
-            N' ON ' +
-            QUOTENAME(r.table_name) +
-            N' DISABLE;',
-        sort_order = 1
-    FROM #index_cleanup_report AS r
-    WHERE r.user_seeks = 0
-    AND   r.user_scans = 0
-    AND   r.user_lookups = 0
-    AND   r.user_updates = 0
-    ORDER BY
-        f.table_name,
-        f.index_name,
-        sort_order
-    OPTION(RECOMPILE);
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Generating scripts', 0, 0) WITH NOWAIT;
-    END;
-
-    /*Merge into*/
-    SELECT
-        @final_script += 
-        N'
-        -- =============================================================================
-        -- MERGE INDEX: ' + 
-        QUOTENAME(f.index_name) + 
-        N' into ' +
-        CASE
-            WHEN f.action = 'MERGE CONSOLIDATED'
-            THEN QUOTENAME(f.index_name)
-            ELSE 'Unknown Target'
+/* Generate index merge scripts with compression and drop_existing */
+SELECT
+    database_name,
+    schema_name,
+    table_name,
+    index_name,
+    target_index_name,
+    consolidation_rule,
+    merge_script =
+        'CREATE INDEX ' + QUOTENAME(index_name) +
+        ' ON ' + QUOTENAME(database_name) + '.' + QUOTENAME(schema_name) + '.' + QUOTENAME(table_name) +
+        ' (' + key_columns + ')' +
+        CASE WHEN included_columns IS NOT NULL AND LEN(included_columns) > 0
+             THEN ' INCLUDE (' + included_columns + ')'
+             ELSE ''
         END +
-        N'
-        -- Reason: This index overlaps with another index and can be consolidated
-        -- Original definition: ' + 
-        NCHAR(10) +
-        (
-            SELECT 
-                MAX(ics.current_definition)
-            FROM #index_cleanup_summary AS ics 
-            WHERE ics.index_name = f.index_name 
-            AND   ics.table_name = f.table_name
-        ) + 
-        N'
-        -- Usage: Seeks: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        SUM(DISTINCT id.user_seeks)
-                    FROM #index_details AS id 
-                    WHERE id.table_name = f.table_name 
-                    AND   id.index_name = f.index_name
-                ), 
-                0
-            )
-        ) + 
-        N', Scans: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        SUM(DISTINCT id.user_scans)
-                    FROM #index_details AS id 
-                    WHERE id.table_name = f.table_name 
-                    AND   id.index_name = f.index_name
-                ), 
-                0
-            )
-        ) +
-        N', Lookups: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        SUM(DISTINCT id.user_lookups)
-                    FROM #index_details AS id 
-                    WHERE id.table_name = f.table_name 
-                    AND   id.index_name = f.index_name
-                ), 
-                0
-            )
-        ) +
-        N', Updates: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        SUM(DISTINCT id.user_updates)
-                    FROM #index_details AS id 
-                    WHERE id.table_name = f.table_name 
-                    AND   id.index_name = f.index_name
-                ), 
-                0
-            )
-        ) +
-        N'
-        -- Space saved: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        CONVERT
-                        (
-                            decimal(10,2), 
-                            SUM(ps.total_space_mb) / 1024.0
-                        )
-                    FROM #partition_stats AS ps
-                    WHERE ps.table_name = f.table_name 
-                    AND   ps.index_name = f.index_name
-                ), 
-                0
-            )
-        ) + N' GB
-        -- =============================================================================
-        ' + 
-        f.script + 
-        NCHAR(10) + 
-        NCHAR(10)
-    FROM #final_index_actions AS f
-    WHERE f.action = N'MERGE CONSOLIDATED'
-    ORDER BY
-        f.table_name,
-        f.index_name;
+        CASE WHEN filter_definition IS NOT NULL
+             THEN ' WHERE ' + filter_definition
+             ELSE ''
+        END +
+        ' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ON, DATA_COMPRESSION = PAGE);'
+FROM #index_analysis
+WHERE action = 'MERGE INCLUDES'
+ORDER BY table_name, index_name;
 
-    /*Disable merged indexes*/
-    SELECT
-        @final_script += N'
-        /*
-        -- =============================================================================
-        -- DISABLE MERGED INDEX: ' + 
-        QUOTENAME(f.index_name) + 
-        N'
-        -- Reason: This index has been merged into another index
-        -- =============================================================================
-        */' + 
-        NCHAR(10) +
-        f.script + 
-        NCHAR(10) + 
-        NCHAR(10)
-    FROM #final_index_actions AS f
-    WHERE f.action = N'DISABLE MERGED'
-    ORDER BY
-        f.table_name,
-        f.index_name;
-    
-    /*Drop indexes*/
-    SELECT
-        @final_script += N'
-        /*
-        -- =============================================================================
-        -- DROP INDEX: ' + 
-        QUOTENAME(f.index_name) + 
-        N'
-        -- Reason: This index is redundant with other indexes on the same table
-        -- Current usage: Seeks: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        SUM(DISTINCT id.user_seeks)
-                    FROM #index_details AS id 
-                    WHERE id.table_name = f.table_name 
-                    AND   id.index_name = f.index_name
-                ), 
-                0
-            )
-        ) + 
-        N', Scans: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        SUM(DISTINCT id.user_scans)
-                    FROM #index_details AS id 
-                    WHERE id.table_name = f.table_name 
-                    AND   id.index_name = f.index_name
-                ), 
-                0
-            )
-        ) +
-        N', Lookups: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        SUM(DISTINCT id.user_lookups) 
-                    FROM #index_details AS id 
-                    WHERE id.table_name = f.table_name 
-                    AND   id.index_name = f.index_name
-                ), 
-                0
-            )
-        ) +
-        N', Updates: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        SUM(DISTINCT id.user_updates)
-                    FROM #index_details AS id 
-                    WHERE id.table_name = f.table_name 
-                    AND   id.index_name = f.index_name
-                ), 
-                0
-            )
-        ) +
-        N'
-        -- Last used: ' + 
-        ISNULL
-        (
-            CONVERT
-            (
-                nvarchar(30), 
-                (
-                    SELECT 
-                        MAX
-                        (
-                            CASE 
-                                WHEN id.last_user_seek > id.last_user_scan 
-                                AND  id.last_user_seek > id.last_user_lookup 
-                                THEN id.last_user_seek
-                                WHEN id.last_user_scan > id.last_user_lookup
-                                THEN id.last_user_scan
-                                ELSE id.last_user_lookup
-                            END
-                        )
-                    FROM #index_details AS id 
-                    WHERE id.table_name = f.table_name 
-                    AND   id.index_name = f.index_name
-                ), 
-                120
-            ), 
-            'Never'
-        ) +
-        N'
-        -- Space reclaimed: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        CONVERT
-                        (
-                            decimal(10,2), 
-                            SUM(ps.total_space_mb) / 1024.0
-                        )
-                    FROM #partition_stats AS ps
-                    WHERE ps.table_name = f.table_name 
-                    AND   ps.index_name = f.index_name
-                ), 
-                0
-            )
-        ) + N' GB
-        -- =============================================================================
-        */' + 
-        f.script + 
-        NCHAR(10) + 
-        NCHAR(10)
-    FROM #final_index_actions AS f
-    WHERE f.action = N'DROP'
-    ORDER BY
-        f.table_name,
-        f.index_name;
-       
-    /*Unused indexes*/
-    SELECT
-        @final_script += N'
-        /*
-        -- =============================================================================
-        -- DISABLE UNUSED INDEX: ' + 
-        QUOTENAME(i.index_name) + 
-        N'
-        -- Reason: This index has never been used for reads but has been updated ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            i.user_updates
-        ) + 
-        N' times
-        -- Space reclaimed: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        CONVERT
-                        (
-                            decimal(10,2), 
-                            SUM(ps.total_space_mb) / 1024.0
-                        )
-                    FROM #partition_stats AS ps
-                    WHERE ps.table_name = i.table_name 
-                    AND   ps.index_name = i.index_name
-                ), 
-                0
-            )
-        ) + N' GB
-        -- Warning: Verify this index is truly not needed before dropping
-        -- =============================================================================
-        */' + 
-        NCHAR(10) +
-        N'ALTER INDEX ' + 
-        QUOTENAME(i.index_name) + 
-        N' ON ' + 
-        QUOTENAME(i.database_name) +
-        N'.' +
-        QUOTENAME
-        (i.schema_name) +
-        N'.' +
-        QUOTENAME(i.table_name) + 
-        N' DISABLE;' +  
-        NCHAR(10) +  
-        NCHAR(10)
-    FROM 
-    (
-        SELECT DISTINCT
-            icr.database_name,
-            icr.schema_name,
-            icr.table_name,
-            icr.index_name,
-            icr.user_updates
-        FROM #index_cleanup_report AS icr
-        WHERE icr.user_seeks = 0
-        AND   icr.user_scans = 0
-        AND   icr.user_lookups = 0
-        AND   icr.user_updates = 0
-        AND   icr.action <> N'DROP'
-        AND   icr.action NOT LIKE N'MERGE INTO%'
-        AND   NOT EXISTS 
-        (
-            SELECT 
-                1/0
-            FROM #final_index_actions AS fia
-            WHERE fia.index_name = icr.index_name
-            AND   fia.table_name = icr.table_name
-            AND   fia.action IN (N'MERGE CONSOLIDATED', N'DISABLE MERGED')
-        )
-    ) AS i
-    ORDER BY
-        i.table_name,
-        i.index_name;
-    
-    
-    /*Summary*/
-    SELECT
-        @final_script += N'
-    -- =============================================================================
-    -- SUMMARY OF CHANGES
-    -- Total indexes analyzed: ' + 
-        CONVERT
-        (
-            nvarchar(10), 
-            (
-                SELECT 
-                    COUNT_BIG(*) 
-                FROM #index_cleanup_report AS icr
-            )
-        ) + 
-        N'
-    -- Indexes recommended for dropping: ' + 
-        CONVERT
-        (
-            nvarchar(10), 
-            (
-                SELECT 
-                    COUNT_BIG(*) 
-                FROM #index_cleanup_report AS icr 
-                WHERE icr.action = 'DROP'
-            )
-        ) + 
-        N'
-    -- Indexes recommended for merging: ' + 
-        CONVERT
-        (
-            nvarchar(10), 
-            (
-                SELECT 
-                    COUNT_BIG(*) 
-                FROM #index_cleanup_report AS icr 
-                WHERE icr.action LIKE 'MERGE INTO%'
-            )
-        ) + 
-        N'
-    -- Unused indexes found: ' + 
-        CONVERT
-        (
-            nvarchar(10), 
-            (
-                SELECT 
-                    COUNT_BIG(*) 
-                FROM #index_cleanup_report AS icr
-                WHERE icr.user_seeks = 0 
-                AND   icr.user_scans = 0 
-                AND   icr.user_lookups = 0
-            )
-        ) + 
-        N'
-    -- Estimated space savings: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        CONVERT
-                        (
-                            decimal(10,2), 
-                            SUM(ps.total_space_mb) / 1024.0
-                        )
-                    FROM #partition_stats AS ps
-                    JOIN #index_cleanup_report AS icr 
-                      ON ps.table_name = icr.table_name 
-                      AND ps.index_name = icr.index_name
-                    WHERE icr.action = 'DROP' 
-                    OR    icr.action LIKE 'MERGE INTO%' 
-                    OR    
-                    (
-                          icr.user_seeks = 0 
-                      AND icr.user_scans = 0 
-                      AND icr.user_lookups = 0
-                    )
-                ), 
-                0
-            )
-        ) + N' GB
-    -- Estimated write operations reduced: ' + 
-        CONVERT
-        (
-            nvarchar(20), 
-            ISNULL
-            (
-                (
-                    SELECT 
-                        SUM(icr.user_updates)
-                    FROM #index_cleanup_report AS icr
-                    WHERE icr.action = 'DROP' 
-                    OR    icr.action LIKE 'MERGE INTO%' 
-                    OR 
-                    (
-                          icr.user_seeks = 0 
-                      AND icr.user_scans = 0 
-                      AND icr.user_lookups = 0
-                    )
-                ), 
-                0
-            )
-        ) + N' operations
-    -- =============================================================================
-    ';
-
-    SELECT 
-        [text()] = 
-            N'/* Index Cleanup Script for ' + 
-            @database_name +
-            N' */',
-        [text()] = 
-        (
-            SELECT 
-                NCHAR(10) +
-                N'        ----------------------' +
-                NCHAR(10) +
-                N'        -- Final script to review. DO NOT EXECUTE WITHOUT CAREFUL REVIEW.' +
-                NCHAR(10) +
-                N'        -- Implementation Script:' +
-                NCHAR(10) +
-                N'        ----------------------' +
-                NCHAR(10) +
-                @final_script 
-            FOR 
-                XML 
-                PATH(''), 
-                TYPE
-        ).value('(./text())[1]', 'nvarchar(max)')
-    FOR 
-        XML 
-        PATH(''), 
-        TYPE;
-
+/* Generate disable scripts for unneeded indexes */
+SELECT
+    database_name,
+    schema_name,
+    table_name,
+    index_name,
+    consolidation_rule,
+    disable_script =
+        'ALTER INDEX ' + QUOTENAME(index_name) +
+        ' ON ' + QUOTENAME(database_name) + '.' + QUOTENAME(schema_name) + '.' + QUOTENAME(table_name) +
+        ' DISABLE;'
+FROM #index_analysis
+WHERE action = 'DISABLE'
+ORDER BY table_name, index_name;
 END TRY
 BEGIN CATCH
     THROW;
