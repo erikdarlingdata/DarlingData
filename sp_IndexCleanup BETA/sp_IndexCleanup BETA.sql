@@ -1093,9 +1093,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         x.partition_id,
         x.partition_number,
         x.total_rows,
-        x.total_space_mb,
-        x.reserved_lob_mb,
-        x.reserved_row_overflow_mb,
+        x.total_space_gb,
+        x.reserved_lob_gb,
+        x.reserved_row_overflow_gb,
         x.data_compression_desc,
         built_on =
             ISNULL
@@ -2188,7 +2188,9 @@ SELECT
     CONVERT(nvarchar(20), ps.total_rows) +
     N' | Size: ' +
     CONVERT(nvarchar(20), CONVERT(decimal(10,4), ps.total_space_gb)) + 
-    N' GB'
+    N' GB',
+    NULL,
+    NULL
 FROM #index_analysis AS ia
 JOIN #partition_stats AS ps 
   ON  ia.database_id = ps.database_id
