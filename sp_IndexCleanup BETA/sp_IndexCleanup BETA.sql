@@ -1560,9 +1560,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SET 
         ia1.consolidation_rule = 'Key Subset',
         ia1.target_index_name = ia2.index_name,
-        ia1.action = 'DISABLE',  /* The narrower index gets disabled */
-        /* Update the wider (winning) index for the report */
-        ia2.superseded_by = 'Supersedes ' + ia1.index_name
+        ia1.action = 'DISABLE'  /* The narrower index gets disabled */
     FROM #index_analysis ia1
     JOIN #index_analysis ia2 
       ON  ia1.database_id = ia2.database_id
@@ -1594,6 +1592,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.index_name = ia2.index_name
         AND   id2.is_eligible_for_dedupe = 1
     );
+    
+    /* Update the superseded_by column for the wider index in a separate statement */
+    UPDATE 
+        ia2
+    SET 
+        ia2.superseded_by = 'Supersedes ' + ia1.index_name
+    FROM #index_analysis ia1
+    JOIN #index_analysis ia2 
+      ON  ia1.database_id = ia2.database_id
+      AND ia1.object_id = ia2.object_id
+      AND ia1.index_name <> ia2.index_name
+      AND ia2.key_columns LIKE (ia1.key_columns + '%')  /* ia2 has wider key that starts with ia1's key */
+      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+      /* Exception: If narrower index is unique and wider is not, they should not be merged */
+      AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
+    WHERE ia1.consolidation_rule = 'Key Subset'  /* Use records just processed in previous UPDATE */
+    AND   ia1.target_index_name = ia2.index_name;  /* Make sure we're updating the right wider index */
     
     /* Rule 5: Unique constraint vs. nonclustered index handling */
     UPDATE 
