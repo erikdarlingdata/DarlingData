@@ -1514,6 +1514,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      (ia1.index_priority >= ia2.index_priority AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1))
                 THEN 'MERGE INCLUDES'  /* Keep this index but merge includes */
                 ELSE 'DISABLE'  /* Other index is keeper, disable this one */
+            END,
+        /* For the winning index, set clear superseded_by text for the report */
+        ia1.superseded_by = 
+            CASE 
+                WHEN (ia1.is_unique = 1 AND ia2.is_unique = 0) OR
+                     (ia1.index_priority >= ia2.index_priority AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1))
+                THEN 'Supersedes ' + ia2.index_name
+                ELSE NULL
             END
     FROM #index_analysis ia1
     JOIN #index_analysis ia2 
@@ -1552,7 +1560,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SET 
         ia1.consolidation_rule = 'Key Subset',
         ia1.target_index_name = ia2.index_name,
-        ia1.action = 'DISABLE'  /* The narrower index gets disabled */
+        ia1.action = 'DISABLE',  /* The narrower index gets disabled */
+        /* Update the wider (winning) index for the report */
+        ia2.superseded_by = 'Supersedes ' + ia1.index_name
     FROM #index_analysis ia1
     JOIN #index_analysis ia2 
       ON  ia1.database_id = ia2.database_id
@@ -1673,6 +1683,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     );
 
 /* Insert summary statistics first */
+/* Add a separator row for the header */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    script_type,
+    additional_info
+)
+SELECT 
+    'HEADER',
+    0,
+    'SEPARATOR',
+    N'==================== INDEX CLEANUP SUMMARY ====================';
+
+/* Add summary information */
 INSERT INTO #index_cleanup_results
 (
     result_type,
@@ -1762,6 +1787,34 @@ LEFT JOIN #compression_eligibility ce ON
       AND ia.object_id = ce.object_id
       AND ia.index_id = ce.index_id;
 
+/* Add a separator for scripts section */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    script_type,
+    additional_info
+)
+SELECT 
+    'HEADER',
+    9,
+    'SEPARATOR',
+    N'==================== INDEX SCRIPTS ====================';
+
+/* Add a separator for report section at the end */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    script_type,
+    additional_info
+)
+SELECT 
+    'HEADER',
+    99,
+    'SEPARATOR',
+    N'==================== END OF REPORT ====================';
+
 /* Insert merge scripts for indexes */
 INSERT INTO #index_cleanup_results
 (
@@ -1774,7 +1827,8 @@ INSERT INTO #index_cleanup_results
     script_type,
     consolidation_rule,
     target_index_name,
-    script
+    script,
+    additional_info
 )
 SELECT
     'MERGE',
@@ -1841,7 +1895,13 @@ CREATE '
     END +
     N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
     CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
-    N', DATA_COMPRESSION = PAGE);'
+    N', DATA_COMPRESSION = PAGE);',
+    /* Additional info about what this script does */
+    CASE
+        WHEN ia.action = 'MERGE INCLUDES' THEN N'This index will absorb includes from duplicate indexes'
+        WHEN ia.action = 'MAKE UNIQUE' THEN N'This index will replace a unique constraint'
+        ELSE NULL
+    END
 FROM #index_analysis ia
 LEFT JOIN 
 (
@@ -1871,9 +1931,7 @@ JOIN #compression_eligibility ce
   AND ia.index_id = ce.index_id
 WHERE ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE')
 AND ce.can_compress = 1
-ORDER BY
-    ia.table_name,
-    ia.index_name;
+AND ia.target_index_name IS NULL  /* Only create merge scripts for the "winning" indexes */;
 
 /* Insert disable scripts for unneeded indexes */
 INSERT INTO #index_cleanup_results
@@ -1886,7 +1944,8 @@ INSERT INTO #index_cleanup_results
     index_name,
     script_type,
     consolidation_rule,
-    script
+    script,
+    additional_info
 )
 SELECT
     'DISABLE',
@@ -1905,7 +1964,18 @@ SELECT
     QUOTENAME(ia.schema_name) +
     N'.' +
     QUOTENAME(ia.table_name) +
-    N' DISABLE;'
+    N' DISABLE;',
+    CASE 
+        WHEN ia.consolidation_rule = 'Key Subset' 
+            THEN N'This index is superseded by a wider index: ' + ISNULL(ia.target_index_name, N'(unknown)')
+        WHEN ia.consolidation_rule = 'Exact Duplicate' 
+            THEN N'This index is an exact duplicate of: ' + ISNULL(ia.target_index_name, N'(unknown)')
+        WHEN ia.consolidation_rule = 'Key Duplicate' 
+            THEN N'This index has the same keys as: ' + ISNULL(ia.target_index_name, N'(unknown)')
+        WHEN ia.consolidation_rule LIKE 'Unused Index%' 
+            THEN ia.consolidation_rule
+        ELSE N'This index is redundant'
+    END
 FROM #index_analysis ia
 WHERE ia.action = 'DISABLE';
 
@@ -2147,22 +2217,33 @@ Results are ordered by:
 7. Ineligible objects (tables that can't be compressed)
 */
 SELECT
+    /* First, show the information needed to understand the script */
+    script_type,
+    additional_info,
+    /* Then show identifying information for the index */
     database_name,
     schema_name,
     table_name,
     index_name,
-    script_type,
+    /* Then show relationship information */
     consolidation_rule,
     target_index_name,
-    script,
-    additional_info
-FROM #index_cleanup_results
+    /* Include superseded_by info for winning indexes */
+    CASE WHEN ia.superseded_by IS NOT NULL THEN ia.superseded_by ELSE NULL END AS superseded_info,
+    /* Finally show the actual script */
+    script
+FROM #index_cleanup_results ir
+LEFT JOIN #index_analysis ia
+    ON ir.database_name = ia.database_name
+    AND ir.schema_name = ia.schema_name
+    AND ir.table_name = ia.table_name
+    AND ir.index_name = ia.index_name
 ORDER BY
-    sort_order,
-    database_name,
-    schema_name,
-    table_name,
-    index_name;
+    ir.sort_order,
+    ir.database_name,
+    ir.schema_name,
+    ir.table_name,
+    ir.index_name;
 
 END TRY
 BEGIN CATCH
