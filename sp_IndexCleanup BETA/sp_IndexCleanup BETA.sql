@@ -1407,7 +1407,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         consolidation_rule = 
             CASE 
                 WHEN @uptime_warning = 1 
-                THEN 'Unused Index (WARNING: Server uptime < 14 days)'
+                THEN 'Unused Index (WARNING: Server uptime < 14 days - usage data may be incomplete)'
                 ELSE 'Unused Index' 
             END,
         action = 'DISABLE'
@@ -1749,6 +1749,7 @@ SELECT
     ia.schema_name,
     ia.table_name,
     ia.index_name,
+    compression_type = N'All Partitions',
     compression_script =
         N'ALTER INDEX ' +
         QUOTENAME(ia.index_name) +
@@ -1801,9 +1802,113 @@ ORDER BY
     ia.table_name,
     ia.index_name;
 
+/* Generate scripts to disable unique constraints that are being replaced by unique indexes */
+SELECT
+    ia.database_name,
+    ia.schema_name,
+    ia.table_name,
+    ia.index_name,
+    constraint_name = id.index_name,
+    disable_constraint_script =
+        N'ALTER TABLE ' +
+        QUOTENAME(ia.database_name) +
+        N'.' +
+        QUOTENAME(ia.schema_name) +
+        N'.' +
+        QUOTENAME(ia.table_name) +
+        N' NOCHECK CONSTRAINT ' +
+        QUOTENAME(id.index_name) +
+        N';'
+FROM #index_analysis ia
+JOIN #index_details id ON
+    id.database_id = ia.database_id AND
+    id.object_id = ia.object_id AND
+    id.is_unique_constraint = 1
+WHERE 
+    /* Only indexes that are being made unique */
+    ia.action = 'MAKE UNIQUE'
+    /* Find the constraint that matches the index being made unique */
+    AND EXISTS (
+        SELECT 1/0
+        FROM #index_details id_nc
+        WHERE id_nc.database_id = ia.database_id
+        AND id_nc.object_id = ia.object_id
+        AND id_nc.index_name = ia.index_name
+        /* Matching key columns */
+        AND NOT EXISTS (
+            SELECT id.column_name 
+            FROM #index_details id_inner
+            WHERE id_inner.database_id = id.database_id
+            AND id_inner.object_id = id.object_id
+            AND id_inner.index_id = id.index_id
+            AND id_inner.is_included_column = 0
+            EXCEPT
+            SELECT id_nc_inner.column_name
+            FROM #index_details id_nc_inner
+            WHERE id_nc_inner.database_id = id_nc.database_id
+            AND id_nc_inner.object_id = id_nc.object_id
+            AND id_nc_inner.index_name = id_nc.index_name
+            AND id_nc_inner.is_included_column = 0
+        )
+    )
+ORDER BY
+    ia.table_name,
+    ia.index_name;
+
+/* Generate per-partition compression scripts for partitioned indexes */
+SELECT
+    ia.database_name,
+    ia.schema_name,
+    ia.table_name,
+    ia.index_name,
+    compression_type = N'Per Partition',
+    partition_number = ps.partition_number,
+    total_rows = ps.total_rows,
+    total_space_mb = ps.total_space_mb,
+    compression_script =
+        N'ALTER INDEX ' +
+        QUOTENAME(ia.index_name) +
+        N' ON ' +
+        QUOTENAME(ia.database_name) +
+        N'.' +
+        QUOTENAME(ia.schema_name) +
+        N'.' +
+        QUOTENAME(ia.table_name) +
+        N' REBUILD PARTITION = ' +
+        CAST(ps.partition_number AS nvarchar(20)) +
+        N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+        CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
+        N', DATA_COMPRESSION = PAGE);'
+FROM #index_analysis ia
+JOIN #partition_stats ps ON
+    ia.database_id = ps.database_id AND
+    ia.object_id = ps.object_id AND
+    ia.index_id = ps.index_id
+JOIN #compression_eligibility ce ON
+    ia.database_id = ce.database_id AND
+    ia.object_id = ce.object_id
+WHERE 
+    /* Only partitioned indexes */
+    ps.partition_function_name IS NOT NULL
+    /* Indexes that are not being disabled or merged */
+    AND (ia.action IS NULL OR ia.action = 'KEEP')
+    /* Only indexes eligible for compression */
+    AND ce.can_compress = 1
+ORDER BY
+    ia.table_name,
+    ia.index_name,
+    ps.partition_number;
+
 /* Generate index statistics and reporting */
 SELECT
     report_title = N'Index Cleanup Summary',
+    server_uptime_days = @uptime_days,
+    uptime_warning = 
+        CASE 
+            WHEN @uptime_warning = 1 
+            THEN N'Low uptime detected! Index usage data may be incomplete.' 
+            ELSE NULL 
+        END,
     tables_analyzed = COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
     total_indexes = COUNT(*),
     indexes_to_disable = SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END),
