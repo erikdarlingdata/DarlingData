@@ -1653,56 +1653,195 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating results', 0, 0) WITH NOWAIT;
     END;
 
-/* Generate index merge scripts with compression and drop_existing */
+    /* 
+    Create a consolidated results table to hold all outputs in a single result set
+    This provides a more cohesive experience with summary information and scripts in one place
+    */
+    CREATE TABLE #index_cleanup_results
+    (
+        result_type varchar(50) NOT NULL,  /* 'SUMMARY', 'MERGE', 'DISABLE', 'COMPRESS', etc. */
+        sort_order integer NOT NULL,       /* Keeps results in logical order */
+        database_name sysname NULL,
+        schema_name sysname NULL,
+        table_name sysname NULL,
+        index_name sysname NULL,
+        script_type nvarchar(50) NULL,     /* 'MERGE', 'DISABLE', 'COMPRESS', etc. */
+        consolidation_rule nvarchar(200) NULL,
+        target_index_name sysname NULL,
+        script nvarchar(max) NULL,
+        additional_info nvarchar(max) NULL /* For stats, constraints, etc. */
+    );
+
+/* Insert summary statistics first */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    script_type,
+    additional_info
+)
+SELECT 
+    'SUMMARY',
+    1,
+    'Index Cleanup Summary',
+    N'Server uptime: ' + 
+    CAST(@uptime_days AS nvarchar(10)) + 
+    N' days' +
+    CASE 
+        WHEN @uptime_warning = 1 
+        THEN N' (WARNING: Low uptime detected! Index usage data may be incomplete.)' 
+        ELSE N'' 
+    END +
+    N' | Tables analyzed: ' + 
+    CAST(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)) AS nvarchar(10)) +
+    N' | Total indexes: ' + 
+    CAST(COUNT(*) AS nvarchar(10)) +
+    N' | Indexes to disable: ' + 
+    CAST(SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END) AS nvarchar(10)) +
+    N' | Indexes to merge: ' + 
+    CAST(SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END) AS nvarchar(10)) +
+    N' | Avg indexes per table: ' + 
+    CAST(CONVERT(decimal(10,2), COUNT(*) * 1.0 / 
+         NULLIF(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 0)) AS nvarchar(10))
+FROM #index_analysis ia;
+
+/* Insert space savings estimates */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    script_type,
+    additional_info
+)
+SELECT 
+    'SUMMARY',
+    2,
+    'Estimated Space Savings',
+    N'Space saved from cleanup: ' + 
+    CAST(CONVERT(decimal(10,2), SUM(CASE 
+        WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+        THEN ps.total_space_mb 
+        ELSE 0 
+    END)) AS nvarchar(20)) + 
+    N' MB | Compression savings estimate: ' + 
+    CAST(CONVERT(decimal(10,2), SUM(CASE 
+        WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
+        THEN ps.total_space_mb * 0.20 /* Conservative estimate - 20% compression ratio */
+        ELSE 0 
+    END)) AS nvarchar(20)) + 
+    N' - ' + 
+    CAST(CONVERT(decimal(10,2), SUM(CASE 
+        WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
+        THEN ps.total_space_mb * 0.60 /* Optimistic estimate - 60% compression ratio */
+        ELSE 0 
+    END)) AS nvarchar(20)) + 
+    N' MB | Total estimated savings: ' + 
+    CAST(CONVERT(decimal(10,2), SUM(CASE 
+        WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+        THEN ps.total_space_mb
+        WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
+        THEN ps.total_space_mb * 0.20
+        ELSE 0 
+    END)) AS nvarchar(20)) + 
+    N' - ' + 
+    CAST(CONVERT(decimal(10,2), SUM(CASE 
+        WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+        THEN ps.total_space_mb
+        WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
+        THEN ps.total_space_mb * 0.60
+        ELSE 0 
+    END)) AS nvarchar(20)) + 
+    N' MB'
+FROM #index_analysis ia
+LEFT JOIN #partition_stats ps ON
+      ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+LEFT JOIN #compression_eligibility ce ON
+      ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id;
+
+/* Insert merge scripts for indexes */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    database_name,
+    schema_name,
+    table_name,
+    index_name,
+    script_type,
+    consolidation_rule,
+    target_index_name,
+    script
+)
 SELECT
+    'MERGE',
+    10,
     ia.database_name,
     ia.schema_name,
     ia.table_name,
     ia.index_name,
-    ia.target_index_name,
+    'MERGE SCRIPT',
     ia.consolidation_rule,
-    merge_script =
-        N'CREATE ' +
-        CASE WHEN ia.action = 'MAKE UNIQUE' THEN N'UNIQUE ' ELSE N'' END +
-        N'INDEX ' +
-        QUOTENAME(ia.index_name) +
-        N' ON ' +
-        QUOTENAME(ia.database_name) +
-        N'.' +
-        QUOTENAME(ia.schema_name) +
-        N'.' +
-        QUOTENAME(ia.table_name) +
-        N' (' +
-        ia.key_columns +
-        N')' +
-        CASE 
-            WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
-            THEN N' INCLUDE (' +
-                 ia.included_columns +
-                 N')'
-            ELSE N''
-        END +
-        CASE 
-            WHEN ia.filter_definition IS NOT NULL
-            THEN N' WHERE ' +
-                 ia.filter_definition
-            ELSE N''
-        END +
-        CASE 
-            WHEN ps.partition_function_name IS NOT NULL
-            THEN N' ON ' +
-                 QUOTENAME(ps.partition_function_name) +
-                 N'(' +
-                 ISNULL(ps.partition_columns, N'') +
-                 N')'
-            WHEN ps.built_on IS NOT NULL
-            THEN N' ON ' +
-                 QUOTENAME(ps.built_on)
-            ELSE N''
-        END +
-        N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-        CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
-        N', DATA_COMPRESSION = PAGE);'
+    ia.target_index_name,
+    CASE 
+        WHEN ia.action = 'MAKE UNIQUE' 
+        THEN N'/* This index can replace a unique constraint */
+/* Creating unique index with same keys as constraint */
+CREATE UNIQUE '
+        WHEN ia.action = 'MERGE INCLUDES'
+        THEN N'/* This index can be merged with another index */
+/* Creating index with combined includes from both */
+CREATE '
+        ELSE N'CREATE '
+    END +
+    N'INDEX ' +
+    QUOTENAME(ia.index_name) +
+    N' ON ' +
+    QUOTENAME(ia.database_name) +
+    N'.' +
+    QUOTENAME(ia.schema_name) +
+    N'.' +
+    QUOTENAME(ia.table_name) +
+    N' (' +
+    ia.key_columns +
+    N')' +
+    CASE 
+        WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0 AND ia.action = 'MERGE INCLUDES'
+        THEN N' INCLUDE (' +
+             N'/* Combined includes from merged indexes */
+             ' +
+             ia.included_columns +
+             N')'
+        WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
+        THEN N' INCLUDE (' +
+             ia.included_columns +
+             N')'
+        ELSE N''
+    END +
+    CASE 
+        WHEN ia.filter_definition IS NOT NULL
+        THEN N' WHERE ' +
+             ia.filter_definition
+        ELSE N''
+    END +
+    CASE 
+        WHEN ps.partition_function_name IS NOT NULL
+        THEN N' ON ' +
+             QUOTENAME(ps.partition_function_name) +
+             N'(' +
+             ISNULL(ps.partition_columns, N'') +
+             N')'
+        WHEN ps.built_on IS NOT NULL
+        THEN N' ON ' +
+             QUOTENAME(ps.built_on)
+        ELSE N''
+    END +
+    N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+    CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
+    N', DATA_COMPRESSION = PAGE);'
 FROM #index_analysis ia
 LEFT JOIN 
 (
@@ -1736,38 +1875,62 @@ ORDER BY
     ia.table_name,
     ia.index_name;
 
-/* Generate disable scripts for unneeded indexes */
+/* Insert disable scripts for unneeded indexes */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    database_name,
+    schema_name,
+    table_name,
+    index_name,
+    script_type,
+    consolidation_rule,
+    script
+)
 SELECT
+    'DISABLE',
+    20,
     ia.database_name,
     ia.schema_name,
     ia.table_name,
     ia.index_name,
+    'DISABLE SCRIPT',
     ia.consolidation_rule,
-    disable_script =
-        N'ALTER INDEX ' +
-        QUOTENAME(ia.index_name) +
-        N' ON ' +
-        QUOTENAME(ia.database_name) +
-        N'.' +
-        QUOTENAME(ia.schema_name) +
-        N'.' +
-        QUOTENAME(ia.table_name) +
-        N' DISABLE;'
+    N'ALTER INDEX ' +
+    QUOTENAME(ia.index_name) +
+    N' ON ' +
+    QUOTENAME(ia.database_name) +
+    N'.' +
+    QUOTENAME(ia.schema_name) +
+    N'.' +
+    QUOTENAME(ia.table_name) +
+    N' DISABLE;'
 FROM #index_analysis ia
-WHERE ia.action = 'DISABLE'
-ORDER BY
-    ia.table_name,
-    ia.index_name;
+WHERE ia.action = 'DISABLE';
 
-/* Generate compression scripts for remaining indexes */
+/* Insert compression scripts for remaining indexes */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    database_name,
+    schema_name,
+    table_name,
+    index_name,
+    script_type,
+    script,
+    additional_info
+)
 SELECT
+    'COMPRESS',
+    40,
     ia.database_name,
     ia.schema_name,
     ia.table_name,
     ia.index_name,
-    compression_type = N'All Partitions',
-    compression_script =
-        N'ALTER INDEX ' +
+    'COMPRESSION SCRIPT',
+    N'ALTER INDEX ' +
         QUOTENAME(ia.index_name) +
         N' ON ' +
         QUOTENAME(ia.database_name) +
@@ -1782,7 +1945,8 @@ SELECT
         END +
         N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
         CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
-        N', DATA_COMPRESSION = PAGE);'
+        N', DATA_COMPRESSION = PAGE);',
+    N'Compression type: All Partitions'
 FROM #index_analysis ia
 LEFT JOIN 
 (
@@ -1812,30 +1976,41 @@ JOIN #compression_eligibility ce
   AND ia.index_id = ce.index_id
 WHERE 
     /* Indexes that are not being disabled or merged */
-    ia.action IS NULL OR ia.action = 'KEEP'
+    (ia.action IS NULL OR ia.action = 'KEEP')
     /* Only indexes eligible for compression */
-    AND ce.can_compress = 1
-ORDER BY
-    ia.table_name,
-    ia.index_name;
+    AND ce.can_compress = 1;
 
-/* Generate scripts to disable unique constraints that are being replaced by unique indexes */
+/* Insert disable scripts for unique constraints */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    database_name,
+    schema_name,
+    table_name,
+    index_name,
+    script_type,
+    additional_info,
+    script
+)
 SELECT
+    'CONSTRAINT',
+    30,
     ia.database_name,
     ia.schema_name,
     ia.table_name,
     ia.index_name,
-    constraint_name = id.index_name,
-    disable_constraint_script =
-        N'ALTER TABLE ' +
-        QUOTENAME(ia.database_name) +
-        N'.' +
-        QUOTENAME(ia.schema_name) +
-        N'.' +
-        QUOTENAME(ia.table_name) +
-        N' NOCHECK CONSTRAINT ' +
-        QUOTENAME(id.index_name) +
-        N';'
+    'DISABLE CONSTRAINT SCRIPT',
+    N'Constraint to disable: ' + id.index_name,
+    N'ALTER TABLE ' +
+    QUOTENAME(ia.database_name) +
+    N'.' +
+    QUOTENAME(ia.schema_name) +
+    N'.' +
+    QUOTENAME(ia.table_name) +
+    N' NOCHECK CONSTRAINT ' +
+    QUOTENAME(id.index_name) +
+    N';'
 FROM #index_analysis ia
 JOIN #index_details id 
   ON  id.database_id = ia.database_id
@@ -1872,35 +2047,49 @@ WHERE
             AND   id_nc_inner.index_name = id_nc.index_name
             AND   id_nc_inner.is_included_column = 0
         )
-    )
-ORDER BY
-    ia.table_name,
-    ia.index_name;
+    );
 
-/* Generate per-partition compression scripts for partitioned indexes */
+/* Insert per-partition compression scripts */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    database_name,
+    schema_name,
+    table_name,
+    index_name,
+    script_type,
+    script,
+    additional_info
+)
 SELECT
+    'COMPRESS_PARTITION',
+    50,
     ia.database_name,
     ia.schema_name,
     ia.table_name,
     ia.index_name,
-    compression_type = N'Per Partition',
-    partition_number = ps.partition_number,
-    total_rows = ps.total_rows,
-    total_space_mb = ps.total_space_mb,
-    compression_script =
-        N'ALTER INDEX ' +
-        QUOTENAME(ia.index_name) +
-        N' ON ' +
-        QUOTENAME(ia.database_name) +
-        N'.' +
-        QUOTENAME(ia.schema_name) +
-        N'.' +
-        QUOTENAME(ia.table_name) +
-        N' REBUILD PARTITION = ' +
-        CAST(ps.partition_number AS nvarchar(20)) +
-        N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-        CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
-        N', DATA_COMPRESSION = PAGE);'
+    'PARTITION COMPRESSION SCRIPT',
+    N'ALTER INDEX ' +
+    QUOTENAME(ia.index_name) +
+    N' ON ' +
+    QUOTENAME(ia.database_name) +
+    N'.' +
+    QUOTENAME(ia.schema_name) +
+    N'.' +
+    QUOTENAME(ia.table_name) +
+    N' REBUILD PARTITION = ' +
+    CAST(ps.partition_number AS nvarchar(20)) +
+    N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+    CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
+    N', DATA_COMPRESSION = PAGE);',
+    N'Compression type: Per Partition | Partition: ' + 
+    CAST(ps.partition_number AS nvarchar(20)) +
+    N' | Rows: ' +
+    CAST(ps.total_rows AS nvarchar(20)) +
+    N' | Size: ' +
+    CAST(CONVERT(decimal(10,2), ps.total_space_mb) AS nvarchar(20)) + 
+    N' MB'
 FROM #index_analysis ia
 JOIN #partition_stats ps 
   ON  ia.database_id = ps.database_id
@@ -1916,90 +2105,64 @@ WHERE
     /* Indexes that are not being disabled or merged */
     AND (ia.action IS NULL OR ia.action = 'KEEP')
     /* Only indexes eligible for compression */
-    AND ce.can_compress = 1
-ORDER BY
-    ia.table_name,
-    ia.index_name,
-    ps.partition_number;
+    AND ce.can_compress = 1;
 
-/* Generate index statistics and reporting */
-SELECT
-    report_title = N'Index Cleanup Summary',
-    server_uptime_days = @uptime_days,
-    uptime_warning = 
-        CASE 
-            WHEN @uptime_warning = 1 
-            THEN N'Low uptime detected! Index usage data may be incomplete.' 
-            ELSE NULL 
-        END,
-    tables_analyzed = COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
-    total_indexes = COUNT(*),
-    indexes_to_disable = SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END),
-    indexes_to_merge = SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END),
-    avg_indexes_per_table = CONVERT(DECIMAL(10,2), COUNT(*) * 1.0 / NULLIF(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 0))
-FROM #index_analysis ia;
+/* Stats reporting has been moved to #index_cleanup_results table */
 
-/* Generate estimated space savings report */
-SELECT
-    report_title = N'Estimated Space Savings',
-    space_saved_from_cleanup_mb = 
-        SUM(CASE 
-            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-            THEN ps.total_space_mb 
-            ELSE 0 
-        END),
-    estimated_min_compression_savings_mb = 
-        SUM(CASE 
-            WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-            THEN ps.total_space_mb * 0.20 /* Conservative estimate - 20% compression ratio */
-            ELSE 0 
-        END),
-    estimated_max_compression_savings_mb = 
-        SUM(CASE 
-            WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-            THEN ps.total_space_mb * 0.60 /* Optimistic estimate - 60% compression ratio */
-            ELSE 0 
-        END),
-    total_min_estimated_savings_mb = 
-        SUM(CASE 
-            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-            THEN ps.total_space_mb
-            WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-            THEN ps.total_space_mb * 0.20
-            ELSE 0 
-        END),
-    total_max_estimated_savings_mb = 
-        SUM(CASE 
-            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-            THEN ps.total_space_mb
-            WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-            THEN ps.total_space_mb * 0.60
-            ELSE 0 
-        END)
-FROM #index_analysis ia
-LEFT JOIN #partition_stats ps 
-  ON  ia.database_id = ps.database_id
-  AND ia.object_id = ps.object_id
-  AND ia.index_id = ps.index_id
-LEFT JOIN #compression_eligibility ce 
-  ON  ia.database_id = ce.database_id
-  AND ia.object_id = ce.object_id
-  AND ia.index_id = ce.index_id;
+/* Space savings reporting has been moved to #index_cleanup_results table */
 
-/* Report on tables that can't be compressed */
+/* Insert compression ineligible info */
+INSERT INTO #index_cleanup_results
+(
+    result_type,
+    sort_order,
+    database_name,
+    schema_name,
+    table_name,
+    index_name,
+    script_type,
+    additional_info
+)
 SELECT
+    'INELIGIBLE',
+    90,
     ce.database_name,
     ce.schema_name,
     ce.table_name,
     ce.index_name,
-    compression_ineligibility_reason = ce.reason
+    'INELIGIBLE FOR COMPRESSION',
+    ce.reason
 FROM #compression_eligibility ce
-WHERE ce.can_compress = 0
+WHERE ce.can_compress = 0;
+
+/* 
+Return the consolidated results in a single result set
+Results are ordered by:
+1. Summary information (overall stats, savings estimates)
+2. Merge scripts (includes merges and unique conversions)
+3. Disable scripts (for redundant indexes)
+4. Constraint scripts (for unique constraints to disable)
+5. Compression scripts (for tables eligible for compression)
+6. Partition-specific compression scripts
+7. Ineligible objects (tables that can't be compressed)
+*/
+SELECT
+    database_name,
+    schema_name,
+    table_name,
+    index_name,
+    script_type,
+    consolidation_rule,
+    target_index_name,
+    script,
+    additional_info
+FROM #index_cleanup_results
 ORDER BY
-    ce.database_name,
-    ce.schema_name,
-    ce.table_name,
-    ce.index_name;
+    sort_order,
+    database_name,
+    schema_name,
+    table_name,
+    index_name;
 
 END TRY
 BEGIN CATCH
