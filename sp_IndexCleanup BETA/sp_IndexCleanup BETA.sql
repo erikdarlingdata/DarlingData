@@ -2994,9 +2994,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.database_name,
         index_count = COUNT(DISTINCT CONCAT(ps.object_id, N'.', ps.index_id)),
         total_size_gb = SUM(ps.total_space_gb),
-        /* Sum the rows from our temporary table to avoid double-counting */
-        total_rows = (SELECT SUM(row_count) FROM #temp_table_rows 
-                     WHERE database_id = ps.database_id),
+        /* Use a simple aggregation to avoid double-counting */
+        total_rows = SUM(DISTINCT CASE WHEN ps.index_id IN (0, 1) THEN ps.total_rows ELSE 0 END),
         unused_indexes = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN 1 ELSE 0 END),
         unused_size_gb = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN ps.total_space_gb ELSE 0 END),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
@@ -3041,24 +3040,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating #index_reporting_stats insert, TABLE', 0, 0) WITH NOWAIT;
     END;
 
-    /* Use a temporary table to get accurate row counts */
-    SELECT
-        database_id,
-        database_name,
-        object_id,
-        schema_id,
-        schema_name,
-        table_name,
-        row_count = MAX(CASE WHEN index_id IN (0, 1) THEN total_rows ELSE 0 END)
-    INTO #temp_table_rows
-    FROM #partition_stats
-    GROUP BY 
-        database_id,
-        database_name,
-        object_id,
-        schema_id,
-        schema_name,
-        table_name;
+    /* No need for a temporary table - we'll use a simpler approach */
 
     INSERT INTO 
         #index_reporting_stats
@@ -3102,8 +3084,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.table_name,
         index_count = COUNT(DISTINCT ps.index_id),
         total_size_gb = SUM(ps.total_space_gb),
-        /* Get accurate row count from our temporary table */
-        total_rows = MAX(tr.row_count),
+        /* Use MAX to get the row count from the clustered index or heap */
+        total_rows = MAX(CASE WHEN ps.index_id IN (0, 1) THEN ps.total_rows ELSE 0 END),
         unused_indexes = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN 1 ELSE 0 END),
         unused_size_gb = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN ps.total_space_gb ELSE 0 END),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
@@ -3139,9 +3121,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ON  os.database_id = ps.database_id
         AND os.object_id = ps.object_id
         AND os.index_id = ps.index_id
-    LEFT JOIN #temp_table_rows tr
-        ON  tr.database_id = ps.database_id
-        AND tr.object_id = ps.object_id
+    /* No need for the temporary table join */
     GROUP BY ps.database_name, ps.schema_name, ps.table_name
     OPTION(RECOMPILE);
 
