@@ -45,6 +45,26 @@ BEGIN
 SET NOCOUNT ON;
 
 BEGIN TRY
+/* Check for SQL Server 2012 (11.0) or later for FORMAT and CONCAT functions*/
+    IF CONVERT
+       (
+           integer, 
+           SUBSTRING
+           (
+               CONVERT
+               (
+                   varchar(20), 
+                   SERVERPROPERTY('ProductVersion')
+               ), 
+               1, 
+               2
+           )
+       ) < 11
+    BEGIN
+        RAISERROR('This procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT and CONCAT functions.', 11, 1);
+        RETURN;
+    END;
+
     SELECT
         @version = '-2147483648',
         @version_date = '17530101';
