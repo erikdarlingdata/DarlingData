@@ -3388,10 +3388,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         
         /* ===== Section 2: Size and Space Savings ===== */
         /* Current size in GB */
-        CASE 
-            WHEN irs.summary_level = 'SUMMARY' THEN FORMAT(irs.total_size_gb, 'N2')
-            ELSE FORMAT(irs.total_size_gb, 'N2')
-        END AS current_size_gb,
+        FORMAT(irs.total_size_gb, 'N2') AS current_size_gb,
         
         /* Size that can be saved through cleanup */
         CASE
@@ -3399,16 +3396,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE FORMAT(irs.unused_size_gb, 'N2')
         END AS cleanup_savings_gb,
         
-        /* Potential additional savings (show at all levels for clarity) */
+        /* Potential additional savings */
         CASE
             WHEN irs.summary_level = 'SUMMARY' 
             THEN FORMAT(irs.total_min_savings_gb, 'N2') + ' - ' + FORMAT(irs.total_max_savings_gb, 'N2')
-            /* For database/table levels, show potential savings if table has unused space */
-            WHEN irs.total_size_gb > 0 
-            THEN FORMAT(irs.unused_size_gb + (irs.total_size_gb - irs.unused_size_gb) * 0.2, 'N2') + 
-                 ' - ' + 
-                 FORMAT(irs.unused_size_gb + (irs.total_size_gb - irs.unused_size_gb) * 0.6, 'N2')
-            ELSE NULL
+            ELSE NULL /* Only show at summary level to avoid confusion */
         END AS potential_savings_gb,
         
         /* ===== Section 3: Table and Usage Statistics ===== */
