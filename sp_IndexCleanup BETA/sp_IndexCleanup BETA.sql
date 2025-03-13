@@ -1832,6 +1832,70 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         0,
         N'=====',
         N'==================== INDEX CLEANUP SUMMARY ====================';
+
+    /* Add a separator for scripts section */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        script_type,
+        additional_info
+    )
+    SELECT 
+        'HEADER',
+        4, /* Just before merge scripts at sort_order 5 */
+        script_type = N'======',
+        additional_info = N'==================== INDEX SCRIPTS ====================';
+    
+    /* Add a separator for report section at the end */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        script_type,
+        additional_info
+    )
+    SELECT 
+        result_type = 'HEADER',
+        sort_order = 99,
+        script_type = N'======',
+        additional_info = N'==================== END OF REPORT ====================';
+
+    /* Add a separator for indexes needing review section */
+    INSERT INTO 
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        script_type,
+        additional_info
+    )
+    SELECT 
+        result_type = 'HEADER',
+        sort_order = 92,
+        script_type = N'======',
+        additional_info = N'==================== INDEXES NEEDING REVIEW ====================';
+
+    /* Add a separator for kept indexes section */
+    INSERT INTO 
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        script_type,
+        additional_info
+    )
+    SELECT 
+        result_type = 'HEADER',
+        sort_order = 94,
+        script_type = N'======',
+        additional_info = N'==================== INDEXES KEPT ====================';
     
     /* Add summary information */
     INSERT INTO 
@@ -1843,1037 +1907,1191 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         additional_info
     )
     SELECT 
-        'SUMMARY',
-        1,
-        'Index Cleanup Summary',
-        N'Server uptime: ' + 
-        CONVERT(nvarchar(10), @uptime_days) + 
-        N' days' +
-        CASE 
-            WHEN @uptime_warning = 1 
-            THEN N' (WARNING: Low uptime detected! Index usage data may be incomplete.)' 
-            ELSE N'' 
-        END +
-        N' | Tables analyzed: ' + 
-        CONVERT(nvarchar(10), COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id))) +
-        N' | Total indexes: ' + 
-        CONVERT(nvarchar(10), COUNT(*)) +
-        N' | Indexes to disable: ' + 
-        CONVERT(nvarchar(10), SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END)) +
-        N' | Indexes to merge: ' + 
-        CONVERT(nvarchar(10), SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END)) +
-        N' | Avg indexes per table: ' + 
-        CONVERT(nvarchar(10), CONVERT(decimal(10,2), COUNT(*) * 1.0 / 
-             NULLIF(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 0)))
-    FROM #index_analysis AS ia;
+        result_type = 'SUMMARY',
+        sort_order = 1,
+        script_type = 'Index Cleanup Summary',
+        additional_info = 
+            N'Server uptime: ' + 
+            CONVERT(nvarchar(10), @uptime_days) + 
+            N' days' +
+            CASE 
+                WHEN @uptime_warning = 1 
+                THEN N' (WARNING: Low uptime detected! Index usage data may be incomplete.)' 
+                ELSE N'' 
+            END +
+            N' | Tables analyzed: ' + 
+            CONVERT
+            (
+                nvarchar(10), 
+                COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id))
+            ) +
+            N' | Total indexes: ' + 
+            CONVERT
+            (
+                nvarchar(10), 
+                COUNT_BIG(*)
+            ) +
+            N' | Indexes to disable: ' + 
+            CONVERT
+            (
+                nvarchar(10), 
+                SUM
+                (
+                    CASE 
+                        WHEN ia.action = 'DISABLE' 
+                        THEN 1 
+                        ELSE 0 
+                    END
+                )
+            ) +
+            N' | Indexes to merge: ' + 
+            CONVERT(nvarchar(10), SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END)) +
+            N' | Avg indexes per table: ' + 
+            CONVERT
+            (
+                nvarchar(10), 
+                CONVERT
+                (
+                    decimal(10,2), 
+                    COUNT_BIG(*) * 1.0 / 
+                    NULLIF
+                    (
+                        COUNT_BIG
+                        (
+                            DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)
+                        ), 
+                        0
+                    )
+                )
+            )
+    FROM #index_analysis AS ia
+    OPTION(RECOMPILE);
 
-/* Insert space savings estimates */
-INSERT INTO #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    script_type,
-    additional_info
-)
-SELECT 
-    'SUMMARY',
-    2,
-    'Estimated Space Savings',
-    N'Space saved from cleanup: ' + 
-    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
-        WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-        THEN ps.total_space_gb 
-        ELSE 0 
-    END))) + 
-    N' GB | Compression savings estimate: ' + 
-    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
-        WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-        THEN ps.total_space_gb * 0.20 /* Conservative estimate - 20% compression ratio */
-        ELSE 0 
-    END))) + 
-    N' - ' + 
-    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
-        WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-        THEN ps.total_space_gb * 0.60 /* Optimistic estimate - 60% compression ratio */
-        ELSE 0 
-    END))) + 
-    N' GB | Total estimated savings: ' + 
-    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
-        WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-        THEN ps.total_space_gb
-        WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-        THEN ps.total_space_gb * 0.20
-        ELSE 0 
-    END))) + 
-    N' - ' + 
-    CONVERT(nvarchar(20), CONVERT(decimal(10,4), SUM(CASE 
-        WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-        THEN ps.total_space_gb
-        WHEN (ia.action IS NULL OR ia.action = 'KEEP') AND ce.can_compress = 1 
-        THEN ps.total_space_gb * 0.60
-        ELSE 0 
-    END))) + 
-    N' GB'
-FROM #index_analysis AS ia
-LEFT JOIN #partition_stats AS ps ON
-      ia.database_id = ps.database_id
+    /* Insert space savings estimates */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        script_type,
+        additional_info
+    )
+    SELECT 
+        result_type = 'SUMMARY',
+        sort_order = 2,
+        script_type = 'Estimated Space Savings',
+        additional_info = 
+            N'Space saved from cleanup: ' + 
+            CONVERT
+            (
+                nvarchar(20), 
+                CONVERT
+                (
+                    decimal(10,4), 
+                    SUM
+                    (
+                        CASE 
+                            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+                            THEN ps.total_space_gb 
+                            ELSE 0 
+                        END
+                    )
+                )
+            ) + 
+            N' GB | Compression savings estimate: ' + 
+            CONVERT
+            (
+                nvarchar(20), 
+                CONVERT
+                (
+                    decimal(10,4), 
+                    SUM
+                    (
+                        CASE 
+                            WHEN (ia.action IS NULL OR ia.action = 'KEEP') 
+                            AND   ce.can_compress = 1 
+                            THEN ps.total_space_gb * 0.20 /* Conservative estimate - 20% compression ratio */
+                            ELSE 0 
+                        END
+                    )
+                )
+            ) + 
+            N' - ' + 
+            CONVERT
+            (
+                nvarchar(20), 
+                CONVERT
+                (
+                    decimal(10,4), 
+                    SUM
+                    (
+                        CASE 
+                            WHEN (ia.action IS NULL OR ia.action = 'KEEP') 
+                            AND   ce.can_compress = 1 
+                            THEN ps.total_space_gb * 0.60 /* Optimistic estimate - 60% compression ratio */
+                            ELSE 0 
+                        END
+                    )
+                )
+            ) + 
+            N' GB | Total estimated savings: ' + 
+            CONVERT
+            (
+                nvarchar(20), 
+                CONVERT
+                (
+                    decimal(10,4), 
+                    SUM
+                    (
+                        CASE 
+                            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+                            THEN ps.total_space_gb
+                            WHEN (ia.action IS NULL OR ia.action = 'KEEP') 
+                            AND   ce.can_compress = 1 
+                            THEN ps.total_space_gb * 0.20
+                            ELSE 0 
+                        END
+                    )
+                )
+            ) + 
+            N' - ' + 
+            CONVERT
+            (
+                nvarchar(20), 
+                CONVERT
+                (
+                    decimal(10,4), 
+                    SUM
+                    (
+                        CASE 
+                            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+                            THEN ps.total_space_gb
+                            WHEN (ia.action IS NULL OR ia.action = 'KEEP') 
+                            AND   ce.can_compress = 1 
+                            THEN ps.total_space_gb * 0.60
+                            ELSE 0 
+                        END
+                    )
+                )
+            ) + 
+            N' GB'
+    FROM #index_analysis AS ia
+    LEFT JOIN #partition_stats AS ps 
+      ON  ia.database_id = ps.database_id
       AND ia.object_id = ps.object_id
       AND ia.index_id = ps.index_id
-LEFT JOIN #compression_eligibility AS ce ON
-      ia.database_id = ce.database_id
+    LEFT JOIN #compression_eligibility AS ce 
+      ON  ia.database_id = ce.database_id
       AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id;
-
-/* Add a separator for scripts section */
-INSERT INTO #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    script_type,
-    additional_info
-)
-SELECT 
-    'HEADER',
-    4, /* Just before merge scripts at sort_order 5 */
-    'SEPARATOR',
-    N'==================== INDEX SCRIPTS ====================';
-
-/* Add a separator for report section at the end */
-INSERT INTO #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    script_type,
-    additional_info
-)
-SELECT 
-    'HEADER',
-    99,
-    'SEPARATOR',
-    N'==================== END OF REPORT ====================';
+      AND ia.index_id = ce.index_id
+    OPTION(RECOMPILE);
 
 
-/* Identify key duplicates where both indexes have MERGE INCLUDES action */
-INSERT INTO 
-    #key_duplicate_dedupe
-WITH
-    (TABLOCK)
-(
-    database_id,
-    object_id,
-    database_name,
-    schema_name,
-    table_name,
-    base_key_columns,
-    filter_definition,
-    winning_index_name,
-    index_list
-)
-SELECT
-    ia.database_id,
-    ia.object_id,
-    MAX(ia.database_name),
-    MAX(ia.schema_name),
-    MAX(ia.table_name),
-    ia.key_columns,
-    ISNULL(ia.filter_definition, ''),
-    /* Choose the index with most included columns as the winner (or first alphabetically if tied) */
+    /* Identify key duplicates where both indexes have MERGE INCLUDES action */
+    INSERT INTO 
+        #key_duplicate_dedupe
+    WITH
+        (TABLOCK)
     (
-        SELECT TOP 1 candidate.index_name
-        FROM #index_analysis AS candidate
-        WHERE candidate.database_id = ia.database_id
-          AND candidate.object_id = ia.object_id
-          AND candidate.key_columns = ia.key_columns
-          AND ISNULL(candidate.filter_definition, '') = ISNULL(ia.filter_definition, '')
-          AND candidate.action = 'MERGE INCLUDES'
-          AND candidate.consolidation_rule = 'Key Duplicate'
-        ORDER BY 
-            /* First prefer indexes with "_Extended" in the name */
-            CASE WHEN candidate.index_name LIKE '%\_Extended%' ESCAPE '\' THEN 1 ELSE 0 END DESC,
-            /* Then prefer indexes with more included columns (by length as a proxy) */
-            LEN(ISNULL(candidate.included_columns, '')) DESC,
-            /* Then alphabetically for stability */
-            candidate.index_name
-    ),
-    /* Build a list of other indexes in this group */
-    STUFF((
-        SELECT ', ' + inner_ia.index_name
-        FROM #index_analysis AS inner_ia
-        WHERE inner_ia.database_id = ia.database_id
-          AND inner_ia.object_id = ia.object_id
-          AND inner_ia.key_columns = ia.key_columns
-          AND ISNULL(inner_ia.filter_definition, '') = ISNULL(ia.filter_definition, '')
-          AND inner_ia.action = 'MERGE INCLUDES'
-          AND inner_ia.consolidation_rule = 'Key Duplicate'
-        ORDER BY inner_ia.index_name
-        FOR XML PATH(''), TYPE
-    ).value('.', 'nvarchar(max)'), 1, 2, '')
-FROM #index_analysis AS ia
-WHERE ia.action = 'MERGE INCLUDES'
-  AND ia.consolidation_rule = 'Key Duplicate'
-GROUP BY
-    ia.database_id,
-    ia.object_id,
-    ia.key_columns,
-    ISNULL(ia.filter_definition, '')
-HAVING COUNT(*) > 1; /* Only groups with multiple MERGE INCLUDES */
-
-/* Update the index_analysis table to make only one index the winner in each group */
-UPDATE ia
-SET
-    ia.action = 'DISABLE',
-    ia.target_index_name = kdd.winning_index_name,
-    ia.superseded_by = NULL
-FROM #index_analysis AS ia
-JOIN #key_duplicate_dedupe AS kdd
-  ON ia.database_id = kdd.database_id
-  AND ia.object_id = kdd.object_id
-  AND ia.key_columns = kdd.base_key_columns
-  AND ISNULL(ia.filter_definition, '') = kdd.filter_definition
-WHERE ia.index_name <> kdd.winning_index_name
-  AND ia.action = 'MERGE INCLUDES'
-  AND ia.consolidation_rule = 'Key Duplicate';
-
-/* Update the winning index's superseded_by to list all other indexes */
-UPDATE ia
-SET
-    ia.superseded_by = 'Supersedes ' + 
-    REPLACE(kdd.index_list, ia.index_name + ', ', '') /* Remove self from list if present */
-FROM #index_analysis AS ia
-JOIN #key_duplicate_dedupe AS kdd
-  ON ia.database_id = kdd.database_id
-  AND ia.object_id = kdd.object_id
-  AND ia.key_columns = kdd.base_key_columns
-  AND ISNULL(ia.filter_definition, '') = kdd.filter_definition
-WHERE ia.index_name = kdd.winning_index_name;
-
-/* Find indexes with same key columns where one has includes that are a subset of another */
-INSERT INTO 
-    #include_subset_dedupe
-WITH
-    (TABLOCK)
-(
-    database_id,
-    object_id,
-    subset_index_name,
-    superset_index_name,
-    subset_included_columns,
-    superset_included_columns
-)
-SELECT
-    ia1.database_id,
-    ia1.object_id,
-    ia1.index_name AS subset_index_name,
-    ia2.index_name AS superset_index_name,
-    ia1.included_columns AS subset_included_columns,
-    ia2.included_columns AS superset_included_columns
-FROM #index_analysis AS ia1
-JOIN #index_analysis AS ia2
-  ON ia1.database_id = ia2.database_id
-  AND ia1.object_id = ia2.object_id
-  AND ia1.key_columns = ia2.key_columns
-  AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')
-  AND ia1.index_name <> ia2.index_name
-  AND ia1.action = 'MERGE INCLUDES'
-  AND ia2.action = 'MERGE INCLUDES'
-  AND ia1.consolidation_rule = 'Key Duplicate'
-  AND ia2.consolidation_rule = 'Key Duplicate'
-  /* Find where subset's includes are contained within superset's includes */
-  AND (
-    ia1.included_columns IS NULL OR 
-    CHARINDEX(ia1.included_columns, ia2.included_columns) > 0
-  )
-  /* Don't match if lengths are the same (would be exact duplicates) */
-  AND (
-    ia1.included_columns IS NULL OR ia2.included_columns IS NULL OR
-    LEN(ia1.included_columns) < LEN(ia2.included_columns)
-  );
-
-/* Update the subset indexes to be disabled, since supersets already contain their columns */
-UPDATE ia
-SET
-    ia.action = 'DISABLE',
-    ia.target_index_name = isd.superset_index_name,
-    ia.superseded_by = NULL
-FROM #index_analysis AS ia
-JOIN #include_subset_dedupe AS isd
-  ON ia.database_id = isd.database_id
-  AND ia.object_id = isd.object_id
-  AND ia.index_name = isd.subset_index_name;
-
-/* Update the superset indexes to indicate they supersede the subset indexes */
-UPDATE ia
-SET
-    ia.superseded_by = CASE
-        WHEN ia.superseded_by IS NULL THEN 'Supersedes ' + isd.subset_index_name
-        ELSE ia.superseded_by + ', ' + isd.subset_index_name
-    END
-FROM #index_analysis AS ia
-JOIN #include_subset_dedupe AS isd
-  ON ia.database_id = isd.database_id
-  AND ia.object_id = isd.object_id
-  AND ia.index_name = isd.superset_index_name;
-
-/* Update winning indexes that don't actually need changes to have action = 'KEEP' */
-UPDATE ia
-SET
-    /* Change action to 'KEEP' for indexes that don't need to be modified */
-    ia.action = 'KEEP'
-FROM #index_analysis AS ia
-WHERE ia.action = 'MERGE INCLUDES'
-AND ia.superseded_by IS NOT NULL
-/* Check if the index name contains "Extended" and has more included columns */
-AND (ia.index_name LIKE '%\_Extended%' ESCAPE '\' OR ia.index_name LIKE '%\_Extended' OR ia.index_name LIKE '%_Extended%')
-/* This should indicate it already has all the needed includes */
-AND NOT EXISTS (
-    /* Find any indexes it supersedes that have includes not in this index */
-    SELECT 1
-    FROM #index_analysis AS ia_subset
-    WHERE ia_subset.database_id = ia.database_id
-    AND ia_subset.object_id = ia.object_id
-    AND ia_subset.key_columns = ia.key_columns
-    AND ia_subset.action = 'DISABLE'
-    AND ia_subset.target_index_name = ia.index_name
-    /* This complex check handles cases where the superset doesn't contain all subset columns */
-    AND CHARINDEX(ISNULL(ia_subset.included_columns, ''), ISNULL(ia.included_columns, '')) = 0
-    AND ISNULL(ia_subset.included_columns, '') <> ''
-);
-
-/* Insert merge scripts for indexes */
-INSERT INTO 
-    #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    script_type,
-    consolidation_rule,
-    target_index_name,
-    script,
-    additional_info,
-    superseded_info,
-    index_size_gb,
-    index_rows,
-    index_reads,
-    index_writes
-)
-SELECT
-    'MERGE',
-    /* Put merge target indexes higher in sort order (5) so they appear before 
-       indexes that will be disabled (20) */
-    5,
-    ia.database_name,
-    ia.schema_name,
-    ia.table_name,
-    ia.index_name,
-    'MERGE SCRIPT',
-    ia.consolidation_rule,
-    ia.target_index_name,
-    CASE 
-        WHEN ia.action = 'MAKE UNIQUE' 
-        THEN N'/* This index can replace a unique constraint */
-/* Creating unique index with same keys as constraint */
-CREATE UNIQUE '
-        WHEN ia.action = 'MERGE INCLUDES'
-        THEN N'/* This index can be merged with another index */
-/* Creating index with combined includes from both */
-CREATE '
-        ELSE N'CREATE '
-    END +
-    N'INDEX ' +
-    QUOTENAME(ia.index_name) +
-    N' ON ' +
-    QUOTENAME(ia.database_name) +
-    N'.' +
-    QUOTENAME(ia.schema_name) +
-    N'.' +
-    QUOTENAME(ia.table_name) +
-    N' (' +
-    ia.key_columns +
-    N')' +
-    CASE 
-        WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0 AND ia.action = 'MERGE INCLUDES'
-        THEN N' INCLUDE (' +
-             N'/* Combined includes from merged indexes */
-             ' +
-             ia.included_columns +
-             N')'
-        WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
-        THEN N' INCLUDE (' +
-             ia.included_columns +
-             N')'
-        ELSE N''
-    END +
-    CASE 
-        WHEN ia.filter_definition IS NOT NULL
-        THEN N' WHERE ' +
-             ia.filter_definition
-        ELSE N''
-    END +
-    CASE 
-        WHEN ps.partition_function_name IS NOT NULL
-        THEN N' ON ' +
-             QUOTENAME(ps.partition_function_name) +
-             N'(' +
-             ISNULL(ps.partition_columns, N'') +
-             N')'
-        WHEN ps.built_on IS NOT NULL
-        THEN N' ON ' +
-             QUOTENAME(ps.built_on)
-        ELSE N''
-    END +
-    N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-    CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
-    N', DATA_COMPRESSION = PAGE);',
-    /* Additional info about what this script does */
-    CASE
-        WHEN ia.action = 'MERGE INCLUDES' THEN N'This index will absorb includes from duplicate indexes'
-        WHEN ia.action = 'MAKE UNIQUE' THEN N'This index will replace a unique constraint'
-        ELSE NULL
-    END,
-    /* Add superseded_by information if available */
-    ia.superseded_by
-FROM #index_analysis AS ia
-LEFT JOIN 
-(
-    /* Get the partition info for each index */
-    SELECT 
-        ps.database_id,
-        ps.object_id,
-        ps.index_id,
-        ps.built_on,
-        ps.partition_function_name,
-        ps.partition_columns
-    FROM #partition_stats ps
+        database_id,
+        object_id,
+        database_name,
+        schema_name,
+        table_name,
+        base_key_columns,
+        filter_definition,
+        winning_index_name,
+        index_list
+    )
+    SELECT
+        ia.database_id,
+        ia.object_id,
+        database_name = MAX(ia.database_name),
+        schema_name = MAX(ia.schema_name),
+        table_name = MAX(ia.table_name),
+        base_key_columns = ia.key_columns,
+        filter_definition = ISNULL(ia.filter_definition, N''),
+        /* Choose the index with most included columns as the winner (or first alphabetically if tied) */
+        winning_index_name =
+        (
+            SELECT TOP (1) 
+                candidate.index_name
+            FROM #index_analysis AS candidate
+            WHERE candidate.database_id = ia.database_id
+              AND candidate.object_id = ia.object_id
+              AND candidate.key_columns = ia.key_columns
+              AND ISNULL(candidate.filter_definition, '') = ISNULL(ia.filter_definition, '')
+              AND candidate.action = 'MERGE INCLUDES'
+              AND candidate.consolidation_rule = 'Key Duplicate'
+            ORDER BY 
+                /* First prefer indexes with "_Extended" in the name */
+                CASE WHEN candidate.index_name LIKE '%\_Extended%' ESCAPE '\' THEN 1 ELSE 0 END DESC,
+                /* Then prefer indexes with more included columns (by length as a proxy) */
+                LEN(ISNULL(candidate.included_columns, '')) DESC,
+                /* Then alphabetically for stability */
+                candidate.index_name
+        ),
+        /* Build a list of other indexes in this group */
+        index_list =
+            STUFF
+            (
+              (
+                SELECT 
+                    N', ' + 
+                    inner_ia.index_name
+                FROM #index_analysis AS inner_ia
+                WHERE inner_ia.database_id = ia.database_id
+                  AND inner_ia.object_id = ia.object_id
+                  AND inner_ia.key_columns = ia.key_columns
+                  AND ISNULL(inner_ia.filter_definition, '') = ISNULL(ia.filter_definition, '')
+                  AND inner_ia.action = 'MERGE INCLUDES'
+                  AND inner_ia.consolidation_rule = 'Key Duplicate'
+                ORDER BY 
+                    inner_ia.index_name
+                FOR 
+                    XML 
+                    PATH(''), 
+                    TYPE
+              ).value('.', 'nvarchar(max)'), 
+              1, 
+              2, 
+              ''
+            )
+    FROM #index_analysis AS ia
+    WHERE ia.action = 'MERGE INCLUDES'
+      AND ia.consolidation_rule = 'Key Duplicate'
     GROUP BY
-        ps.database_id,
-        ps.object_id,
-        ps.index_id,
-        ps.built_on,
-        ps.partition_function_name,
-        ps.partition_columns
-) AS ps 
-  ON  ia.database_id = ps.database_id 
-  AND ia.object_id = ps.object_id
-  AND ia.index_id = ps.index_id
-JOIN #compression_eligibility AS ce 
-  ON  ia.database_id = ce.database_id
-  AND ia.object_id = ce.object_id
-  AND ia.index_id = ce.index_id
-WHERE ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE')
-AND ce.can_compress = 1
-/* Only create merge scripts for the indexes that should remain after merging */
-AND ia.target_index_name IS NULL;
+        ia.database_id,
+        ia.object_id,
+        ia.key_columns,
+        ia.filter_definition
+    HAVING 
+        COUNT_BIG(*) > 1
+    OPTION(RECOMPILE); /* Only groups with multiple MERGE INCLUDES */
 
-/* Insert disable scripts for unneeded indexes */
-INSERT INTO 
-    #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    script_type,
-    consolidation_rule,
-    script,
-    additional_info,
-    target_index_name,
-    superseded_info,
-    index_size_gb,
-    index_rows,
-    index_reads,
-    index_writes
-)
-SELECT
-    'DISABLE',
-    /* Sort duplicate/subset indexes first (20), then unused indexes last (25) */
-    CASE 
-        WHEN ia.consolidation_rule LIKE 'Unused Index%' THEN 25
-        ELSE 20
-    END,
-    ia.database_name,
-    ia.schema_name,
-    ia.table_name,
-    ia.index_name,
-    'DISABLE SCRIPT',
-    ia.consolidation_rule,
-    N'ALTER INDEX ' +
-    QUOTENAME(ia.index_name) +
-    N' ON ' +
-    QUOTENAME(ia.database_name) +
-    N'.' +
-    QUOTENAME(ia.schema_name) +
-    N'.' +
-    QUOTENAME(ia.table_name) +
-    N' DISABLE;',
-    CASE 
-        WHEN ia.consolidation_rule = 'Key Subset' 
-            THEN N'This index is superseded by a wider index: ' + ISNULL(ia.target_index_name, N'(unknown)')
-        WHEN ia.consolidation_rule = 'Exact Duplicate' 
-            THEN N'This index is an exact duplicate of: ' + ISNULL(ia.target_index_name, N'(unknown)')
-        WHEN ia.consolidation_rule = 'Key Duplicate' 
-            THEN N'This index has the same keys as: ' + ISNULL(ia.target_index_name, N'(unknown)')
-        WHEN ia.consolidation_rule LIKE 'Unused Index%' 
-            THEN ia.consolidation_rule
-        WHEN ia.action = 'DISABLE'
-            THEN N'This index is redundant and will be disabled'
-        ELSE N'This index is redundant'
-    END,
-    ia.target_index_name,  /* Include the target index name */
-    NULL,  /* Don't need superseded_by info for disabled indexes */
-    ps.total_space_gb,
-    ps.row_count,
-    (id.user_seeks + id.user_scans + id.user_lookups),
-    id.user_updates
-FROM #index_analysis AS ia
-LEFT JOIN #partition_stats AS ps
-  ON  ia.database_id = ps.database_id
-  AND ia.object_id = ps.object_id
-  AND ia.index_id = ps.index_id
-LEFT JOIN #index_details AS id
-  ON  id.database_id = ia.database_id
-  AND id.object_id = ia.object_id
-  AND id.index_name = ia.index_name
-  AND id.is_included_column = 0 /* Get only one row per index */
-  AND id.key_ordinal > 0
-WHERE ia.action = 'DISABLE';
+    /* Update the index_analysis table to make only one index the winner in each group */
+    UPDATE 
+        ia
+    SET
+        ia.action = N'DISABLE',
+        ia.target_index_name = kdd.winning_index_name,
+        ia.superseded_by = NULL
+    FROM #index_analysis AS ia
+    JOIN #key_duplicate_dedupe AS kdd
+      ON  ia.database_id = kdd.database_id
+      AND ia.object_id = kdd.object_id
+      AND ia.key_columns = kdd.base_key_columns
+      AND ISNULL(ia.filter_definition, N'') = kdd.filter_definition
+    WHERE ia.index_name <> kdd.winning_index_name
+      AND ia.action = N'MERGE INCLUDES'
+      AND ia.consolidation_rule = 'Key Duplicate'
+    OPTION(RECOMPILE);
 
-/* Insert compression scripts for remaining indexes */
-INSERT INTO 
-    #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    script_type,
-    script,
-    additional_info,
-    target_index_name,
-    superseded_info,
-    index_size_gb,
-    index_rows,
-    index_reads,
-    index_writes
-)
-SELECT
-    'COMPRESS',
-    40,
-    ia.database_name,
-    ia.schema_name,
-    ia.table_name,
-    ia.index_name,
-    'COMPRESSION SCRIPT',
-    N'ALTER INDEX ' +
-        QUOTENAME(ia.index_name) +
-        N' ON ' +
-        QUOTENAME(ia.database_name) +
-        N'.' +
-        QUOTENAME(ia.schema_name) +
-        N'.' +
-        QUOTENAME(ia.table_name) +
-        CASE 
-            WHEN ps.partition_function_name IS NOT NULL
-            THEN N' REBUILD PARTITION = ALL' 
-            ELSE N' REBUILD' 
-        END +
-        N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-        CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
-        N', DATA_COMPRESSION = PAGE);',
-    N'Compression type: All Partitions',
-    NULL, /* No target index for compression scripts */
-    ia.superseded_by, /* Include superseded_by info for compression scripts */
-    ps_full.total_space_gb,
-    ps_full.row_count,
-    (id.user_seeks + id.user_scans + id.user_lookups),
-    id.user_updates
-FROM #index_analysis AS ia
-LEFT JOIN 
-(
-    /* Get the partition info for each index */
-    SELECT 
-        ps.database_id,
-        ps.object_id,
-        ps.index_id,
-        ps.built_on,
-        ps.partition_function_name,
-        ps.partition_columns
-    FROM #partition_stats ps
-    GROUP BY
-        ps.database_id,
-        ps.object_id,
-        ps.index_id,
-        ps.built_on,
-        ps.partition_function_name,
-        ps.partition_columns
-) ps 
-  ON  ia.database_id = ps.database_id
-  AND ia.object_id = ps.object_id
-  AND ia.index_id = ps.index_id
-LEFT JOIN #partition_stats AS ps_full
-  ON  ia.database_id = ps_full.database_id
-  AND ia.object_id = ps_full.object_id
-  AND ia.index_id = ps_full.index_id
-LEFT JOIN #index_details AS id
-  ON  id.database_id = ia.database_id
-  AND id.object_id = ia.object_id
-  AND id.index_name = ia.index_name
-  AND id.is_included_column = 0 /* Get only one row per index */
-  AND id.key_ordinal > 0
-JOIN #compression_eligibility ce 
-  ON  ia.database_id = ce.database_id
-  AND ia.object_id = ce.object_id
-  AND ia.index_id = ce.index_id
-WHERE 
-    /* Indexes that are not being disabled or merged */
-    (ia.action IS NULL OR ia.action = 'KEEP')
-    /* Only indexes eligible for compression */
-    AND ce.can_compress = 1;
+    /* Update the winning index's superseded_by to list all other indexes */
+    UPDATE 
+        ia
+    SET
+        ia.superseded_by = 'Supersedes ' + 
+        REPLACE
+        (
+            kdd.index_list, 
+            ia.index_name + N', ', N''
+        ) /* Remove self from list if present */
+    FROM #index_analysis AS ia
+    JOIN #key_duplicate_dedupe AS kdd
+      ON  ia.database_id = kdd.database_id
+      AND ia.object_id = kdd.object_id
+      AND ia.key_columns = kdd.base_key_columns
+      AND ISNULL(ia.filter_definition, '') = kdd.filter_definition
+    WHERE ia.index_name = kdd.winning_index_name
+    OPTION(RECOMPILE);
 
-/* Insert disable scripts for unique constraints */
-INSERT INTO 
-    #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    script_type,
-    additional_info,
-    script,
-    index_size_gb,
-    index_rows,
-    index_reads,
-    index_writes
-)
-SELECT
-    'CONSTRAINT',
-    30,
-    ia.database_name,
-    ia.schema_name,
-    ia.table_name,
-    ia.index_name,
-    'DISABLE CONSTRAINT SCRIPT',
-    N'Constraint to disable: ' + id.index_name,
-    N'ALTER TABLE ' +
-    QUOTENAME(ia.database_name) +
-    N'.' +
-    QUOTENAME(ia.schema_name) +
-    N'.' +
-    QUOTENAME(ia.table_name) +
-    N' NOCHECK CONSTRAINT ' +
-    QUOTENAME(id.index_name) +
-    N';',
-    ps.total_space_gb,
-    ps.row_count,
-    (id2.user_seeks + id2.user_scans + id2.user_lookups),
-    id2.user_updates
-FROM #index_analysis AS ia
-JOIN #index_details AS id 
-  ON  id.database_id = ia.database_id
-  AND id.object_id = ia.object_id
-  AND id.is_unique_constraint = 1
-LEFT JOIN #index_details AS id2
-  ON  id2.database_id = ia.database_id
-  AND id2.object_id = ia.object_id
-  AND id2.index_name = ia.index_name
-  AND id2.is_included_column = 0 /* Get only one row per index */
-  AND id2.key_ordinal > 0
-LEFT JOIN #partition_stats AS ps
-  ON  ia.database_id = ps.database_id
-  AND ia.object_id = ps.object_id
-  AND ia.index_id = ps.index_id
-WHERE 
-    /* Only indexes that are being made unique */
-    ia.action = 'MAKE UNIQUE'
-    /* Find the constraint that matches the index being made unique */
-    AND EXISTS 
+    /* Find indexes with same key columns where one has includes that are a subset of another */
+    INSERT INTO 
+        #include_subset_dedupe
+    WITH
+        (TABLOCK)
     (
+        database_id,
+        object_id,
+        subset_index_name,
+        superset_index_name,
+        subset_included_columns,
+        superset_included_columns
+    )
+    SELECT
+        ia1.database_id,
+        ia1.object_id,
+        ia1.index_name AS subset_index_name,
+        ia2.index_name AS superset_index_name,
+        ia1.included_columns AS subset_included_columns,
+        ia2.included_columns AS superset_included_columns
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2
+      ON  ia1.database_id = ia2.database_id
+      AND ia1.object_id = ia2.object_id
+      AND ia1.key_columns = ia2.key_columns
+      AND ISNULL(ia1.filter_definition, N'') = ISNULL(ia2.filter_definition, N'')
+      AND ia1.index_name <> ia2.index_name
+      AND ia1.action = N'MERGE INCLUDES'
+      AND ia2.action = N'MERGE INCLUDES'
+      AND ia1.consolidation_rule = 'Key Duplicate'
+      AND ia2.consolidation_rule = 'Key Duplicate'
+      /* Find where subset's includes are contained within superset's includes */
+      AND 
+      (
+             ia1.included_columns IS NULL 
+          OR CHARINDEX(ia1.included_columns, ia2.included_columns) > 0
+      )
+      /* Don't match if lengths are the same (would be exact duplicates) */
+      AND 
+      (
+           ia1.included_columns IS NULL 
+        OR ia2.included_columns IS NULL 
+        OR LEN(ia1.included_columns) < LEN(ia2.included_columns)
+      )
+      OPTION(RECOMPILE);
+
+    /* Update the subset indexes to be disabled, since supersets already contain their columns */
+    UPDATE 
+        ia
+    SET
+        ia.action = N'DISABLE',
+        ia.target_index_name = isd.superset_index_name,
+        ia.superseded_by = NULL
+    FROM #index_analysis AS ia
+    JOIN #include_subset_dedupe AS isd
+      ON  ia.database_id = isd.database_id
+      AND ia.object_id = isd.object_id
+      AND ia.index_name = isd.subset_index_name
+    OPTION(RECOMPILE);
+
+    /* Update the superset indexes to indicate they supersede the subset indexes */
+    UPDATE 
+        ia
+    SET
+        ia.superseded_by = 
+            CASE
+                WHEN ia.superseded_by IS NULL 
+                THEN N'Supersedes ' + isd.subset_index_name
+                ELSE ia.superseded_by + N', ' + isd.subset_index_name
+            END
+    FROM #index_analysis AS ia
+    JOIN #include_subset_dedupe AS isd
+      ON  ia.database_id = isd.database_id
+      AND ia.object_id = isd.object_id
+      AND ia.index_name = isd.superset_index_name
+    OPTION(RECOMPILE);
+
+    /* Update winning indexes that don't actually need changes to have action = 'KEEP' */
+    UPDATE 
+        ia
+    SET
+        /* Change action to 'KEEP' for indexes that don't need to be modified */
+        ia.action = N'KEEP'
+    FROM #index_analysis AS ia
+    WHERE ia.action = 'MERGE INCLUDES'
+    AND   ia.superseded_by IS NOT NULL
+    /* Check if the index name contains "Extended" and has more included columns */
+    AND  (ia.index_name LIKE '%\_Extended%' ESCAPE '\' OR ia.index_name LIKE '%\_Extended' OR ia.index_name LIKE '%_Extended%')
+    /* This should indicate it already has all the needed includes */
+    AND NOT EXISTS 
+    (
+        /* Find any indexes it supersedes that have includes not in this index */
         SELECT 
             1/0
-        FROM #index_details id_nc
-        WHERE id_nc.database_id = ia.database_id
-        AND id_nc.object_id = ia.object_id
-        AND id_nc.index_name = ia.index_name
-        /* Matching key columns */
-        AND NOT EXISTS 
+        FROM #index_analysis AS ia_subset
+        WHERE ia_subset.database_id = ia.database_id
+        AND   ia_subset.object_id = ia.object_id
+        AND   ia_subset.key_columns = ia.key_columns
+        AND   ia_subset.action = 'DISABLE'
+        AND   ia_subset.target_index_name = ia.index_name
+        /* This complex check handles cases where the superset doesn't contain all subset columns */
+        AND CHARINDEX(ISNULL(ia_subset.included_columns, N''), ISNULL(ia.included_columns, N'')) = 0
+        AND ISNULL(ia_subset.included_columns, N'') <> N''
+    )
+    OPTION(RECOMPILE);
+
+    /* Insert merge scripts for indexes */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        target_index_name,
+        script,
+        additional_info,
+        superseded_info,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT
+        result_type = 'MERGE',
+        /* Put merge target indexes higher in sort order (5) so they appear before 
+           indexes that will be disabled (20) */
+        sort_order = 5,
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = N'MERGE SCRIPT',
+        ia.consolidation_rule,
+        ia.target_index_name,
+        script =
+            CASE 
+                WHEN ia.action = 'MAKE UNIQUE' 
+                THEN N'/* This index can replace a unique constraint */
+        /* Creating unique index with same keys as constraint */
+        CREATE UNIQUE '
+                WHEN ia.action = 'MERGE INCLUDES'
+                THEN N'/* This index can be merged with another index */
+        /* Creating index with combined includes from both */
+        CREATE '
+                ELSE N'CREATE '
+            END +
+            N'INDEX ' +
+            QUOTENAME(ia.index_name) +
+            N' ON ' +
+            QUOTENAME(ia.database_name) +
+            N'.' +
+            QUOTENAME(ia.schema_name) +
+            N'.' +
+            QUOTENAME(ia.table_name) +
+            N' (' +
+            ia.key_columns +
+            N')' +
+            CASE 
+                WHEN ia.included_columns IS NOT NULL 
+                AND  LEN(ia.included_columns) > 0 
+                AND  ia.action = 'MERGE INCLUDES'
+                THEN N' INCLUDE (' +
+                     ia.included_columns +
+                     N')'
+                WHEN ia.included_columns IS NOT NULL 
+                AND  LEN(ia.included_columns) > 0
+                THEN N' INCLUDE (' +
+                     ia.included_columns +
+                     N')'
+                ELSE N''
+            END +
+            CASE 
+                WHEN ia.filter_definition IS NOT NULL
+                THEN N' WHERE ' +
+                     ia.filter_definition
+                ELSE N''
+            END +
+            CASE 
+                WHEN ps.partition_function_name IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.partition_function_name) +
+                     N'(' +
+                     ISNULL(ps.partition_columns, N'') +
+                     N')'
+                WHEN ps.built_on IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(ps.built_on)
+                ELSE N''
+            END +
+            N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            CASE 
+                WHEN @online = 1 
+                THEN N'ON' 
+                ELSE N'OFF' 
+            END +
+            N', DATA_COMPRESSION = PAGE);',
+            /* Additional info about what this script does */
+        additional_info =
+            CASE
+                WHEN ia.action = 'MERGE INCLUDES' 
+                THEN N'This index will absorb includes from duplicate indexes'
+                WHEN ia.action = 'MAKE UNIQUE' 
+                THEN N'This index will replace a unique constraint'
+                ELSE NULL
+            END,
+        /* Add superseded_by information if available */
+        ia.superseded_by,
+        NULL,
+        NULL,
+        NULL,
+        NULL
+    FROM #index_analysis AS ia
+    LEFT JOIN 
+    (
+        /* Get the partition info for each index */
+        SELECT 
+            ps.database_id,
+            ps.object_id,
+            ps.index_id,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+        FROM #partition_stats ps
+        GROUP BY
+            ps.database_id,
+            ps.object_id,
+            ps.index_id,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+    ) AS ps 
+      ON  ia.database_id = ps.database_id 
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+    JOIN #compression_eligibility AS ce 
+      ON  ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id
+    WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+    AND   ce.can_compress = 1
+    /* Only create merge scripts for the indexes that should remain after merging */
+    AND   ia.target_index_name IS NULL
+    OPTION(RECOMPILE);
+
+    /* Insert disable scripts for unneeded indexes */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        script,
+        additional_info,
+        target_index_name,
+        superseded_info,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT
+        result_type = 'DISABLE',
+        /* Sort duplicate/subset indexes first (20), then unused indexes last (25) */
+        sort_order =
+            CASE 
+                WHEN ia.consolidation_rule LIKE 'Unused Index%' THEN 25
+                ELSE 20
+            END,
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = 'DISABLE SCRIPT',
+        ia.consolidation_rule,
+        script =
+            N'ALTER INDEX ' +
+            QUOTENAME(ia.index_name) +
+            N' ON ' +
+            QUOTENAME(ia.database_name) +
+            N'.' +
+            QUOTENAME(ia.schema_name) +
+            N'.' +
+            QUOTENAME(ia.table_name) +
+            N' DISABLE;',
+            CASE 
+                WHEN ia.consolidation_rule = 'Key Subset' 
+                THEN N'This index is superseded by a wider index: ' + ISNULL(ia.target_index_name, N'(unknown)')
+                WHEN ia.consolidation_rule = 'Exact Duplicate' 
+                THEN N'This index is an exact duplicate of: ' + ISNULL(ia.target_index_name, N'(unknown)')
+                WHEN ia.consolidation_rule = 'Key Duplicate' 
+                THEN N'This index has the same keys as: ' + ISNULL(ia.target_index_name, N'(unknown)')
+                WHEN ia.consolidation_rule LIKE 'Unused Index%' 
+                THEN ia.consolidation_rule
+                WHEN ia.action = N'DISABLE'
+                THEN N'This index is redundant and will be disabled'
+                ELSE N'This index is redundant'
+            END,
+        ia.target_index_name,  /* Include the target index name */
+        superseded_info = NULL,  /* Don't need superseded_by info for disabled indexes */
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads = 
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #index_analysis AS ia
+    LEFT JOIN #partition_stats AS ps
+      ON  ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+    LEFT JOIN #index_details AS id
+      ON  id.database_id = ia.database_id
+      AND id.object_id = ia.object_id
+      AND id.index_name = ia.index_name
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    WHERE ia.action = 'DISABLE'
+    OPTION(RECOMPILE);
+
+    /* Insert compression scripts for remaining indexes */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        script,
+        additional_info,
+        target_index_name,
+        superseded_info,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT
+        result_type = 'COMPRESS',
+        sort_order = 40,
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = 'COMPRESSION SCRIPT',
+        script =
+            N'ALTER INDEX ' +
+            QUOTENAME(ia.index_name) +
+            N' ON ' +
+            QUOTENAME(ia.database_name) +
+            N'.' +
+            QUOTENAME(ia.schema_name) +
+            N'.' +
+            QUOTENAME(ia.table_name) +
+            CASE 
+                WHEN ps.partition_function_name IS NOT NULL
+                THEN N' REBUILD PARTITION = ALL' 
+                ELSE N' REBUILD' 
+            END +
+            N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
+            N', DATA_COMPRESSION = PAGE);',
+        N'Compression type: All Partitions',
+        superseded_info = NULL, /* No target index for compression scripts */
+        ia.superseded_by, /* Include superseded_by info for compression scripts */
+        ps_full.total_space_gb,
+        ps_full.total_rows,
+        index_reads =
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #index_analysis AS ia
+    LEFT JOIN 
+    (
+        /* Get the partition info for each index */
+        SELECT 
+            ps.database_id,
+            ps.object_id,
+            ps.index_id,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+        FROM #partition_stats ps
+        GROUP BY
+            ps.database_id,
+            ps.object_id,
+            ps.index_id,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+    ) ps 
+      ON  ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+    LEFT JOIN #partition_stats AS ps_full
+      ON  ia.database_id = ps_full.database_id
+      AND ia.object_id = ps_full.object_id
+      AND ia.index_id = ps_full.index_id
+    LEFT JOIN #index_details AS id
+      ON  id.database_id = ia.database_id
+      AND id.object_id = ia.object_id
+      AND id.index_name = ia.index_name
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    JOIN #compression_eligibility ce 
+      ON  ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id
+    WHERE 
+        /* Indexes that are not being disabled or merged */
+        (ia.action IS NULL OR ia.action = 'KEEP')
+        /* Only indexes eligible for compression */
+    AND  ce.can_compress = 1
+    OPTION(RECOMPILE);
+
+    /* Insert disable scripts for unique constraints */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        additional_info,
+        script,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT
+        result_type = 'CONSTRAINT',
+        sort_order = 30,
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = 'DISABLE CONSTRAINT SCRIPT',
+        additional_info = 
+            N'Constraint to disable: ' + 
+            id.index_name,
+        script = 
+            N'ALTER TABLE ' +
+            QUOTENAME(ia.database_name) +
+            N'.' +
+            QUOTENAME(ia.schema_name) +
+            N'.' +
+            QUOTENAME(ia.table_name) +
+            N' NOCHECK CONSTRAINT ' +
+            QUOTENAME(id.index_name) +
+            N';',
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads =
+            (id2.user_seeks + id2.user_scans + id2.user_lookups),
+        id2.user_updates
+    FROM #index_analysis AS ia
+    JOIN #index_details AS id 
+      ON  id.database_id = ia.database_id
+      AND id.object_id = ia.object_id
+      AND id.is_unique_constraint = 1
+    LEFT JOIN #index_details AS id2
+      ON  id2.database_id = ia.database_id
+      AND id2.object_id = ia.object_id
+      AND id2.index_name = ia.index_name
+      AND id2.is_included_column = 0 /* Get only one row per index */
+      AND id2.key_ordinal > 0
+    LEFT JOIN #partition_stats AS ps
+      ON  ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+    WHERE 
+        /* Only indexes that are being made unique */
+        ia.action = 'MAKE UNIQUE'
+        /* Find the constraint that matches the index being made unique */
+        AND EXISTS 
         (
             SELECT 
-                id.column_name 
-            FROM #index_details id_inner
-            WHERE id_inner.database_id = id.database_id
-            AND   id_inner.object_id = id.object_id
-            AND   id_inner.index_id = id.index_id
-            AND   id_inner.is_included_column = 0
-            
-            EXCEPT
-            
-            SELECT 
-                id_nc_inner.column_name
-            FROM #index_details id_nc_inner
-            WHERE id_nc_inner.database_id = id_nc.database_id
-            AND   id_nc_inner.object_id = id_nc.object_id
-            AND   id_nc_inner.index_name = id_nc.index_name
-            AND   id_nc_inner.is_included_column = 0
+                1/0
+            FROM #index_details id_nc
+            WHERE id_nc.database_id = ia.database_id
+            AND id_nc.object_id = ia.object_id
+            AND id_nc.index_name = ia.index_name
+            /* Matching key columns */
+            AND NOT EXISTS 
+            (
+                SELECT 
+                    id.column_name 
+                FROM #index_details id_inner
+                WHERE id_inner.database_id = id.database_id
+                AND   id_inner.object_id = id.object_id
+                AND   id_inner.index_id = id.index_id
+                AND   id_inner.is_included_column = 0
+                
+                EXCEPT
+                
+                SELECT 
+                    id_nc_inner.column_name
+                FROM #index_details id_nc_inner
+                WHERE id_nc_inner.database_id = id_nc.database_id
+                AND   id_nc_inner.object_id = id_nc.object_id
+                AND   id_nc_inner.index_name = id_nc.index_name
+                AND   id_nc_inner.is_included_column = 0
+            )
         )
-    );
+        OPTION(RECOMPILE);
 
-/* Insert per-partition compression scripts */
-INSERT INTO 
-    #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    script_type,
-    script,
-    additional_info,
-    target_index_name,
-    superseded_info,
-    index_size_gb,
-    index_rows,
-    index_reads,
-    index_writes
-)
-SELECT
-    'COMPRESS_PARTITION',
-    50,
-    ia.database_name,
-    ia.schema_name,
-    ia.table_name,
-    ia.index_name,
-    'PARTITION COMPRESSION SCRIPT',
-    N'ALTER INDEX ' +
-    QUOTENAME(ia.index_name) +
-    N' ON ' +
-    QUOTENAME(ia.database_name) +
-    N'.' +
-    QUOTENAME(ia.schema_name) +
-    N'.' +
-    QUOTENAME(ia.table_name) +
-    N' REBUILD PARTITION = ' +
-    CONVERT(nvarchar(20), ps.partition_number) +
-    N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-    CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
-    N', DATA_COMPRESSION = PAGE);',
-    N'Compression type: Per Partition | Partition: ' + 
-    CONVERT(nvarchar(20), ps.partition_number) +
-    N' | Rows: ' +
-    CONVERT(nvarchar(20), ps.total_rows) +
-    N' | Size: ' +
-    CONVERT(nvarchar(20), CONVERT(decimal(10,4), ps.total_space_gb)) + 
-    N' GB',
-    NULL,
-    NULL,
-    ps.total_space_gb,
-    ps.row_count,
-    (id.user_seeks + id.user_scans + id.user_lookups),
-    id.user_updates
-FROM #index_analysis AS ia
-JOIN #partition_stats AS ps 
-  ON  ia.database_id = ps.database_id
-  AND ia.object_id = ps.object_id
-  AND ia.index_id = ps.index_id
-LEFT JOIN #index_details AS id
-  ON  id.database_id = ia.database_id
-  AND id.object_id = ia.object_id
-  AND id.index_name = ia.index_name
-  AND id.is_included_column = 0 /* Get only one row per index */
-  AND id.key_ordinal > 0
-JOIN #compression_eligibility AS ce 
-  ON  ia.database_id = ce.database_id
-  AND ia.object_id = ce.object_id
-  AND ia.index_id = ce.index_id
-WHERE 
-    /* Only partitioned indexes */
-    ps.partition_function_name IS NOT NULL
-    /* Indexes that are not being disabled or merged */
-    AND (ia.action IS NULL OR ia.action = 'KEEP')
-    /* Only indexes eligible for compression */
-    AND ce.can_compress = 1;
+    /* Insert per-partition compression scripts */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        script,
+        additional_info,
+        target_index_name,
+        superseded_info,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT
+        result_type = 'COMPRESS_PARTITION',
+        sort_order = 50,
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = 'PARTITION COMPRESSION SCRIPT',
+        script = 
+            N'ALTER INDEX ' +
+            QUOTENAME(ia.index_name) +
+            N' ON ' +
+            QUOTENAME(ia.database_name) +
+            N'.' +
+            QUOTENAME(ia.schema_name) +
+            N'.' +
+            QUOTENAME(ia.table_name) +
+            N' REBUILD PARTITION = ' +
+            CONVERT
+            (
+                nvarchar(20), 
+                ps.partition_number
+            ) +
+            N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            CASE 
+                WHEN @online = 1 
+                THEN N'ON' 
+                ELSE N'OFF' 
+            END +
+            N', DATA_COMPRESSION = PAGE);',
+            N'Compression type: Per Partition | Partition: ' + 
+            CONVERT
+            (
+                nvarchar(20), 
+                ps.partition_number
+            ) +
+            N' | Rows: ' +
+            CONVERT
+            (
+                nvarchar(20), 
+                ps.total_rows
+            ) +
+            N' | Size: ' +
+            CONVERT
+            (
+                nvarchar(20), 
+                CONVERT
+                (
+                    decimal(10,4), 
+                    ps.total_space_gb
+                )
+            ) + 
+            N' GB',
+        target_index_name = NULL,
+        superseded_info = NULL,
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads =
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #index_analysis AS ia
+    JOIN #partition_stats AS ps 
+      ON  ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+    LEFT JOIN #index_details AS id
+      ON  id.database_id = ia.database_id
+      AND id.object_id = ia.object_id
+      AND id.index_name = ia.index_name
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    JOIN #compression_eligibility AS ce 
+      ON  ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id
+    WHERE 
+        /* Only partitioned indexes */
+        ps.partition_function_name IS NOT NULL
+        /* Indexes that are not being disabled or merged */
+    AND  (ia.action IS NULL OR ia.action = 'KEEP')
+        /* Only indexes eligible for compression */
+    AND   ce.can_compress = 1
+    OPTION(RECOMPILE);
 
-/* Stats reporting has been moved to #index_cleanup_results table */
+    /* Insert compression ineligible info */
+    INSERT INTO 
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        additional_info,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT
+        result_type = 'INELIGIBLE',
+        sort_order = 90,
+        ce.database_name,
+        ce.schema_name,
+        ce.table_name,
+        ce.index_name,
+        script_type = 'INELIGIBLE FOR COMPRESSION',
+        ce.reason,
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads =
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #compression_eligibility AS ce
+    LEFT JOIN #partition_stats AS ps
+      ON  ce.database_id = ps.database_id
+      AND ce.object_id = ps.object_id
+      AND ce.index_id = ps.index_id
+    LEFT JOIN #index_details AS id
+      ON  id.database_id = ce.database_id
+      AND id.object_id = ce.object_id
+      AND id.index_name = ce.index_name
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    WHERE ce.can_compress = 0
+    OPTION(RECOMPILE);
 
-/* Space savings reporting has been moved to #index_cleanup_results table */
 
-/* Insert compression ineligible info */
-INSERT INTO 
-    #index_cleanup_results
-WITH
-    (TABLOCK)
-(
-    result_type,
-    sort_order,
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    script_type,
-    additional_info,
-    index_size_gb,
-    index_rows,
-    index_reads,
-    index_writes
-)
-SELECT
-    'INELIGIBLE',
-    90,
-    ce.database_name,
-    ce.schema_name,
-    ce.table_name,
-    ce.index_name,
-    'INELIGIBLE FOR COMPRESSION',
-    ce.reason,
-    ps.total_space_gb,
-    ps.row_count,
-    (id.user_seeks + id.user_scans + id.user_lookups),
-    id.user_updates
-FROM #compression_eligibility AS ce
-LEFT JOIN #partition_stats AS ps
-  ON  ce.database_id = ps.database_id
-  AND ce.object_id = ps.object_id
-  AND ce.index_id = ps.index_id
-LEFT JOIN #index_details AS id
-  ON  id.database_id = ce.database_id
-  AND id.object_id = ce.object_id
-  AND id.index_name = ce.index_name
-  AND id.is_included_column = 0 /* Get only one row per index */
-  AND id.key_ordinal > 0
-WHERE ce.can_compress = 0;
+    /* Insert indexes identified for manual review */
+    INSERT INTO 
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        target_index_name,
+        additional_info,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT
+        result_type = 'REVIEW',
+        sort_order = 93, /* Just before KEPT indexes */
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = 'NEEDS REVIEW',
+        ia.consolidation_rule,
+        ia.target_index_name,
+        additional_info =
+            CASE
+                WHEN ia.consolidation_rule = 'Same Keys Different Order' 
+                THEN N'This index has the same key columns as ' + ISNULL(ia.target_index_name, N'(unknown)') + 
+                     N' but in a different order. May be redundant depending on query patterns.'
+                ELSE N'This index needs manual review'
+            END,
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads =
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #index_analysis AS ia
+    LEFT JOIN #partition_stats AS ps
+      ON  ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+    LEFT JOIN #index_details AS id
+      ON  id.database_id = ia.database_id
+      AND id.object_id = ia.object_id
+      AND id.index_name = ia.index_name
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    WHERE ia.action = 'REVIEW'
+    OPTION(RECOMPILE);
 
-/* Add a separator for indexes needing review section */
-INSERT INTO 
-    #index_cleanup_results
-WITH
-    (TABLOCK)
-(
-    result_type,
-    sort_order,
-    script_type,
-    additional_info
-)
-SELECT 
-    'HEADER',
-    92,
-    'SEPARATOR',
-    N'==================== INDEXES NEEDING REVIEW ====================';
 
-/* Insert indexes identified for manual review */
-INSERT INTO 
-    #index_cleanup_results
-WITH
-    (TABLOCK)
-(
-    result_type,
-    sort_order,
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    script_type,
-    consolidation_rule,
-    target_index_name,
-    additional_info,
-    index_size_gb,
-    index_rows,
-    index_reads,
-    index_writes
-)
-SELECT
-    'REVIEW',
-    93, /* Just before KEPT indexes */
-    ia.database_name,
-    ia.schema_name,
-    ia.table_name,
-    ia.index_name,
-    'NEEDS REVIEW',
-    ia.consolidation_rule,
-    ia.target_index_name,
-    CASE
-        WHEN ia.consolidation_rule = 'Same Keys Different Order' 
-            THEN 'This index has the same key columns as ' + ISNULL(ia.target_index_name, N'(unknown)') + 
-                 ' but in a different order. May be redundant depending on query patterns.'
-        ELSE 'This index needs manual review'
-    END,
-    ps.total_space_gb,
-    ps.row_count,
-    (id.user_seeks + id.user_scans + id.user_lookups),
-    id.user_updates
-FROM #index_analysis AS ia
-LEFT JOIN #partition_stats AS ps
-  ON  ia.database_id = ps.database_id
-  AND ia.object_id = ps.object_id
-  AND ia.index_id = ps.index_id
-LEFT JOIN #index_details AS id
-  ON  id.database_id = ia.database_id
-  AND id.object_id = ia.object_id
-  AND id.index_name = ia.index_name
-  AND id.is_included_column = 0 /* Get only one row per index */
-  AND id.key_ordinal > 0
-WHERE ia.action = 'REVIEW';
+    /* Insert indexes that are being kept (superset indexes and others) */
+    INSERT INTO 
+        #index_cleanup_results
+    WITH
+        (TABLOCK)
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        superseded_info,
+        additional_info,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT
+        result_type = 'KEEP',
+        sort_order = 95, /* Just before END OF REPORT at 99 */
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = 'KEPT',
+        ia.consolidation_rule,
+        ia.superseded_by,
+        additional_info =
+            CASE
+                WHEN ia.superseded_by IS NOT NULL 
+                THEN 'This index supersedes other indexes and already has all needed columns'
+                WHEN ia.action = 'KEEP' 
+                THEN 'This index is being kept'
+                ELSE NULL
+            END,
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads =
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #index_analysis AS ia
+    LEFT JOIN #partition_stats AS ps
+      ON  ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+    LEFT JOIN #index_details AS id
+      ON  id.database_id = ia.database_id
+      AND id.object_id = ia.object_id
+      AND id.index_name = ia.index_name
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    WHERE ia.action = 'KEEP' 
+    OR 
+    (
+          ia.action IS NULL 
+      AND ia.consolidation_rule IS NULL
+    )
+    OPTION(RECOMPILE);
 
-/* Add a separator for kept indexes section */
-INSERT INTO 
-    #index_cleanup_results
-WITH
-    (TABLOCK)
-(
-    result_type,
-    sort_order,
-    script_type,
-    additional_info
-)
-SELECT 
-    'HEADER',
-    94,
-    'SEPARATOR',
-    N'==================== INDEXES KEPT ====================';
+    /* 
+    Return the consolidated results in a single result set
+    Results are ordered by:
+    1. Summary information (overall stats, savings estimates)
+    2. Merge scripts (includes merges and unique conversions) - sort_order 5
+    3. Disable scripts (for redundant indexes) - sort_order 20
+    4. Constraint scripts (for unique constraints to disable)
+    5. Compression scripts (for tables eligible for compression)
+    6. Partition-specific compression scripts
+    7. Ineligible objects (tables that can't be compressed)
+    8. Kept indexes - sort_order 95
+    
+    Note: Merge target scripts are sorted higher in the results (sort_order 5)
+    so that new merged indexes are created before subset indexes are disabled.
+    
+    Within each category, indexes are sorted by size and impact for better prioritization.
+    */
 
-/* Insert indexes that are being kept (superset indexes and others) */
-INSERT INTO 
-    #index_cleanup_results
-WITH
-    (TABLOCK)
-(
-    result_type,
-    sort_order,
-    database_name,
-    schema_name,
-    table_name,
-    index_name,
-    script_type,
-    consolidation_rule,
-    superseded_info,
-    additional_info,
-    index_size_gb,
-    index_rows,
-    index_reads,
-    index_writes
-)
-SELECT
-    'KEEP',
-    95, /* Just before END OF REPORT at 99 */
-    ia.database_name,
-    ia.schema_name,
-    ia.table_name,
-    ia.index_name,
-    'KEPT',
-    ia.consolidation_rule,
-    ia.superseded_by,
-    CASE
-        WHEN ia.superseded_by IS NOT NULL THEN 'This index supersedes other indexes and already has all needed columns'
-        WHEN ia.action = 'KEEP' THEN 'This index is being kept'
-        ELSE NULL
-    END,
-    ps.total_space_gb,
-    ps.row_count,
-    (id.user_seeks + id.user_scans + id.user_lookups),
-    id.user_updates
-FROM #index_analysis AS ia
-LEFT JOIN #partition_stats AS ps
-  ON  ia.database_id = ps.database_id
-  AND ia.object_id = ps.object_id
-  AND ia.index_id = ps.index_id
-LEFT JOIN #index_details AS id
-  ON  id.database_id = ia.database_id
-  AND id.object_id = ia.object_id
-  AND id.index_name = ia.index_name
-  AND id.is_included_column = 0 /* Get only one row per index */
-  AND id.key_ordinal > 0
-WHERE ia.action = 'KEEP' OR (ia.action IS NULL AND ia.consolidation_rule IS NULL);
-
-/* 
-Return the consolidated results in a single result set
-Results are ordered by:
-1. Summary information (overall stats, savings estimates)
-2. Merge scripts (includes merges and unique conversions) - sort_order 5
-3. Disable scripts (for redundant indexes) - sort_order 20
-4. Constraint scripts (for unique constraints to disable)
-5. Compression scripts (for tables eligible for compression)
-6. Partition-specific compression scripts
-7. Ineligible objects (tables that can't be compressed)
-8. Kept indexes - sort_order 95
-
-Note: Merge target scripts are sorted higher in the results (sort_order 5)
-so that new merged indexes are created before subset indexes are disabled.
-
-Within each category, indexes are sorted by size and impact for better prioritization.
-*/
-SELECT
-    /* First, show the information needed to understand the script */
-    ir.script_type,
-    ir.additional_info,
-    /* Then show identifying information for the index */
-    ir.database_name,
-    ir.schema_name,
-    ir.table_name,
-    ir.index_name,
-    /* Then show relationship information */
-    ir.consolidation_rule,
-    ir.target_index_name,
-    /* Include superseded_by info for winning indexes */
-    CASE WHEN ia.superseded_by IS NOT NULL THEN ia.superseded_by ELSE ir.superseded_info END AS superseded_info,
-    /* Add size and usage metrics */
-    index_size_gb = 
-        CASE 
-            WHEN ir.result_type IN ('HEADER', 'SUMMARY') THEN NULL
-            ELSE FORMAT(ir.index_size_gb, 'N4')
-        END,
-    index_rows = 
-        CASE 
-            WHEN ir.result_type IN ('HEADER', 'SUMMARY') THEN NULL
-            ELSE FORMAT(ir.index_rows, 'N0')
-        END,
-    index_reads = 
-        CASE 
-            WHEN ir.result_type IN ('HEADER', 'SUMMARY') THEN NULL
-            ELSE FORMAT(ir.index_reads, 'N0')
-        END,
-    index_writes = 
-        CASE 
-            WHEN ir.result_type IN ('HEADER', 'SUMMARY') THEN NULL
-            ELSE FORMAT(ir.index_writes, 'N0')
-        END,
-    /* Finally show the actual script */
-    ir.script
-FROM #index_cleanup_results AS ir
-LEFT JOIN #index_analysis AS ia
-    ON ir.database_name = ia.database_name
-    AND ir.schema_name = ia.schema_name
-    AND ir.table_name = ia.table_name
-    AND ir.index_name = ia.index_name
-ORDER BY
-    ir.sort_order,
-    /* Within each sort_order group, prioritize by size and usage */
-    CASE
-        /* For HEADER and SUMMARY, keep the original order */
-        WHEN ir.result_type IN ('HEADER', 'SUMMARY') THEN 0
-        /* For script categories, order by size and impact */
-        ELSE ISNULL(ir.index_size_gb, 0)
-    END DESC,
-    CASE
-        /* For HEADER and SUMMARY, keep the original order */
-        WHEN ir.result_type IN ('HEADER', 'SUMMARY') THEN 0
-        /* For script categories, consider rows as secondary sort */
-        ELSE ISNULL(ir.index_rows, 0)
-    END DESC,
-    /* Then by database, schema, table, index name for consistent ordering */
-    ir.database_name,
-    ir.schema_name,
-    ir.table_name,
-    ir.index_name;
+    SELECT
+        /* First, show the information needed to understand the script */
+        ir.script_type,
+        ir.additional_info,
+        /* Then show identifying information for the index */
+        ir.database_name,
+        ir.schema_name,
+        ir.table_name,
+        ir.index_name,
+        /* Then show relationship information */
+        ir.consolidation_rule,
+        ir.target_index_name,
+        /* Include superseded_by info for winning indexes */
+        superseded_info =
+            CASE 
+                WHEN ia.superseded_by IS NOT NULL 
+                THEN ia.superseded_by 
+                ELSE ir.superseded_info 
+            END,
+        /* Add size and usage metrics */
+        index_size_gb = 
+            CASE 
+                WHEN ir.result_type IN ('HEADER', 'SUMMARY') 
+                THEN NULL
+                ELSE FORMAT(ir.index_size_gb, 'N4')
+            END,
+        index_rows = 
+            CASE 
+                WHEN ir.result_type IN ('HEADER', 'SUMMARY') 
+                THEN NULL
+                ELSE FORMAT(ir.index_rows, 'N0')
+            END,
+        index_reads = 
+            CASE 
+                WHEN ir.result_type IN ('HEADER', 'SUMMARY') 
+                THEN NULL
+                ELSE FORMAT(ir.index_reads, 'N0')
+            END,
+        index_writes = 
+            CASE 
+                WHEN ir.result_type IN ('HEADER', 'SUMMARY') 
+                THEN NULL
+                ELSE FORMAT(ir.index_writes, 'N0')
+            END,
+        /* Finally show the actual script */
+        ir.script
+    FROM #index_cleanup_results AS ir
+    LEFT JOIN #index_analysis AS ia
+      ON  ir.database_name = ia.database_name
+      AND ir.schema_name = ia.schema_name
+      AND ir.table_name = ia.table_name
+      AND ir.index_name = ia.index_name
+    ORDER BY
+        ir.sort_order,
+        /* Within each sort_order group, prioritize by size and usage */
+        CASE
+            /* For HEADER and SUMMARY, keep the original order */
+            WHEN ir.result_type IN ('HEADER', 'SUMMARY') 
+            THEN 0
+            /* For script categories, order by size and impact */
+            ELSE ISNULL(ir.index_size_gb, 0)
+        END DESC,
+        CASE
+            /* For HEADER and SUMMARY, keep the original order */
+            WHEN ir.result_type IN ('HEADER', 'SUMMARY') 
+            THEN 0
+            /* For script categories, consider rows as secondary sort */
+            ELSE ISNULL(ir.index_rows, 0)
+        END DESC,
+        /* Then by database, schema, table, index name for consistent ordering */
+        ir.database_name,
+        ir.schema_name,
+        ir.table_name,
+        ir.index_name
+    OPTION(RECOMPILE);
 
 END TRY
 BEGIN CATCH
