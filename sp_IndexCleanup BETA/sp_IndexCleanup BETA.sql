@@ -49,9 +49,26 @@ BEGIN TRY
     
     IF 
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
-    (CONVERT(INT, SERVERPROPERTY('EngineEdition')) NOT IN (5, 8) /* Not Azure SQL DB or Managed Instance */
-    AND CONVERT(INT, SUBSTRING(CONVERT(VARCHAR(20), SERVERPROPERTY('ProductVersion')), 1, 2)) < 11) /* Pre-2012 */
-    
+    (
+        CONVERT
+        (
+            integer, 
+            SERVERPROPERTY('EngineEdition')
+        ) NOT IN (5, 8) /* Not Azure SQL DB or Managed Instance */
+    AND CONVERT
+        (
+            integer, 
+            SUBSTRING
+            (
+                CONVERT
+                (
+                    varchar(20), 
+                    SERVERPROPERTY('ProductVersion')
+                ), 
+                1, 
+                2
+            )
+        ) < 11) /* Pre-2012 */    
     BEGIN
         RAISERROR('This procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT and CONCAT functions.', 11, 1);
         RETURN;
@@ -600,13 +617,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             1/0
         FROM ' + QUOTENAME(@database_name) + N'.sys.views AS v
         WHERE v.object_id = i.object_id 
-        AND   v.is_indexed_view = 1
     )';
       
     IF 
         /* Check SQL Server 2016+ for temporal tables support */
-        (CONVERT(INT, SERVERPROPERTY('EngineEdition')) IN (5, 8) /* Azure SQL DB or Managed Instance */
-        OR CONVERT(INT, SUBSTRING(CONVERT(VARCHAR(20), SERVERPROPERTY('ProductVersion')), 1, 2)) >= 13) /* SQL 2016+ */
+        (
+            CONVERT
+            (
+                integer, 
+                SERVERPROPERTY('EngineEdition')
+            ) IN (5, 8) /* Azure SQL DB or Managed Instance */
+        OR  CONVERT
+            (
+                integer, 
+                SUBSTRING
+                (
+                    CONVERT
+                    (
+                        varchar(20), 
+                        SERVERPROPERTY('ProductVersion')
+                    ), 
+                    1, 
+                    2
+                )
+            ) >= 13
+        ) /* SQL 2016+ */
     BEGIN
         SET @sql += N'
     AND   NOT EXISTS 
