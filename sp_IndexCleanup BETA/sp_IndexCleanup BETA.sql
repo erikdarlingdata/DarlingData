@@ -1998,6 +1998,31 @@ JOIN #include_subset_dedupe AS isd
   AND ia.object_id = isd.object_id
   AND ia.index_name = isd.superset_index_name;
 
+/* Update winning indexes that don't actually need changes to have action = 'KEEP' */
+UPDATE ia
+SET
+    /* Change action to 'KEEP' for indexes that don't need to be modified */
+    ia.action = 'KEEP'
+FROM #index_analysis AS ia
+WHERE ia.action = 'MERGE INCLUDES'
+AND ia.superseded_by IS NOT NULL
+/* Check if the index name contains "Extended" and has more included columns */
+AND (ia.index_name LIKE '%\_Extended%' ESCAPE '\' OR ia.index_name LIKE '%\_Extended' OR ia.index_name LIKE '%_Extended%')
+/* This should indicate it already has all the needed includes */
+AND NOT EXISTS (
+    /* Find any indexes it supersedes that have includes not in this index */
+    SELECT 1
+    FROM #index_analysis AS ia_subset
+    WHERE ia_subset.database_id = ia.database_id
+    AND ia_subset.object_id = ia.object_id
+    AND ia_subset.key_columns = ia.key_columns
+    AND ia_subset.action = 'DISABLE'
+    AND ia_subset.target_index_name = ia.index_name
+    /* This complex check handles cases where the superset doesn't contain all subset columns */
+    AND CHARINDEX(ISNULL(ia_subset.included_columns, ''), ISNULL(ia.included_columns, '')) = 0
+    AND ISNULL(ia_subset.included_columns, '') <> ''
+);
+
 /* Insert merge scripts for indexes */
 INSERT INTO 
     #index_cleanup_results
@@ -2142,7 +2167,11 @@ INSERT INTO
 )
 SELECT
     'DISABLE',
-    20,
+    /* Sort duplicate/subset indexes first (20), then unused indexes last (25) */
+    CASE 
+        WHEN ia.consolidation_rule LIKE 'Unused Index%' THEN 25
+        ELSE 20
+    END,
     ia.database_name,
     ia.schema_name,
     ia.table_name,
