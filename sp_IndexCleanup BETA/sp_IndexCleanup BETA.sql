@@ -801,7 +801,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #filtered_objects AS fo
         OPTION(RECOMPILE);
 
-        RAISERROR('Generaring #compression_eligibility insert', 0, 0) WITH NOWAIT;
+        RAISERROR('Generating #compression_eligibility insert', 0, 0) WITH NOWAIT;
     END;
     
     /* Populate compression eligibility table */    
@@ -850,8 +850,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Check for sparse columns or incompatible data types */
     IF @can_compress = 1
     BEGIN
-        RAISERROR('Updating #compression_eligibility', 0, 0) WITH NOWAIT;
-        
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Updating #compression_eligibility', 0, 0) WITH NOWAIT;
+        END;
+
         SELECT
             @sql = N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -1954,6 +1957,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
     /* Create a reference to the detailed summary that will appear at the end */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_cleanup_results
     (
@@ -1971,6 +1979,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
     /* Identify key duplicates where both indexes have MERGE INCLUDES action */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #key_duplicate_dedupe insert', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #key_duplicate_dedupe
     WITH
@@ -2053,6 +2066,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE); /* Only groups with multiple MERGE INCLUDES */
 
     /* Update the index_analysis table to make only one index the winner in each group */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_analysis updates', 0, 0) WITH NOWAIT;
+    END;
+
     UPDATE 
         ia
     SET
@@ -2090,6 +2108,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Find indexes with same key columns where one has includes that are a subset of another */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #include_subset_dedupe insert', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #include_subset_dedupe
     WITH
@@ -2136,6 +2159,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Update the subset indexes to be disabled, since supersets already contain their columns */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_analysis updates', 0, 0) WITH NOWAIT;
+    END;
+
     UPDATE 
         ia
     SET
@@ -2196,6 +2224,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert merge scripts for indexes */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, MERGE', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_cleanup_results
     (
@@ -2339,6 +2372,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert disable scripts for unneeded indexes */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, DISABLE', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_cleanup_results
     (
@@ -2418,6 +2456,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert compression scripts for remaining indexes */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, COMPRESS', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_cleanup_results
     (
@@ -2515,6 +2558,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert disable scripts for unique constraints */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, CONSTRAINT', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_cleanup_results
     (
@@ -2610,6 +2658,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert per-partition compression scripts */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, COMPRESS_PARTITION', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_cleanup_results
     (
@@ -2714,6 +2767,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert compression ineligible info */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, INELIGIBLE', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_cleanup_results
     WITH
@@ -2762,6 +2820,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
     /* Insert indexes identified for manual review */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, REVIEW', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_cleanup_results
     WITH
@@ -2820,6 +2883,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 
     /* Insert indexes that are being kept (superset indexes and others) */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, KEEP', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_cleanup_results
     WITH
@@ -2883,6 +2951,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert database-level summaries */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_reporting_stats insert, DATABASE', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_reporting_stats
     (
@@ -2966,7 +3039,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert table-level summaries */
-    INSERT INTO #index_reporting_stats
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_reporting_stats insert, TABLE', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO 
+        #index_reporting_stats
     (
         summary_level,
         database_name,
@@ -3071,6 +3150,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     
     Within each category, indexes are sorted by size and impact for better prioritization.
     */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, RESULTS', 0, 0) WITH NOWAIT;
+    END;
 
     SELECT
         /* First, show the information needed to understand the script */
@@ -3149,6 +3232,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert overall summary information */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_reporting_stats insert, SUMMARY', 0, 0) WITH NOWAIT;
+    END;
+
     INSERT INTO 
         #index_reporting_stats
     WITH
@@ -3241,6 +3329,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Return streamlined reporting statistics focused on key metrics */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_reporting_stats, REPORT', 0, 0) WITH NOWAIT;
+    END;
+
     SELECT 
         /* Basic identification */
         CASE 
