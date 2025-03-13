@@ -1,9 +1,9 @@
 /*
-EXEC sp_IndexCleanup
+EXECUTE sp_IndexCleanup
     @database_name = 'StackOverflow2013',
     @debug = 1;
 
-EXEC sp_IndexCleanup
+EXECUTE sp_IndexCleanup
     @database_name = 'StackOverflow2013',
     @table_name = 'Users',
     @debug = 1
@@ -92,7 +92,6 @@ It needs lots of love and testing in real environments with real indexes to fix 
         SELECT
             help = N'without careful analysis and consideration. it may be harmful.'
 
-
         /*
         Parameters
         */
@@ -104,25 +103,55 @@ It needs lots of love and testing in real environments with real indexes to fix 
             description =
                 CASE
                     ap.name
-                    WHEN ap.name
-                    THEN ap.name
+                    WHEN N'@database_name' THEN 'the name of the database you wish to analyze'
+                    WHEN N'@schema_name' THEN 'the schema name to filter indexes by'
+                    WHEN N'@table_name' THEN 'the table name to filter indexes by'
+                    WHEN N'@min_reads' THEN 'minimum number of reads for an index to be considered used'
+                    WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
+                    WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
+                    WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
+                    WHEN N'@help' THEN 'displays this help information'
+                    WHEN N'@debug' THEN 'prints debug information during execution'
+                    WHEN N'@version' THEN 'returns the version number of the procedure'
+                    WHEN N'@version_date' THEN 'returns the date this version was released'
+                    ELSE NULL
                 END,
             valid_inputs =
                 CASE
                     ap.name
-                    WHEN ap.name
-                    THEN ap.name
+                    WHEN N'@database_name' THEN 'the name of a database you care about indexes in'
+                    WHEN N'@schema_name' THEN 'schema name or NULL for all schemas'
+                    WHEN N'@table_name' THEN 'table name or NULL for all tables'
+                    WHEN N'@min_reads' THEN 'any positive integer or 0'
+                    WHEN N'@min_writes' THEN 'any positive integer or 0'
+                    WHEN N'@min_size_gb' THEN 'any positive decimal number or 0'
+                    WHEN N'@min_rows' THEN 'any positive integer or 0'
+                    WHEN N'@help' THEN '0 or 1'
+                    WHEN N'@debug' THEN '0 or 1'
+                    WHEN N'@version' THEN 'OUTPUT parameter'
+                    WHEN N'@version_date' THEN 'OUTPUT parameter'
+                    ELSE NULL
                 END,
             defaults =
                 CASE
                     ap.name
-                    WHEN ap.name
-                    THEN ap.name
+                    WHEN N'@database_name' THEN 'NULL'
+                    WHEN N'@schema_name' THEN 'NULL'
+                    WHEN N'@table_name' THEN 'NULL'
+                    WHEN N'@min_reads' THEN '0'
+                    WHEN N'@min_writes' THEN '0'
+                    WHEN N'@min_size_gb' THEN '0'
+                    WHEN N'@min_rows' THEN '0'
+                    WHEN N'@help' THEN 'false'
+                    WHEN N'@debug' THEN 'true'
+                    WHEN N'@version' THEN 'NULL'
+                    WHEN N'@version_date' THEN 'NULL'
+                    ELSE NULL
                 END
         FROM sys.all_parameters AS ap
-        INNER JOIN sys.all_objects AS o
+        JOIN sys.all_objects AS o
           ON ap.object_id = o.object_id
-        INNER JOIN sys.types AS t
+        JOIN sys.types AS t
           ON  ap.system_type_id = t.system_type_id
           AND ap.user_type_id = t.user_type_id
         WHERE o.name = N'sp_IndexCleanup'
@@ -186,9 +215,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Compression variables */
         @can_compress bit = 
             CASE 
-                WHEN CONVERT(int, SERVERPROPERTY('EngineEdition')) IN (3, 5, 8) 
-                    OR (CONVERT(int, SERVERPROPERTY('EngineEdition')) = 2 
-                        AND CONVERT(int, SUBSTRING(CONVERT(varchar(20), SERVERPROPERTY('ProductVersion')), 1, 2)) >= 13)
+                WHEN 
+                    CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (3, 5, 8) 
+                    OR 
+                    (
+                          CONVERT(integer, SERVERPROPERTY('EngineEdition')) = 2 
+                      AND CONVERT(integer, SUBSTRING(CONVERT(varchar(20), SERVERPROPERTY('ProductVersion')), 1, 2)) >= 13
+                    )
                 THEN 1
                 ELSE 0
             END,
@@ -321,8 +354,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name sysname NOT NULL,
         index_id integer NOT NULL,
         index_name sysname NOT NULL
-        PRIMARY KEY 
-            (database_id, schema_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -366,8 +398,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_io_latch_wait_in_ms bigint NULL,
         page_compression_attempt_count bigint NULL,
         page_compression_success_count bigint NULL,
-        PRIMARY KEY CLUSTERED
-            (database_id, schema_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -446,14 +477,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         included_columns nvarchar(max) NULL,
         filter_definition nvarchar(max) NULL,
         is_redundant bit NULL,
-        superseded_by sysname NULL,
+        superseded_by nvarchar(256) NULL,
         missing_columns nvarchar(max) NULL,
         action nvarchar(max) NULL,
         target_index_name sysname NULL,
         consolidation_rule varchar(512) NULL,
         index_priority int NULL,
-        INDEX c CLUSTERED
-            (database_id, schema_name, table_name, index_name)
+        INDEX c CLUSTERED (database_id, schema_id, object_id, index_id)
     );
     
     CREATE TABLE 
@@ -469,7 +499,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
         reason nvarchar(200) NULL,
-        PRIMARY KEY (database_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
     );
 
     CREATE TABLE 
@@ -483,7 +513,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         base_key_columns nvarchar(max) NULL,
         filter_definition nvarchar(max) NULL,
         winning_index_name sysname NULL,
-        index_list nvarchar(max) NULL
+        index_list nvarchar(max) NULL,
     );
 
     CREATE TABLE 
@@ -507,7 +537,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name sysname NULL,
         index_name sysname NULL,
         script_type nvarchar(50) NULL,     /* 'MERGE', 'DISABLE', 'COMPRESS', etc. */
-        consolidation_rule nvarchar(200) NULL,
+        consolidation_rule nvarchar(256) NULL,
         target_index_name sysname NULL,
         script nvarchar(max) NULL,
         additional_info nvarchar(max) NULL, /* For stats, constraints, etc. */
@@ -579,7 +609,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             1/0
         FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats AS ps
         WHERE ps.object_id = t.object_id
-        AND ps.index_id IN (0, 1)
+        AND   ps.index_id IN (0, 1)
         GROUP 
             BY ps.object_id
         HAVING 
@@ -591,7 +621,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             1/0
         FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_index_usage_stats AS ius
         WHERE ius.object_id = t.object_id
-        AND ius.database_id = @database_id
+        AND   ius.database_id = @database_id
         GROUP BY 
             ius.object_id
         HAVING 
@@ -620,7 +650,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id,
         index_name
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@database_id int,
         @min_reads bigint,
@@ -642,15 +672,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             table_name = '#filtered_objects',
             fo.*
-        FROM #filtered_objects AS fo;
+        FROM #filtered_objects AS fo
+        OPTION(RECOMPILE);
+
+        RAISERROR('Generaring #compression_eligibility insert', 0, 0) WITH NOWAIT;
     END;
     
-    /* Populate compression eligibility table */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Populating #compression_eligibility', 0, 0) WITH NOWAIT;
-    END;  
-    
+    /* Populate compression eligibility table */    
     INSERT INTO 
         #compression_eligibility
     WITH
@@ -678,42 +706,55 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         fo.index_name,
         1, /* Default to compressible */
         NULL
-    FROM #filtered_objects AS fo;
+    FROM #filtered_objects AS fo
+    OPTION(RECOMPILE);
     
     /* If SQL Server edition doesn't support compression, mark all as ineligible */
     IF @can_compress = 0
     BEGIN
-        UPDATE #compression_eligibility
+        UPDATE 
+            #compression_eligibility
         SET 
             can_compress = 0,
             reason = N'SQL Server edition or version does not support compression'
-        WHERE can_compress = 1;
+        WHERE can_compress = 1
+        OPTION(RECOMPILE);
     END;
     
     /* Check for sparse columns or incompatible data types */
     IF @can_compress = 1
     BEGIN
+        RAISERROR('Updating #compression_eligibility', 0, 0) WITH NOWAIT;
+        
         SELECT
             @sql = N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
         
-        UPDATE ce
+        UPDATE 
+            ce
         SET 
-            can_compress = 0,
-            reason = ''Table contains sparse columns or incompatible data types''
+            ce.can_compress = 0,
+            ce.reason = ''Table contains sparse columns or incompatible data types''
         FROM #compression_eligibility AS ce
         WHERE EXISTS 
         (
-            SELECT 1/0
+            SELECT 
+                1/0
             FROM ' + QUOTENAME(@database_name) + N'.sys.columns AS c
             JOIN ' + QUOTENAME(@database_name) + N'.sys.types AS t 
               ON c.user_type_id = t.user_type_id
             WHERE c.object_id = ce.object_id
-            AND (c.is_sparse = 1 OR t.name IN (N''text'', N''ntext'', N''image''))
-        );
+            AND 
+            (
+                 c.is_sparse = 1 
+              OR t.name IN (N''text'', N''ntext'', N''image'')
+            )
+        )
+        OPTION(RECOMPILE);
         ';
         
-        EXEC sys.sp_executesql @sql;
+        EXECUTE sys.sp_executesql 
+            @sql;
     END;
     
     IF @debug = 1
@@ -721,13 +762,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             table_name = '#compression_eligibility',
             ce.*
-        FROM #compression_eligibility AS ce;
-    END;
+        FROM #compression_eligibility AS ce
+        OPTION(RECOMPILE);
 
-    IF @debug = 1
-    BEGIN
         RAISERROR('Generating #operational_stats insert', 0, 0) WITH NOWAIT;
-    END;  
+    END; 
 
     SELECT
         @sql = N'
@@ -856,7 +895,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_compression_attempt_count,
         page_compression_success_count
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
         @object_id integer',
@@ -870,13 +909,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             table_name = '#operational_stats',
             os.*
-        FROM #operational_stats AS os;
-    END;
+        FROM #operational_stats AS os
+        OPTION(RECOMPILE);
 
-    IF @debug = 1
-    BEGIN
         RAISERROR('Generating #index_details insert', 0, 0) WITH NOWAIT;
-    END;  
+    END;
 
     SELECT
         @sql = N'
@@ -1079,7 +1116,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_update,
         is_eligible_for_dedupe
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
         @object_id integer,
@@ -1096,12 +1133,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#index_details',
             *
         FROM #index_details AS id;
-    END;
 
-    IF @debug = 1
-    BEGIN
         RAISERROR('Generating #partition_stats insert', 0, 0) WITH NOWAIT;
-    END;  
+    END;
 
     SELECT
         @sql = N'
@@ -1267,7 +1301,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         partition_function_name,
         partition_columns
     )
-    EXEC sys.sp_executesql
+    EXECUTE sys.sp_executesql
         @sql,
       N'@database_id integer,
         @object_id integer',
@@ -1282,12 +1316,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#partition_stats',
             *
         FROM #partition_stats AS ps;
-    END;
 
-    IF @debug = 1
-    BEGIN
         RAISERROR('Performing #index_analysis insert', 0, 0) WITH NOWAIT;
-    END;  
+    END; 
 
     INSERT INTO
         #index_analysis
@@ -1393,10 +1424,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#index_analysis',
             ia.*
         FROM #index_analysis AS ia;
-    END;
 
-    IF @debug = 1
-    BEGIN
         RAISERROR('Starting updates', 0, 0) WITH NOWAIT;
     END;
 
@@ -1439,7 +1467,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHERE id.index_name = #index_analysis.index_name
                     AND   id.table_name = #index_analysis.table_name
                     AND   id.user_scans > 0
-                ) THEN 50 ELSE 0 
+                ) THEN 100 ELSE 0 
             END;  /* Indexes with scans get some priority */
 
 
@@ -1453,7 +1481,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 'Unused Index (WARNING: Server uptime < 14 days - usage data may be incomplete)'
                 ELSE 'Unused Index' 
             END,
-        action = 'DISABLE'
+        action = N'DISABLE'
     WHERE EXISTS 
     (
         SELECT 
@@ -1546,8 +1574,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* For the winning index, set clear superseded_by text for the report */
         ia1.superseded_by = 
             CASE 
-                WHEN (ia1.is_unique = 1 AND ia2.is_unique = 0) OR
-                     (ia1.index_priority >= ia2.index_priority AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1))
+                WHEN (ia1.is_unique = 1 AND ia2.is_unique = 0) 
+                OR   
+                (
+                    ia1.index_priority >= ia2.index_priority 
+                  AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1)
+                )
                 THEN 'Supersedes ' + ia2.index_name
                 ELSE NULL
             END
@@ -1681,7 +1713,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id2_inner.object_id = id2.object_id
             AND   id2_inner.index_id = id2.index_id
             AND   id2_inner.is_included_column = 0
+            
             EXCEPT
+            
             SELECT 
                 id1_inner.column_name
             FROM #index_details id1_inner
@@ -1710,56 +1744,66 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia2.consolidation_rule IS NULL  /* Not already processed */
     WHERE 
         /* Leading columns match */
-        EXISTS (
-            SELECT TOP 1 id1.column_name
-            FROM #index_details id1
-            JOIN #index_details id2
-              ON id1.database_id = id2.database_id
+        EXISTS 
+        (
+            SELECT
+                1/0
+            FROM #index_details AS id1
+            JOIN #index_details AS id2
+              ON  id1.database_id = id2.database_id
               AND id1.object_id = id2.object_id
               AND id1.column_name = id2.column_name
               AND id1.key_ordinal = 1
               AND id2.key_ordinal = 1
             WHERE id1.database_id = ia1.database_id
-            AND id1.object_id = ia1.object_id
-            AND id1.index_name = ia1.index_name
-            AND id2.index_name = ia2.index_name
+            AND   id1.object_id = ia1.object_id
+            AND   id1.index_name = ia1.index_name
+            AND   id2.index_name = ia2.index_name
         )
         /* Same set of key columns but in different order */
-        AND NOT EXISTS (
+        AND NOT EXISTS 
+        (
             /* Make sure the sets of key columns are exactly the same */
-            SELECT id1.column_name
-            FROM #index_details id1
+            SELECT
+                id1.column_name
+            FROM #index_details AS id1
             WHERE id1.database_id = ia1.database_id
             AND id1.object_id = ia1.object_id
             AND id1.index_name = ia1.index_name
             AND id1.is_included_column = 0
             AND id1.key_ordinal > 0
+            
             EXCEPT
-            SELECT id2.column_name
-            FROM #index_details id2
+            
+            SELECT 
+                id2.column_name
+            FROM #index_details AS id2
             WHERE id2.database_id = ia2.database_id
-            AND id2.object_id = ia2.object_id
-            AND id2.index_name = ia2.index_name
-            AND id2.is_included_column = 0
-            AND id2.key_ordinal > 0
+            AND   id2.object_id = ia2.object_id
+            AND   id2.index_name = ia2.index_name
+            AND   id2.is_included_column = 0
+            AND   id2.key_ordinal > 0
         )
         /* But the order is different (excluding the first column) */
-        AND EXISTS (
+        AND EXISTS 
+        (
             /* There's at least one column in a different position */
-            SELECT 1
-            FROM #index_details id1
-            JOIN #index_details id2
-              ON id1.database_id = id2.database_id
+            SELECT 
+                1/0
+            FROM #index_details AS id1
+            JOIN #index_details AS id2
+              ON  id1.database_id = id2.database_id
               AND id1.object_id = id2.object_id
               AND id1.column_name = id2.column_name
               AND id1.key_ordinal <> id2.key_ordinal
               AND id1.key_ordinal > 1  /* After the first column */
               AND id2.key_ordinal > 1  /* After the first column */
             WHERE id1.database_id = ia1.database_id
-            AND id1.object_id = ia1.object_id
-            AND id1.index_name = ia1.index_name
-            AND id2.index_name = ia2.index_name
-        );
+            AND   id1.object_id = ia1.object_id
+            AND   id1.index_name = ia1.index_name
+            AND   id2.index_name = ia2.index_name
+        )
+        OPTION(RECOMPILE);
 
 
     IF @debug = 1
@@ -1768,61 +1812,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#index_analysis after update',
             ia.*
         FROM #index_analysis AS ia;
-    END;
 
-    IF @debug = 1
-    BEGIN
         RAISERROR('Generating results', 0, 0) WITH NOWAIT;
     END;
 
 
-/* Insert summary statistics first */
-/* Add a separator row for the header */
-INSERT INTO #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    script_type,
-    additional_info
-)
-SELECT 
-    'HEADER',
-    0,
-    'SEPARATOR',
-    N'==================== INDEX CLEANUP SUMMARY ====================';
-
-/* Add summary information */
-INSERT INTO #index_cleanup_results
-(
-    result_type,
-    sort_order,
-    script_type,
-    additional_info
-)
-SELECT 
-    'SUMMARY',
-    1,
-    'Index Cleanup Summary',
-    N'Server uptime: ' + 
-    CONVERT(nvarchar(10), @uptime_days) + 
-    N' days' +
-    CASE 
-        WHEN @uptime_warning = 1 
-        THEN N' (WARNING: Low uptime detected! Index usage data may be incomplete.)' 
-        ELSE N'' 
-    END +
-    N' | Tables analyzed: ' + 
-    CONVERT(nvarchar(10), COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id))) +
-    N' | Total indexes: ' + 
-    CONVERT(nvarchar(10), COUNT(*)) +
-    N' | Indexes to disable: ' + 
-    CONVERT(nvarchar(10), SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END)) +
-    N' | Indexes to merge: ' + 
-    CONVERT(nvarchar(10), SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END)) +
-    N' | Avg indexes per table: ' + 
-    CONVERT(nvarchar(10), CONVERT(decimal(10,2), COUNT(*) * 1.0 / 
-         NULLIF(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 0)))
-FROM #index_analysis AS ia;
+    /* Insert summary statistics first */
+    /* Add a separator row for the header */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        script_type,
+        additional_info
+    )
+    SELECT 
+        'HEADER',
+        0,
+        N'=====',
+        N'==================== INDEX CLEANUP SUMMARY ====================';
+    
+    /* Add summary information */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        script_type,
+        additional_info
+    )
+    SELECT 
+        'SUMMARY',
+        1,
+        'Index Cleanup Summary',
+        N'Server uptime: ' + 
+        CONVERT(nvarchar(10), @uptime_days) + 
+        N' days' +
+        CASE 
+            WHEN @uptime_warning = 1 
+            THEN N' (WARNING: Low uptime detected! Index usage data may be incomplete.)' 
+            ELSE N'' 
+        END +
+        N' | Tables analyzed: ' + 
+        CONVERT(nvarchar(10), COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id))) +
+        N' | Total indexes: ' + 
+        CONVERT(nvarchar(10), COUNT(*)) +
+        N' | Indexes to disable: ' + 
+        CONVERT(nvarchar(10), SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END)) +
+        N' | Indexes to merge: ' + 
+        CONVERT(nvarchar(10), SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END)) +
+        N' | Avg indexes per table: ' + 
+        CONVERT(nvarchar(10), CONVERT(decimal(10,2), COUNT(*) * 1.0 / 
+             NULLIF(COUNT(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 0)))
+    FROM #index_analysis AS ia;
 
 /* Insert space savings estimates */
 INSERT INTO #index_cleanup_results
