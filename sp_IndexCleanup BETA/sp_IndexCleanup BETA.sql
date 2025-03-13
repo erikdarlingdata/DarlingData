@@ -665,6 +665,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND us.database_id = @database_id
     WHERE t.is_ms_shipped = 0
     AND   t.type <> N''TF''
+    AND   i.index_id > 0
     AND   NOT EXISTS 
     (
         SELECT 
