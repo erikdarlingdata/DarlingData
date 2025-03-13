@@ -3040,111 +3040,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     GROUP BY ps.database_name, ps.schema_name, ps.table_name
     OPTION(RECOMPILE);
 
-    /* Insert index-level summaries */
-    INSERT INTO #index_reporting_stats
-    (
-        summary_level,
-        database_name,
-        schema_name,
-        table_name,
-        index_name,
-        total_size_gb,
-        total_rows,
-        total_reads,
-        total_writes,
-        user_seeks,
-        user_scans,
-        user_lookups,
-        user_updates,
-        range_scan_count,
-        singleton_lookup_count,
-        row_lock_count,
-        row_lock_wait_count,
-        row_lock_wait_in_ms,
-        page_lock_count,
-        page_lock_wait_count,
-        page_lock_wait_in_ms,
-        page_latch_wait_count,
-        page_latch_wait_in_ms,
-        page_io_latch_wait_count,
-        page_io_latch_wait_in_ms,
-        forwarded_fetch_count,
-        leaf_insert_count,
-        leaf_update_count,
-        leaf_delete_count
-    )
-    SELECT
-        summary_level = 'INDEX',
-        ps.database_name,
-        ps.schema_name,
-        ps.table_name,
-        ps.index_name,
-        total_size_gb = SUM(ps.total_space_gb),
-        /* For indexes, use the base table row count to avoid duplication */
-        total_rows = (
-            SELECT MAX(base_ps.total_rows)
-            FROM #partition_stats base_ps
-            WHERE base_ps.database_id = ps.database_id
-              AND base_ps.object_id = ps.object_id
-              AND base_ps.index_id IN (0, 1) /* Clustered index or heap */
-        ),
-        total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
-        total_writes = SUM(id.user_updates),
-        user_seeks = MAX(id.user_seeks),
-        user_scans = MAX(id.user_scans),
-        user_lookups = MAX(id.user_lookups),
-        user_updates = MAX(id.user_updates),
-        range_scan_count = os.range_scan_count,
-        singleton_lookup_count = os.singleton_lookup_count,
-        row_lock_count = os.row_lock_count,
-        row_lock_wait_count = os.row_lock_wait_count,
-        row_lock_wait_in_ms = os.row_lock_wait_in_ms,
-        page_lock_count = os.page_lock_count,
-        page_lock_wait_count = os.page_lock_wait_count,
-        page_lock_wait_in_ms = os.page_lock_wait_in_ms,
-        page_latch_wait_count = os.page_latch_wait_count,
-        page_latch_wait_in_ms = os.page_latch_wait_in_ms,
-        page_io_latch_wait_count = os.page_io_latch_wait_count,
-        page_io_latch_wait_in_ms = os.page_io_latch_wait_in_ms,
-        forwarded_fetch_count = os.forwarded_fetch_count,
-        leaf_insert_count = os.leaf_insert_count,
-        leaf_update_count = os.leaf_update_count,
-        leaf_delete_count = os.leaf_delete_count
-    FROM #partition_stats ps
-    LEFT JOIN #index_details id
-        ON  id.database_id = ps.database_id
-        AND id.object_id = ps.object_id
-        AND id.index_name = ps.index_name
-        AND id.is_included_column = 0
-        AND id.key_ordinal > 0
-    LEFT JOIN #operational_stats os
-        ON  os.database_id = ps.database_id
-        AND os.object_id = ps.object_id
-        AND os.index_id = ps.index_id
-    GROUP BY 
-        ps.database_id,
-        ps.object_id,
-        ps.database_name, 
-        ps.schema_name, 
-        ps.table_name, 
-        ps.index_name,
-        os.range_scan_count,
-        os.singleton_lookup_count,
-        os.row_lock_count,
-        os.row_lock_wait_count,
-        os.row_lock_wait_in_ms,
-        os.page_lock_count,
-        os.page_lock_wait_count,
-        os.page_lock_wait_in_ms,
-        os.page_latch_wait_count,
-        os.page_latch_wait_in_ms,
-        os.page_io_latch_wait_count,
-        os.page_io_latch_wait_in_ms,
-        os.forwarded_fetch_count,
-        os.leaf_insert_count,
-        os.leaf_update_count,
-        os.leaf_delete_count
-    OPTION(RECOMPILE);
+    /* We're not doing index-level summaries - focusing on database and table level reports */
 
     /* 
     Return the consolidated results in a single result set
@@ -3316,7 +3212,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia.index_id = ce.index_id
     OPTION(RECOMPILE);
 
-    /* Return the detailed reporting statistics */
+    /* Return the detailed reporting statistics (summary and table levels only) */
     SELECT 
         CASE 
             WHEN irs.summary_level = 'SUMMARY' 
@@ -3326,7 +3222,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.database_name,
         irs.schema_name,
         irs.table_name,
-        irs.index_name,
         
         /* Special formatting for summary level */
         CASE
@@ -3343,7 +3238,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ' | Indexes to merge: ' + FORMAT(irs.indexes_to_merge, 'N0') +
                 ' | Avg indexes per table: ' + FORMAT(irs.avg_indexes_per_table, 'N2')
             ELSE FORMAT(irs.index_count, 'N0')
-        END AS index_count,
+        END AS indexes,
         
         /* Size metrics - special handling for summary */
         CASE
@@ -3423,26 +3318,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CASE WHEN irs.summary_level = 'SUMMARY' THEN NULL ELSE FORMAT(irs.leaf_update_count, 'N0') END AS leaf_updates,
         CASE WHEN irs.summary_level = 'SUMMARY' THEN NULL ELSE FORMAT(irs.leaf_delete_count, 'N0') END AS leaf_deletes
     FROM #index_reporting_stats AS irs
+    WHERE irs.summary_level IN ('SUMMARY', 'DATABASE', 'TABLE') /* Filter out INDEX level */
     ORDER BY 
         /* Order by level - put summary first */
         CASE 
             WHEN irs.summary_level = 'SUMMARY' THEN 0
             WHEN irs.summary_level = 'DATABASE' THEN 1
             WHEN irs.summary_level = 'TABLE' THEN 2
-            WHEN irs.summary_level = 'INDEX' THEN 3
-            ELSE 4
+            ELSE 3
         END,
         /* Then by database name */
         irs.database_name,
-        /* For tables and indexes, sort by size */
+        /* For tables, sort by size */
         CASE 
             WHEN irs.summary_level IN ('SUMMARY', 'DATABASE') THEN 0
             ELSE ISNULL(irs.total_size_gb, 0)
         END DESC,
-        /* Then by schema, table, index name */
+        /* Then by schema, table */
         irs.schema_name,
-        irs.table_name,
-        irs.index_name
+        irs.table_name
     OPTION(RECOMPILE);
 
 END TRY
