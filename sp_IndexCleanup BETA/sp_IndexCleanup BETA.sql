@@ -3080,7 +3080,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.table_name,
         ps.index_name,
         total_size_gb = SUM(ps.total_space_gb),
-        total_rows = SUM(ps.total_rows),
+        /* For indexes, use the base table row count to avoid duplication */
+        total_rows = (
+            SELECT MAX(base_ps.total_rows)
+            FROM #partition_stats base_ps
+            WHERE base_ps.database_id = ps.database_id
+              AND base_ps.object_id = ps.object_id
+              AND base_ps.index_id IN (0, 1) /* Clustered index or heap */
+        ),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
         total_writes = SUM(id.user_updates),
         user_seeks = MAX(id.user_seeks),
@@ -3115,6 +3122,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND os.object_id = ps.object_id
         AND os.index_id = ps.index_id
     GROUP BY 
+        ps.database_id,
+        ps.object_id,
         ps.database_name, 
         ps.schema_name, 
         ps.table_name, 
