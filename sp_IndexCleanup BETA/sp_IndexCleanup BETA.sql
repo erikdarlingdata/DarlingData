@@ -46,7 +46,8 @@ SET NOCOUNT ON;
 
 BEGIN TRY
 /* Check for SQL Server 2012 (11.0) or later for FORMAT and CONCAT functions*/
-    IF CONVERT
+    IF 
+    CONVERT
        (
            integer, 
            SUBSTRING
@@ -70,7 +71,7 @@ BEGIN TRY
         @version_date = '17530101';
 
     SELECT
-        warning = N'Read the messages pane carefully!'
+        for_insurance_purposes = N'Read the messages pane carefully!'
 
     PRINT N'
 -------------------------------------------------------------------------------------------
@@ -83,15 +84,14 @@ It needs lots of love and testing in real environments with real indexes to fix 
  * Deduping logic
  * Result correctness
  * Edge cases
+ * May not account for specific query patterns that benefit from seemingly redundant indexes
+ 
+ALWAYS TEST THESE RECOMMENDATIONS IN A NON-PRODUCTION ENVIRONMENT FIRST"
 
- If you run this, only use the output to debug and validate result correctness.
-
- Do not run any of the output scripts, period. Doing so may be harmful.
- -------------------------------------------------------------------------------------------
- -------------------------------------------------------------------------------------------
- -------------------------------------------------------------------------------------------
-
- ';
+-------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------
+-------------------------------------------------------------------------------------------
+';
 
 
     /*
@@ -602,7 +602,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  t.object_id = us.object_id
       AND us.database_id = @database_id
     WHERE t.is_ms_shipped = 0
-    AND   t.type <> N''TF'''
+    AND   t.type <> N''TF''
+    AND   NOT EXISTS 
+    (
+        SELECT 
+            1/0
+        FROM ' + QUOTENAME(@database_name) + N'.sys.views AS v
+        WHERE v.object_id = i.object_id 
+        AND   v.is_indexed_view = 1
+    )';
+      
+    IF 
+        CONVERT
+        (
+            integer, 
+            SUBSTRING
+            (
+                CONVERT
+                (
+                    varchar(20), 
+                    SERVERPROPERTY('ProductVersion')
+                ), 
+                1, 
+                2
+            )
+        ) >= 13
+    BEGIN
+        SET @sql += N'
+    AND   NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
+        WHERE t.object_id = i.object_id 
+        AND   t.temporal_type > 0
+    )';
+    END;
+
 
     IF @object_id IS NOT NULL
     BEGIN
@@ -3102,6 +3138,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ir.index_name = ia.index_name
     ORDER BY
         ir.sort_order,
+        ir.database_name,
         /* Within each sort_order group, prioritize by size and usage */
         CASE
             /* For HEADER and SUMMARY, keep the original order */
@@ -3118,7 +3155,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE ISNULL(ir.index_rows, 0)
         END DESC,
         /* Then by database, schema, table, index name for consistent ordering */
-        ir.database_name,
         ir.schema_name,
         ir.table_name,
         ir.index_name
