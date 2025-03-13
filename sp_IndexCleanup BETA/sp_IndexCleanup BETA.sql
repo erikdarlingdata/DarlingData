@@ -3006,7 +3006,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         total_size_gb = SUM(ps.total_space_gb),
         /* Use a simple aggregation to avoid double-counting */
         /* Get actual row count by grabbing the real row count from clustered index/heap per table */
-        total_rows = SUM(d.actual_rows),
+        total_rows = SUM(DISTINCT d.actual_rows),
         indexes_to_merge = 
             (
                 SELECT 
