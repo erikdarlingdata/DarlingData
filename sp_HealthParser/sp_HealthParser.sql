@@ -5403,7 +5403,8 @@ END;
                 CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN wait_duration_ms BETWEEN 10000 AND 30000 THEN 1 END)) + N' high, ' +
                 CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN wait_duration_ms BETWEEN 5000 AND 10000 THEN 1 END)) + N' medium. ' +
             N'Longest wait: ' + CONVERT(nvarchar(10), MAX(wait_duration_ms)/1000.0) + N' seconds (' + 
-            (SELECT TOP 1 wait_type FROM #wait_info AS wi2 ORDER BY wait_duration_ms DESC) + N')',
+            (SELECT TOP 1 wait_type FROM #wait_info AS wi2 ORDER BY wait_duration_ms DESC) + N'). ' +
+            N'Occurred at: ' + CONVERT(nvarchar(30), (SELECT TOP 1 event_time FROM #wait_info AS wi3 ORDER BY wait_duration_ms DESC), 120),
             sort_order = 
                 CASE 
                     WHEN MAX(wait_duration_ms) > 30000 THEN 100  -- Critical
@@ -5432,7 +5433,8 @@ END;
                 THEN N'Possible hung task detected. '
                 ELSE N''
             END +
-            N'Longest running task: ' + CONVERT(nvarchar(10), MAX(wait_duration_ms)/1000.0) + N' seconds',
+            N'Longest running task: ' + CONVERT(nvarchar(10), MAX(wait_duration_ms)/1000.0) + N' seconds. ' +
+            N'Occurred at: ' + CONVERT(nvarchar(30), (SELECT TOP 1 event_time FROM #cpu_info AS ci2 ORDER BY wait_duration_ms DESC), 120),
             sort_order = CASE 
                 WHEN MAX(wait_duration_ms) > 300000 THEN 110 -- Critical
                 WHEN MAX(wait_duration_ms) > 180000 THEN 210 -- High
@@ -5461,9 +5463,14 @@ END;
             END +
             CASE
                 WHEN COUNT_BIG(CASE WHEN notification_type LIKE N'%RESOURCE_MEM_HIGH%' THEN 1 END) > 0
-                THEN N'SQL Server memory pressure detected.'
+                THEN N'SQL Server memory pressure detected. '
                 ELSE N''
-            END,
+            END +
+            N'Last detected: ' + CONVERT(nvarchar(30), (SELECT TOP 1 event_time FROM #memory_conditions AS mc2 
+                                                      ORDER BY CASE WHEN notification_type LIKE N'%CRITICAL%' THEN 1
+                                                                    WHEN notification_type LIKE N'%HIGH%' THEN 2
+                                                                    ELSE 3 END, 
+                                                               event_time DESC), 120),
             sort_order = CASE 
                 WHEN COUNT_BIG(CASE WHEN notification_type LIKE N'%CRITICAL%' THEN 1 END) > 0 THEN 120 -- Critical
                 WHEN COUNT_BIG(CASE WHEN notification_type LIKE N'%HIGH%' THEN 1 END) > 0 THEN 220     -- High
@@ -5486,7 +5493,8 @@ END;
             N'Maximum requested: ' + MAX(memory_requested_gb) + N' GB. ' +
             N'Most common clerk: ' + 
             (SELECT TOP 1 memory_clerk_name FROM #memory_broker AS mb2
-             GROUP BY memory_clerk_name ORDER BY COUNT_BIG(*) DESC),
+             GROUP BY memory_clerk_name ORDER BY COUNT_BIG(*) DESC) + 
+            N'. Most recent event: ' + CONVERT(nvarchar(30), (SELECT TOP 1 event_time FROM #memory_broker AS mb3 ORDER BY event_time DESC), 120),
             sort_order = 330  -- Medium priority for broker events
         FROM #memory_broker AS mb
         HAVING COUNT_BIG(*) > 0;
@@ -5508,7 +5516,8 @@ END;
             ) +
             N'. Most common clerk: ' + 
             (SELECT TOP 1 memory_clerk_name FROM #memory_node_oom AS mno3
-             GROUP BY memory_clerk_name ORDER BY COUNT_BIG(*) DESC),
+             GROUP BY memory_clerk_name ORDER BY COUNT_BIG(*) DESC) +
+            N'. Most recent OOM: ' + CONVERT(nvarchar(30), (SELECT TOP 1 event_time FROM #memory_node_oom AS mno4 ORDER BY event_time DESC), 120),
             sort_order = 130  -- Critical for OOM events
         FROM #memory_node_oom AS mno
         HAVING COUNT_BIG(*) > 0;
@@ -5529,7 +5538,9 @@ END;
             N'File: ' + 
             (SELECT TOP 1 longestPendingRequests_filePath 
              FROM #io_issues AS io2
-             ORDER BY TRY_CONVERT(bigint, longestPendingRequests_duration_ms) DESC),
+             ORDER BY TRY_CONVERT(bigint, longestPendingRequests_duration_ms) DESC) +
+            N'. Detected at: ' + CONVERT(nvarchar(30), (SELECT TOP 1 event_time FROM #io_issues AS io3 
+                                                      ORDER BY TRY_CONVERT(bigint, longestPendingRequests_duration_ms) DESC), 120),
             sort_order = CASE 
                 WHEN MAX(TRY_CONVERT(bigint, longestPendingRequests_duration_ms)) > 15000 THEN 140 -- Critical
                 WHEN MAX(TRY_CONVERT(bigint, longestPendingRequests_duration_ms)) > 5000 THEN 240  -- High
@@ -5553,7 +5564,14 @@ END;
             CONVERT(nvarchar(10), SUM(CASE WHEN nonYieldingTasksReported > 0 THEN nonYieldingTasksReported ELSE 0 END)) + N' non-yielding tasks, ' +
             CONVERT(nvarchar(10), SUM(CASE WHEN isAccessViolationOccurred > 0 THEN isAccessViolationOccurred ELSE 0 END)) + N' access violations. ' +
             N'CPU utilization - SQL: ' + CONVERT(nvarchar(10), MAX(sqlCpuUtilization)) + N'%, ' +
-            N'System: ' + CONVERT(nvarchar(10), MAX(systemCpuUtilization)) + N'%',
+            N'System: ' + CONVERT(nvarchar(10), MAX(systemCpuUtilization)) + N'%. ' +
+            N'Recorded at: ' + CONVERT(nvarchar(30), (SELECT TOP 1 event_time FROM #system_health AS sh2 
+                                                  ORDER BY CASE 
+                                                            WHEN isAccessViolationOccurred > 0 THEN 1
+                                                            WHEN nonYieldingTasksReported > 0 THEN 2
+                                                            WHEN sqlCpuUtilization > 80 THEN 3
+                                                            ELSE 4 END,
+                                                         event_time DESC), 120),
             sort_order = CASE 
                 WHEN SUM(CASE WHEN isAccessViolationOccurred > 0 THEN 1 ELSE 0 END) > 0 THEN 150 -- Critical
                 WHEN SUM(CASE WHEN nonYieldingTasksReported > 0 THEN 1 ELSE 0 END) > 0 THEN 250  -- High
@@ -5582,7 +5600,9 @@ END;
             N' (' + 
             (SELECT TOP 1 LEFT(message, 50) + CASE WHEN LEN(message) > 50 THEN N'...' ELSE N'' END 
              FROM #error_info AS ei3 ORDER BY severity DESC, event_time DESC) + 
-            N')',
+            N'). ' +
+            N'Most recent error: ' + 
+            CONVERT(nvarchar(30), (SELECT TOP 1 event_time FROM #error_info AS ei4 ORDER BY severity DESC, event_time DESC), 120),
             sort_order = CASE 
                 WHEN COUNT_BIG(CASE WHEN severity >= 22 THEN 1 END) > 0 THEN 160 -- Fatal
                 WHEN COUNT_BIG(CASE WHEN severity BETWEEN 20 AND 21 THEN 1 END) > 0 THEN 260 -- Critical
@@ -5605,7 +5625,9 @@ END;
             CONVERT(nvarchar(10), COUNT_BIG(*)) + N' scheduler events detected. ' +
             CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN is_online = 0 THEN 1 END)) + N' schedulers offline, ' +
             CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN is_running = 0 AND is_online = 1 THEN 1 END)) + N' schedulers not running. ' +
-            N'Non-yielding time: Max ' + CONVERT(nvarchar(10), MAX(TRY_CONVERT(bigint, non_yielding_time_ms))) + N' ms',
+            N'Non-yielding time: Max ' + CONVERT(nvarchar(10), MAX(TRY_CONVERT(bigint, non_yielding_time_ms))) + N' ms. ' + 
+            N'Last detected: ' + CONVERT(nvarchar(30), (SELECT TOP 1 event_time FROM #scheduler_issues AS si2 
+                                                    ORDER BY TRY_CONVERT(bigint, non_yielding_time_ms) DESC), 120),
             sort_order = CASE 
                 WHEN MAX(TRY_CONVERT(bigint, non_yielding_time_ms)) > 60000 THEN 170 -- Critical
                 WHEN COUNT_BIG(CASE WHEN is_online = 0 THEN 1 END) > 0 THEN 270         -- High
