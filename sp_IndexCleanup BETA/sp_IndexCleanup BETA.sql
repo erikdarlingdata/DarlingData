@@ -2995,8 +2995,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_count = COUNT(DISTINCT CONCAT(ps.object_id, N'.', ps.index_id)),
         total_size_gb = SUM(ps.total_space_gb),
         /* Use a simple aggregation to avoid double-counting */
-        total_rows = SUM(DISTINCT CASE WHEN ps.index_id IN (0, 1) THEN ps.total_rows ELSE 0 END),
-        unused_indexes = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN 1 ELSE 0 END),
+        /* Get actual row count by grabbing the real row count from clustered index/heap per table */
+        total_rows = SUM(d.actual_rows),
+        indexes_to_merge = (SELECT COUNT(*) FROM #index_analysis ia WHERE ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') AND ia.database_name = ps.database_name),
+        /* Use count from analysis to keep consistent with SUMMARY level */
+        unused_indexes = (SELECT COUNT(*) FROM #index_analysis ia WHERE ia.action = 'DISABLE' AND ia.database_name = ps.database_name),
         unused_size_gb = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN ps.total_space_gb ELSE 0 END),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
         total_writes = SUM(id.user_updates),
@@ -3031,6 +3034,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ON  os.database_id = ps.database_id
         AND os.object_id = ps.object_id
         AND os.index_id = ps.index_id
+    OUTER APPLY (
+        /* Get actual row count per table using MAX from clustered index/heap */
+        SELECT 
+            actual_rows = MAX(CASE WHEN ps2.index_id IN (0, 1) THEN ps2.total_rows ELSE 0 END)
+        FROM #partition_stats ps2 
+        WHERE ps2.database_id = ps.database_id
+          AND ps2.object_id = ps.object_id
+          AND ps2.index_id IN (0, 1)
+        GROUP BY ps2.object_id
+    ) d
     GROUP BY ps.database_name
     OPTION(RECOMPILE);
 
@@ -3086,7 +3099,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         total_size_gb = SUM(ps.total_space_gb),
         /* Use MAX to get the row count from the clustered index or heap */
         total_rows = MAX(CASE WHEN ps.index_id IN (0, 1) THEN ps.total_rows ELSE 0 END),
-        unused_indexes = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN 1 ELSE 0 END),
+        indexes_to_merge = (SELECT COUNT(*) FROM #index_analysis ia 
+                            WHERE ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE')
+                            AND ia.database_name = ps.database_name 
+                            AND ia.schema_name = ps.schema_name
+                            AND ia.table_name = ps.table_name),
+        /* Use count from analysis to keep consistent with SUMMARY level */
+        unused_indexes = (SELECT COUNT(*) FROM #index_analysis ia 
+                          WHERE ia.action = 'DISABLE' 
+                          AND ia.database_name = ps.database_name 
+                          AND ia.schema_name = ps.schema_name 
+                          AND ia.table_name = ps.table_name),
         unused_size_gb = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN ps.total_space_gb ELSE 0 END),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
         total_writes = SUM(id.user_updates),
@@ -3310,7 +3333,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   ce.can_compress = 1 
             THEN ps.total_space_gb * 0.60
             ELSE 0 
-        END)
+        END),
+        /* Get total rows from database unique tables */
+        total_rows = (
+            SELECT SUM(t.row_count)
+            FROM (
+                SELECT 
+                    ps_distinct.object_id,
+                    row_count = MAX(CASE WHEN ps_distinct.index_id IN (0, 1) THEN ps_distinct.total_rows ELSE 0 END)
+                FROM #partition_stats ps_distinct
+                WHERE ps_distinct.index_id IN (0, 1)
+                GROUP BY ps_distinct.object_id
+            ) t
+        )
     FROM #index_analysis AS ia
     LEFT JOIN #partition_stats AS ps 
       ON  ia.database_id = ps.database_id
@@ -3365,10 +3400,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE FORMAT(irs.unused_indexes, 'N0') /* Unused indexes at database/table level */
         END AS removable_indexes,
         
-        /* Show mergeable indexes as a separate column for clarity (summary level only) */
+        /* Show mergeable indexes across all levels */
         CASE
             WHEN irs.summary_level = 'SUMMARY' THEN FORMAT(irs.indexes_to_merge, 'N0')
-            ELSE NULL
+            ELSE FORMAT(irs.indexes_to_merge, 'N0') 
         END AS mergeable_indexes,
         
         /* Percent of indexes that can be removed */
@@ -3394,16 +3429,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CASE
             WHEN irs.summary_level = 'SUMMARY' 
             THEN FORMAT(irs.total_min_savings_gb, 'N2') + ' - ' + FORMAT(irs.total_max_savings_gb, 'N2')
-            ELSE NULL /* Only show at summary level to avoid confusion */
+            ELSE FORMAT(irs.unused_size_gb, 'N2') /* Show at all levels */
         END AS potential_savings_gb,
         
         /* ===== Section 3: Table and Usage Statistics ===== */
         /* Row count */
-        CASE 
-            WHEN irs.summary_level <> 'SUMMARY' 
-            THEN FORMAT(irs.total_rows, 'N0')
-            ELSE NULL
-        END AS total_rows,
+        FORMAT(irs.total_rows, 'N0') AS total_rows,
         
         /* Total reads - combined total and breakdown */
         CASE 
