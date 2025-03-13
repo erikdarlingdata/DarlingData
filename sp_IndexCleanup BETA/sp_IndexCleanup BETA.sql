@@ -2878,8 +2878,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         forwarded_fetch_count bigint NULL,
         leaf_insert_count bigint NULL,
         leaf_update_count bigint NULL,
-        leaf_delete_count bigint NULL,
-        PRIMARY KEY (summary_level, ISNULL(database_name, ''), ISNULL(schema_name, ''), ISNULL(table_name, ''), ISNULL(index_name, ''))
+        leaf_delete_count bigint NULL
     );
 
     /* Insert database-level summaries */
