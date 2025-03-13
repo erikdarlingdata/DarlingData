@@ -45,8 +45,10 @@ BEGIN
 SET NOCOUNT ON;
 
 BEGIN TRY
-/* Check for SQL Server 2012 (11.0) or later for FORMAT and CONCAT functions*/
+    /* Check for SQL Server 2012 (11.0) or later for FORMAT and CONCAT functions*/
+    
     IF 
+    /*fix version check*/
     CONVERT
        (
            integer, 
@@ -61,6 +63,7 @@ BEGIN TRY
                2
            )
        ) < 11
+    
     BEGIN
         RAISERROR('This procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT and CONCAT functions.', 11, 1);
         RETURN;
@@ -613,6 +616,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )';
       
     IF 
+        /*fix version check*/
         CONVERT
         (
             integer, 
