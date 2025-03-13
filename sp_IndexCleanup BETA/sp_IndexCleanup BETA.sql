@@ -508,7 +508,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_redundant bit NULL,
         superseded_by nvarchar(256) NULL,
         missing_columns nvarchar(max) NULL,
-        action nvarchar(max) NULL,
+        action nvarchar(30) NULL,
         target_index_name sysname NULL,
         consolidation_rule varchar(512) NULL,
         index_priority int NULL,
