@@ -2359,7 +2359,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_reads,
         index_writes
     )
-    SELECT
+    SELECT DISTINCT
         result_type = 'DISABLE',
         /* Sort duplicate/subset indexes first (20), then unused indexes last (25) */
         sort_order =
@@ -3007,7 +3007,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.table_name,
         index_count = COUNT(DISTINCT ps.index_id),
         total_size_gb = SUM(ps.total_space_gb),
-        total_rows = MIN(CASE WHEN ps.index_id IN (0, 1) THEN ps.total_rows ELSE NULL END),
+        /* Only count rows once per table by using min with index_id=1 (clustered) or 0 (heap) */
+        total_rows = SUM(CASE WHEN ps.index_id = 1 OR (ps.index_id = 0 AND NOT EXISTS (
+                          SELECT 1 FROM #partition_stats ps2 
+                          WHERE ps2.database_id = ps.database_id 
+                            AND ps2.object_id = ps.object_id 
+                            AND ps2.index_id = 1))
+                     THEN ps.total_rows ELSE 0 END),
         unused_indexes = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN 1 ELSE 0 END),
         unused_size_gb = SUM(CASE WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 THEN ps.total_space_gb ELSE 0 END),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
@@ -3265,10 +3271,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Total indexes */
         FORMAT(irs.index_count, 'N0') AS total_indexes,
         
-        /* Removable indexes - use same value from #index_analysis at all levels for consistency */
+        /* Removable indexes - report consistent values across levels */
         CASE
-            WHEN irs.summary_level = 'SUMMARY' THEN FORMAT(irs.indexes_to_disable, 'N0') 
-            ELSE FORMAT(irs.unused_indexes, 'N0')
+            WHEN irs.summary_level = 'SUMMARY' 
+            THEN FORMAT(irs.indexes_to_disable, 'N0') /* Indexes that will be disabled based on analysis */
+            ELSE FORMAT(irs.unused_indexes, 'N0') /* Unused indexes at database/table level */
         END AS removable_indexes,
         
         /* Show mergeable indexes as a separate column for clarity (summary level only) */
@@ -3287,11 +3294,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END AS pct_removable,
         
         /* ===== Section 2: Size and Space Savings ===== */
-        /* Current size in GB */
+        /* Current size in GB - show at all levels */
         CASE 
-            WHEN irs.summary_level <> 'SUMMARY' 
-            THEN FORMAT(irs.total_size_gb, 'N2')
-            ELSE NULL
+            WHEN irs.summary_level = 'SUMMARY' 
+            THEN FORMAT(SUM(irs.total_size_gb) OVER(), 'N2') /* Total size across all databases */
+            ELSE FORMAT(irs.total_size_gb, 'N2')
         END AS current_size_gb,
         
         /* Size that can be saved through cleanup */
@@ -3300,10 +3307,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE FORMAT(irs.unused_size_gb, 'N2')
         END AS cleanup_savings_gb,
         
-        /* Potential additional savings from compression (summary only) */
+        /* Potential additional savings (show at all levels for clarity) */
         CASE
             WHEN irs.summary_level = 'SUMMARY' 
             THEN FORMAT(irs.total_min_savings_gb, 'N2') + ' - ' + FORMAT(irs.total_max_savings_gb, 'N2')
+            /* For database/table levels, show potential savings if table has unused space */
+            WHEN irs.total_size_gb > 0 
+            THEN FORMAT(irs.unused_size_gb + (irs.total_size_gb - irs.unused_size_gb) * 0.2, 'N2') + 
+                 ' - ' + 
+                 FORMAT(irs.unused_size_gb + (irs.total_size_gb - irs.unused_size_gb) * 0.6, 'N2')
             ELSE NULL
         END AS potential_savings_gb,
         
