@@ -3238,7 +3238,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     INSERT INTO 
-        #index_reporting_stats
+        RAISERROR('Generating #index_reporting_stats insert, TABLE', 0, 0) WITH NOWAIT;
     WITH
         (TABLOCK)
     (
