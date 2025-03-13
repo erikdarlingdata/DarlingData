@@ -273,7 +273,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             @database_id = d.database_id
         FROM sys.databases AS d
-        WHERE d.name = @database_name;
+        WHERE d.name = @database_name
+        OPTION(RECOMPILE);;
     END;
 
     IF  @schema_name IS NULL
@@ -1315,7 +1316,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             table_name = '#partition_stats',
             *
-        FROM #partition_stats AS ps;
+        FROM #partition_stats AS ps
+        OPTION(RECOMPILE);;
 
         RAISERROR('Performing #index_analysis insert', 0, 0) WITH NOWAIT;
     END; 
@@ -1423,7 +1425,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             table_name = '#index_analysis',
             ia.*
-        FROM #index_analysis AS ia;
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);;
 
         RAISERROR('Starting updates', 0, 0) WITH NOWAIT;
     END;
@@ -1468,7 +1471,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND   id.table_name = #index_analysis.table_name
                     AND   id.user_scans > 0
                 ) THEN 100 ELSE 0 
-            END;  /* Indexes with scans get some priority */
+            END
+        OPTION(RECOMPILE);;  /* Indexes with scans get some priority */
 
 
     /* Rule 1: Identify unused indexes */
@@ -1497,7 +1501,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id.is_unique_constraint = 0  /* Don't disable unique constraints */
         AND   id.is_eligible_for_dedupe = 1 /* Only eligible indexes */
     )
-    AND #index_analysis.index_id <> 1;  /* Don't disable clustered indexes */
+    AND #index_analysis.index_id <> 1
+    OPTION(RECOMPILE);  /* Don't disable clustered indexes */
 
     /* Rule 2: Exact duplicates - matching key columns and includes */
     UPDATE 
@@ -1545,7 +1550,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.object_id = ia2.object_id
         AND   id2.index_name = ia2.index_name
         AND   id2.is_eligible_for_dedupe = 1
-    );
+    )
+    OPTION(RECOMPILE);
 
     /* Rule 3: Key duplicates - matching key columns, different includes */
     UPDATE 
@@ -1612,7 +1618,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.object_id = ia2.object_id
         AND   id2.index_name = ia2.index_name
         AND   id2.is_eligible_for_dedupe = 1
-    );
+    )
+    OPTION(RECOMPILE);
     
     /* Rule 4: Superset/subset key columns */
     UPDATE 
@@ -1651,7 +1658,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.object_id = ia2.object_id
         AND   id2.index_name = ia2.index_name
         AND   id2.is_eligible_for_dedupe = 1
-    );
+    )
+    OPTION(RECOMPILE);
     
     /* Update the superseded_by column for the wider index in a separate statement */
     UPDATE 
@@ -1668,8 +1676,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       /* Exception: If narrower index is unique and wider is not, they should not be merged */
       AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
     WHERE ia1.consolidation_rule = 'Key Subset'  /* Use records just processed in previous UPDATE */
-    AND   ia1.target_index_name = ia2.index_name;  /* Make sure we're updating the right wider index */
-    
+    AND   ia1.target_index_name = ia2.index_name  /* Make sure we're updating the right wider index */
+    OPTION(RECOMPILE);
+
     /* Rule 5: Unique constraint vs. nonclustered index handling */
     UPDATE 
         ia1
@@ -1724,7 +1733,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id1_inner.index_name = ia1.index_name
             AND   id1_inner.is_included_column = 0
         )
-    );
+    )
+    OPTION(RECOMPILE);
     
     /* Rule 7: Identify indexes with same keys but in different order after first column */
     /* This rule flags indexes that have the same set of key columns but ordered differently */
@@ -1803,7 +1813,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id1.index_name = ia1.index_name
             AND   id2.index_name = ia2.index_name
         )
-        OPTION(RECOMPILE);
+    OPTION(RECOMPILE);
 
 
     IF @debug = 1
@@ -1811,7 +1821,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             table_name = '#index_analysis after update',
             ia.*
-        FROM #index_analysis AS ia;
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
 
         RAISERROR('Generating results', 0, 0) WITH NOWAIT;
     END;
@@ -2250,7 +2261,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OR ia2.included_columns IS NULL 
         OR LEN(ia1.included_columns) < LEN(ia2.included_columns)
       )
-      OPTION(RECOMPILE);
+    OPTION(RECOMPILE);
 
     /* Update the subset indexes to be disabled, since supersets already contain their columns */
     UPDATE 
@@ -2307,8 +2318,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia_subset.action = 'DISABLE'
         AND   ia_subset.target_index_name = ia.index_name
         /* This complex check handles cases where the superset doesn't contain all subset columns */
-        AND CHARINDEX(ISNULL(ia_subset.included_columns, N''), ISNULL(ia.included_columns, N'')) = 0
-        AND ISNULL(ia_subset.included_columns, N'') <> N''
+        AND   CHARINDEX(ISNULL(ia_subset.included_columns, N''), ISNULL(ia.included_columns, N'')) = 0
+        AND   ISNULL(ia_subset.included_columns, N'') <> N''
     )
     OPTION(RECOMPILE);
 
@@ -2724,7 +2735,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   id_nc_inner.is_included_column = 0
             )
         )
-        OPTION(RECOMPILE);
+    OPTION(RECOMPILE);
 
     /* Insert per-partition compression scripts */
     INSERT INTO 
@@ -2957,7 +2968,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_reads,
         index_writes
     )
-    SELECT
+    SELECT DISTINCT
         result_type = 'KEEP',
         sort_order = 95, /* Just before END OF REPORT at 99 */
         ia.database_name,
