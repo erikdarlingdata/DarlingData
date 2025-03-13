@@ -577,6 +577,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_writes bigint NULL           /* Total writes (updates) */
     );
 
+    /* Create a new temp table for detailed reporting statistics */
+    CREATE TABLE 
+        #index_reporting_stats
+    (
+        summary_level varchar(20) NOT NULL,  /* 'DATABASE', 'TABLE', 'INDEX', 'SUMMARY' */
+        database_name sysname NULL,
+        schema_name sysname NULL,
+        table_name sysname NULL,
+        index_name sysname NULL,
+        server_uptime_days int NULL,
+        uptime_warning bit NULL,
+        tables_analyzed int NULL,
+        index_count int NULL,
+        total_size_gb decimal(38, 4) NULL,
+        total_rows bigint NULL,
+        unused_indexes int NULL,
+        unused_size_gb decimal(38, 4) NULL,
+        indexes_to_disable int NULL,
+        indexes_to_merge int NULL,
+        avg_indexes_per_table decimal(10, 2) NULL,
+        space_saved_gb decimal(10, 4) NULL,
+        compression_min_savings_gb decimal(10, 4) NULL,
+        compression_max_savings_gb decimal(10, 4) NULL,
+        total_min_savings_gb decimal(10, 4) NULL,
+        total_max_savings_gb decimal(10, 4) NULL,
+        /* Index usage metrics */
+        total_reads bigint NULL,
+        total_writes bigint NULL,
+        user_seeks bigint NULL,
+        user_scans bigint NULL,
+        user_lookups bigint NULL,
+        user_updates bigint NULL,
+        /* Operational stats */
+        range_scan_count bigint NULL,
+        singleton_lookup_count bigint NULL,
+        /* Lock stats */
+        row_lock_count bigint NULL,
+        row_lock_wait_count bigint NULL,
+        row_lock_wait_in_ms bigint NULL,
+        page_lock_count bigint NULL,
+        page_lock_wait_count bigint NULL,
+        page_lock_wait_in_ms bigint NULL,
+        /* Latch stats */
+        page_latch_wait_count bigint NULL,
+        page_latch_wait_in_ms bigint NULL,
+        page_io_latch_wait_count bigint NULL,
+        page_io_latch_wait_in_ms bigint NULL,
+        /* Misc stats */
+        forwarded_fetch_count bigint NULL,
+        leaf_insert_count bigint NULL,
+        leaf_update_count bigint NULL,
+        leaf_delete_count bigint NULL
+    );
+
     /*
     Start insert queries
     */
@@ -2828,61 +2882,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
 
-    /* Create a new temp table for detailed reporting statistics */
-    CREATE TABLE #index_reporting_stats
-    (
-        summary_level varchar(20) NOT NULL,  /* 'DATABASE', 'TABLE', 'INDEX', 'SUMMARY' */
-        database_name sysname NULL,
-        schema_name sysname NULL,
-        table_name sysname NULL,
-        index_name sysname NULL,
-        server_uptime_days int NULL,
-        uptime_warning bit NULL,
-        tables_analyzed int NULL,
-        index_count int NULL,
-        total_size_gb decimal(38, 4) NULL,
-        total_rows bigint NULL,
-        unused_indexes int NULL,
-        unused_size_gb decimal(38, 4) NULL,
-        indexes_to_disable int NULL,
-        indexes_to_merge int NULL,
-        avg_indexes_per_table decimal(10, 2) NULL,
-        space_saved_gb decimal(10, 4) NULL,
-        compression_min_savings_gb decimal(10, 4) NULL,
-        compression_max_savings_gb decimal(10, 4) NULL,
-        total_min_savings_gb decimal(10, 4) NULL,
-        total_max_savings_gb decimal(10, 4) NULL,
-        /* Index usage metrics */
-        total_reads bigint NULL,
-        total_writes bigint NULL,
-        user_seeks bigint NULL,
-        user_scans bigint NULL,
-        user_lookups bigint NULL,
-        user_updates bigint NULL,
-        /* Operational stats */
-        range_scan_count bigint NULL,
-        singleton_lookup_count bigint NULL,
-        /* Lock stats */
-        row_lock_count bigint NULL,
-        row_lock_wait_count bigint NULL,
-        row_lock_wait_in_ms bigint NULL,
-        page_lock_count bigint NULL,
-        page_lock_wait_count bigint NULL,
-        page_lock_wait_in_ms bigint NULL,
-        /* Latch stats */
-        page_latch_wait_count bigint NULL,
-        page_latch_wait_in_ms bigint NULL,
-        page_io_latch_wait_count bigint NULL,
-        page_io_latch_wait_in_ms bigint NULL,
-        /* Misc stats */
-        forwarded_fetch_count bigint NULL,
-        leaf_insert_count bigint NULL,
-        leaf_update_count bigint NULL,
-        leaf_delete_count bigint NULL
-    );
-
     /* Insert database-level summaries */
-    INSERT INTO #index_reporting_stats
+    INSERT INTO 
+        #index_reporting_stats
     (
         summary_level,
         database_name,
@@ -3136,7 +3138,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* Insert overall summary information */
-    INSERT INTO #index_reporting_stats
+    INSERT INTO 
+        #index_reporting_stats
+    WITH
+        (TABLOCK)
     (
         summary_level,
         server_uptime_days,
@@ -3156,25 +3161,38 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         summary_level = 'SUMMARY',
         server_uptime_days = @uptime_days,
         uptime_warning = @uptime_warning,
-        tables_analyzed = COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
-        index_count = COUNT_BIG(*),
-        indexes_to_disable = SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END),
-        indexes_to_merge = SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END),
-        avg_indexes_per_table = COUNT_BIG(*) * 1.0 / 
+        tables_analyzed = 
+            COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
+        index_count = 
+            COUNT_BIG(*),
+        indexes_to_disable = 
+            SUM(CASE WHEN ia.action = 'DISABLE' THEN 1 ELSE 0 END),
+        indexes_to_merge = 
+            SUM(CASE WHEN ia.action IN ('MERGE INCLUDES', 'MAKE UNIQUE') THEN 1 ELSE 0 END),
+        avg_indexes_per_table = 
+            COUNT_BIG(*) * 1.0 / 
             NULLIF(COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 0),
         /* Space savings from cleanup */
-        space_saved_gb = SUM(CASE 
-            WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
-            THEN ps.total_space_gb 
-            ELSE 0 
-        END),
+        space_saved_gb = 
+            SUM
+            (
+                CASE 
+                    WHEN ia.action IN ('DISABLE', 'MERGE INCLUDES', 'MAKE UNIQUE') 
+                    THEN ps.total_space_gb 
+                    ELSE 0 
+                END
+            ),
         /* Conservative compression savings estimate (20%) */
-        compression_min_savings_gb = SUM(CASE 
-            WHEN (ia.action IS NULL OR ia.action = 'KEEP') 
-            AND   ce.can_compress = 1 
-            THEN ps.total_space_gb * 0.20
-            ELSE 0 
-        END),
+        compression_min_savings_gb = 
+        SUM
+        (
+            CASE 
+                WHEN (ia.action IS NULL OR ia.action = 'KEEP') 
+                AND   ce.can_compress = 1 
+                THEN ps.total_space_gb * 0.20
+                ELSE 0 
+            END
+        ),
         /* Optimistic compression savings estimate (60%) */
         compression_max_savings_gb = SUM(CASE 
             WHEN (ia.action IS NULL OR ia.action = 'KEEP') 
