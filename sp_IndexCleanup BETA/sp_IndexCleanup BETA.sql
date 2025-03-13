@@ -3294,10 +3294,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END AS pct_removable,
         
         /* ===== Section 2: Size and Space Savings ===== */
-        /* Current size in GB - show at all levels */
+        /* Current size in GB */
         CASE 
-            WHEN irs.summary_level = 'SUMMARY' 
-            THEN FORMAT(SUM(irs.total_size_gb) OVER(), 'N2') /* Total size across all databases */
+            WHEN irs.summary_level = 'SUMMARY' THEN FORMAT(irs.total_size_gb, 'N2')
             ELSE FORMAT(irs.total_size_gb, 'N2')
         END AS current_size_gb,
         
