@@ -1109,7 +1109,10 @@ AND   ca.utc_timestamp < @end_date';
             DELETE FROM ' + @log_table_severe_errors + '
             WHERE collection_time < @cleanup_date;';
             
-            IF @debug = 1 BEGIN PRINT @dsql; END;
+            IF @debug = 1 
+            BEGIN 
+                PRINT @dsql; 
+            END;
             
             EXECUTE sys.sp_executesql 
                 @dsql, 
@@ -1264,6 +1267,16 @@ AND   ca.utc_timestamp < @end_date';
         #memory_node_oom
     (
         memory_node_oom xml NOT NULL
+    );
+
+    CREATE TABLE
+        #health_findings
+    (
+        id integer IDENTITY PRIMARY KEY CLUSTERED,
+        check_id integer NOT NULL,
+        finding_group nvarchar(100) NULL,
+        finding nvarchar(4000) NULL,
+        sort_order bigint NULL
     );
 
     /*The more you ignore waits, the worser they get*/
@@ -1842,7 +1855,10 @@ AND   ca.utc_timestamp < @end_date';
                         'event_time'
                     );
                 
-                IF @debug = 1 BEGIN PRINT @mdsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @mdsql, 
@@ -1889,7 +1905,10 @@ AND   ca.utc_timestamp < @end_date';
             )' + 
                 @dsql;
                 
-                IF @debug = 1 BEGIN PRINT @insert_sql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @insert_sql, 
@@ -1899,9 +1918,11 @@ AND   ca.utc_timestamp < @end_date';
             
             /* Execute the query for client results */
             IF @log_to_table = 0
-            BEGIN        
-                
-                IF @debug = 1 BEGIN PRINT @dsql; END;
+            BEGIN                 
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @dsql;
@@ -2098,7 +2119,10 @@ AND   ca.utc_timestamp < @end_date';
                         'event_time_rounded'
                     );
                 
-                IF @debug = 1 BEGIN PRINT @mdsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @mdsql, 
@@ -2144,7 +2168,10 @@ AND   ca.utc_timestamp < @end_date';
             )' + 
                 @dsql;
                 
-                IF @debug = 1 BEGIN PRINT @insert_sql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @insert_sql, 
@@ -2155,7 +2182,10 @@ AND   ca.utc_timestamp < @end_date';
             /* Execute the query for client results */
             IF @log_to_table = 0
             BEGIN
-                IF @debug = 1 BEGIN PRINT @dsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @dsql;
@@ -2386,7 +2416,10 @@ AND   ca.utc_timestamp < @end_date';
                         'event_time_rounded'
                     );
                 
-                IF @debug = 1 BEGIN PRINT @mdsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @mdsql, 
@@ -2430,7 +2463,10 @@ AND   ca.utc_timestamp < @end_date';
             )' + 
                 @dsql;
                 
-                IF @debug = 1 BEGIN PRINT @insert_sql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @insert_sql, 
@@ -2441,7 +2477,10 @@ AND   ca.utc_timestamp < @end_date';
             /* Execute the query for client results */
             IF @log_to_table = 0
             BEGIN
-                IF @debug = 1 BEGIN PRINT @dsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @dsql;
@@ -2596,7 +2635,10 @@ AND   ca.utc_timestamp < @end_date';
                         'event_time'
                     );
         
-                IF @debug = 1 BEGIN PRINT @mdsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql; 
+                END;
                         
                 EXECUTE sys.sp_executesql 
                     @mdsql, 
@@ -2644,7 +2686,10 @@ AND   ca.utc_timestamp < @end_date';
             )' 
                 + @dsql;
                 
-                IF @debug = 1 BEGIN PRINT @insert_sql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @insert_sql, 
@@ -2655,7 +2700,10 @@ AND   ca.utc_timestamp < @end_date';
             /* Execute the query for client results */
             IF @log_to_table = 0
             BEGIN
-                IF @debug = 1 BEGIN PRINT @dsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @dsql;
@@ -2785,7 +2833,10 @@ END;
                     'event_time'
                 );
     
-            IF @debug = 1 BEGIN PRINT @mdsql; END;
+            IF @debug = 1 
+            BEGIN 
+                PRINT @mdsql; 
+            END;
                     
             EXECUTE sys.sp_executesql 
                 @mdsql, 
@@ -2837,7 +2888,10 @@ END;
         )' + 
             @dsql;
             
-            IF @debug = 1 BEGIN PRINT @insert_sql; END;
+            IF @debug = 1 
+            BEGIN 
+                PRINT @insert_sql; 
+            END;
             
             EXECUTE sys.sp_executesql 
                 @insert_sql, 
@@ -2848,7 +2902,10 @@ END;
         /* Execute the query for client results */
         IF @log_to_table = 0
         BEGIN
-            IF @debug = 1 BEGIN PRINT @dsql; END;
+            IF @debug = 1 
+            BEGIN 
+                PRINT @dsql; 
+            END;
             
             EXECUTE sys.sp_executesql 
                 @dsql;
@@ -3013,7 +3070,10 @@ END;
                         'event_time'
                     );
         
-                IF @debug = 1 BEGIN PRINT @mdsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql; 
+                END;
                         
                 EXECUTE sys.sp_executesql 
                     @mdsql, 
@@ -3087,7 +3147,10 @@ END;
             + 
                 @dsql;
                 
-                IF @debug = 1 BEGIN PRINT @insert_sql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @insert_sql, 
@@ -3098,7 +3161,10 @@ END;
             /* Execute the query for client results */
             IF @log_to_table = 0
             BEGIN
-                IF @debug = 1 BEGIN PRINT @dsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @dsql;
@@ -3247,7 +3313,10 @@ BEGIN
                 'event_time'
             );
 
-        IF @debug = 1 BEGIN PRINT @mdsql; END;
+        IF @debug = 1 
+        BEGIN 
+            PRINT @mdsql; 
+        END;
                 
         EXECUTE sys.sp_executesql 
             @mdsql, 
@@ -3296,7 +3365,10 @@ BEGIN
     )' + 
         @dsql;
         
-        IF @debug = 1 BEGIN PRINT @insert_sql; END;
+        IF @debug = 1 
+        BEGIN 
+            PRINT @insert_sql; 
+        END;
         
         EXECUTE sys.sp_executesql 
             @insert_sql, 
@@ -3307,7 +3379,10 @@ BEGIN
     /* Execute the query for client results */
     IF @log_to_table = 0
     BEGIN
-        IF @debug = 1 BEGIN PRINT @dsql; END;
+        IF @debug = 1 
+        BEGIN 
+            PRINT @dsql; 
+        END;
         
         EXECUTE sys.sp_executesql 
             @dsql;
@@ -3519,7 +3594,10 @@ END;
                         'event_time'
                     );
         
-                IF @debug = 1 BEGIN PRINT @mdsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql; 
+                END;
                         
                 EXECUTE sys.sp_executesql 
                     @mdsql, 
@@ -3570,7 +3648,10 @@ END;
             )' + 
                 @dsql;
                 
-                IF @debug = 1 BEGIN PRINT @insert_sql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @insert_sql, 
@@ -3581,7 +3662,10 @@ END;
             /* Execute the query for client results */
             IF @log_to_table = 0
             BEGIN
-                IF @debug = 1 BEGIN PRINT @dsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @dsql;
@@ -3716,7 +3800,10 @@ END;
                         'event_time'
                     );
         
-                IF @debug = 1 BEGIN PRINT @mdsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql; 
+                END;
                         
                 EXECUTE sys.sp_executesql 
                     @mdsql, 
@@ -3773,7 +3860,10 @@ END;
             )' + 
                 @dsql;
                 
-                IF @debug = 1 BEGIN PRINT @insert_sql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @insert_sql, 
@@ -3784,7 +3874,10 @@ END;
             /* Execute the query for client results */
             IF @log_to_table = 0
             BEGIN
-                IF @debug = 1 BEGIN PRINT @dsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @dsql;
@@ -3934,7 +4027,10 @@ END;
                         'event_time'
                     );
         
-                IF @debug = 1 BEGIN PRINT @mdsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql; 
+                END;
                         
                 EXECUTE sys.sp_executesql 
                     @mdsql, 
@@ -3984,7 +4080,10 @@ END;
             )' + 
                 @dsql;
                 
-                IF @debug = 1 BEGIN PRINT @insert_sql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @insert_sql, 
@@ -3995,7 +4094,10 @@ END;
             /* Execute the query for client results */
             IF @log_to_table = 0
             BEGIN
-                IF @debug = 1 BEGIN PRINT @dsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @dsql;
@@ -4128,7 +4230,10 @@ END;
                         'event_time'
                     );
         
-                IF @debug = 1 BEGIN PRINT @mdsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql; 
+                END;
                         
                 EXECUTE sys.sp_executesql 
                     @mdsql, 
@@ -4177,7 +4282,10 @@ END;
             )' + 
                 @dsql;
                 
-                IF @debug = 1 BEGIN PRINT @insert_sql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @insert_sql, 
@@ -4188,7 +4296,10 @@ END;
             /* Execute the query for client results */
             IF @log_to_table = 0
             BEGIN
-                IF @debug = 1 BEGIN PRINT @dsql; END;
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @dsql;
@@ -5272,39 +5383,32 @@ END;
     /*
     This section generates a summary table with key findings from all health check sections
     */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Creating health summary findings', 0, 1) WITH NOWAIT;
-    END;
-
-    CREATE TABLE
-        #health_findings
-    (
-        id integer IDENTITY PRIMARY KEY CLUSTERED,
-        check_id integer NOT NULL,
-        finding_group nvarchar(100) NULL,
-        finding nvarchar(4000) NULL,
-        sort_order bigint
-    );
-
     -- Significant waits findings
     IF @what_to_check IN ('all', 'waits')
     AND EXISTS (SELECT 1/0 FROM #wait_info AS wi WHERE wait_duration_ms > 1000)
     BEGIN
-        INSERT INTO #health_findings (check_id, finding_group, finding, sort_order)
+        INSERT INTO 
+            #health_findings 
+        (
+            check_id, 
+            finding_group, 
+            finding, 
+            sort_order
+        )
         SELECT 
-            1 AS check_id,
-            N'waits' AS finding_group,
+            check_id = 1,
+            finding_group = N'waits',
             finding = N'Long waits detected: ' + 
-            CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN wait_duration_ms > 30000 THEN 1 END)) + N' critical, ' +
-            CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN wait_duration_ms BETWEEN 10000 AND 30000 THEN 1 END)) + N' high, ' +
-            CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN wait_duration_ms BETWEEN 5000 AND 10000 THEN 1 END)) + N' medium. ' +
+                CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN wait_duration_ms > 30000 THEN 1 END)) + N' critical, ' +
+                CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN wait_duration_ms BETWEEN 10000 AND 30000 THEN 1 END)) + N' high, ' +
+                CONVERT(nvarchar(10), COUNT_BIG(CASE WHEN wait_duration_ms BETWEEN 5000 AND 10000 THEN 1 END)) + N' medium. ' +
             N'Longest wait: ' + CONVERT(nvarchar(10), MAX(wait_duration_ms)/1000.0) + N' seconds (' + 
             (SELECT TOP 1 wait_type FROM #wait_info AS wi2 ORDER BY wait_duration_ms DESC) + N')',
-            sort_order = CASE 
-                WHEN MAX(wait_duration_ms) > 30000 THEN 100  -- Critical
-                WHEN MAX(wait_duration_ms) > 10000 THEN 200  -- High
-                WHEN MAX(wait_duration_ms) > 5000 THEN 300   -- Medium
+            sort_order = 
+                CASE 
+                    WHEN MAX(wait_duration_ms) > 30000 THEN 100  -- Critical
+                    WHEN MAX(wait_duration_ms) > 10000 THEN 200  -- High
+                    WHEN MAX(wait_duration_ms) > 5000 THEN 300   -- Medium
                 ELSE 400                                      -- Low
             END
         FROM #wait_info AS wi
