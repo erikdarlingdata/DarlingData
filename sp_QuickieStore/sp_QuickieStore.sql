@@ -6207,7 +6207,7 @@ IF @debug = 1
 BEGIN
     PRINT LEN(@sql);
 
-    IF LEN(@sql) > 7999
+    IF LEN(@sql) > 4000
     BEGIN
         SELECT
             query =
