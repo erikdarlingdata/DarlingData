@@ -62,23 +62,33 @@ GO
 ALTER PROCEDURE
     dbo.sp_HumanEventsBlockViewer
 (
-    @session_name nvarchar(256) = N'keeper_HumanEvents_blocking',
-    @target_type sysname = NULL,
-    @start_date datetime2 = NULL,
-    @end_date datetime2 = NULL,
-    @database_name sysname = NULL,
-    @object_name sysname = NULL,
-    @help bit = 0,
-    @debug bit = 0,
-    @version varchar(30) = NULL OUTPUT,
-    @version_date datetime = NULL OUTPUT
+    @session_name sysname = N'keeper_HumanEvents_blocking', /*Event session name*/
+    @target_type sysname = NULL, /*ring buffer, file, or table*/
+    @start_date datetime2 = NULL, /*when to start looking for blocking*/
+    @end_date datetime2 = NULL, /*when to stop looking for blocking*/
+    @database_name sysname = NULL, /*target a specific database*/
+    @object_name sysname = NULL, /*target a specific schema-prefixed table*/
+    @target_database sysname = NULL, /*database containing the table with BPR data*/
+    @target_schema sysname = NULL, /*schema of the table*/
+    @target_table sysname = NULL, /*table name*/
+    @target_column sysname = NULL, /*column containing XML data*/
+    @timestamp_column sysname = NULL, /*column containing timestamp (optional)*/
+    @log_to_table bit = 0, /*enable logging to permanent tables*/
+    @log_database_name sysname = NULL, /*database to store logging tables*/
+    @log_schema_name sysname = NULL, /*schema to store logging tables*/
+    @log_table_name_prefix sysname = 'HumanEventsBlockViewer', /*prefix for all logging tables*/
+    @log_retention_days integer = 30, /*Number of days to keep logs, 0 = keep indefinitely*/
+    @help bit = 0, /*get help with this procedure*/
+    @debug bit = 0, /*print dynamic sql and select temp table contents*/
+    @version varchar(30) = NULL OUTPUT, /*check the version number*/
+    @version_date datetime = NULL OUTPUT /*check the version date*/
 )
 WITH RECOMPILE
 AS
 BEGIN
 SET STATISTICS XML OFF;
 SET NOCOUNT ON;
-SET XACT_ABORT ON;
+SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
@@ -105,11 +115,21 @@ BEGIN
         description =
             CASE ap.name
                  WHEN N'@session_name' THEN 'name of the extended event session to pull from'
-                 WHEN N'@target_type' THEN 'target of the extended event session'
+                 WHEN N'@target_type' THEN 'target type of the extended event session (ring buffer, file) or ''table'' to read from a table'
                  WHEN N'@start_date' THEN 'filter by date'
                  WHEN N'@end_date' THEN 'filter by date'
                  WHEN N'@database_name' THEN 'filter by database name'
                  WHEN N'@object_name' THEN 'filter by table name'
+                 WHEN N'@target_database' THEN 'database containing the table with blocked process report data'
+                 WHEN N'@target_schema' THEN 'schema of the table containing blocked process report data'
+                 WHEN N'@target_table' THEN 'table containing blocked process report data'
+                 WHEN N'@target_column' THEN 'column containing blocked process report XML'
+                 WHEN N'@timestamp_column' THEN 'column containing timestamp for filtering (optional)'
+                 WHEN N'@log_to_table' THEN N'enable logging to permanent tables instead of returning results'
+                 WHEN N'@log_database_name' THEN N'database to store logging tables'
+                 WHEN N'@log_schema_name' THEN N'schema to store logging tables'
+                 WHEN N'@log_table_name_prefix' THEN N'prefix for all logging tables'
+                 WHEN N'@log_retention_days' THEN N'how many days of data to retain'
                  WHEN N'@help' THEN 'how you got here'
                  WHEN N'@debug' THEN 'dumps raw temp table contents'
                  WHEN N'@version' THEN 'OUTPUT; for support'
@@ -123,6 +143,16 @@ BEGIN
                  WHEN N'@end_date' THEN 'a reasonable date'
                  WHEN N'@database_name' THEN 'a database that exists on this server'
                  WHEN N'@object_name' THEN 'a schema-prefixed table name'
+                 WHEN N'@target_database' THEN 'a database that exists on this server'
+                 WHEN N'@target_schema' THEN 'a schema in the target database'
+                 WHEN N'@target_table' THEN 'a table in the target schema'
+                 WHEN N'@target_column' THEN 'an XML column containing blocked process report data'
+                 WHEN N'@timestamp_column' THEN 'a datetime column for filtering by date range'
+                 WHEN N'@log_to_table' THEN N'0 or 1'
+                 WHEN N'@log_database_name' THEN N'any valid database name'
+                 WHEN N'@log_schema_name' THEN N'any valid schema name'
+                 WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
+                 WHEN N'@log_retention_days' THEN N'a positive integer'
                  WHEN N'@help' THEN '0 or 1'
                  WHEN N'@debug' THEN '0 or 1'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -136,6 +166,16 @@ BEGIN
                  WHEN N'@end_date' THEN 'NULL'
                  WHEN N'@database_name' THEN 'NULL'
                  WHEN N'@object_name' THEN 'NULL'
+                 WHEN N'@target_database' THEN 'NULL'
+                 WHEN N'@target_schema' THEN 'NULL'
+                 WHEN N'@target_table' THEN 'NULL'
+                 WHEN N'@target_column' THEN 'NULL'
+                 WHEN N'@timestamp_column' THEN 'NULL'
+                 WHEN N'@log_to_table' THEN N'0'
+                 WHEN N'@log_database_name' THEN N'NULL (current database)'
+                 WHEN N'@log_schema_name' THEN N'NULL (dbo)'
+                 WHEN N'@log_table_name_prefix' THEN N'HumanEventsBlockViewer'
+                 WHEN N'@log_retention_days' THEN N'30'
                  WHEN N'@help' THEN '0'
                  WHEN N'@debug' THEN '0'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -284,7 +324,19 @@ DECLARE
     @inputbuf_bom nvarchar(1) =
         CONVERT(nvarchar(1), 0x0a00, 0),
     @start_date_original datetime2 = @start_date,
-    @end_date_original datetime2 = @end_date;
+    @end_date_original datetime2 = @end_date,
+    @validation_sql nvarchar(max),
+    @extract_sql nvarchar(max),
+    /*Log to table stuff*/       
+    @log_table_blocking sysname,  
+    @cleanup_date datetime2(7),
+    @check_sql nvarchar(max) = N'',
+    @create_sql nvarchar(max) = N'',
+    @insert_sql nvarchar(max) = N'',
+    @log_database_schema nvarchar(1024),
+    @max_event_time datetime2(7), 
+    @dsql nvarchar(max) = N'',
+    @mdsql nvarchar(max) = N'';
 
 /*Use some sane defaults for input parameters*/
 IF @debug = 1
@@ -358,13 +410,392 @@ SELECT
             WHEN @session_name LIKE N'system%health'
             THEN 1
             ELSE 0
-        END;
+        END,
+    @mdsql = N'
+IF OBJECT_ID(''{table_check}'', ''U'') IS NOT NULL
+BEGIN
+    SELECT 
+        @max_event_time = 
+            ISNULL
+            (
+                MAX({date_column}),
+                DATEADD
+                (
+                    MINUTE,
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        SYSDATETIME(),
+                        GETUTCDATE()
+                    ),
+                    DATEADD
+                    (
+                        DAY,
+                        -1,
+                        SYSDATETIME()
+                    )
+                )
+            )
+    FROM {table_check};
+END;';
 
 SELECT
     @azure_msg =
         CONVERT(nchar(1), @azure),
     @is_system_health_msg =
         CONVERT(nchar(1), @is_system_health);
+
+/*Change this here in case someone leave it NULL*/
+IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL 
+AND ISNULL(@target_schema, N'dbo') IS NOT NULL 
+AND @target_table IS NOT NULL 
+AND @target_column IS NOT NULL
+BEGIN
+    SET @target_type = N'table';
+END;
+
+/* Check for table input early and validate */
+IF LOWER(@target_type) = N'table'
+BEGIN
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Table source detected, validating parameters', 0, 1) WITH NOWAIT;
+    END;
+
+    IF @target_database IS NULL
+    BEGIN
+        SET @target_database = DB_NAME();
+    END;
+
+    IF @target_schema IS NULL
+    BEGIN
+        SET @target_schema = N'dbo'
+    END;
+
+    /* Parameter validation  */
+    IF @target_table IS NULL 
+    OR @target_column IS NULL
+    BEGIN
+        RAISERROR(N'
+        When @target_type is ''table'', you must specify @target_table and @target_column.
+        When @target_database or @target_schema is NULL, they default to DB_NAME() and dbo.
+        ', 
+        11, 1) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /* Check if target database exists */
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM sys.databases AS d
+        WHERE d.name = @target_database
+    )
+    BEGIN
+        RAISERROR(N'The specified @target_database ''%s'' does not exist.', 11, 1, @target_database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /* Use dynamic SQL to validate schema, table, and column existence */
+    SET @validation_sql = N'
+    /*Validate schema exists*/
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.schemas AS s
+        WHERE s.name = @schema
+    )
+    BEGIN
+        RAISERROR(N''The specified @target_schema %s does not exist in @database %s'', 11, 1, @schema, @database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /*Validate table exists*/
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.tables AS t
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE t.name = @table 
+        AND   s.name = @schema
+    )
+    BEGIN
+        RAISERROR(N''The specified @target_table %s does not exist in @schema %s in database %s'', 11, 1, @table, @schema, @database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /*Validate column name exists*/
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+          ON c.object_id = t.object_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE c.name = @column 
+        AND   t.name = @table 
+        AND   s.name = @schema
+    )
+    BEGIN
+        RAISERROR(N''The specified @target_column %s does not exist in table %s.%s in database %s'', 11, 1, @column, @schema, @table, @database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /* Validate column is XML type */
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.types AS ty 
+          ON c.user_type_id = ty.user_type_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+          ON c.object_id = t.object_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE c.name = @column 
+        AND   t.name = @table 
+        AND   s.name = @schema
+        AND   ty.name = ''xml''
+    )
+    BEGIN
+        RAISERROR(N''The specified @target_column %s must be of XML data type.'', 11, 1, @column) WITH NOWAIT;
+        RETURN;
+    END;
+    ';
+
+    /* Validate timestamp_column if specified */
+    IF @timestamp_column IS NOT NULL
+    BEGIN
+        SET @validation_sql = @validation_sql + N'
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+          ON c.object_id = t.object_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE c.name = @timestamp_column 
+        AND   t.name = @table 
+        AND   s.name = @schema
+    )
+    BEGIN
+        RAISERROR(N''The specified @timestamp_column %s does not exist in table %s.%s in database %s'', 11, 1, @timestamp_column, @schema, @table, @database) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /* Validate timestamp column is date-ish type */
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.types AS ty 
+          ON c.user_type_id = ty.user_type_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+          ON c.object_id = t.object_id
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+          ON t.schema_id = s.schema_id
+        WHERE c.name = @timestamp_column 
+        AND   t.name = @table 
+        AND   s.name = @schema
+        AND   ty.name LIKE N''%date%''
+    )
+    BEGIN
+        RAISERROR(N''The specified @timestamp_column %s must be of datetime data type.'', 11, 1, @timestamp_column) WITH NOWAIT;
+        RETURN;
+    END;';
+    END;
+
+    IF @debug = 1
+    BEGIN
+        PRINT @validation_sql;
+    END;
+
+    EXECUTE sys.sp_executesql 
+        @validation_sql, 
+        N'
+        @database sysname, 
+        @schema sysname, 
+        @table sysname, 
+        @column sysname, 
+        @timestamp_column sysname
+        ',
+        @target_database, 
+        @target_schema, 
+        @target_table, 
+        @target_column, 
+        @timestamp_column;
+END;
+
+/* Validate logging parameters */
+IF @log_to_table = 1
+BEGIN    
+    SELECT 
+        /* Default database name to current database if not specified */
+        @log_database_name = ISNULL(@log_database_name, DB_NAME()),        
+        /* Default schema name to dbo if not specified */
+        @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+        @log_retention_days = 
+            CASE 
+                WHEN @log_retention_days < 0 
+                THEN ABS(@log_retention_days) 
+                ELSE @log_retention_days 
+            END;
+    
+    /* Validate database exists */
+    IF NOT EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM sys.databases AS d
+        WHERE d.name = @log_database_name
+    )
+    BEGIN
+        RAISERROR('The specified logging database %s does not exist. Logging will be disabled.', 11, 1, @log_database_name) WITH NOWAIT;
+        RETURN;
+    END;
+
+    SET
+        @log_database_schema = 
+            QUOTENAME(@log_database_name) +
+            N'.' +
+            QUOTENAME(@log_schema_name) +
+            N'.';
+    
+    /* Generate fully qualified table names */
+    SELECT
+        @log_table_blocking = 
+            @log_database_schema +
+            QUOTENAME(@log_table_name_prefix + N'_BlockedProcessReport');
+    
+    /* Check if schema exists and create it if needed */
+    SET @check_sql = N'
+        IF NOT EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+            WHERE s.name = @schema_name
+        )
+        BEGIN
+            DECLARE 
+                @create_schema_sql nvarchar(max) = N''CREATE SCHEMA '' + QUOTENAME(@schema_name);
+            
+            EXECUTE ' + QUOTENAME(@log_database_name) + N'.sys.sp_executesql @create_schema_sql;
+            IF @debug = 1 BEGIN RAISERROR(''Created schema %s in database %s for logging.'', 0, 1, @schema_name, @db_name) WITH NOWAIT; END;
+        END';
+
+    EXECUTE sys.sp_executesql 
+        @check_sql, 
+      N'@schema_name sysname, 
+        @db_name sysname,
+        @debug bit', 
+        @log_schema_name, 
+        @log_database_name,
+        @debug;
+
+    SET @create_sql = N'
+        IF NOT EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+              ON t.schema_id = s.schema_id
+            WHERE t.name = @table_name + N''_BlockedProcessReport''
+            AND   s.name = @schema_name
+        )
+        BEGIN
+            CREATE TABLE ' + @log_table_blocking + N' 
+            (
+                id bigint IDENTITY,
+                collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+	            blocked_process_report varchar(22) NOT NULL,
+	            event_time datetime2(7) NULL,
+	            database_name nvarchar(128) NULL,
+	            currentdbname nvarchar(256) NULL,
+	            contentious_object nvarchar(4000) NULL,
+	            activity varchar(8) NULL,
+	            blocking_tree varchar(8000) NULL,
+	            spid int NULL,
+	            ecid int NULL,
+	            query_text xml NULL,
+	            wait_time_ms bigint NULL,
+	            status nvarchar(10) NULL,
+	            isolation_level nvarchar(50) NULL,
+	            lock_mode nvarchar(10) NULL,
+	            resource_owner_type nvarchar(256) NULL,
+	            transaction_count int NULL,
+	            transaction_name nvarchar(512) NULL,
+	            last_transaction_started datetime2(7) NULL,
+	            last_transaction_completed datetime2(7) NULL,
+	            client_option_1 varchar(261) NULL,
+	            client_option_2 varchar(307) NULL,
+	            wait_resource nvarchar(100) NULL,
+	            priority int NULL,
+	            log_used bigint NULL,
+	            client_app nvarchar(256) NULL,
+	            host_name nvarchar(256) NULL,
+	            login_name nvarchar(256) NULL,
+	            transaction_id bigint NULL,
+	            blocked_process_report_xml xml NULL
+                PRIMARY KEY CLUSTERED (collection_time, id)
+            );
+            IF @debug = 1 BEGIN RAISERROR(''Created table %s for significant waits logging.'', 0, 1, ''' + @log_table_blocking + N''') WITH NOWAIT; END;
+        END';
+
+    EXECUTE sys.sp_executesql 
+        @create_sql, 
+      N'@schema_name sysname, 
+        @table_name sysname,
+        @debug bit', 
+        @log_schema_name, 
+        @log_table_name_prefix,
+        @debug;
+
+    /* Handle log retention if specified */
+    IF @log_to_table = 1 AND @log_retention_days > 0
+    BEGIN            
+        IF @debug = 1 
+        BEGIN 
+            RAISERROR('Cleaning up log tables older than %i days', 0, 1, @log_retention_days) WITH NOWAIT; 
+        END;
+
+        SET @cleanup_date = 
+            DATEADD
+            (
+                DAY, 
+                -@log_retention_days, 
+                SYSDATETIME()
+            );
+        
+        /* Clean up each log table */
+        SET @dsql = N'
+        DELETE FROM ' + @log_table_blocking + '
+        WHERE collection_time < @cleanup_date;';
+        
+        IF @debug = 1 BEGIN PRINT @dsql; END;
+        
+        EXECUTE sys.sp_executesql 
+            @dsql, 
+          N'@cleanup_date datetime2(7)', 
+            @cleanup_date;
+        
+        IF @debug = 1 
+        BEGIN 
+            RAISERROR('Log cleanup complete', 0, 1) WITH NOWAIT; 
+        END;
+    END;
+END;
 
 /*Temp tables for staging results*/
 IF @debug = 1
@@ -386,14 +817,20 @@ CREATE TABLE
 CREATE TABLE
     #block_findings
 (
-    id int IDENTITY PRIMARY KEY,
-    check_id int NOT NULL,
+    id integer IDENTITY PRIMARY KEY CLUSTERED,
+    check_id integer NOT NULL,
     database_name nvarchar(256) NULL,
     object_name nvarchar(1000) NULL,
     finding_group nvarchar(100) NULL,
     finding nvarchar(4000) NULL,
     sort_order bigint
 );
+
+IF LOWER(@target_type) = N'table'
+BEGIN
+    GOTO TableMode;
+    RETURN;
+END;
 
 /*Look to see if the session exists and is running*/
 IF @debug = 1
@@ -441,7 +878,8 @@ IF @debug = 1
 BEGIN
     RAISERROR('What kind of target does %s have?', 0, 1, @session_name) WITH NOWAIT;
 END;
-IF @target_type IS NULL AND @is_system_health = 0
+IF  @target_type IS NULL 
+AND @is_system_health = 0
 BEGIN
     IF @azure = 0
     BEGIN
@@ -471,7 +909,8 @@ BEGIN
 END;
 
 /* Dump whatever we got into a temp table */
-IF @target_type = N'ring_buffer' AND @is_system_health = 0
+IF  LOWER(@target_type) = N'ring_buffer' 
+AND @is_system_health = 0
 BEGIN
     IF @azure = 0
     BEGIN
@@ -520,7 +959,8 @@ BEGIN
     END;
 END;
 
-IF @target_type = N'event_file' AND @is_system_health = 0
+IF  LOWER(@target_type) = N'event_file' 
+AND @is_system_health = 0
 BEGIN
     IF @azure = 0
     BEGIN
@@ -635,7 +1075,8 @@ BEGIN
 END;
 
 
-IF @target_type = N'ring_buffer' AND @is_system_health = 0
+IF  LOWER(@target_type) = N'ring_buffer' 
+AND @is_system_health = 0
 BEGIN
     IF @debug = 1
     BEGIN
@@ -643,7 +1084,9 @@ BEGIN
     END;
 
     INSERT
-        #blocking_xml WITH(TABLOCKX)
+        #blocking_xml 
+    WITH
+        (TABLOCKX)
     (
         human_events_xml
     )
@@ -656,7 +1099,8 @@ BEGIN
     OPTION(RECOMPILE);
 END;
 
-IF @target_type = N'event_file' AND @is_system_health = 0
+IF  LOWER(@target_type) = N'event_file' 
+AND @is_system_health = 0
 BEGIN
     IF @debug = 1
     BEGIN
@@ -664,7 +1108,9 @@ BEGIN
     END;
 
     INSERT
-        #blocking_xml WITH(TABLOCKX)
+        #blocking_xml 
+    WITH
+        (TABLOCKX)
     (
         human_events_xml
     )
@@ -680,8 +1126,17 @@ END;
 /*
 This section is special for the well-hidden and much less comprehensive blocked
 process report stored in the system health extended event session
+
+Note: I do not allow logging to a table from this, because the set of columns
+and available data is too incomplete, and I don't want to juggle multiple
+table definitions. 
+
+Logging to a table is only allowed from the a blocked_process_report Extended Event,
+but it can either be ring buffer or file target. I don't care about that.
 */
-IF @is_system_health = 1
+IF  @is_system_health = 1
+AND LOWER(@target_type) <> N'table'
+AND @log_to_table = 0
 BEGIN
     IF @debug = 1
     BEGIN
@@ -748,16 +1203,16 @@ BEGIN
     SELECT
         bx.event_time,
         currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-        spid = bd.value('(process/@spid)[1]', 'int'),
-        ecid = bd.value('(process/@ecid)[1]', 'int'),
-        query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+        spid = bd.value('(process/@spid)[1]', 'integer'),
+        ecid = bd.value('(process/@ecid)[1]', 'integer'),
+        query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
         lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
         lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
         wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
         status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bd.value('(process/@priority)[1]', 'int'),
-        transaction_count = bd.value('(process/@trancount)[1]', 'int'),
+        priority = bd.value('(process/@priority)[1]', 'integer'),
+        transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
         client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
         host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
         login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -805,16 +1260,16 @@ BEGIN
     SELECT
         bx.event_time,
         currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-        spid = bg.value('(process/@spid)[1]', 'int'),
-        ecid = bg.value('(process/@ecid)[1]', 'int'),
-        query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+        spid = bg.value('(process/@spid)[1]', 'integer'),
+        ecid = bg.value('(process/@ecid)[1]', 'integer'),
+        query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
         wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
         last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
         last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
         wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
         status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-        priority = bg.value('(process/@priority)[1]', 'int'),
-        transaction_count = bg.value('(process/@trancount)[1]', 'int'),
+        priority = bg.value('(process/@priority)[1]', 'integer'),
+        transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
         client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
         host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
         login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -1051,13 +1506,13 @@ BEGIN
                 'available_plans',
             b.currentdbname,
             query_text =
-                TRY_CAST(b.query_text AS nvarchar(MAX)),
+                TRY_CAST(b.query_text AS nvarchar(max)),
             sql_handle =
                 CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
             stmtstart =
-                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+                ISNULL(n.c.value('@stmtstart', 'integer'), 0),
             stmtend =
-                ISNULL(n.c.value('@stmtend', 'int'), -1)
+                ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks_sh AS b
         CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.currentdbname = @database_name
@@ -1070,13 +1525,13 @@ BEGIN
                 'available_plans',
             b.currentdbname,
             query_text =
-                TRY_CAST(b.query_text AS nvarchar(MAX)),
+                TRY_CAST(b.query_text AS nvarchar(max)),
             sql_handle =
                 CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
             stmtstart =
-                ISNULL(n.c.value('@stmtstart', 'int'), 0),
+                ISNULL(n.c.value('@stmtstart', 'integer'), 0),
             stmtend =
-                ISNULL(n.c.value('@stmtend', 'int'), -1)
+                ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks_sh AS b
         CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.currentdbname = @database_name
@@ -1159,7 +1614,8 @@ BEGIN
         FROM #available_plans_sh AS ap
         WHERE ap.sql_handle = deqs.sql_handle
     )
-    AND deqs.query_hash IS NOT NULL;
+    AND deqs.query_hash IS NOT NULL
+    OPTION(RECOMPILE);
 
     IF @debug = 1
     BEGIN
@@ -1259,6 +1715,72 @@ BEGIN
     /*End system health section, skips checks because most of them won't run*/
 END;
 
+TableMode:
+IF LOWER(@target_type) = N'table'
+BEGIN
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Extracting blocked process reports from table %s.%s.%s', 0, 1, @target_database, @target_schema, @target_table) WITH NOWAIT;
+    END;
+
+    /* Build dynamic SQL to extract the XML */ 
+    SET @extract_sql = N'
+    SELECT 
+        human_events_xml = ' + 
+        QUOTENAME(@target_column) + 
+        N'
+    FROM ' + 
+    QUOTENAME(@target_database) + 
+    N'.' + 
+    QUOTENAME(@target_schema) + 
+    N'.' + 
+    QUOTENAME(@target_table) + 
+    N' AS x
+    CROSS APPLY x.' + 
+    QUOTENAME(@target_column) + 
+    N'.nodes(''/event'') AS e(x)
+    WHERE e.x.exist(''@name[ .= "blocked_process_report"]'') = 1';
+    
+    /* Add timestamp filtering if specified*/
+    IF @timestamp_column IS NOT NULL 
+    BEGIN
+            SET @extract_sql = @extract_sql + N'
+    AND   x.' + QUOTENAME(@timestamp_column) + N' >= @start_date
+    AND   x.' + QUOTENAME(@timestamp_column) + N' < @end_date';
+    END;
+
+    IF @timestamp_column IS NULL
+    BEGIN
+        BEGIN
+            SET @extract_sql = @extract_sql + N'
+    AND   e.x.exist(''@timestamp[. >= sql:variable("@start_date") and . < sql:variable("@end_date")]'') = 1';
+        END;
+    END;
+
+    SET @extract_sql = @extract_sql + N'
+    OPTION(RECOMPILE);
+    ';
+    
+    IF @debug = 1
+    BEGIN
+        PRINT @extract_sql;
+    END;
+
+    /* Execute the dynamic SQL*/
+    INSERT 
+        #blocking_xml 
+    WITH
+        (TABLOCKX)
+    (
+        human_events_xml
+    )
+    EXECUTE sys.sp_executesql 
+        @extract_sql, 
+      N'@start_date datetime2, 
+        @end_date datetime2',
+        @start_date, 
+        @end_date;
+END;
 
 IF @debug = 1
 BEGIN
@@ -1284,17 +1806,17 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
-    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
-    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
+    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
     resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
-    monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
-    blocking_spid = bg.value('(process/@spid)[1]', 'int'),
-    blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
-    blocked_spid = bd.value('(process/@spid)[1]', 'int'),
-    blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
-    query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+    monitor_loop = c.value('(//@monitorLoop)[1]', 'integer'),
+    blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
+    blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
+    blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
+    blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
+    query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
     wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
     transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(512)'),
     last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
@@ -1302,8 +1824,8 @@ SELECT
     wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
     lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
     status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-    priority = bd.value('(process/@priority)[1]', 'int'),
-    transaction_count = bd.value('(process/@trancount)[1]', 'int'),
+    priority = bd.value('(process/@priority)[1]', 'integer'),
+    transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
     client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
     host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
     login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -1312,7 +1834,7 @@ SELECT
     clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
     clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
     currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
-    currentdbid = bd.value('(process/@currentdb)[1]', 'int'),
+    currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
     sort_order = CAST('' AS varchar(400)),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
@@ -1404,17 +1926,17 @@ SELECT
             ),
             c.value('@timestamp', 'datetime2')
         ),
-    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'int')),
-    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'int'),
-    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'int'),
+    database_name = DB_NAME(c.value('(data[@name="database_id"]/value/text())[1]', 'integer')),
+    database_id = c.value('(data[@name="database_id"]/value/text())[1]', 'integer'),
+    object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
     resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
-    monitor_loop = c.value('(//@monitorLoop)[1]', 'int'),
-    blocking_spid = bg.value('(process/@spid)[1]', 'int'),
-    blocking_ecid = bg.value('(process/@ecid)[1]', 'int'),
-    blocked_spid = bd.value('(process/@spid)[1]', 'int'),
-    blocked_ecid = bd.value('(process/@ecid)[1]', 'int'),
-    query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+    monitor_loop = c.value('(//@monitorLoop)[1]', 'integer'),
+    blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
+    blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
+    blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
+    blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
+    query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
     wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
     transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(512)'),
     last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
@@ -1422,8 +1944,8 @@ SELECT
     wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
     lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
     status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-    priority = bg.value('(process/@priority)[1]', 'int'),
-    transaction_count = bg.value('(process/@trancount)[1]', 'int'),
+    priority = bg.value('(process/@priority)[1]', 'integer'),
+    transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
     client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
     host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
     login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -1432,7 +1954,7 @@ SELECT
     clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
     clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
     currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-    currentdbid = bg.value('(process/@currentdb)[1]', 'int'),
+    currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
     sort_order = CAST('' AS varchar(400)),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
@@ -1523,15 +2045,15 @@ WITH
             CAST
             (
                 blocking_desc +
-                ' <-- ' +
+                ' </* ' +
                 blocked_desc AS varchar(400)
             )
-    FROM #blocking b
+    FROM #blocking AS b
     WHERE NOT EXISTS
     (
         SELECT
             1/0
-        FROM #blocking b2
+        FROM #blocking AS b2
         WHERE b2.monitor_loop = b.monitor_loop
         AND   b2.blocked_desc = b.blocking_desc
     )
@@ -1549,20 +2071,21 @@ WITH
                 h.sort_order +
                 ' ' +
                 bg.blocking_desc +
-                ' <-- ' +
+                ' </* ' +
                 bg.blocked_desc AS varchar(400)
             )
-    FROM hierarchy h
-    JOIN #blocking bg
+    FROM hierarchy AS h
+    JOIN #blocking AS bg
       ON  bg.monitor_loop = h.monitor_loop
       AND bg.blocking_desc = h.blocked_desc
 )
-UPDATE #blocked
+UPDATE 
+    #blocked
 SET
     blocking_level = h.level,
     sort_order = h.sort_order
-FROM #blocked b
-JOIN hierarchy h
+FROM #blocked AS b
+JOIN hierarchy AS h
   ON  h.monitor_loop = b.monitor_loop
   AND h.blocking_desc = b.blocking_desc
   AND h.blocked_desc = b.blocked_desc
@@ -1573,12 +2096,13 @@ BEGIN
     RAISERROR('Updating #blocking', 0, 1) WITH NOWAIT;
 END;
 
-UPDATE #blocking
+UPDATE 
+    #blocking
 SET
     blocking_level = bd.blocking_level,
     sort_order = bd.sort_order
-FROM #blocking bg
-JOIN #blocked bd
+FROM #blocking AS bg
+JOIN #blocked AS bd
   ON  bd.monitor_loop = bg.monitor_loop
   AND bd.blocking_desc = bg.blocking_desc
   AND bd.blocked_desc = bg.blocked_desc
@@ -1688,16 +2212,24 @@ FROM
     SELECT
         bg.*
     FROM #blocking AS bg
-    WHERE (bg.database_name = @database_name
-           OR @database_name IS NULL)
+    WHERE 
+    (
+         @database_name IS NULL 
+      OR bg.database_name = @database_name 
+      OR bg.currentdbname = @database_name
+    )
 
     UNION ALL
 
     SELECT
         bd.*
     FROM #blocked AS bd
-    WHERE (bd.database_name = @database_name
-           OR @database_name IS NULL)
+    WHERE 
+    (
+         @database_name IS NULL 
+      OR bd.database_name = @database_name 
+      OR bd.currentdbname = @database_name
+    )
 ) AS kheb
 OPTION(RECOMPILE);
 
@@ -1808,9 +2340,11 @@ CROSS APPLY
 ) AS co
 OPTION(RECOMPILE);
 
+/*Either return results or log to a table*/
+SET @dsql = N'
 SELECT
     blocked_process_report =
-        'blocked_process_report',
+        ''blocked_process_report'',
     b.event_time,
     b.database_name,
     b.currentdbname,
@@ -1838,7 +2372,8 @@ SELECT
     b.host_name,
     b.login_name,
     b.transaction_id,
-    blocked_process_report_xml = b.blocked_process_report
+    blocked_process_report_xml = 
+        b.blocked_process_report
 FROM
 (
     SELECT
@@ -1858,915 +2393,476 @@ FROM
 WHERE b.n = 1
 AND   (b.contentious_object = @object_name
        OR @object_name IS NULL)
+
+';
+
+/* Add the WHERE clause only for table logging */
+IF @log_to_table = 1
+BEGIN
+    SET @mdsql = 
+        REPLACE
+        (
+            REPLACE
+            (
+                @mdsql, 
+                '{table_check}', 
+                @log_table_blocking
+            ), 
+            '{date_column}', 
+            'event_time'
+        );
+    
+    IF @debug = 1 BEGIN PRINT @mdsql; END;
+    
+    EXECUTE sys.sp_executesql 
+        @mdsql, 
+      N'@max_event_time datetime2(7) OUTPUT', 
+        @max_event_time OUTPUT;
+
+    SET @mdsql = 
+        REPLACE
+        (
+            REPLACE
+            (
+                @mdsql, 
+                @log_table_blocking, 
+                '{table_check}'
+            ),
+            'event_time', 
+            '{date_column}'
+        );
+
+    SET @dsql += N'
+AND   b.event_time > @max_event_time';
+END;
+
+/* Add the ORDER BY clause */
+SET @dsql += N'
 ORDER BY
     b.event_time,
     b.sort_order,
     CASE
-        WHEN b.activity = 'blocking'
+        WHEN b.activity = ''blocking''
         THEN -1
         ELSE +1
     END
-OPTION(RECOMPILE);
+OPTION(RECOMPILE);';
 
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #available_plans', 0, 1) WITH NOWAIT;
+/* Handle table logging */
+IF @log_to_table = 1
+BEGIN        
+    SET @insert_sql = N'
+INSERT INTO 
+    ' + @log_table_blocking + N'
+(
+    blocked_process_report,
+    event_time,
+    database_name,
+    currentdbname,
+    contentious_object,
+    activity,
+    blocking_tree,
+    spid,
+    ecid,
+    query_text,
+    wait_time_ms,
+    status,
+    isolation_level,
+    lock_mode,
+    resource_owner_type,
+    transaction_count,
+    transaction_name,
+    last_transaction_started,
+    last_transaction_completed,
+    client_option_1,
+    client_option_2,
+    wait_resource,
+    priority,
+    log_used,
+    client_app,
+    host_name,
+    login_name,
+    transaction_id,
+    blocked_process_report_xml
+)' + 
+    @dsql;
+    
+    IF @debug = 1 BEGIN PRINT @insert_sql; END;
+    
+    EXECUTE sys.sp_executesql 
+        @insert_sql, 
+      N'@max_event_time datetime2(7),
+        @object_name sysname', 
+        @max_event_time,
+        @object_name;
 END;
 
-SELECT DISTINCT
-    b.*
-INTO #available_plans
-FROM
-(
-    SELECT
-        available_plans =
-            'available_plans',
-        b.database_name,
-        b.database_id,
-        b.currentdbname,
-        b.currentdbid,
-        b.contentious_object,
-        query_text =
-            TRY_CAST(b.query_text AS nvarchar(MAX)),
-        sql_handle =
-            CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
-        stmtstart =
-            ISNULL(n.c.value('@stmtstart', 'int'), 0),
-        stmtend =
-            ISNULL(n.c.value('@stmtend', 'int'), -1)
-    FROM #blocks AS b
-    CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-    WHERE (b.database_name = @database_name
-            OR @database_name IS NULL)
-    AND  (b.contentious_object = @object_name
-            OR @object_name IS NULL)
-
-    UNION ALL
-
-    SELECT
-        available_plans =
-            'available_plans',
-        b.database_name,
-        b.database_id,
-        b.currentdbname,
-        b.currentdbid,
-        b.contentious_object,
-        query_text =
-            TRY_CAST(b.query_text AS nvarchar(MAX)),
-        sql_handle =
-            CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
-        stmtstart =
-            ISNULL(n.c.value('@stmtstart', 'int'), 0),
-        stmtend =
-            ISNULL(n.c.value('@stmtend', 'int'), -1)
-    FROM #blocks AS b
-    CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-    WHERE (b.database_name = @database_name
-            OR @database_name IS NULL)
-    AND  (b.contentious_object = @object_name
-            OR @object_name IS NULL)
-) AS b
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    SELECT
-        '#available_plans' AS table_name,
-        ap.*
-    FROM #available_plans AS ap
-    OPTION(RECOMPILE);
-
-    RAISERROR('Inserting #dm_exec_query_stats', 0, 1) WITH NOWAIT;
+/* Execute the query for client results */
+IF @log_to_table = 0
+BEGIN        
+    
+    IF @debug = 1 BEGIN PRINT @dsql; END;
+    
+    EXECUTE sys.sp_executesql 
+        @dsql,
+      N'@object_name sysname',
+        @object_name;
 END;
 
-SELECT
-    deqs.sql_handle,
-    deqs.plan_handle,
-    deqs.statement_start_offset,
-    deqs.statement_end_offset,
-    deqs.creation_time,
-    deqs.last_execution_time,
-    deqs.execution_count,
-    total_worker_time_ms =
-        deqs.total_worker_time / 1000.,
-    avg_worker_time_ms =
-        CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
-    total_elapsed_time_ms =
-        deqs.total_elapsed_time / 1000.,
-    avg_elapsed_time_ms =
-        CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
-    executions_per_second =
-        ISNULL
-        (
-            deqs.execution_count /
-                NULLIF
-                (
-                    DATEDIFF
-                    (
-                        SECOND,
-                        deqs.creation_time,
-                        NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
-                    ),
-                    0
-                ),
-                0
-        ),
-    total_physical_reads_mb =
-        deqs.total_physical_reads * 8. / 1024.,
-    total_logical_writes_mb =
-        deqs.total_logical_writes * 8. / 1024.,
-    total_logical_reads_mb =
-        deqs.total_logical_reads * 8. / 1024.,
-    min_grant_mb =
-        deqs.min_grant_kb * 8. / 1024.,
-    max_grant_mb =
-        deqs.max_grant_kb * 8. / 1024.,
-    min_used_grant_mb =
-        deqs.min_used_grant_kb * 8. / 1024.,
-    max_used_grant_mb =
-        deqs.max_used_grant_kb * 8. / 1024.,
-    deqs.min_reserved_threads,
-    deqs.max_reserved_threads,
-    deqs.min_used_threads,
-    deqs.max_used_threads,
-    deqs.total_rows,
-    max_worker_time_ms =
-        deqs.max_worker_time / 1000.,
-    max_elapsed_time_ms =
-        deqs.max_elapsed_time / 1000.
-INTO #dm_exec_query_stats
-FROM sys.dm_exec_query_stats AS deqs
-WHERE EXISTS
-(
-   SELECT
-       1/0
-   FROM #available_plans AS ap
-   WHERE ap.sql_handle = deqs.sql_handle
-)
-AND deqs.query_hash IS NOT NULL;
-
-IF @debug = 1
+/*
+Only run query plan and check stuff 
+when not logging to a table
+*/
+IF @log_to_table = 0
 BEGIN
-    RAISERROR('Creating index on #dm_exec_query_stats', 0, 1) WITH NOWAIT;
-END;
-
-CREATE CLUSTERED INDEX
-    deqs
-ON #dm_exec_query_stats
-(
-    sql_handle,
-    plan_handle
-);
-
-SELECT
-    ap.available_plans,
-    ap.database_name,
-    ap.currentdbname,
-    query_text =
-        TRY_CAST(ap.query_text AS xml),
-    ap.query_plan,
-    ap.creation_time,
-    ap.last_execution_time,
-    ap.execution_count,
-    ap.executions_per_second,
-    ap.total_worker_time_ms,
-    ap.avg_worker_time_ms,
-    ap.max_worker_time_ms,
-    ap.total_elapsed_time_ms,
-    ap.avg_elapsed_time_ms,
-    ap.max_elapsed_time_ms,
-    ap.total_logical_reads_mb,
-    ap.total_physical_reads_mb,
-    ap.total_logical_writes_mb,
-    ap.min_grant_mb,
-    ap.max_grant_mb,
-    ap.min_used_grant_mb,
-    ap.max_used_grant_mb,
-    ap.min_reserved_threads,
-    ap.max_reserved_threads,
-    ap.min_used_threads,
-    ap.max_used_threads,
-    ap.total_rows,
-    ap.sql_handle,
-    ap.statement_start_offset,
-    ap.statement_end_offset
-FROM
-(
-
-    SELECT
-        ap.*,
-        c.statement_start_offset,
-        c.statement_end_offset,
-        c.creation_time,
-        c.last_execution_time,
-        c.execution_count,
-        c.total_worker_time_ms,
-        c.avg_worker_time_ms,
-        c.total_elapsed_time_ms,
-        c.avg_elapsed_time_ms,
-        c.executions_per_second,
-        c.total_physical_reads_mb,
-        c.total_logical_writes_mb,
-        c.total_logical_reads_mb,
-        c.min_grant_mb,
-        c.max_grant_mb,
-        c.min_used_grant_mb,
-        c.max_used_grant_mb,
-        c.min_reserved_threads,
-        c.max_reserved_threads,
-        c.min_used_threads,
-        c.max_used_threads,
-        c.total_rows,
-        c.query_plan,
-        c.max_worker_time_ms,
-        c.max_elapsed_time_ms
-    FROM #available_plans AS ap
-    OUTER APPLY
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #available_plans', 0, 1) WITH NOWAIT;
+    END;
+    
+    SELECT DISTINCT
+        b.*
+    INTO #available_plans
+    FROM
     (
         SELECT
-            deqs.*,
-            query_plan =
-                TRY_CAST(deps.query_plan AS xml)
-        FROM #dm_exec_query_stats deqs
-        OUTER APPLY sys.dm_exec_text_query_plan
+            available_plans =
+                'available_plans',
+            b.database_name,
+            b.database_id,
+            b.currentdbname,
+            b.currentdbid,
+            b.contentious_object,
+            query_text =
+                TRY_CAST(b.query_text AS nvarchar(max)),
+            sql_handle =
+                CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
+            stmtstart =
+                ISNULL(n.c.value('@stmtstart', 'integer'), 0),
+            stmtend =
+                ISNULL(n.c.value('@stmtend', 'integer'), -1)
+        FROM #blocks AS b
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        WHERE
         (
-            deqs.plan_handle,
-            deqs.statement_start_offset,
-            deqs.statement_end_offset
-        ) AS deps
-        WHERE deqs.sql_handle = ap.sql_handle
-        AND   deps.dbid IN (ap.database_id, ap.currentdbid)
-    ) AS c
-) AS ap
-WHERE ap.query_plan IS NOT NULL
-ORDER BY
-    ap.avg_worker_time_ms DESC
-OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id -1', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id = -1,
-    database_name = N'erikdarling.com',
-    object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
-    finding_group = N'https://github.com/erikdarlingdata/DarlingData',
-    finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
-    1;
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 1', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        1,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Database Locks',
-    finding =
-        N'The database ' +
-        b.database_name +
-        N' has been involved in ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' blocking sessions.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 2', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        2,
-    database_name =
-        b.database_name,
-    object_name =
-        b.contentious_object,
-    finding_group =
-        N'Object Locks',
-    finding =
-        N'The object ' +
-        b.contentious_object +
-        CASE
-            WHEN b.contentious_object LIKE N'Unresolved%'
-            THEN N''
-            ELSE N' in database ' +
-                 b.database_name
-        END +
-        N' has been involved in ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' blocking sessions.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name,
-    b.contentious_object
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 3', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        3,
-    database_name =
-        b.database_name,
-    object_name =
-        CASE
-            WHEN EXISTS
-                 (
-                     SELECT
-                         1/0
-                     FROM sys.databases AS d
-                     WHERE d.name COLLATE DATABASE_DEFAULT = b.database_name COLLATE DATABASE_DEFAULT
-                     AND   d.is_read_committed_snapshot_on = 1
-                 )
-            THEN N'You already enabled RCSI, but...'
-            ELSE N'You Might Need RCSI'
-        END,
-    finding_group =
-        N'Blocking Involving Selects',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' select queries involved in blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.lock_mode IN
-      (
-          N'S',
-          N'IS'
-      )
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-HAVING
-    COUNT_BIG(DISTINCT b.transaction_id) > 1
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 4', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        4,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Repeatable Read Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' repeatable read queries involved in blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.isolation_level LIKE N'repeatable%'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 5', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        5,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Serializable Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' serializable queries involved in blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.isolation_level LIKE N'serializable%'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 6.1', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        6,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Sleeping Query Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' sleeping queries involved in blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.status = N'sleeping'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 6.2', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        6,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Background Query Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' background tasks involved in blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.status = N'background'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 6.3', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        6,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Done Query Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' background tasks involved in blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.status = N'done'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 6.4', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        6,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Compile Lock Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' compile locks blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.wait_resource LIKE N'%COMPILE%'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 6.5', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        6,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Application Lock Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' application locks blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.wait_resource LIKE N'APPLICATION%'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 7.1', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        7,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Implicit Transaction Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' implicit transaction queries involved in blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.transaction_name = N'implicit_transaction'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 7.2', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        7,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'User Transaction Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' user transaction queries involved in blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.transaction_name = N'user_transaction'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 7.3', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        7,
-    database_name =
-        b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Auto-Stats Update Blocking',
-    finding =
-        N'There have been ' +
-        CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-        N' user transaction queries involved in blocking sessions in ' +
-        b.database_name +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE b.transaction_name = N'sqlsource_transform'
-AND   (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 8', 0, 1) WITH NOWAIT;
-END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id = 8,
-    b.database_name,
-    object_name = N'-',
-    finding_group = N'Login, App, and Host blocking',
-    finding =
-        N'This database has had ' +
-        CONVERT
+            (b.database_name = @database_name
+                OR @database_name IS NULL)
+         OR (b.currentdbname = @database_name
+                OR @database_name IS NULL)
+        )
+        AND  (b.contentious_object = @object_name
+                OR @object_name IS NULL)
+    
+        UNION ALL
+    
+        SELECT
+            available_plans =
+                'available_plans',
+            b.database_name,
+            b.database_id,
+            b.currentdbname,
+            b.currentdbid,
+            b.contentious_object,
+            query_text =
+                TRY_CAST(b.query_text AS nvarchar(max)),
+            sql_handle =
+                CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
+            stmtstart =
+                ISNULL(n.c.value('@stmtstart', 'integer'), 0),
+            stmtend =
+                ISNULL(n.c.value('@stmtend', 'integer'), -1)
+        FROM #blocks AS b
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        WHERE    
         (
-            nvarchar(20),
-            COUNT_BIG(DISTINCT b.transaction_id)
-        ) +
-        N' instances of blocking involving the login ' +
-        ISNULL
-        (
-            b.login_name,
-            N'UNKNOWN'
-        ) +
-        N' from the application ' +
-        ISNULL
-        (
-            b.client_app,
-            N'UNKNOWN'
-        ) +
-        N' on host ' +
-        ISNULL
-        (
-            b.host_name,
-            N'UNKNOWN'
-        ) +
-        N'.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
-FROM #blocks AS b
-WHERE (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name,
-    b.login_name,
-    b.client_app,
-    b.host_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 1000', 0, 1) WITH NOWAIT;
-END;
-
-WITH
-    b AS
-(
+            (b.database_name = @database_name
+                OR @database_name IS NULL)
+         OR (b.currentdbname = @database_name
+                OR @database_name IS NULL)
+        )
+        AND  (b.contentious_object = @object_name
+                OR @object_name IS NULL)
+    ) AS b
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        SELECT
+            '#available_plans' AS table_name,
+            ap.*
+        FROM #available_plans AS ap
+        OPTION(RECOMPILE);
+    
+        RAISERROR('Inserting #dm_exec_query_stats', 0, 1) WITH NOWAIT;
+    END;
+    
     SELECT
-        b.database_name,
-        b.transaction_id,
-        wait_time_ms =
-            MAX(b.wait_time_ms)
+        deqs.sql_handle,
+        deqs.plan_handle,
+        deqs.statement_start_offset,
+        deqs.statement_end_offset,
+        deqs.creation_time,
+        deqs.last_execution_time,
+        deqs.execution_count,
+        total_worker_time_ms =
+            deqs.total_worker_time / 1000.,
+        avg_worker_time_ms =
+            CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
+        total_elapsed_time_ms =
+            deqs.total_elapsed_time / 1000.,
+        avg_elapsed_time_ms =
+            CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
+        executions_per_second =
+            ISNULL
+            (
+                deqs.execution_count /
+                    NULLIF
+                    (
+                        DATEDIFF
+                        (
+                            SECOND,
+                            deqs.creation_time,
+                            NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
+                        ),
+                        0
+                    ),
+                    0
+            ),
+        total_physical_reads_mb =
+            deqs.total_physical_reads * 8. / 1024.,
+        total_logical_writes_mb =
+            deqs.total_logical_writes * 8. / 1024.,
+        total_logical_reads_mb =
+            deqs.total_logical_reads * 8. / 1024.,
+        min_grant_mb =
+            deqs.min_grant_kb * 8. / 1024.,
+        max_grant_mb =
+            deqs.max_grant_kb * 8. / 1024.,
+        min_used_grant_mb =
+            deqs.min_used_grant_kb * 8. / 1024.,
+        max_used_grant_mb =
+            deqs.max_used_grant_kb * 8. / 1024.,
+        deqs.min_reserved_threads,
+        deqs.max_reserved_threads,
+        deqs.min_used_threads,
+        deqs.max_used_threads,
+        deqs.total_rows,
+        max_worker_time_ms =
+            deqs.max_worker_time / 1000.,
+        max_elapsed_time_ms =
+            deqs.max_elapsed_time / 1000.
+    INTO #dm_exec_query_stats
+    FROM sys.dm_exec_query_stats AS deqs
+    WHERE EXISTS
+    (
+       SELECT
+           1/0
+       FROM #available_plans AS ap
+       WHERE ap.sql_handle = deqs.sql_handle
+    )
+    AND deqs.query_hash IS NOT NULL
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Creating index on #dm_exec_query_stats', 0, 1) WITH NOWAIT;
+    END;
+    
+    CREATE CLUSTERED INDEX
+        deqs
+    ON #dm_exec_query_stats
+    (
+        sql_handle,
+        plan_handle
+    );
+
+    SELECT
+        ap.available_plans,
+        ap.database_name,
+        ap.currentdbname,
+        query_text =
+            TRY_CAST(ap.query_text AS xml),
+        ap.query_plan,
+        ap.creation_time,
+        ap.last_execution_time,
+        ap.execution_count,
+        ap.executions_per_second,
+        ap.total_worker_time_ms,
+        ap.avg_worker_time_ms,
+        ap.max_worker_time_ms,
+        ap.total_elapsed_time_ms,
+        ap.avg_elapsed_time_ms,
+        ap.max_elapsed_time_ms,
+        ap.total_logical_reads_mb,
+        ap.total_physical_reads_mb,
+        ap.total_logical_writes_mb,
+        ap.min_grant_mb,
+        ap.max_grant_mb,
+        ap.min_used_grant_mb,
+        ap.max_used_grant_mb,
+        ap.min_reserved_threads,
+        ap.max_reserved_threads,
+        ap.min_used_threads,
+        ap.max_used_threads,
+        ap.total_rows,
+        ap.sql_handle,
+        ap.statement_start_offset,
+        ap.statement_end_offset
+    FROM
+    (
+    
+        SELECT
+            ap.*,
+            c.statement_start_offset,
+            c.statement_end_offset,
+            c.creation_time,
+            c.last_execution_time,
+            c.execution_count,
+            c.total_worker_time_ms,
+            c.avg_worker_time_ms,
+            c.total_elapsed_time_ms,
+            c.avg_elapsed_time_ms,
+            c.executions_per_second,
+            c.total_physical_reads_mb,
+            c.total_logical_writes_mb,
+            c.total_logical_reads_mb,
+            c.min_grant_mb,
+            c.max_grant_mb,
+            c.min_used_grant_mb,
+            c.max_used_grant_mb,
+            c.min_reserved_threads,
+            c.max_reserved_threads,
+            c.min_used_threads,
+            c.max_used_threads,
+            c.total_rows,
+            c.query_plan,
+            c.max_worker_time_ms,
+            c.max_elapsed_time_ms
+        FROM #available_plans AS ap
+        OUTER APPLY
+        (
+            SELECT
+                deqs.*,
+                query_plan =
+                    TRY_CAST(deps.query_plan AS xml)
+            FROM #dm_exec_query_stats deqs
+            OUTER APPLY sys.dm_exec_text_query_plan
+            (
+                deqs.plan_handle,
+                deqs.statement_start_offset,
+                deqs.statement_end_offset
+            ) AS deps
+            WHERE deqs.sql_handle = ap.sql_handle
+            AND   deps.dbid IN (ap.database_id, ap.currentdbid)
+        ) AS c
+    ) AS ap
+    WHERE ap.query_plan IS NOT NULL
+    ORDER BY
+        ap.avg_worker_time_ms DESC
+    OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id -1', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id = -1,
+        database_name = N'erikdarling.com',
+        object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
+        finding_group = N'https://github.com/erikdarlingdata/DarlingData',
+        finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
+        1;
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 1', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            1,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Database Locks',
+        finding =
+            N'The database ' +
+            b.database_name +
+            N' has been involved in ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' blocking sessions.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 2', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            2,
+        database_name =
+            b.database_name,
+        object_name =
+            b.contentious_object,
+        finding_group =
+            N'Object Locks',
+        finding =
+            N'The object ' +
+            b.contentious_object +
+            CASE
+                WHEN b.contentious_object LIKE N'Unresolved%'
+                THEN N''
+                ELSE N' in database ' +
+                     b.database_name
+            END +
+            N' has been involved in ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' blocking sessions.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
     FROM #blocks AS b
     WHERE (b.database_name = @database_name
            OR @database_name IS NULL)
@@ -2774,87 +2870,536 @@ WITH
            OR @object_name IS NULL)
     GROUP BY
         b.database_name,
-        b.transaction_id
-)
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        1000,
-    b.database_name,
-    object_name =
-        N'-',
-    finding_group =
-        N'Total database block wait time',
-    finding =
-        N'This database has had ' +
-        CONVERT
-        (
-            nvarchar(30),
-            (
-                SUM
-                (
-                    CONVERT
-                    (
-                        bigint,
-                        b.wait_time_ms
-                    )
-                ) / 1000 / 86400
-            )
-        ) +
-        N' ' +
-        CONVERT
-          (
-              nvarchar(30),
-              DATEADD
-              (
-                  MILLISECOND,
-                  (
-                      SUM
-                      (
-                          CONVERT
-                          (
-                              bigint,
-                              b.wait_time_ms
-                          )
-                      )
-                  ),
-                  '19000101'
-              ),
-              14
-          ) +
-        N' [dd hh:mm:ss:ms] of lock wait time.',
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
-FROM b AS b
-WHERE (b.database_name = @database_name
-       OR @database_name IS NULL)
-GROUP BY
-    b.database_name
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 1001', 0, 1) WITH NOWAIT;
-END;
-
-WITH
-    b AS
-(
+        b.contentious_object
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 3', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
     SELECT
+        check_id =
+            3,
+        database_name =
+            b.database_name,
+        object_name =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM sys.databases AS d
+                         WHERE d.name COLLATE DATABASE_DEFAULT = b.database_name COLLATE DATABASE_DEFAULT
+                         AND   d.is_read_committed_snapshot_on = 1
+                     )
+                THEN N'You already enabled RCSI, but...'
+                ELSE N'You Might Need RCSI'
+            END,
+        finding_group =
+            N'Blocking Involving Selects',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' select queries involved in blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.lock_mode IN
+          (
+              N'S',
+              N'IS'
+          )
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    HAVING
+        COUNT_BIG(DISTINCT b.transaction_id) > 1
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 4', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            4,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Repeatable Read Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' repeatable read queries involved in blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.isolation_level LIKE N'repeatable%'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 5', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            5,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Serializable Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' serializable queries involved in blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.isolation_level LIKE N'serializable%'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 6.1', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            6,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Sleeping Query Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' sleeping queries involved in blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.status = N'sleeping'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 6.2', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            6,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Background Query Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' background tasks involved in blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.status = N'background'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 6.3', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            6,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Done Query Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' background tasks involved in blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.status = N'done'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 6.4', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            6,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Compile Lock Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' compile locks blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.wait_resource LIKE N'%COMPILE%'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 6.5', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            6,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Application Lock Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' application locks blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.wait_resource LIKE N'APPLICATION%'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 7.1', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            7,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Implicit Transaction Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' implicit transaction queries involved in blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.transaction_name = N'implicit_transaction'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 7.2', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            7,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'User Transaction Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' user transaction queries involved in blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.transaction_name = N'user_transaction'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 7.3', 0, 1) WITH NOWAIT;
+    END;
+
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            7,
+        database_name =
+            b.database_name,
+        object_name =
+            N'-',
+        finding_group =
+            N'Auto-Stats Update Blocking',
+        finding =
+            N'There have been ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
+            N' auto stats updates involved in blocking sessions in ' +
+            b.database_name +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
+    FROM #blocks AS b
+    WHERE b.transaction_name = N'sqlsource_transform'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 8', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id = 8,
         b.database_name,
-        b.transaction_id,
-        b.contentious_object,
-        wait_time_ms =
-            MAX(b.wait_time_ms)
+        object_name = N'-',
+        finding_group = N'Login, App, and Host blocking',
+        finding =
+            N'This database has had ' +
+            CONVERT
+            (
+                nvarchar(20),
+                COUNT_BIG(DISTINCT b.transaction_id)
+            ) +
+            N' instances of blocking involving the login ' +
+            ISNULL
+            (
+                b.login_name,
+                N'UNKNOWN'
+            ) +
+            N' from the application ' +
+            ISNULL
+            (
+                b.client_app,
+                N'UNKNOWN'
+            ) +
+            N' on host ' +
+            ISNULL
+            (
+                b.host_name,
+                N'UNKNOWN'
+            ) +
+            N'.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
     FROM #blocks AS b
     WHERE (b.database_name = @database_name
            OR @database_name IS NULL)
@@ -2862,114 +3407,228 @@ WITH
            OR @object_name IS NULL)
     GROUP BY
         b.database_name,
-        b.contentious_object,
-        b.transaction_id
-)
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id =
-        1001,
-    b.database_name,
-    object_name =
-        b.contentious_object,
-    finding_group =
-        N'Total database and object block wait time',
-    finding =
-        N'This object has had ' +
-        CONVERT
-        (
-            nvarchar(30),
-            (
-                SUM
-                (
-                    CONVERT
-                    (
-                        bigint,
-                        b.wait_time_ms
-                    )
-                ) / 1000 / 86400
-            )
-        ) +
-        N' ' +
-        CONVERT
-          (
-              nvarchar(30),
-              DATEADD
-              (
-                  MILLISECOND,
-                  (
-                      SUM
-                      (
-                          CONVERT
-                          (
-                              bigint,
-                              b.wait_time_ms
-                          )
-                      )
-                  ),
-                  '19000101'
-              ),
-              14
-          ) +
-        N' [dd hh:mm:ss:ms] of lock wait time in database ' +
+        b.login_name,
+        b.client_app,
+        b.host_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 1000', 0, 1) WITH NOWAIT;
+    END;
+    
+    WITH
+        b AS
+    (
+        SELECT
+            b.database_name,
+            b.transaction_id,
+            wait_time_ms =
+                MAX(b.wait_time_ms)
+        FROM #blocks AS b
+        WHERE (b.database_name = @database_name
+               OR @database_name IS NULL)
+        AND   (b.contentious_object = @object_name
+               OR @object_name IS NULL)
+        GROUP BY
+            b.database_name,
+            b.transaction_id
+    )
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            1000,
         b.database_name,
-   sort_order =
-       ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
-FROM b AS b
-WHERE (b.database_name = @database_name
-       OR @database_name IS NULL)
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-GROUP BY
-    b.database_name,
-    b.contentious_object
-OPTION(RECOMPILE);
-
-IF @debug = 1
-BEGIN
-    RAISERROR('Inserting #block_findings, check_id 2147483647', 0, 1) WITH NOWAIT;
+        object_name =
+            N'-',
+        finding_group =
+            N'Total database block wait time',
+        finding =
+            N'This database has had ' +
+            CONVERT
+            (
+                nvarchar(30),
+                (
+                    SUM
+                    (
+                        CONVERT
+                        (
+                            bigint,
+                            b.wait_time_ms
+                        )
+                    ) / 1000 / 86400
+                )
+            ) +
+            N' ' +
+            CONVERT
+              (
+                  nvarchar(30),
+                  DATEADD
+                  (
+                      MILLISECOND,
+                      (
+                          SUM
+                          (
+                              CONVERT
+                              (
+                                  bigint,
+                                  b.wait_time_ms
+                              )
+                          )
+                      ),
+                      '19000101'
+                  ),
+                  14
+              ) +
+            N' [dd hh:mm:ss:ms] of lock wait time.',
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
+    FROM b AS b
+    WHERE (b.database_name = @database_name
+           OR @database_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 1001', 0, 1) WITH NOWAIT;
+    END;
+    
+    WITH
+        b AS
+    (
+        SELECT
+            b.database_name,
+            b.transaction_id,
+            b.contentious_object,
+            wait_time_ms =
+                MAX(b.wait_time_ms)
+        FROM #blocks AS b
+        WHERE (b.database_name = @database_name
+               OR @database_name IS NULL)
+        AND   (b.contentious_object = @object_name
+               OR @object_name IS NULL)
+        GROUP BY
+            b.database_name,
+            b.contentious_object,
+            b.transaction_id
+    )
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            1001,
+        b.database_name,
+        object_name =
+            b.contentious_object,
+        finding_group =
+            N'Total database and object block wait time',
+        finding =
+            N'This object has had ' +
+            CONVERT
+            (
+                nvarchar(30),
+                (
+                    SUM
+                    (
+                        CONVERT
+                        (
+                            bigint,
+                            b.wait_time_ms
+                        )
+                    ) / 1000 / 86400
+                )
+            ) +
+            N' ' +
+            CONVERT
+              (
+                  nvarchar(30),
+                  DATEADD
+                  (
+                      MILLISECOND,
+                      (
+                          SUM
+                          (
+                              CONVERT
+                              (
+                                  bigint,
+                                  b.wait_time_ms
+                              )
+                          )
+                      ),
+                      '19000101'
+                  ),
+                  14
+              ) +
+            N' [dd hh:mm:ss:ms] of lock wait time in database ' +
+            b.database_name,
+       sort_order =
+           ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
+    FROM b AS b
+    WHERE (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name,
+        b.contentious_object
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Inserting #block_findings, check_id 2147483647', 0, 1) WITH NOWAIT;
+    END;
+    
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id = 2147483647,
+        database_name = N'erikdarling.com',
+        object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
+        finding_group = N'https://github.com/erikdarlingdata/DarlingData',
+        finding = N'thanks for using me!',
+        2147483647;
+    
+    SELECT
+        findings =
+             'findings',
+        bf.check_id,
+        bf.database_name,
+        bf.object_name,
+        bf.finding_group,
+        bf.finding
+    FROM #block_findings AS bf
+    ORDER BY
+        bf.check_id,
+        bf.finding_group,
+        bf.sort_order
+    OPTION(RECOMPILE);
 END;
-
-INSERT
-    #block_findings
-(
-    check_id,
-    database_name,
-    object_name,
-    finding_group,
-    finding,
-    sort_order
-)
-SELECT
-    check_id = 2147483647,
-    database_name = N'erikdarling.com',
-    object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
-    finding_group = N'https://github.com/erikdarlingdata/DarlingData',
-    finding = N'thanks for using me!',
-    2147483647;
-
-SELECT
-    findings =
-         'findings',
-    bf.check_id,
-    bf.database_name,
-    bf.object_name,
-    bf.finding_group,
-    bf.finding
-FROM #block_findings AS bf
-ORDER BY
-    bf.check_id,
-    bf.finding_group,
-    bf.sort_order
-OPTION(RECOMPILE);
 END; --Final End
 GO
