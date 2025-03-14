@@ -57,6 +57,11 @@ ALTER PROCEDURE
     @skip_waits bit = 0, /*skips waits when you do not need them on every run*/
     @skip_perfmon bit = 0, /*skips perfmon counters when you do not need them on every run*/
     @sample_seconds tinyint = 0, /*take a sample of your server's metrics*/
+    @log_to_table bit = 0, /*enable logging to permanent tables*/
+    @log_database_name sysname = NULL, /*database to store logging tables*/
+    @log_schema_name sysname = NULL, /*schema to store logging tables*/
+    @log_table_name_prefix sysname = 'PressureDetector', /*prefix for all logging tables*/
+    @log_retention_days integer = 30, /*Number of days to keep logs, 0 = keep indefinitely*/
     @help bit = 0, /*how you got here*/
     @debug bit = 0, /*prints dynamic sql, displays parameter and variable values, and table contents*/
     @version varchar(5) = NULL OUTPUT, /*OUTPUT; for support*/
@@ -110,6 +115,11 @@ BEGIN
                 WHEN N'@skip_waits' THEN N'skips waits when you do not need them on every run'
                 WHEN N'@skip_perfmon' THEN N'skips perfmon counters when you do not need them on every run'
                 WHEN N'@sample_seconds' THEN N'take a sample of your server''s metrics'
+                WHEN N'@log_to_table' THEN N'enable logging to permanent tables instead of returning results'
+                WHEN N'@log_database_name' THEN N'database to store logging tables'
+                WHEN N'@log_schema_name' THEN N'schema to store logging tables'
+                WHEN N'@log_table_name_prefix' THEN N'prefix for all logging tables'
+                WHEN N'@log_retention_days' THEN N'how many days of data to retain'
                 WHEN N'@help' THEN N'how you got here'
                 WHEN N'@debug' THEN N'prints dynamic sql, displays parameter and variable values, and table contents'
                 WHEN N'@version' THEN N'OUTPUT; for support'
@@ -126,6 +136,11 @@ BEGIN
                 WHEN N'@skip_waits' THEN N'0 or 1'
                 WHEN N'@skip_perfmon' THEN N'0 or 1'
                 WHEN N'@sample_seconds' THEN N'a valid tinyint: 0-255'
+                WHEN N'@log_to_table' THEN N'0 or 1'
+                WHEN N'@log_database_name' THEN N'any valid database name'
+                WHEN N'@log_schema_name' THEN N'any valid schema name'
+                WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
+                WHEN N'@log_retention_days' THEN N'a positive integer'
                 WHEN N'@help' THEN N'0 or 1'
                 WHEN N'@debug' THEN N'0 or 1'
                 WHEN N'@version' THEN N'none'
@@ -142,15 +157,20 @@ BEGIN
                 WHEN N'@skip_waits' THEN N'0'
                 WHEN N'@skip_perfmon' THEN N'0'
                 WHEN N'@sample_seconds' THEN N'0'
+                WHEN N'@log_to_table' THEN N'0'
+                WHEN N'@log_database_name' THEN N'NULL (current database)'
+                WHEN N'@log_schema_name' THEN N'NULL (dbo)'
+                WHEN N'@log_table_name_prefix' THEN N'PressureDetector'
+                WHEN N'@log_retention_days' THEN N'30'
                 WHEN N'@help' THEN N'0'
                 WHEN N'@debug' THEN N'0'
                 WHEN N'@version' THEN N'none; OUTPUT'
                 WHEN N'@version_date' THEN N'none; OUTPUT'
             END
     FROM sys.all_parameters AS ap
-    INNER JOIN sys.all_objects AS o
+    JOIN sys.all_objects AS o
       ON ap.object_id = o.object_id
-    INNER JOIN sys.types AS t
+    JOIN sys.types AS t
       ON  ap.system_type_id = t.system_type_id
       AND ap.user_type_id = t.user_type_id
     WHERE o.name = N'sp_PressureDetector'
@@ -214,6 +234,58 @@ END; /*End help section*/
             @what_to_check = 'all';
     END;
 
+    IF  @log_to_table = 1 
+    AND @cpu_utilization_threshold > 0
+    BEGIN
+        IF @debug = 1
+        BEGIN 
+            RAISERROR('Setting @cpu_utilization_threshold to 0 to capture all CPU utilization data when logging to tables', 0, 1) WITH NOWAIT;
+        END;
+        SELECT 
+            @cpu_utilization_threshold = 0;
+    END;
+
+    IF  @log_to_table = 1 
+    AND @sample_seconds <> 0
+    BEGIN
+        IF @debug = 1
+        BEGIN 
+            RAISERROR('Logging to tables is not compatible with @sample_seconds. Using @sample_seconds = 0', 0, 1) WITH NOWAIT;
+        END;
+        SELECT 
+            @sample_seconds = 0;
+    END;
+
+    IF   @log_to_table = 1 
+    AND @what_to_check <> 'all'
+    BEGIN
+        IF @debug = 1
+        BEGIN 
+            RAISERROR('@what_to_check was set to %s, setting to all when logging to tables', 0, 1, @what_to_check) WITH NOWAIT;
+        END; 
+        SELECT
+            @what_to_check = 'all';
+    END;
+
+    IF   @log_to_table = 1 
+    AND 
+    (
+           @skip_queries = 1
+        OR @skip_plan_xml = 1
+        OR @skip_waits = 1
+        OR @skip_perfmon = 1
+    )
+    BEGIN
+        IF @debug = 1
+        BEGIN 
+            RAISERROR('reverting skip options for table logging', 0, 1, @what_to_check) WITH NOWAIT;
+        END; 
+        SELECT
+            @skip_queries = 0,
+            @skip_plan_xml = 0,
+            @skip_waits = 0,
+            @skip_perfmon = 0;
+    END;
 
     /*
     Declarations of Variablependence
@@ -235,7 +307,7 @@ END; /*End help section*/
                 THEN 1
                 ELSE 0
             END,
-        @pool_sql nvarchar(MAX) = N'',
+        @pool_sql nvarchar(max) = N'',
         @pages_kb bit =
             CASE
                 WHEN
@@ -249,7 +321,7 @@ END; /*End help section*/
                 THEN 1
                 ELSE 0
             END,
-        @mem_sql nvarchar(MAX) = N'',
+        @mem_sql nvarchar(max) = N'',
         @helpful_new_columns bit =
             CASE
                 WHEN
@@ -267,7 +339,7 @@ END; /*End help section*/
                 THEN 1
                 ELSE 0
             END,
-        @cpu_sql nvarchar(MAX) = N'',
+        @cpu_sql nvarchar(max) = N'',
         @cool_new_columns bit =
             CASE
                 WHEN
@@ -286,7 +358,7 @@ END; /*End help section*/
                 ELSE 0
             END,
         @reserved_worker_count_out varchar(10) = '0',
-        @reserved_worker_count nvarchar(MAX) = N'
+        @reserved_worker_count nvarchar(max) = N'
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
@@ -295,10 +367,10 @@ SELECT
 FROM sys.dm_exec_query_memory_grants AS deqmg
 OPTION(MAXDOP 1, RECOMPILE);
             ',
-        @cpu_details nvarchar(MAX) = N'',
+        @cpu_details nvarchar(max) = N'',
         @cpu_details_output xml = N'',
-        @cpu_details_columns nvarchar(MAX) = N'',
-        @cpu_details_select nvarchar(MAX) = N'
+        @cpu_details_columns nvarchar(max) = N'',
+        @cpu_details_select nvarchar(max) = N'
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
@@ -308,19 +380,19 @@ SELECT
                 offline_cpus =
                     (SELECT COUNT_BIG(*) FROM sys.dm_os_schedulers dos WHERE dos.is_online = 0),
 ',
-        @cpu_details_from nvarchar(MAX) = N'
+        @cpu_details_from nvarchar(max) = N'
             FROM sys.dm_os_sys_info AS osi
             FOR XML
                 PATH(''cpu_details''),
                 TYPE
         )
 OPTION(MAXDOP 1, RECOMPILE);',
-        @database_size_out nvarchar(MAX) = N'',
-        @database_size_out_gb varchar(10) = '0',
+        @database_size_out nvarchar(max) = N'',
+        @database_size_out_gb nvarchar(10) = '0',
         @total_physical_memory_gb bigint,
         @cpu_utilization xml = N'',
         @low_memory xml = N'',
-        @disk_check nvarchar(MAX) = N'',
+        @disk_check nvarchar(max) = N'',
         @live_plans bit =
             CASE
                 WHEN OBJECT_ID('sys.dm_exec_query_statistics_xml') IS NOT NULL
@@ -359,7 +431,573 @@ OPTION(MAXDOP 1, RECOMPILE);',
         N'%',
         @memory_grant_cap xml,
         @cache_xml xml,
-        @cache_sql nvarchar(MAX) = N'';
+        @cache_sql nvarchar(max) = N'',
+        @resource_semaphores nvarchar(max) = N'',
+        @cpu_threads nvarchar(max) = N'',
+        /*Log to table stuff*/
+        @log_table_waits sysname,
+        @log_table_file_metrics sysname,
+        @log_table_perfmon sysname,
+        @log_table_memory sysname,
+        @log_table_cpu sysname,
+        @log_table_memory_consumers sysname,
+        @log_table_memory_queries sysname,
+        @log_table_cpu_queries sysname,
+        @log_table_cpu_events sysname,
+        @cleanup_date datetime2(7),
+        @check_sql nvarchar(max) = N'',
+        @create_sql nvarchar(max) = N'',
+        @insert_sql nvarchar(max) = N'',
+        @delete_sql nvarchar(max) = N'',
+        @log_database_schema nvarchar(1024);
+
+    /* Validate logging parameters */
+    IF @log_to_table = 1
+    BEGIN    
+        /* Default database name to current database if not specified */
+        SELECT @log_database_name = ISNULL(@log_database_name, DB_NAME());
+        
+        /* Default schema name to dbo if not specified */
+        SELECT @log_schema_name = ISNULL(@log_schema_name, N'dbo');
+        
+        /* Validate database exists */
+        IF NOT EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM sys.databases AS d
+            WHERE d.name = @log_database_name
+        )
+        BEGIN
+            RAISERROR('The specified logging database %s does not exist. Logging will be disabled.', 11, 1, @log_database_name) WITH NOWAIT;
+            RETURN;
+        END;
+
+        SET
+            @log_database_schema = 
+                QUOTENAME(@log_database_name) +
+                N'.' +
+                QUOTENAME(@log_schema_name) +
+                N'.';
+        
+        /* Generate fully qualified table names */
+        SELECT
+            @log_table_waits = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_Waits'),
+            @log_table_file_metrics = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_FileMetrics'),
+            @log_table_perfmon = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_Perfmon'),
+            @log_table_memory = 
+                @log_database_schema + 
+                QUOTENAME(@log_table_name_prefix + N'_Memory'),
+            @log_table_cpu = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_CPU'),
+            @log_table_memory_consumers = 
+                @log_database_schema + 
+                QUOTENAME(@log_table_name_prefix + N'_MemoryConsumers'),
+            @log_table_memory_queries = 
+                @log_database_schema + 
+                QUOTENAME(@log_table_name_prefix + N'_MemoryQueries'),
+            @log_table_cpu_queries = 
+                @log_database_schema + 
+                QUOTENAME(@log_table_name_prefix + N'_CPUQueries'),
+            @log_table_cpu_events = 
+                @log_database_schema + 
+                QUOTENAME(@log_table_name_prefix + N'_CPUEvents');
+        
+        /* Check if schema exists and create it if needed */
+        SET @check_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                WHERE s.name = @schema_name
+            )
+            BEGIN
+                DECLARE 
+                    @create_schema_sql nvarchar(max) = N''CREATE SCHEMA '' + QUOTENAME(@schema_name);
+                
+                EXECUTE ' + QUOTENAME(@log_database_name) + N'.sys.sp_executesql @create_schema_sql;
+                IF @debug = 1 BEGIN RAISERROR(''Created schema %s in database %s for logging.'', 0, 1, @schema_name, @db_name) WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @check_sql, 
+          N'@schema_name sysname, 
+            @db_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_database_name,
+            @debug;
+
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_Waits''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_waits + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    hours_uptime integer NULL,
+                    hours_cpu_time decimal(38,2) NULL,
+                    wait_type nvarchar(60) NOT NULL,
+                    description nvarchar(60) NULL,
+                    hours_wait_time decimal(38,2) NULL,
+                    avg_ms_per_wait decimal(38,2) NULL,
+                    percent_signal_waits decimal(38,2) NULL,
+                    waiting_tasks_count bigint NULL,
+                    sample_time datetime NULL,
+                    sorting bigint NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for wait stats logging.'', 0, 1, ''' + @log_table_waits + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+        
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_FileMetrics''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_file_metrics + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    hours_uptime integer NULL,
+                    drive nvarchar(255) NOT NULL,
+                    database_name nvarchar(128) NOT NULL,
+                    database_file_details nvarchar(1000) NULL,
+                    file_size_gb decimal(38,2) NULL,
+                    total_gb_read decimal(38,2) NULL,
+                    total_mb_read decimal(38,2) NULL,
+                    total_read_count bigint NULL,
+                    avg_read_stall_ms decimal(38,2) NULL,
+                    total_gb_written decimal(38,2) NULL,
+                    total_mb_written decimal(38,2) NULL,
+                    total_write_count bigint NULL,
+                    avg_write_stall_ms decimal(38,2) NULL,
+                    io_stall_read_ms bigint NULL,
+                    io_stall_write_ms bigint NULL,
+                    sample_time datetime NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for file metrics logging.'', 0, 1, ''' + @log_table_file_metrics + N''') WITH NOWAIT; END;
+            END';
+        
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+        
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_Perfmon''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_perfmon + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    sample_time datetime NULL,
+                    object_name sysname NOT NULL,
+                    counter_name sysname NOT NULL,
+                    counter_name_clean sysname NULL,
+                    instance_name sysname NOT NULL,
+                    cntr_value bigint NULL,
+                    cntr_type bigint NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for perfmon logging.'', 0, 1, ''' + @log_table_perfmon + N''') WITH NOWAIT; END;
+            END';
+        
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+        
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_Memory''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_memory + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    resource_semaphore_id integer NOT NULL,
+                    total_database_size_gb varchar(20) NULL,
+                    total_physical_memory_gb bigint NULL,
+                    max_server_memory_gb bigint NULL,
+                    max_memory_grant_cap xml NULL,
+                    memory_model nvarchar(128) NULL,
+                    target_memory_gb decimal(38,2) NULL,
+                    max_target_memory_gb decimal(38,2) NULL,
+                    total_memory_gb decimal(38,2) NULL,
+                    available_memory_gb decimal(38,2) NULL,
+                    granted_memory_gb decimal(38,2) NULL,
+                    used_memory_gb decimal(38,2) NULL,
+                    grantee_count integer NULL,
+                    waiter_count integer NULL,
+                    timeout_error_count integer NULL,
+                    forced_grant_count integer NULL,
+                    total_reduced_memory_grant_count bigint NULL,
+                    pool_id integer NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory logging.'', 0, 1, ''' + @log_table_memory + N''') WITH NOWAIT; END;
+            END';
+        
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+        
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_CPU''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_cpu + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    total_threads integer NULL,
+                    used_threads integer NULL,
+                    available_threads integer NULL,
+                    reserved_worker_count varchar(10) NULL,
+                    threads_waiting_for_cpu integer NULL,
+                    requests_waiting_for_threads integer NULL,
+                    current_workers integer NULL,
+                    total_active_request_count integer NULL,
+                    total_queued_request_count integer NULL,
+                    total_blocked_task_count integer NULL,
+                    total_active_parallel_thread_count integer NULL,
+                    avg_runnable_tasks_count float NULL,
+                    high_runnable_percent varchar(100) NULL,
+                    cpu_details_output xml NULL,
+                    cpu_utilization_over_threshold xml NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU logging.'', 0, 1, ''' + @log_table_cpu + N''') WITH NOWAIT; END;
+            END';
+        
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+
+        /* Memory Consumers table */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_MemoryConsumers''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_memory_consumers + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    memory_source nvarchar(128) NOT NULL,
+                    memory_consumer nvarchar(128) NOT NULL,
+                    memory_consumed_gb decimal(38,2) NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory consumers logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_MemoryConsumers') + N''') WITH NOWAIT; END;
+            END';
+        
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+        
+        /* Memory Query Grants table */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_MemoryQueries''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_memory_queries + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    session_id integer NOT NULL,
+                    database_name nvarchar(128) NULL,
+                    duration varchar(30) NULL,
+                    request_time datetime NULL,
+                    grant_time datetime NULL,
+                    wait_time_seconds decimal(38,2) NULL,
+                    requested_memory_gb decimal(38,2) NULL,
+                    granted_memory_gb decimal(38,2) NULL,
+                    used_memory_gb decimal(38,2) NULL,
+                    max_used_memory_gb decimal(38,2) NULL,
+                    ideal_memory_gb decimal(38,2) NULL,
+                    required_memory_gb decimal(38,2) NULL,
+                    queue_id integer NULL,
+                    wait_order integer NULL,
+                    is_next_candidate bit NULL,
+                    wait_type nvarchar(60) NULL,
+                    wait_duration_seconds decimal(38,2) NULL,
+                    dop integer NULL,
+                    reserved_worker_count integer NULL,
+                    used_worker_count integer NULL,
+                    plan_handle varbinary(64) NULL,
+                    sql_text xml NULL,
+                    query_plan_xml xml NULL,
+                    live_query_plan xml NULL
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory queries logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_MemoryQueries') + N''') WITH NOWAIT; END;
+            END';
+        
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+    
+        /* CPU Queries table */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_CPUQueries''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_cpu_queries + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    session_id integer NOT NULL,
+                    database_name nvarchar(128) NULL,
+                    duration varchar(30) NULL,
+                    status nvarchar(30) NULL,
+                    blocking_session_id integer NULL,
+                    wait_type nvarchar(60) NULL,
+                    wait_time_ms bigint NULL,
+                    wait_resource nvarchar(512) NULL,
+                    cpu_time_ms bigint NULL,
+                    total_elapsed_time_ms bigint NULL,
+                    reads bigint NULL,
+                    writes bigint NULL,
+                    logical_reads bigint NULL,
+                    granted_query_memory_gb decimal(38,2) NULL,
+                    transaction_isolation_level nvarchar(30) NULL,
+                    dop integer NULL,
+                    parallel_worker_count integer NULL,
+                    plan_handle varbinary(64) NULL,
+                    sql_text xml NULL,
+                    query_plan_xml xml NULL,
+                    live_query_plan xml NULL,
+                    statement_start_offset integer NULL,
+                    statement_end_offset integer NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU queries logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_CPUQueries') + N''') WITH NOWAIT; END;
+            END';
+        
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+        
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+        
+        /* CPU Utilization Events table */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_CPUEvents''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_cpu_events + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    sample_time datetime NULL,
+                    sqlserver_cpu_utilization integer NULL,
+                    other_process_cpu_utilization integer NULL,
+                    total_cpu_utilization integer NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU utilization events logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_CPUEvents') + N''') WITH NOWAIT; END;
+            END';
+        
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;  
+            
+        /* Handle log retention if specified */
+        IF @log_to_table = 1 AND @log_retention_days > 0
+        BEGIN            
+            IF @debug = 1 
+            BEGIN 
+                RAISERROR('Cleaning up log tables older than %i days', 0, 1, @log_retention_days) WITH NOWAIT; 
+            END;
+
+            SET @cleanup_date = 
+                DATEADD
+                (
+                    DAY, 
+                    -@log_retention_days, 
+                    SYSDATETIME()
+                );
+            
+            /* Clean up each log table */
+            SET @delete_sql = N'
+            DELETE FROM ' + @log_table_waits + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_file_metrics + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_perfmon + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_memory + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_cpu + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_memory_consumers + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_memory_queries + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_cpu_queries + '
+            WHERE collection_time < @cleanup_date;
+            
+            DELETE FROM ' + @log_table_cpu_events + '
+            WHERE collection_time < @cleanup_date;';
+            
+            IF @debug = 1 BEGIN PRINT @delete_sql; END;
+            
+            EXECUTE sys.sp_executesql 
+                @delete_sql, 
+              N'@cleanup_date datetime2(7)', 
+                @cleanup_date;
+            
+            IF @debug = 1 
+            BEGIN 
+                RAISERROR('Log cleanup complete', 0, 1) WITH NOWAIT; 
+            END;
+        END;
+
+    END; /*End log to tables validation checks here*/
 
     DECLARE
         @waits table
@@ -445,6 +1083,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     (
         @what_to_check = 'all'
     AND @pass = 1
+    AND @log_to_table = 0
     )
     BEGIN
         IF @debug = 1
@@ -760,100 +1399,153 @@ OPTION(MAXDOP 1, RECOMPILE);',
             dows.waiting_tasks_count DESC
         OPTION(MAXDOP 1, RECOMPILE);
 
-        IF @sample_seconds = 0
+        IF @log_to_table = 0
         BEGIN
-            SELECT
-                w.wait_type,
-                w.description,
-                w.hours_uptime,
-                w.hours_cpu_time,
-                w.hours_wait_time,
-                w.avg_ms_per_wait,
-                w.percent_signal_waits,
-                waiting_tasks_count =
-                    REPLACE
-                    (
-                        CONVERT
+            IF @sample_seconds = 0
+            BEGIN
+                SELECT
+                    w.wait_type,
+                    w.description,
+                    w.hours_uptime,
+                    w.hours_cpu_time,
+                    w.hours_wait_time,
+                    w.avg_ms_per_wait,
+                    w.percent_signal_waits,
+                    waiting_tasks_count =
+                        REPLACE
                         (
-                            nvarchar(30),
                             CONVERT
                             (
-                                money,
-                                w.waiting_tasks_count
+                                nvarchar(30),
+                                CONVERT
+                                (
+                                    money,
+                                    w.waiting_tasks_count
+                                ),
+                                1
                             ),
-                            1
+                            N'.00',
+                            N''
+                        )
+                FROM @waits AS w
+                WHERE w.waiting_tasks_count_n > 0
+                ORDER BY
+                    w.sorting
+                OPTION(MAXDOP 1, RECOMPILE);
+            END;
+            
+            IF
+            (
+                @sample_seconds > 0
+            AND @pass = 1
+            )
+            BEGIN
+                SELECT
+                    w.wait_type,
+                    w.description,
+                    sample_cpu_time_seconds =
+                        CONVERT
+                        (
+                            decimal(38,2),
+                            (w2.hours_cpu_time - w.hours_cpu_time) / 1000.
                         ),
-                        N'.00',
-                        N''
+                    wait_time_seconds =
+                        CONVERT
+                        (
+                            decimal(38,2),
+                            (w2.hours_wait_time - w.hours_wait_time) / 1000.
+                        ),
+                    avg_ms_per_wait =
+                        CONVERT
+                        (
+                            decimal(38,1),
+                            (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2
+                        ),
+                    percent_signal_waits =
+                        CONVERT
+                        (
+                            decimal(38,1),
+                            (w2.percent_signal_waits + w.percent_signal_waits) / 2
+                        ),
+                    waiting_tasks_count =
+                        REPLACE
+                        (
+                            CONVERT
+                            (
+                                nvarchar(30),
+                                CONVERT
+                                (
+                                    money,
+                                    (w2.waiting_tasks_count_n - w.waiting_tasks_count_n)
+                                ),
+                                1
+                            ),
+                            N'.00',
+                            N''
+                        ),
+                    sample_seconds =
+                        DATEDIFF(SECOND, w.sample_time, w2.sample_time)
+                FROM @waits AS w
+                JOIN @waits AS w2
+                  ON  w.wait_type = w2.wait_type
+                  AND w.sample_time < w2.sample_time
+                  AND (w2.waiting_tasks_count_n - w.waiting_tasks_count_n) > 0
+                ORDER BY
+                    wait_time_seconds DESC
+                OPTION(MAXDOP 1, RECOMPILE);
+            END;
+        END;
+       
+            IF @log_to_table = 1
+            BEGIN
+                
+                SELECT
+                    w.*
+                INTO #waits
+                FROM @waits AS w
+                OPTION(RECOMPILE);
+                
+                SET @insert_sql = N'
+                    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                    INSERT INTO ' + @log_table_waits + N' 
+                    (
+                        hours_uptime, 
+                        hours_cpu_time, 
+                        wait_type, 
+                        description, 
+                        hours_wait_time, 
+                        avg_ms_per_wait, 
+                        percent_signal_waits, 
+                        waiting_tasks_count, 
+                        sample_time, 
+                        sorting
                     )
-            FROM @waits AS w
-            WHERE w.waiting_tasks_count_n > 0
-            ORDER BY
-                w.sorting
-            OPTION(MAXDOP 1, RECOMPILE);
-        END;
+                    SELECT 
+                        w.hours_uptime, 
+                        w.hours_cpu_time, 
+                        w.wait_type, 
+                        w.description, 
+                        w.hours_wait_time, 
+                        w.avg_ms_per_wait, 
+                        w.percent_signal_waits, 
+                        w.waiting_tasks_count_n, 
+                        w.sample_time, 
+                        w.sorting
+                    FROM #waits AS w;
+                    ';
 
-        IF
-        (
-            @sample_seconds > 0
-        AND @pass = 1
-        )
-        BEGIN
-            SELECT
-                w.wait_type,
-                w.description,
-                sample_cpu_time_seconds =
-                    CONVERT
-                    (
-                        decimal(38,2),
-                        (w2.hours_cpu_time - w.hours_cpu_time) / 1000.
-                    ),
-                wait_time_seconds =
-                    CONVERT
-                    (
-                        decimal(38,2),
-                        (w2.hours_wait_time - w.hours_wait_time) / 1000.
-                    ),
-                avg_ms_per_wait =
-                    CONVERT
-                    (
-                        decimal(38,1),
-                        (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2
-                    ),
-                percent_signal_waits =
-                    CONVERT
-                    (
-                        decimal(38,1),
-                        (w2.percent_signal_waits + w.percent_signal_waits) / 2
-                    ),
-                waiting_tasks_count =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                (w2.waiting_tasks_count_n - w.waiting_tasks_count_n)
-                            ),
-                            1
-                        ),
-                        N'.00',
-                        N''
-                    ),
-                sample_seconds =
-                    DATEDIFF(SECOND, w.sample_time, w2.sample_time)
-            FROM @waits AS w
-            JOIN @waits AS w2
-              ON  w.wait_type = w2.wait_type
-              AND w.sample_time < w2.sample_time
-              AND (w2.waiting_tasks_count_n - w.waiting_tasks_count_n) > 0
-            ORDER BY
-                wait_time_seconds DESC
-            OPTION(MAXDOP 1, RECOMPILE);
-        END;
-    END;
+                IF @debug = 1
+                BEGIN
+                    PRINT @insert_sql;
+                END;    
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql;
+
+                DROP TABLE IF EXISTS
+                    #waits;
+            END;
+    END; /*End wait stats*/
     /*
     This section looks at disk metrics
     */
@@ -1011,7 +1703,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         JOIN ' +
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             CASE
                 WHEN @azure = 1
                 THEN N'sys.database_files AS f
@@ -1059,21 +1751,219 @@ OPTION(MAXDOP 1, RECOMPILE);',
         EXECUTE sys.sp_executesql
             @disk_check;
 
-        IF @sample_seconds = 0
+        IF @log_to_table = 0
         BEGIN
-            WITH
-                file_metrics AS
-            (
+            IF @sample_seconds = 0
+            BEGIN
+                WITH
+                    file_metrics AS
+                (
+                    SELECT
+                        fm.hours_uptime,
+                        fm.drive,
+                        fm.database_name,
+                        fm.database_file_details,
+                        fm.file_size_gb,
+                        fm.avg_read_stall_ms,
+                        fm.avg_write_stall_ms,
+                        fm.total_gb_read,
+                        fm.total_gb_written,
+                        total_read_count =
+                            REPLACE
+                            (
+                                CONVERT
+                                (
+                                    nvarchar(30),
+                                    CONVERT
+                                    (
+                                        money,
+                                        fm.total_read_count
+                                    ),
+                                    1
+                                ),
+                                N'.00',
+                                N''
+                            ),
+                        total_write_count =
+                            REPLACE
+                            (
+                                CONVERT
+                                (
+                                    nvarchar(30),
+                                    CONVERT
+                                    (
+                                        money,
+                                        fm.total_write_count
+                                    ),
+                                    1
+                                ),
+                                N'.00',
+                                N''
+                            ),
+                        total_avg_stall_ms =
+                            fm.avg_read_stall_ms +
+                            fm.avg_write_stall_ms
+                    FROM @file_metrics AS fm
+                    WHERE fm.avg_read_stall_ms  > @minimum_disk_latency_ms
+                    OR    fm.avg_write_stall_ms > @minimum_disk_latency_ms
+                )
                 SELECT
-                    fm.hours_uptime,
                     fm.drive,
                     fm.database_name,
                     fm.database_file_details,
+                    fm.hours_uptime,
                     fm.file_size_gb,
                     fm.avg_read_stall_ms,
                     fm.avg_write_stall_ms,
+                    fm.total_avg_stall_ms,
                     fm.total_gb_read,
                     fm.total_gb_written,
+                    fm.total_read_count,
+                    fm.total_write_count
+                FROM file_metrics AS fm
+            
+                UNION ALL
+            
+                SELECT
+                    drive = N'Nothing to see here',
+                    database_name = N'By default, only >100 ms latency is reported',
+                    database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
+                    hours_uptime = 0,
+                    file_size_gb = 0,
+                    avg_read_stall_ms = 0,
+                    avg_write_stall_ms = 0,
+                    total_avg_stall = 0,
+                    total_gb_read = 0,
+                    total_gb_written = 0,
+                    total_read_count = N'0',
+                    total_write_count = N'0'
+                WHERE NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM file_metrics AS fm
+                )
+                ORDER BY
+                    total_avg_stall_ms DESC
+                OPTION(MAXDOP 1, RECOMPILE);
+            END;
+            
+            IF
+            (
+                @sample_seconds > 0
+            AND @pass = 1
+            )
+            BEGIN
+                WITH
+                    f AS
+                (
+                    SELECT
+                        fm.drive,
+                        fm.database_name,
+                        fm.database_file_details,
+                        fm.file_size_gb,
+                        avg_read_stall_ms =
+                            CASE
+                                WHEN (fm2.total_read_count - fm.total_read_count) = 0
+                                THEN 0.00
+                                ELSE
+                                    CONVERT
+                                    (
+                                        decimal(38, 2),
+                                        (fm2.io_stall_read_ms - fm.io_stall_read_ms) /
+                                        (fm2.total_read_count  - fm.total_read_count)
+                                    )
+                            END,
+                        avg_write_stall_ms =
+                            CASE
+                                WHEN (fm2.total_write_count - fm.total_write_count) = 0
+                                THEN 0.00
+                                ELSE
+                                    CONVERT
+                                    (
+                                        decimal(38, 2),
+                                        (fm2.io_stall_write_ms - fm.io_stall_write_ms) /
+                                        (fm2.total_write_count  - fm.total_write_count)
+                                    )
+                            END,
+                        total_avg_stall =
+                            CASE
+                                WHEN (fm2.total_read_count  - fm.total_read_count) +
+                                     (fm2.total_write_count - fm.total_write_count) = 0
+                                THEN 0.00
+                                ELSE
+                                    CONVERT
+                                    (
+                                        decimal(38,2),
+                                        (
+                                            (fm2.io_stall_read_ms  - fm.io_stall_read_ms) +
+                                            (fm2.io_stall_write_ms - fm.io_stall_write_ms)
+                                        ) /
+                                        (
+                                            (fm2.total_read_count  - fm.total_read_count) +
+                                            (fm2.total_write_count - fm.total_write_count)
+                                        )
+                                    )
+                            END,
+                        total_mb_read =
+                            (fm2.total_mb_read - fm.total_mb_read),
+                        total_mb_written =
+                            (fm2.total_mb_written - fm.total_mb_written),
+                        total_read_count =
+                            (fm2.total_read_count - fm.total_read_count),
+                        total_write_count =
+                            (fm2.total_write_count - fm.total_write_count),
+                        sample_time_o =
+                            fm.sample_time,
+                        sample_time_t =
+                            fm2.sample_time
+                    FROM @file_metrics AS fm
+                    JOIN @file_metrics AS fm2
+                      ON  fm.drive = fm2.drive
+                      AND fm.database_name = fm2.database_name
+                      AND fm.database_file_details = fm2.database_file_details
+                      AND fm.sample_time < fm2.sample_time
+                )
+                SELECT
+                    f.drive,
+                    f.database_name,
+                    f.database_file_details,
+                    f.file_size_gb,
+                    f.avg_read_stall_ms,
+                    f.avg_write_stall_ms,
+                    f.total_avg_stall,
+                    total_mb_read =
+                        REPLACE
+                        (
+                            CONVERT
+                            (
+                                nvarchar(30),
+                                CONVERT
+                                (
+                                    money,
+                                    f.total_mb_read
+                                ),
+                                1
+                            ),
+                            N'.00',
+                            N''
+                        ),
+                    total_mb_written =
+                        REPLACE
+                        (
+                            CONVERT
+                            (
+                                nvarchar(30),
+                                CONVERT
+                                (
+                                    money,
+                                    f.total_mb_written
+                                ),
+                                1
+                            ),
+                            N'.00',
+                            N''
+                        ),
                     total_read_count =
                         REPLACE
                         (
@@ -1083,7 +1973,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 CONVERT
                                 (
                                     money,
-                                    fm.total_read_count
+                                    f.total_read_count
                                 ),
                                 1
                             ),
@@ -1099,220 +1989,87 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 CONVERT
                                 (
                                     money,
-                                    fm.total_write_count
+                                    f.total_write_count
                                 ),
                                 1
                             ),
                             N'.00',
                             N''
                         ),
-                    total_avg_stall_ms =
-                        fm.avg_read_stall_ms +
-                        fm.avg_write_stall_ms
-                FROM @file_metrics AS fm
-                WHERE fm.avg_read_stall_ms  > @minimum_disk_latency_ms
-                OR    fm.avg_write_stall_ms > @minimum_disk_latency_ms
-            )
-            SELECT
-                fm.drive,
-                fm.database_name,
-                fm.database_file_details,
-                fm.hours_uptime,
-                fm.file_size_gb,
-                fm.avg_read_stall_ms,
-                fm.avg_write_stall_ms,
-                fm.total_avg_stall_ms,
-                fm.total_gb_read,
-                fm.total_gb_written,
-                fm.total_read_count,
-                fm.total_write_count
-            FROM file_metrics AS fm
-
-            UNION ALL
-
-            SELECT
-                drive = N'Nothing to see here',
-                database_name = N'By default, only >100 ms latency is reported',
-                database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
-                hours_uptime = 0,
-                file_size_gb = 0,
-                avg_read_stall_ms = 0,
-                avg_write_stall_ms = 0,
-                total_avg_stall = 0,
-                total_gb_read = 0,
-                total_gb_written = 0,
-                total_read_count = N'0',
-                total_write_count = N'0'
-            WHERE NOT EXISTS
-            (
-                SELECT
-                    1/0
-                FROM file_metrics AS fm
-            )
-            ORDER BY
-                total_avg_stall_ms DESC
-            OPTION(MAXDOP 1, RECOMPILE);
+                    sample_seconds =
+                        DATEDIFF(SECOND, f.sample_time_o, f.sample_time_t)
+                FROM f
+                WHERE
+                (
+                     f.total_read_count  > 0
+                  OR f.total_write_count > 0
+                )
+                ORDER BY
+                    f.total_avg_stall DESC
+                OPTION(MAXDOP 1, RECOMPILE);
+            END;
         END;
 
-        IF
-        (
-            @sample_seconds > 0
-        AND @pass = 1
-        )
+        IF @log_to_table = 1
         BEGIN
-            WITH
-                f AS
-            (
-                SELECT
-                    fm.drive,
-                    fm.database_name,
-                    fm.database_file_details,
-                    fm.file_size_gb,
-                    avg_read_stall_ms =
-                        CASE
-                            WHEN (fm2.total_read_count - fm.total_read_count) = 0
-                            THEN 0.00
-                            ELSE
-                                CONVERT
-                                (
-                                    decimal(38, 2),
-                                    (fm2.io_stall_read_ms - fm.io_stall_read_ms) /
-                                    (fm2.total_read_count  - fm.total_read_count)
-                                )
-                        END,
-                    avg_write_stall_ms =
-                        CASE
-                            WHEN (fm2.total_write_count - fm.total_write_count) = 0
-                            THEN 0.00
-                            ELSE
-                                CONVERT
-                                (
-                                    decimal(38, 2),
-                                    (fm2.io_stall_write_ms - fm.io_stall_write_ms) /
-                                    (fm2.total_write_count  - fm.total_write_count)
-                                )
-                        END,
-                    total_avg_stall =
-                        CASE
-                            WHEN (fm2.total_read_count  - fm.total_read_count) +
-                                 (fm2.total_write_count - fm.total_write_count) = 0
-                            THEN 0.00
-                            ELSE
-                                CONVERT
-                                (
-                                    decimal(38,2),
-                                    (
-                                        (fm2.io_stall_read_ms  - fm.io_stall_read_ms) +
-                                        (fm2.io_stall_write_ms - fm.io_stall_write_ms)
-                                    ) /
-                                    (
-                                        (fm2.total_read_count  - fm.total_read_count) +
-                                        (fm2.total_write_count - fm.total_write_count)
-                                    )
-                                )
-                        END,
-                    total_mb_read =
-                        (fm2.total_mb_read - fm.total_mb_read),
-                    total_mb_written =
-                        (fm2.total_mb_written - fm.total_mb_written),
-                    total_read_count =
-                        (fm2.total_read_count - fm.total_read_count),
-                    total_write_count =
-                        (fm2.total_write_count - fm.total_write_count),
-                    sample_time_o =
-                        fm.sample_time,
-                    sample_time_t =
-                        fm2.sample_time
-                FROM @file_metrics AS fm
-                JOIN @file_metrics AS fm2
-                  ON  fm.drive = fm2.drive
-                  AND fm.database_name = fm2.database_name
-                  AND fm.database_file_details = fm2.database_file_details
-                  AND fm.sample_time < fm2.sample_time
-            )
-            SELECT
-                f.drive,
-                f.database_name,
-                f.database_file_details,
-                f.file_size_gb,
-                f.avg_read_stall_ms,
-                f.avg_write_stall_ms,
-                f.total_avg_stall,
-                total_mb_read =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                f.total_mb_read
-                            ),
-                            1
-                        ),
-                        N'.00',
-                        N''
-                    ),
-                total_mb_written =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                f.total_mb_written
-                            ),
-                            1
-                        ),
-                        N'.00',
-                        N''
-                    ),
-                total_read_count =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                f.total_read_count
-                            ),
-                            1
-                        ),
-                        N'.00',
-                        N''
-                    ),
-                total_write_count =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                f.total_write_count
-                            ),
-                            1
-                        ),
-                        N'.00',
-                        N''
-                    ),
-                sample_seconds =
-                    DATEDIFF(SECOND, f.sample_time_o, f.sample_time_t)
-            FROM f
-            WHERE
-            (
-                 f.total_read_count  > 0
-              OR f.total_write_count > 0
-            )
-            ORDER BY
-                f.total_avg_stall DESC
-            OPTION(MAXDOP 1, RECOMPILE);
+           
+           SELECT
+               fm.*
+           INTO #file_metrics
+           FROM @file_metrics AS fm
+           OPTION(RECOMPILE);
+           
+           SET @insert_sql = N'
+               SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+               INSERT INTO ' + @log_table_file_metrics + N' 
+               (
+                   hours_uptime, 
+                   drive, 
+                   database_name, 
+                   database_file_details, 
+                   file_size_gb, 
+                   total_gb_read, 
+                   total_mb_read, 
+                   total_read_count, 
+                   avg_read_stall_ms, 
+                   total_gb_written, 
+                   total_mb_written, 
+                   total_write_count, 
+                   avg_write_stall_ms, 
+                   io_stall_read_ms, 
+                   io_stall_write_ms, 
+                   sample_time
+               )
+               SELECT 
+                   fm.hours_uptime, 
+                   fm.drive, 
+                   fm.database_name, 
+                   fm.database_file_details, 
+                   fm.file_size_gb, 
+                   fm.total_gb_read, 
+                   fm.total_mb_read, 
+                   fm.total_read_count, 
+                   fm.avg_read_stall_ms, 
+                   fm.total_gb_written, 
+                   fm.total_mb_written, 
+                   fm.total_write_count, 
+                   fm.avg_write_stall_ms, 
+                   fm.io_stall_read_ms, 
+                   fm.io_stall_write_ms, 
+                   fm.sample_time
+               FROM #file_metrics AS fm;
+               ';
+
+           IF @debug = 1
+           BEGIN
+               PRINT @insert_sql;
+           END;
+           
+           EXECUTE sys.sp_executesql 
+               @insert_sql;
+
+           DROP TABLE IF EXISTS
+                #file_metrics;
         END;
     END; /*End file stats*/
 
@@ -1395,112 +2152,160 @@ OPTION(MAXDOP 1, RECOMPILE);',
             N'Active parallel threads', N'Active requests', N'Blocked tasks', N'Query optimizations/sec', N'Queued requests', N'Reduced memory grants/sec'
         );
 
-        IF @sample_seconds = 0
+        
+        IF @log_to_table = 0
         BEGIN
-            WITH
-                p AS
-            (
-                SELECT
-                    hours_uptime =
-                        (
-                            SELECT
+            IF @sample_seconds = 0
+            BEGIN
+                WITH
+                    p AS
+                (
+                    SELECT
+                        hours_uptime =
+                            (
+                                SELECT
+                                    DATEDIFF
+                                    (
+                                        HOUR,
+                                        dopc.sample_time,
+                                        SYSDATETIME()
+                                    )
+                            ),
+                        dopc.object_name,
+                        dopc.counter_name,
+                        dopc.instance_name,
+                        dopc.cntr_value,
+                        total =
+                            FORMAT(dopc.cntr_value, 'N0'),
+                        total_per_second =
+                            FORMAT
+                            (
+                                dopc.cntr_value /
                                 DATEDIFF
                                 (
-                                    HOUR,
+                                    SECOND,
                                     dopc.sample_time,
                                     SYSDATETIME()
-                                )
-                        ),
-                    dopc.object_name,
-                    dopc.counter_name,
-                    dopc.instance_name,
-                    dopc.cntr_value,
-                    total =
-                        FORMAT(dopc.cntr_value, 'N0'),
-                    total_per_second =
-                        FORMAT
-                        (
-                            dopc.cntr_value /
-                            DATEDIFF
-                            (
-                                SECOND,
-                                dopc.sample_time,
-                                SYSDATETIME()
-                            ),
-                            'N0'
-                        )
-                FROM @dm_os_performance_counters AS dopc
-            )
-            SELECT
-                p.object_name,
-                p.counter_name,
-                p.instance_name,
-                p.hours_uptime,
-                p.total,
-                p.total_per_second
-            FROM p
-            WHERE p.cntr_value > 0
-            ORDER BY
-                p.object_name,
-                p.counter_name,
-                p.cntr_value DESC
-            OPTION(MAXDOP 1, RECOMPILE);
-        END;
-
-        IF
-        (
-            @sample_seconds > 0
-        AND @pass = 1
-        )
-        BEGIN
-            WITH
-                p AS
-            (
+                                ),
+                                'N0'
+                            )
+                    FROM @dm_os_performance_counters AS dopc
+                )
                 SELECT
-                    dopc.object_name,
-                    dopc.counter_name,
-                    dopc.instance_name,
-                    first_cntr_value =
-                        FORMAT(dopc.cntr_value, 'N0'),
-                    second_cntr_value =
-                        FORMAT(dopc2.cntr_value, 'N0'),
-                    total_difference =
-                        FORMAT((dopc2.cntr_value - dopc.cntr_value), 'N0'),
-                    total_difference_per_second =
-                        FORMAT((dopc2.cntr_value - dopc.cntr_value) /
-                         DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 'N0'),
-                    sample_seconds =
-                        DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
-                    first_sample_time =
-                        dopc.sample_time,
-                    second_sample_time =
-                        dopc2.sample_time,
-                    total_difference_i =
-                        (dopc2.cntr_value - dopc.cntr_value)
-                FROM @dm_os_performance_counters AS dopc
-                JOIN @dm_os_performance_counters AS dopc2
-                  ON  dopc.object_name = dopc2.object_name
-                  AND dopc.counter_name = dopc2.counter_name
-                  AND dopc.instance_name = dopc2.instance_name
-                  AND dopc.sample_time < dopc2.sample_time
-                WHERE (dopc2.cntr_value - dopc.cntr_value) <> 0
+                    p.object_name,
+                    p.counter_name,
+                    p.instance_name,
+                    p.hours_uptime,
+                    p.total,
+                    p.total_per_second
+                FROM p
+                WHERE p.cntr_value > 0
+                ORDER BY
+                    p.object_name,
+                    p.counter_name,
+                    p.cntr_value DESC
+                OPTION(MAXDOP 1, RECOMPILE);
+            END;
+            
+            IF
+            (
+                @sample_seconds > 0
+            AND @pass = 1
             )
-            SELECT
-                p.object_name,
-                p.counter_name,
-                p.instance_name,
-                p.first_cntr_value,
-                p.second_cntr_value,
-                p.total_difference,
-                p.total_difference_per_second,
-                p.sample_seconds
-            FROM p
-            ORDER BY
-                p.object_name,
-                p.counter_name,
-                p.total_difference_i DESC
-            OPTION(MAXDOP 1, RECOMPILE);
+            BEGIN
+                WITH
+                    p AS
+                (
+                    SELECT
+                        dopc.object_name,
+                        dopc.counter_name,
+                        dopc.instance_name,
+                        first_cntr_value =
+                            FORMAT(dopc.cntr_value, 'N0'),
+                        second_cntr_value =
+                            FORMAT(dopc2.cntr_value, 'N0'),
+                        total_difference =
+                            FORMAT((dopc2.cntr_value - dopc.cntr_value), 'N0'),
+                        total_difference_per_second =
+                            FORMAT((dopc2.cntr_value - dopc.cntr_value) /
+                             DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 'N0'),
+                        sample_seconds =
+                            DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
+                        first_sample_time =
+                            dopc.sample_time,
+                        second_sample_time =
+                            dopc2.sample_time,
+                        total_difference_i =
+                            (dopc2.cntr_value - dopc.cntr_value)
+                    FROM @dm_os_performance_counters AS dopc
+                    JOIN @dm_os_performance_counters AS dopc2
+                      ON  dopc.object_name = dopc2.object_name
+                      AND dopc.counter_name = dopc2.counter_name
+                      AND dopc.instance_name = dopc2.instance_name
+                      AND dopc.sample_time < dopc2.sample_time
+                    WHERE (dopc2.cntr_value - dopc.cntr_value) <> 0
+                )
+                SELECT
+                    p.object_name,
+                    p.counter_name,
+                    p.instance_name,
+                    p.first_cntr_value,
+                    p.second_cntr_value,
+                    p.total_difference,
+                    p.total_difference_per_second,
+                    p.sample_seconds
+                FROM p
+                ORDER BY
+                    p.object_name,
+                    p.counter_name,
+                    p.total_difference_i DESC
+                OPTION(MAXDOP 1, RECOMPILE);
+            END;
         END;
+       
+       IF @log_to_table = 1
+       BEGIN
+           
+           SELECT
+               dopc.*
+           INTO #dm_os_performance_counters
+           FROM @dm_os_performance_counters AS dopc
+           OPTION(RECOMPILE);
+           
+           SET @insert_sql = N'
+               SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+               INSERT INTO ' + @log_table_perfmon + N' 
+               (
+                   sample_time, 
+                   object_name, 
+                   counter_name, 
+                   counter_name_clean, 
+                   instance_name, 
+                   cntr_value, 
+                   cntr_type
+               )
+               SELECT 
+                   dopc.sample_time, 
+                   dopc.object_name, 
+                   dopc.counter_name, 
+                   dopc.counter_name_clean, 
+                   dopc.instance_name, 
+                   dopc.cntr_value, 
+                   dopc.cntr_type
+               FROM #dm_os_performance_counters AS dopc;
+               ';
+
+           IF @debug = 1
+           BEGIN
+               PRINT @insert_sql;
+           END;
+           
+           EXECUTE sys.sp_executesql 
+               @insert_sql;
+           
+           DROP TABLE IF EXISTS
+               #dm_os_performance_counters;
+       END;
     END; /*End Perfmon*/
 
     /*
@@ -1511,6 +2316,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @azure = 0
     AND @what_to_check = 'all'
     AND @pass = 1
+    AND @log_to_table = 0
     )
     BEGIN
         IF @debug = 1
@@ -1677,7 +2483,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         ' +
             CONVERT
                (
-                   nvarchar(MAX),
+                   nvarchar(max),
                           CASE @pages_kb
                                WHEN 1
                                THEN
@@ -1686,7 +2492,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         N'domc.single_pages_kb +
                         domc.multi_pages_kb + '
                           END
-                            )
+               )
                         + N'
                         domc.virtual_memory_committed_kb +
                         domc.awe_allocated_kb +
@@ -1739,7 +2545,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         decimal(38, 2),
                         SUM
                         (
-                        ' + CASE @pages_kb
+                        ' + CONVERT
+                            (
+                                nvarchar(max), 
+                            CASE @pages_kb
                                  WHEN 1
                                  THEN
                         N'    domc.pages_kb '
@@ -1764,7 +2573,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                            ELSE
                     N'domc.single_pages_kb +
                     domc.multi_pages_kb '
-                      END + N'
+                      END ) + N'
                ) / 1024. / 1024. > 0.
             ORDER BY
                 memory_used_gb DESC
@@ -1777,8 +2586,38 @@ OPTION(MAXDOP 1, RECOMPILE);',
             PRINT @pool_sql;
         END;
 
-        EXECUTE sys.sp_executesql
-            @pool_sql;
+        IF @log_to_table = 0
+        BEGIN
+            EXECUTE sys.sp_executesql
+                @pool_sql;
+        END;
+       
+        IF @log_to_table = 1
+        BEGIN
+            SET @insert_sql = N'
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                INSERT INTO ' + @log_table_memory_consumers + N' 
+                (
+                    memory_source,
+                    memory_consumer,
+                    memory_consumed_gb
+                )
+                ' + 
+                REPLACE
+                (
+                    @pool_sql,
+                    N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
+                    N''
+                );
+
+            IF @debug = 1
+            BEGIN
+                PRINT @insert_sql;
+            END;
+            
+            EXECUTE sys.sp_executesql 
+                @insert_sql;
+        END;
 
         /*Checking total database size*/
         IF @azure = 1
@@ -1819,7 +2658,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         EXECUTE sys.sp_executesql
             @database_size_out,
-          N'@database_size_out_gb varchar(10) OUTPUT',
+          N'@database_size_out_gb nvarchar(10) OUTPUT',
             @database_size_out_gb OUTPUT;
 
         /*Check physical memory in the server*/
@@ -2039,13 +2878,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         IF @debug = 1
         BEGIN
-            RAISERROR('%s', 0, 1, @cache_sql) WITH NOWAIT;
+            PRINT @cache_sql;
         END;
 
+        IF @log_to_table = 0
+        BEGIN
         EXECUTE sys.sp_executesql
             @cache_sql,
           N'@cache_xml xml OUTPUT',
             @cache_xml OUTPUT;
+        END;
 
         IF @cache_xml IS NULL
         BEGIN
@@ -2060,11 +2902,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
         END;
 
-        SELECT
-            low_memory =
-               @low_memory,
-            cache_memory =
-                @cache_xml;
+        IF @log_to_table = 0
+        BEGIN
+            SELECT
+                low_memory =
+                   @low_memory,
+                cache_memory =
+                    @cache_xml;
+        END;
 
         SELECT
             @memory_grant_cap =
@@ -2111,6 +2956,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
         END;
 
+        SELECT 
+            @resource_semaphores += N'
         SELECT
             deqrs.resource_semaphore_id,
             total_database_size_gb =
@@ -2126,7 +2973,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             c.value_in_use
                         )
                     FROM sys.configurations AS c
-                    WHERE c.name = N'max server memory (MB)'
+                    WHERE c.name = N''max server memory (MB)''
                 ) / 1024,
             max_memory_grant_cap =
                 @memory_grant_cap,
@@ -2192,6 +3039,61 @@ OPTION(MAXDOP 1, RECOMPILE);',
         ORDER BY
             deqrs.pool_id
         OPTION(MAXDOP 1, RECOMPILE);
+        ';
+        
+        IF @log_to_table = 0
+        BEGIN
+            EXECUTE sys.sp_executesql
+                @resource_semaphores,
+              N'@database_size_out_gb nvarchar(10),
+                @total_physical_memory_gb bigint,
+                @memory_grant_cap xml',
+                @database_size_out_gb,
+                @total_physical_memory_gb,
+                @memory_grant_cap;
+        END
+        
+        IF @log_to_table = 1
+        BEGIN
+            SET @insert_sql = N'
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                INSERT INTO ' + @log_table_memory + N' 
+                (
+                    resource_semaphore_id,
+                    total_database_size_gb,
+                    total_physical_memory_gb,
+                    max_server_memory_gb,
+                    max_memory_grant_cap,
+                    memory_model,
+                    target_memory_gb,
+                    max_target_memory_gb,
+                    total_memory_gb,
+                    available_memory_gb,
+                    granted_memory_gb,
+                    used_memory_gb,
+                    grantee_count,
+                    waiter_count,
+                    timeout_error_count,
+                    forced_grant_count,
+                    total_reduced_memory_grant_count,
+                    pool_id
+                )' +
+                @resource_semaphores;
+
+            IF @debug = 1
+            BEGIN
+                PRINT @insert_sql;
+            END;
+            
+            EXECUTE sys.sp_executesql
+                @insert_sql,
+              N'@database_size_out_gb nvarchar(10),
+                @total_physical_memory_gb bigint,
+                @memory_grant_cap xml',
+                @database_size_out_gb,
+                @total_physical_memory_gb,
+                @memory_grant_cap;
+        END;
     END; /*End memory checks*/
 
     /*
@@ -2306,7 +3208,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 ),'
             + CONVERT
               (
-                  nvarchar(MAX),
+                  nvarchar(max),
               CASE
                   WHEN @skip_plan_xml = 0
                   THEN N'
@@ -2411,8 +3313,78 @@ OPTION(MAXDOP 1, RECOMPILE);',
             PRINT SUBSTRING(@mem_sql, 4001, 8000);
         END;
 
+        IF @log_to_table = 0    
+        BEGIN
         EXECUTE sys.sp_executesql
             @mem_sql;
+        END
+
+        IF @log_to_table = 1
+        BEGIN
+            SET @insert_sql = N'
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                INSERT INTO ' + @log_table_memory_queries + N' 
+                (
+                    session_id,
+                    database_name,
+                    duration,
+                    sql_text,
+                    query_plan_xml' +
+                    CASE
+                        WHEN @live_plans = 1
+                        THEN N',
+                    live_query_plan'
+                        ELSE N''
+                    END + N',
+                    request_time,
+                    grant_time,
+                    wait_time_seconds,
+                    requested_memory_gb,
+                    granted_memory_gb,
+                    used_memory_gb,
+                    max_used_memory_gb,
+                    ideal_memory_gb,
+                    required_memory_gb,
+                    queue_id,
+                    wait_order,
+                    is_next_candidate,
+                    wait_type,
+                    wait_duration_seconds,
+                    dop' + 
+                    CASE
+                        WHEN @helpful_new_columns = 1
+                        THEN N',
+                    reserved_worker_count,
+                    used_worker_count'
+                        ELSE N''
+                    END + N',
+                    plan_handle
+                ) ' +
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mem_sql,
+                            N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
+                            N''
+                        ),
+                        N'SET LOCK_TIMEOUT 1000;',
+                        N''
+                    ),
+                    N'SET LOCK_TIMEOUT -1;',
+                    N''
+                );
+
+            IF @debug = 1
+            BEGIN
+                PRINT @insert_sql;
+            END;
+
+            EXECUTE sys.sp_executesql
+                @insert_sql;
+        END;
     END;
 
     /*
@@ -2563,13 +3535,47 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
         END;
 
-        SELECT
-            cpu_details_output =
-                @cpu_details_output,
-            cpu_utilization_over_threshold =
+        IF @log_to_table = 0
+        BEGIN
+            SELECT
+                cpu_details_output =
+                    @cpu_details_output,
+                cpu_utilization_over_threshold =
+                    @cpu_utilization;
+        END;
+        IF @log_to_table = 1
+        BEGIN
+            SET @insert_sql = N'
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                INSERT INTO ' + @log_table_cpu_events + N' 
+                (
+                    sample_time,
+                    sqlserver_cpu_utilization,
+                    other_process_cpu_utilization,
+                    total_cpu_utilization
+                )
+                SELECT 
+                    sample_time = event.value(''(./sample_time)[1]'', ''datetime''),
+                    sqlserver_cpu_utilization = event.value(''(./sqlserver_cpu_utilization)[1]'', ''integer''),
+                    other_process_cpu_utilization = event.value(''(./other_process_cpu_utilization)[1]'', ''integer''),
+                    total_cpu_utilization = event.value(''(./total_cpu_utilization)[1]'', ''integer'')
+                FROM @cpu_utilization.nodes(''/cpu_utilization'') AS cpu(event);';
+
+            IF @debug = 1
+            BEGIN
+                PRINT @insert_sql;
+            END;
+            
+            EXECUTE sys.sp_executesql 
+                @insert_sql, 
+              N'@cpu_utilization xml',
                 @cpu_utilization;
+        END;
 
         /*Thread usage*/
+        SELECT 
+            @cpu_threads += N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
         SELECT
             total_threads =
                 MAX(osi.max_workers_count),
@@ -2577,7 +3583,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 SUM(dos.active_workers_count),
             available_threads =
                 MAX(osi.max_workers_count) - SUM(dos.active_workers_count),
-            reserved_worker_count =
+            reserved_worker_count = ' +
                 CASE @helpful_new_columns
                      WHEN 1
                      THEN ISNULL
@@ -2586,7 +3592,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                               N'0'
                           )
                      ELSE N'N/A'
-                END,
+                END + N',
             threads_waiting_for_cpu =
                 SUM(dos.runnable_tasks_count),
             requests_waiting_for_threads =
@@ -2620,11 +3626,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
         (
             SELECT
                 high_runnable_percent =
-                    '' +
+                    '''' +
                     RTRIM(y.runnable_pct) +
-                    '% of ' +
+                    ''% of '' +
                     RTRIM(y.total) +
-                    ' queries are waiting to get on a CPU.'
+                    '' queries are waiting to get on a CPU.''
             FROM
             (
                 SELECT
@@ -2647,7 +3653,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             SUM
                             (
                                 CASE
-                                    WHEN der.status = N'runnable'
+                                    WHEN der.status = N''runnable''
                                     THEN 1
                                     ELSE 0
                                 END
@@ -2659,38 +3665,65 @@ OPTION(MAXDOP 1, RECOMPILE);',
             WHERE y.runnable_pct >= 10
             AND   y.total >= 4
         ) AS r
-        WHERE dos.status = N'VISIBLE ONLINE'
+        WHERE dos.status = N''VISIBLE ONLINE''
         OPTION(MAXDOP 1, RECOMPILE);
+        ';
+
+        IF @log_to_table = 0
+        BEGIN
+            EXECUTE sys.sp_executesql
+                @cpu_threads;
+        END;
+
+        IF @log_to_table = 1
+        BEGIN
+            SET @insert_sql = N'
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                INSERT INTO ' + @log_table_cpu + N' 
+                (
+                    total_threads,
+                    used_threads,
+                    available_threads,
+                    reserved_worker_count,
+                    threads_waiting_for_cpu,
+                    requests_waiting_for_threads,
+                    current_workers,
+                    total_active_request_count,
+                    total_queued_request_count,
+                    total_blocked_task_count,
+                    total_active_parallel_thread_count,
+                    avg_runnable_tasks_count,
+                    high_runnable_percent
+                )' + 
+                REPLACE
+                (
+                    @cpu_threads,
+                    N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
+                    N''
+                );
+
+            IF @debug = 1
+            BEGIN
+                PRINT @insert_sql;
+            END;
+
+            EXECUTE sys.sp_executesql
+                @insert_sql;
+        END;
 
 
         /*
         Any current threadpool waits?
         */
-        INSERT
-            @threadpool_waits
-        (
-            session_id,
-            wait_duration_ms,
-            threadpool_waits
-        )
-        SELECT
-            dowt.session_id,
-            dowt.wait_duration_ms,
-            threadpool_waits =
-                dowt.wait_type
-        FROM sys.dm_os_waiting_tasks AS dowt
-        WHERE dowt.wait_type = N'THREADPOOL'
-        ORDER BY
-            dowt.wait_duration_ms DESC
-        OPTION(MAXDOP 1, RECOMPILE);
-
-        IF @@ROWCOUNT = 0
+        IF @log_to_table = 0
         BEGIN
-            SELECT
-                THREADPOOL = N'No current THREADPOOL waits';
-        END;
-        ELSE
-        BEGIN
+            INSERT
+                @threadpool_waits
+            (
+                session_id,
+                wait_duration_ms,
+                threadpool_waits
+            )
             SELECT
                 dowt.session_id,
                 dowt.wait_duration_ms,
@@ -2701,6 +3734,25 @@ OPTION(MAXDOP 1, RECOMPILE);',
             ORDER BY
                 dowt.wait_duration_ms DESC
             OPTION(MAXDOP 1, RECOMPILE);
+            
+            IF @@ROWCOUNT = 0
+            BEGIN
+                SELECT
+                    THREADPOOL = N'No current THREADPOOL waits';
+            END;
+            ELSE
+            BEGIN
+                SELECT
+                    dowt.session_id,
+                    dowt.wait_duration_ms,
+                    threadpool_waits =
+                        dowt.wait_type
+                FROM sys.dm_os_waiting_tasks AS dowt
+                WHERE dowt.wait_type = N'THREADPOOL'
+                ORDER BY
+                    dowt.wait_duration_ms DESC
+                OPTION(MAXDOP 1, RECOMPILE);
+            END;
         END;
 
 
@@ -2815,7 +3867,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 +
                 CONVERT
                 (
-                    nvarchar(MAX),
+                    nvarchar(max),
                 CASE
                       WHEN @skip_plan_xml = 0
                       THEN N'
@@ -2851,7 +3903,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 )
                 + CONVERT
                   (
-                      nvarchar(MAX),
+                      nvarchar(max),
                       N'
                 statement_start_offset =
                     (der.statement_start_offset / 2) + 1,
@@ -2918,7 +3970,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       WHEN @cool_new_columns = 1
                       THEN CONVERT
                            (
-                               nvarchar(MAX),
+                               nvarchar(max),
                                N',
                 der.dop,
                 der.parallel_worker_count'
@@ -2927,7 +3979,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                   END
                 + CONVERT
                   (
-                      nvarchar(MAX),
+                      nvarchar(max),
                       N'
             FROM sys.dm_exec_requests AS der
             OUTER APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
@@ -2969,8 +4021,77 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 PRINT SUBSTRING(@cpu_sql, 4001, 8000);
             END;
 
-            EXECUTE sys.sp_executesql
-                @cpu_sql;
+            IF @log_to_table = 0
+            BEGIN
+                EXECUTE sys.sp_executesql
+                    @cpu_sql;
+            END;
+            
+            IF @log_to_table = 1
+            BEGIN
+                SET @insert_sql = N'
+                    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                    INSERT INTO ' + @log_table_cpu_queries + N' 
+                    (
+                        session_id,
+                        database_name,
+                        duration,
+                        sql_text,
+                        query_plan_xml' +
+                        CASE
+                            WHEN @live_plans = 1
+                            THEN N',
+                        live_query_plan'
+                            ELSE N''
+                        END + N',
+                        statement_start_offset,
+                        statement_end_offset,
+                        plan_handle,
+                        status,
+                        blocking_session_id,
+                        wait_type,
+                        wait_time_ms,
+                        wait_resource,
+                        cpu_time_ms,
+                        total_elapsed_time_ms,
+                        reads,
+                        writes,
+                        logical_reads,
+                        granted_query_memory_gb,
+                        transaction_isolation_level' +
+                        CASE
+                            WHEN @cool_new_columns = 1
+                            THEN N',
+                        dop,
+                        parallel_worker_count'
+                            ELSE N''
+                        END + N'
+                    )' + 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            REPLACE
+                            (
+                                @cpu_sql,
+                                N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
+                                N''
+                            ),
+                            N'SET LOCK_TIMEOUT 1000;',
+                            N''
+                        ),
+                        N'SET LOCK_TIMEOUT -1;',
+                        N''
+                    );
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @insert_sql;
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql;
+            END;
         END; /*End not skipping queries*/
     END; /*End CPU checks*/
 
@@ -3103,6 +4224,38 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 @prefix,
             memory_grant_cap =
                 @memory_grant_cap;
+
+        SELECT
+            pattern = 
+                'logging parameters',
+            log_to_table = 
+                @log_to_table,
+            log_database_name = 
+                @log_database_name,
+            log_schema_name = 
+                @log_schema_name,
+            log_table_name_prefix = 
+                @log_table_name_prefix,
+            log_database_schema = 
+                @log_database_schema,
+            log_table_waits = 
+                @log_table_waits,
+            log_table_file_metrics = 
+                @log_table_file_metrics,
+            log_table_perfmon = 
+                @log_table_perfmon,
+            log_table_memory = 
+                @log_table_memory,
+            log_table_cpu = 
+                @log_table_cpu,
+            log_table_memory_consumers = 
+                @log_table_memory_consumers,
+            log_table_memory_queries = 
+                @log_table_memory_queries, 
+            log_table_cpu_queries = 
+                @log_table_cpu_queries,
+            log_table_cpu_events = 
+                @log_table_cpu_events;
 
     END; /*End Debug*/
 END; /*Final End*/
