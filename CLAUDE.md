@@ -378,7 +378,7 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
   EXECUTE sys.sp_executesql
       @sql,
      N'@parameters',
-     @input;
+       @input;
   ```
 
 - Transaction blocks should use consistent indentation:
