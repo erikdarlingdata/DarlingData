@@ -2191,6 +2191,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #index_analysis AS ia1
     WHERE ia1.consolidation_rule IS NULL /* Not already processed */
+    AND ia1.action IS NULL /* Not already processed by earlier rules */
     AND EXISTS 
     (
         /* Find nonclustered indexes */
@@ -2239,6 +2240,62 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         SELECT
             table_name = '#index_analysis after rule 7',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
+    
+    /* Rule 7.5: Mark unique constraints that have matching nonclustered indexes for disabling */
+    UPDATE 
+        ia_uc
+    SET 
+        ia_uc.consolidation_rule = 'Unique Constraint Replacement',
+        ia_uc.action = N'DISABLE', /* Mark unique constraint for disabling */
+        ia_uc.target_index_name = ia_nc.index_name /* Point to the nonclustered index that will replace it */
+    FROM #index_analysis AS ia_uc /* Unique constraint */
+    JOIN #index_details AS id_uc /* Join to get unique constraint details */
+      ON  id_uc.database_id = ia_uc.database_id
+      AND id_uc.object_id = ia_uc.object_id
+      AND id_uc.index_id = ia_uc.index_id
+      AND id_uc.is_unique_constraint = 1 /* This is a unique constraint */
+    JOIN #index_analysis AS ia_nc /* Join to find nonclustered index */
+      ON  ia_nc.database_id = ia_uc.database_id
+      AND ia_nc.object_id = ia_uc.object_id
+      AND ia_nc.index_name <> ia_uc.index_name /* Different index */
+      AND ia_nc.action = 'MAKE UNIQUE' /* That has been marked to be made unique */
+      AND ia_nc.consolidation_rule = 'Unique Constraint Replacement' /* From previous rule */
+    WHERE 
+        /* Verify key columns match between index and unique constraint */
+        NOT EXISTS 
+        (
+            SELECT 
+                id_uc_inner.column_name 
+            FROM #index_details AS id_uc_inner
+            WHERE id_uc_inner.database_id = id_uc.database_id
+            AND   id_uc_inner.object_id = id_uc.object_id
+            AND   id_uc_inner.index_id = id_uc.index_id
+            AND   id_uc_inner.is_included_column = 0
+            
+            EXCEPT
+            
+            SELECT 
+                id_nc_inner.column_name
+            FROM #index_details AS id_nc_inner
+            JOIN #index_details AS id_nc_base
+              ON  id_nc_inner.database_id = id_nc_base.database_id
+              AND id_nc_inner.object_id = id_nc_base.object_id
+              AND id_nc_inner.index_id = id_nc_base.index_id
+            WHERE id_nc_base.database_id = ia_nc.database_id
+            AND   id_nc_base.object_id = ia_nc.object_id
+            AND   id_nc_base.index_id = ia_nc.index_id
+            AND   id_nc_inner.is_included_column = 0
+        )
+    OPTION(RECOMPILE);
+    
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 7.5',
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
@@ -2792,41 +2849,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         script_type = 'DISABLE SCRIPT',
         ia.consolidation_rule,
         script =
-            CASE
-                /* Check if this is a unique constraint and use appropriate syntax */
-                WHEN EXISTS 
-                (
-                    SELECT 
-                        1/0 
-                    FROM #index_details AS id_uc
-                    WHERE id_uc.database_id = ia.database_id
-                    AND   id_uc.object_id = ia.object_id
-                    AND   id_uc.index_id = ia.index_id
-                    AND   id_uc.is_unique_constraint = 1
-                )
-                THEN 
-                    /* Use NOCHECK CONSTRAINT syntax for unique constraints */
-                    N'ALTER TABLE ' +
-                    QUOTENAME(ia.database_name) +
-                    N'.' +
-                    QUOTENAME(ia.schema_name) +
-                    N'.' +
-                    QUOTENAME(ia.table_name) +
-                    N' NOCHECK CONSTRAINT ' +
-                    QUOTENAME(ia.index_name) +
-                    N';'
-                ELSE 
-                    /* Use regular DISABLE syntax for indexes */
-                    N'ALTER INDEX ' +
-                    QUOTENAME(ia.index_name) +
-                    N' ON ' +
-                    QUOTENAME(ia.database_name) +
-                    N'.' +
-                    QUOTENAME(ia.schema_name) +
-                    N'.' +
-                    QUOTENAME(ia.table_name) +
-                    N' DISABLE;'
-            END,
+            /* Use regular DISABLE syntax for indexes */
+            N'ALTER INDEX ' +
+            QUOTENAME(ia.index_name) +
+            N' ON ' +
+            QUOTENAME(ia.database_name) +
+            N'.' +
+            QUOTENAME(ia.schema_name) +
+            N'.' +
+            QUOTENAME(ia.table_name) +
+            N' DISABLE;',
             CASE 
                 WHEN ia.consolidation_rule = 'Key Subset' 
                 THEN N'This index is superseded by a wider index: ' + ISNULL(ia.target_index_name, N'(unknown)')
@@ -2987,6 +3019,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         script_type,
         additional_info,
         script,
+        original_index_definition,
         index_size_gb,
         index_rows,
         index_reads,
@@ -2995,78 +3028,52 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SELECT DISTINCT
         result_type = 'CONSTRAINT',
         sort_order = 30,
-        ia.database_name,
-        ia.schema_name,
-        ia.table_name,
-        ia.index_name,
+        ia_uc.database_name,
+        ia_uc.schema_name,
+        ia_uc.table_name,
+        ia_uc.index_name,
         script_type = 'DISABLE CONSTRAINT SCRIPT',
         additional_info = 
-            N'Constraint to disable: ' + 
-            id.index_name,
+            N'This constraint is being replaced by: ' + 
+            ISNULL(ia_uc.target_index_name, N'(unknown)'),
         script = 
             N'ALTER TABLE ' +
-            QUOTENAME(ia.database_name) +
+            QUOTENAME(ia_uc.database_name) +
             N'.' +
-            QUOTENAME(ia.schema_name) +
+            QUOTENAME(ia_uc.schema_name) +
             N'.' +
-            QUOTENAME(ia.table_name) +
+            QUOTENAME(ia_uc.table_name) +
             N' NOCHECK CONSTRAINT ' +
-            QUOTENAME(id.index_name) +
+            QUOTENAME(ia_uc.index_name) +
             N';',
+        /* Original index definition for validation */
+        original_index_definition = ia_uc.original_index_definition,
         ps.total_space_gb,
         ps.total_rows,
         index_reads =
             (id2.user_seeks + id2.user_scans + id2.user_lookups),
         id2.user_updates
-    FROM #index_analysis AS ia
+    FROM #index_analysis AS ia_uc
     JOIN #index_details AS id 
-      ON  id.database_id = ia.database_id
-      AND id.object_id = ia.object_id
+      ON  id.database_id = ia_uc.database_id
+      AND id.object_id = ia_uc.object_id
+      AND id.index_id = ia_uc.index_id
       AND id.is_unique_constraint = 1
     LEFT JOIN #index_details AS id2
-      ON  id2.database_id = ia.database_id
-      AND id2.object_id = ia.object_id
-      AND id2.index_id = ia.index_id
+      ON  id2.database_id = ia_uc.database_id
+      AND id2.object_id = ia_uc.object_id
+      AND id2.index_id = ia_uc.index_id
       AND id2.is_included_column = 0 /* Get only one row per index */
       AND id2.key_ordinal > 0
     LEFT JOIN #partition_stats AS ps
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
+      ON  ia_uc.database_id = ps.database_id
+      AND ia_uc.object_id = ps.object_id
+      AND ia_uc.index_id = ps.index_id
     WHERE 
-        /* Only indexes that are being made unique */
-        ia.action = N'MAKE UNIQUE'
-        /* Find the constraint that matches the index being made unique */
-        AND EXISTS 
-        (
-            SELECT 
-                1/0
-            FROM #index_details AS id_nc
-            WHERE id_nc.database_id = ia.database_id
-            AND id_nc.object_id = ia.object_id
-            AND id_nc.index_id = ia.index_id
-            /* Matching key columns */
-            AND NOT EXISTS 
-            (
-                SELECT 
-                    id.column_name 
-                FROM #index_details AS id_inner
-                WHERE id_inner.database_id = id.database_id
-                AND   id_inner.object_id = id.object_id
-                AND   id_inner.index_id = id.index_id
-                AND   id_inner.is_included_column = 0
-                
-                EXCEPT
-                
-                SELECT 
-                    id_nc_inner.column_name
-                FROM #index_details AS id_nc_inner
-                WHERE id_nc_inner.database_id = id_nc.database_id
-                AND   id_nc_inner.object_id = id_nc.object_id
-                AND   id_nc_inner.index_id = id_nc.index_id
-                AND   id_nc_inner.is_included_column = 0
-            )
-        )
+        /* Only constraints that are marked for disabling */
+        ia_uc.action = N'DISABLE'
+        /* That have consolidation_rule of 'Unique Constraint Replacement' */
+        AND ia_uc.consolidation_rule = 'Unique Constraint Replacement'
     OPTION(RECOMPILE);
 
     /* Insert per-partition compression scripts */
