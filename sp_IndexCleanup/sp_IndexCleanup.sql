@@ -1717,10 +1717,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END 
             + 
             CASE 
-                WHEN is_unique = 1 
-                THEN 500 
+                /* Unique indexes get high priority, but reduce priority for unique constraints */
+                WHEN is_unique = 1 AND NOT EXISTS 
+                (
+                    SELECT 
+                        1/0 
+                    FROM #index_details AS id_uc 
+                    WHERE id_uc.index_id = #index_analysis.index_id
+                    AND   id_uc.object_id = #index_analysis.object_id
+                    AND   id_uc.is_unique_constraint = 1
+                ) THEN 500 
+                /* Unique constraints get lower priority */
+                WHEN is_unique = 1 AND EXISTS 
+                (
+                    SELECT 
+                        1/0 
+                    FROM #index_details AS id_uc 
+                    WHERE id_uc.index_id = #index_analysis.index_id
+                    AND   id_uc.object_id = #index_analysis.object_id
+                    AND   id_uc.is_unique_constraint = 1
+                ) THEN 50 
                 ELSE 0 
-            END  /* Unique indexes get high priority */
+            END
             + 
             CASE 
                 WHEN EXISTS 
@@ -1822,7 +1840,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    /* Exclude pairs where either one is a unique constraint (we'll handle those separately in Rule 7) */
+    /* Exclude unique constraints - we'll handle those separately in Rule 7 */
     AND NOT EXISTS 
     (
         SELECT 
@@ -2262,8 +2280,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  ia_nc.database_id = ia_uc.database_id
       AND ia_nc.object_id = ia_uc.object_id
       AND ia_nc.index_name <> ia_uc.index_name /* Different index */
-      AND ia_nc.action = 'MAKE UNIQUE' /* That has been marked to be made unique */
-      AND ia_nc.consolidation_rule = 'Unique Constraint Replacement' /* From previous rule */
     WHERE 
         /* Verify key columns match between index and unique constraint */
         NOT EXISTS 
