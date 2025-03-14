@@ -3648,6 +3648,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN NULL
                 ELSE FORMAT(ir.index_writes, 'N0')
             END,
+        ia.original_index_definition,
         /* Finally show the actual script */
         ir.script
     FROM #index_cleanup_results AS ir
