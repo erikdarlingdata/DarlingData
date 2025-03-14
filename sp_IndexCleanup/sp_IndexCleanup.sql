@@ -2792,15 +2792,41 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         script_type = 'DISABLE SCRIPT',
         ia.consolidation_rule,
         script =
-            N'ALTER INDEX ' +
-            QUOTENAME(ia.index_name) +
-            N' ON ' +
-            QUOTENAME(ia.database_name) +
-            N'.' +
-            QUOTENAME(ia.schema_name) +
-            N'.' +
-            QUOTENAME(ia.table_name) +
-            N' DISABLE;',
+            CASE
+                /* Check if this is a unique constraint and use appropriate syntax */
+                WHEN EXISTS 
+                (
+                    SELECT 
+                        1/0 
+                    FROM #index_details AS id_uc
+                    WHERE id_uc.database_id = ia.database_id
+                    AND   id_uc.object_id = ia.object_id
+                    AND   id_uc.index_id = ia.index_id
+                    AND   id_uc.is_unique_constraint = 1
+                )
+                THEN 
+                    /* Use NOCHECK CONSTRAINT syntax for unique constraints */
+                    N'ALTER TABLE ' +
+                    QUOTENAME(ia.database_name) +
+                    N'.' +
+                    QUOTENAME(ia.schema_name) +
+                    N'.' +
+                    QUOTENAME(ia.table_name) +
+                    N' NOCHECK CONSTRAINT ' +
+                    QUOTENAME(ia.index_name) +
+                    N';'
+                ELSE 
+                    /* Use regular DISABLE syntax for indexes */
+                    N'ALTER INDEX ' +
+                    QUOTENAME(ia.index_name) +
+                    N' ON ' +
+                    QUOTENAME(ia.database_name) +
+                    N'.' +
+                    QUOTENAME(ia.schema_name) +
+                    N'.' +
+                    QUOTENAME(ia.table_name) +
+                    N' DISABLE;'
+            END,
             CASE 
                 WHEN ia.consolidation_rule = 'Key Subset' 
                 THEN N'This index is superseded by a wider index: ' + ISNULL(ia.target_index_name, N'(unknown)')
