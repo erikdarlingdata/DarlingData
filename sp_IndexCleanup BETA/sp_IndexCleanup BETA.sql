@@ -654,7 +654,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         object_id = t.object_id,
         table_name = t.name,
         index_id = i.index_id,
-        index_name = i.name
+        index_name = ISNULL(i.name, t.table_name + N''.Heap'')
     FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
     JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
       ON t.schema_id = s.schema_id
@@ -665,7 +665,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND us.database_id = @database_id
     WHERE t.is_ms_shipped = 0
     AND   t.type <> N''TF''
-    AND   i.index_id > 0
     AND   NOT EXISTS 
     (
         SELECT 
