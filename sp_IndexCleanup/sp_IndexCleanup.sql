@@ -1806,6 +1806,91 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
     
+    /* 
+    Merge included columns for indexes marked with MERGE INCLUDES action 
+    */
+    WITH MergeIncludes AS
+    (
+        SELECT 
+            winner.database_id,
+            winner.object_id,
+            winner.index_id,
+            winner.index_name,
+            winner.included_columns AS winner_includes,
+            loser.included_columns AS loser_includes
+        FROM #index_analysis AS winner
+        JOIN #index_analysis AS loser
+          ON  winner.database_id = loser.database_id
+          AND winner.object_id = loser.object_id
+          AND loser.target_index_name = winner.index_name
+        WHERE winner.action = 'MERGE INCLUDES'
+        AND   loser.action = 'DISABLE'
+        AND   winner.consolidation_rule = 'Key Duplicate'
+        AND   loser.consolidation_rule = 'Key Duplicate'
+    )
+    UPDATE ia
+    SET ia.included_columns = 
+        CASE
+            /* If both have includes, combine them without duplicates */
+            WHEN mi.winner_includes IS NOT NULL AND mi.loser_includes IS NOT NULL
+            THEN 
+                /* Create combined includes using XML method that works with all SQL Server versions */
+                (
+                    SELECT 
+                        /* Combine both sets of includes */
+                        combined_cols = 
+                            STUFF
+                            (
+                                (
+                                    SELECT 
+                                        N', ' + t.c.value('.', 'NVARCHAR(4000)')
+                                    FROM 
+                                    (
+                                        /* Create XML from winner includes */
+                                        SELECT 
+                                            x = CONVERT
+                                            (
+                                                XML, 
+                                                N'<c>' + 
+                                                REPLACE(mi.winner_includes, N', ', N'</c><c>') + 
+                                                N'</c>'
+                                            )
+
+                                        UNION ALL
+
+                                        /* Create XML from loser includes */
+                                        SELECT 
+                                            x = CONVERT
+                                            (
+                                                XML, 
+                                                N'<c>' + 
+                                                REPLACE(mi.loser_includes, N', ', N'</c><c>') + 
+                                                N'</c>'
+                                            )
+                                    ) AS a
+                                    /* Split XML into individual columns */
+                                    CROSS APPLY a.x.nodes('/c') AS t(c)
+                                    /* Ensure uniqueness with GROUP BY */
+                                    GROUP BY t.c.value('.', 'NVARCHAR(4000)')
+                                    ORDER BY t.c.value('.', 'NVARCHAR(4000)')
+                                    FOR XML PATH('')
+                                ),
+                                1, 2, ''
+                            )
+                )
+            /* If only loser has includes, use those */
+            WHEN mi.winner_includes IS NULL AND mi.loser_includes IS NOT NULL
+            THEN mi.loser_includes
+            /* If only winner has includes or neither has includes, keep winner's includes */
+            ELSE mi.winner_includes
+        END
+    FROM #index_analysis AS ia
+    JOIN MergeIncludes AS mi
+      ON  ia.database_id = mi.database_id
+      AND ia.object_id = mi.object_id
+      AND ia.index_id = mi.index_id
+    WHERE ia.action = 'MERGE INCLUDES';
+    
     /* Rule 4: Superset/subset key columns */
     UPDATE 
         ia1
