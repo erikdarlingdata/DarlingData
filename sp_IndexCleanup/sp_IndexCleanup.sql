@@ -382,7 +382,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         object_id integer NOT NULL,
         table_name sysname NOT NULL,
         index_id integer NOT NULL,
-        index_name sysname NOT NULL
+        index_name sysname NOT NULL,
+        can_compress bit NOT NULL
         PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
     );
 
@@ -654,12 +655,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         object_id = t.object_id,
         table_name = t.name,
         index_id = i.index_id,
-        index_name = ISNULL(i.name, t.name + N''.Heap'')
+        index_name = ISNULL(i.name, t.name + N''.Heap''),
+        can_compress = 
+            CASE 
+                WHEN p.index_id > 0 
+                AND  p.data_compression = 0 
+                THEN 1 
+                ELSE 0 
+            END
     FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
     JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
       ON t.schema_id = s.schema_id
     JOIN ' + QUOTENAME(@database_name) + N'.sys.indexes AS i
       ON t.object_id = i.object_id
+    JOIN ' + QUOTENAME(@database_name) + N'.sys.partitions AS p
+      ON  i.object_id = p.object_id
+      AND i.index_id = p.index_id
     LEFT JOIN ' + QUOTENAME(@database_name) + N'.sys.dm_db_index_usage_stats AS us
       ON  t.object_id = us.object_id
       AND us.database_id = @database_id
@@ -773,7 +784,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         object_id, 
         table_name,
         index_id,
-        index_name
+        index_name,
+        can_compress
     )
     EXECUTE sys.sp_executesql
         @sql,
@@ -838,6 +850,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         1, /* Default to compressible */
         NULL
     FROM #filtered_objects AS fo
+    WHERE fo.can_compress = 1
     OPTION(RECOMPILE);
     
     /* If SQL Server edition doesn't support compression, mark all as ineligible */
@@ -1162,7 +1175,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN ' + QUOTENAME(@database_name) + N'.sys.index_columns AS ic
       ON  i.object_id = ic.object_id
       AND i.index_id = ic.index_id
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.columns AS c
+    JOIN ' + QUOTENAME(@database_name) + 
+    CONVERT
+    (
+        nvarchar(MAX),
+        N'.sys.columns AS c
       ON  ic.object_id = c.object_id
       AND ic.column_id = c.column_id
     LEFT JOIN sys.dm_db_index_usage_stats AS us
@@ -1185,7 +1202,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT 
             1/0
-        FROM ' + QUOTENAME(@database_name) + 
+        FROM '
+    ) + QUOTENAME(@database_name) + 
         CONVERT
         (
             nvarchar(MAX), 
@@ -2288,7 +2306,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_reads,
         index_writes
     )
-    SELECT
+    SELECT DISTINCT
         result_type = 'MERGE',
         /* Put merge target indexes higher in sort order (5) so they appear before 
            indexes that will be disabled (20) */
@@ -2519,7 +2537,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_reads,
         index_writes
     )
-    SELECT
+    SELECT DISTINCT
         result_type = 'COMPRESS',
         sort_order = 40,
         ia.database_name,
@@ -2620,7 +2638,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_reads,
         index_writes
     )
-    SELECT
+    SELECT DISTINCT
         result_type = 'CONSTRAINT',
         sort_order = 30,
         ia.database_name,
@@ -2722,7 +2740,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_reads,
         index_writes
     )
-    SELECT
+    SELECT DISTINCT
         result_type = 'COMPRESS_PARTITION',
         sort_order = 50,
         ia.database_name,
@@ -2830,7 +2848,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_reads,
         index_writes
     )
-    SELECT
+    SELECT DISTINCT
         result_type = 'INELIGIBLE',
         sort_order = 90,
         ce.database_name,
@@ -2885,7 +2903,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_reads,
         index_writes
     )
-    SELECT
+    SELECT DISTINCT
         result_type = 'REVIEW',
         sort_order = 93, /* Just before KEPT indexes */
         ia.database_name,
