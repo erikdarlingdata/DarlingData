@@ -1657,8 +1657,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND   id.user_scans > 0
                 ) THEN 100 ELSE 0 
             END
-        OPTION(RECOMPILE);  /* Indexes with scans get some priority */
+    OPTION(RECOMPILE);  /* Indexes with scans get some priority */
 
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after priority score',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
 
     /* Rule 1: Identify unused indexes */
     UPDATE 
@@ -1688,6 +1696,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     AND #index_analysis.index_id <> 1
     OPTION(RECOMPILE);  /* Don't disable clustered indexes */
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 1',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
 
     /* Rule 2: Exact duplicates - matching key columns and includes */
     UPDATE 
@@ -1738,6 +1755,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
 
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 2',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
+
     /* Rule 3: Key duplicates - matching key columns, different includes */
     UPDATE 
         ia1
@@ -1746,9 +1772,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia1.target_index_name = 
             CASE 
                 /* If one is unique and the other isn't, prefer the unique one */
-                WHEN ia1.is_unique = 1 AND ia2.is_unique = 0 
+                WHEN ia1.is_unique = 1 
+                AND  ia2.is_unique = 0 
                 THEN NULL
-                WHEN ia1.is_unique = 0 AND ia2.is_unique = 1 
+                WHEN ia1.is_unique = 0 
+                AND  ia2.is_unique = 1 
                 THEN ia2.index_name
                 /* Otherwise use priority */
                 WHEN ia1.index_priority >= ia2.index_priority 
@@ -1757,8 +1785,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END,
         ia1.action = 
             CASE 
-                WHEN (ia1.is_unique = 1 AND ia2.is_unique = 0) OR
-                     (ia1.index_priority >= ia2.index_priority AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1))
+                WHEN (ia1.is_unique = 1 AND ia2.is_unique = 0) 
+                OR   
+                (
+                    ia1.index_priority >= ia2.index_priority 
+                  AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1)
+                )
+                AND ISNULL(ia1.included_columns, N'') <> ISNULL(ia2.included_columns, N'')
                 THEN 'MERGE INCLUDES'  /* Keep this index but merge includes */
                 ELSE 'DISABLE'  /* Other index is keeper, disable this one */
             END,
@@ -1771,7 +1804,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ia1.index_priority >= ia2.index_priority 
                   AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1)
                 )
-                THEN 'Supersedes ' + ia2.index_name
+                THEN 'Supersedes ' + 
+                     ia2.index_name
                 ELSE NULL
             END
     FROM #index_analysis AS ia1
@@ -1805,6 +1839,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.is_eligible_for_dedupe = 1
     )
     OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 3',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
     
     /* 
     Merge included columns for indexes marked with MERGE INCLUDES action 
@@ -1895,6 +1938,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia.object_id = mi.object_id
       AND ia.index_id = mi.index_id
     WHERE ia.action = 'MERGE INCLUDES';
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after merge includes',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
     
     /* Rule 4: Superset/subset key columns */
     UPDATE 
@@ -1935,6 +1987,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.is_eligible_for_dedupe = 1
     )
     OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 4',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
     
     /* Update the superseded_by column for the wider index in a separate statement */
     UPDATE 
@@ -1953,6 +2014,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia1.consolidation_rule = 'Key Subset'  /* Use records just processed in previous UPDATE */
     AND   ia1.target_index_name = ia2.index_name  /* Make sure we're updating the right wider index */
     OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after update superseded',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
 
     /* Rule 5: Unique constraint vs. nonclustered index handling */
     UPDATE 
@@ -2010,8 +2080,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     )
     OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 5',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
     
-    /* Rule 7: Identify indexes with same keys but in different order after first column */
+    /* Rule 6: Identify indexes with same keys but in different order after first column */
     /* This rule flags indexes that have the same set of key columns but ordered differently */
     /* These need manual review as they may be redundant depending on query patterns */
     UPDATE 
@@ -2090,18 +2169,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     OPTION(RECOMPILE);
 
-
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#index_analysis after update',
+            table_name = '#index_analysis after rule 6',
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
-
-        RAISERROR('Generating results', 0, 0) WITH NOWAIT;
     END;
-
 
     /* Create a reference to the detailed summary that will appear at the end */
     IF @debug = 1
