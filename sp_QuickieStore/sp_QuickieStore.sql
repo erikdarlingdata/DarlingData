@@ -6138,16 +6138,17 @@ SELECT
         WHERE qsrs.plan_id = dp.plan_id
         AND   1 = 1
         '
-        + CASE WHEN @regression_mode = 1
-          THEN N' AND ( 1 = 1
-          ' + @regression_where_clause
+        + CASE 
+              WHEN @regression_mode = 1
+              THEN N' AND ( 1 = 1
+          ' + 
+          @regression_where_clause
           + N' )
     OR
           ( 1 = 1
-          '
-          + @where_clause
+          ' + @where_clause
           + N' ) '
-          ELSE @where_clause
+              ELSE @where_clause
           END
       + N'
     ORDER BY
