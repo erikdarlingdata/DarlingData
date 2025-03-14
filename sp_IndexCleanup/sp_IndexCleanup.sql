@@ -572,6 +572,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         script nvarchar(max) NULL,
         additional_info nvarchar(max) NULL, /* For stats, constraints, etc. */
         superseded_info nvarchar(max) NULL, /* To store superseded_by information */
+        original_index_definition nvarchar(max) NULL, /* Original index definition for validation */
         index_size_gb decimal(18,4) NULL,  /* Size of the index in GB */
         index_rows bigint NULL,            /* Number of rows in the index */
         index_reads bigint NULL,           /* Total reads (seeks + scans + lookups) */
@@ -2489,6 +2490,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         script,
         additional_info,
         superseded_info,
+        original_index_definition,
         index_size_gb,
         index_rows,
         index_reads,
@@ -2579,6 +2581,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END,
         /* Add superseded_by information if available */
         ia.superseded_by,
+        /* Original index definition for validation */
+        original_index_definition = 
+            N'CREATE INDEX ' + 
+            QUOTENAME(ia.index_name) + 
+            N' ON ' + 
+            QUOTENAME(ia.database_name) + 
+            N'.' +
+            QUOTENAME(ia.schema_name) + 
+            N'.' +
+            QUOTENAME(ia.table_name) + 
+            N' (' +
+            ia.key_columns +
+            N')' +
+            CASE 
+                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
+                THEN N' INCLUDE (' + ia.included_columns + N')'
+                ELSE N''
+            END +
+            CASE 
+                WHEN ia.filter_definition IS NOT NULL
+                THEN N' WHERE ' + ia.filter_definition
+                ELSE N''
+            END,
         NULL,
         NULL,
         NULL,
@@ -2637,6 +2662,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         additional_info,
         target_index_name,
         superseded_info,
+        original_index_definition,
         index_size_gb,
         index_rows,
         index_reads,
@@ -2681,6 +2707,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END,
         ia.target_index_name,  /* Include the target index name */
         superseded_info = NULL,  /* Don't need superseded_by info for disabled indexes */
+        /* Original index definition for validation */
+        original_index_definition = 
+            N'CREATE INDEX ' + 
+            QUOTENAME(ia.index_name) + 
+            N' ON ' + 
+            QUOTENAME(ia.database_name) + 
+            N'.' +
+            QUOTENAME(ia.schema_name) + 
+            N'.' +
+            QUOTENAME(ia.table_name) + 
+            N' (' +
+            ia.key_columns +
+            N')' +
+            CASE 
+                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
+                THEN N' INCLUDE (' + ia.included_columns + N')'
+                ELSE N''
+            END +
+            CASE 
+                WHEN ia.filter_definition IS NOT NULL
+                THEN N' WHERE ' + ia.filter_definition
+                ELSE N''
+            END,
         ps.total_space_gb,
         ps.total_rows,
         index_reads = 
@@ -2720,6 +2769,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         additional_info,
         target_index_name,
         superseded_info,
+        original_index_definition,
         index_size_gb,
         index_rows,
         index_reads,
@@ -2753,6 +2803,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         N'Compression type: All Partitions',
         superseded_info = NULL, /* No target index for compression scripts */
         ia.superseded_by, /* Include superseded_by info for compression scripts */
+        /* Original index definition for validation */
+        original_index_definition = 
+            N'CREATE INDEX ' + 
+            QUOTENAME(ia.index_name) + 
+            N' ON ' + 
+            QUOTENAME(ia.database_name) + 
+            N'.' +
+            QUOTENAME(ia.schema_name) + 
+            N'.' +
+            QUOTENAME(ia.table_name) + 
+            N' (' +
+            ia.key_columns +
+            N')' +
+            CASE 
+                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
+                THEN N' INCLUDE (' + ia.included_columns + N')'
+                ELSE N''
+            END +
+            CASE 
+                WHEN ia.filter_definition IS NOT NULL
+                THEN N' WHERE ' + ia.filter_definition
+                ELSE N''
+            END,
         ps_full.total_space_gb,
         ps_full.total_rows,
         index_reads =
@@ -3031,6 +3104,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name,
         script_type,
         additional_info,
+        original_index_definition,
         index_size_gb,
         index_rows,
         index_reads,
@@ -3045,6 +3119,36 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ce.index_name,
         script_type = 'INELIGIBLE FOR COMPRESSION',
         ce.reason,
+        /* Original index definition for validation */
+        original_index_definition = 
+            (
+                SELECT TOP (1)
+                    N'CREATE INDEX ' + 
+                    QUOTENAME(ia.index_name) + 
+                    N' ON ' + 
+                    QUOTENAME(ia.database_name) + 
+                    N'.' +
+                    QUOTENAME(ia.schema_name) + 
+                    N'.' +
+                    QUOTENAME(ia.table_name) + 
+                    N' (' +
+                    ia.key_columns +
+                    N')' +
+                    CASE 
+                        WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
+                        THEN N' INCLUDE (' + ia.included_columns + N')'
+                        ELSE N''
+                    END +
+                    CASE 
+                        WHEN ia.filter_definition IS NOT NULL
+                        THEN N' WHERE ' + ia.filter_definition
+                        ELSE N''
+                    END
+                FROM #index_analysis AS ia
+                WHERE ia.database_id = ce.database_id
+                AND   ia.object_id = ce.object_id
+                AND   ia.index_id = ce.index_id
+            ),
         ps.total_space_gb,
         ps.total_rows,
         index_reads =
@@ -3086,6 +3190,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         consolidation_rule,
         target_index_name,
         additional_info,
+        original_index_definition,
         index_size_gb,
         index_rows,
         index_reads,
@@ -3107,6 +3212,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N'This index has the same key columns as ' + ISNULL(ia.target_index_name, N'(unknown)') + 
                      N' but in a different order. May be redundant depending on query patterns.'
                 ELSE N'This index needs manual review'
+            END,
+        /* Original index definition for validation */
+        original_index_definition = 
+            N'CREATE INDEX ' + 
+            QUOTENAME(ia.index_name) + 
+            N' ON ' + 
+            QUOTENAME(ia.database_name) + 
+            N'.' +
+            QUOTENAME(ia.schema_name) + 
+            N'.' +
+            QUOTENAME(ia.table_name) + 
+            N' (' +
+            ia.key_columns +
+            N')' +
+            CASE 
+                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
+                THEN N' INCLUDE (' + ia.included_columns + N')'
+                ELSE N''
+            END +
+            CASE 
+                WHEN ia.filter_definition IS NOT NULL
+                THEN N' WHERE ' + ia.filter_definition
+                ELSE N''
             END,
         ps.total_space_gb,
         ps.total_rows,
@@ -3149,6 +3277,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         consolidation_rule,
         superseded_info,
         additional_info,
+        original_index_definition,
         index_size_gb,
         index_rows,
         index_reads,
@@ -3171,6 +3300,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN ia.action = N'KEEP' 
                 THEN 'This index is being kept'
                 ELSE NULL
+            END,
+        /* Original index definition for validation */
+        original_index_definition = 
+            N'CREATE INDEX ' + 
+            QUOTENAME(ia.index_name) + 
+            N' ON ' + 
+            QUOTENAME(ia.database_name) + 
+            N'.' +
+            QUOTENAME(ia.schema_name) + 
+            N'.' +
+            QUOTENAME(ia.table_name) + 
+            N' (' +
+            ia.key_columns +
+            N')' +
+            CASE 
+                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
+                THEN N' INCLUDE (' + ia.included_columns + N')'
+                ELSE N''
+            END +
+            CASE 
+                WHEN ia.filter_definition IS NOT NULL
+                THEN N' WHERE ' + ia.filter_definition
+                ELSE N''
             END,
         ps.total_space_gb,
         ps.total_rows,
