@@ -35,7 +35,7 @@ ALTER PROCEDURE
     @min_size_gb decimal(10,2) = 0,
     @min_rows bigint = 0,
     @help bit = 'false',
-    @debug bit = 'true',
+    @debug bit = 'false',
     @version varchar(20) = NULL OUTPUT,
     @version_date datetime = NULL OUTPUT
 )
