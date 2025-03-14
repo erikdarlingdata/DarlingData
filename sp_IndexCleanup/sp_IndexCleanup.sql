@@ -1987,6 +1987,107 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.is_eligible_for_dedupe = 1
     )
     OPTION(RECOMPILE);
+    
+    /* Rule 5: Mark superset indexes for merging with includes from subset */
+    UPDATE 
+        ia2
+    SET 
+        ia2.consolidation_rule = 'Key Superset',
+        ia2.action = N'MERGE INCLUDES',  /* The wider index gets merged with includes */
+        ia2.superseded_by = COALESCE(ia2.superseded_by + ', ', '') + 'Supersedes ' + ia1.index_name
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2 
+      ON  ia1.database_id = ia2.database_id
+      AND ia1.object_id = ia2.object_id
+      AND ia1.target_index_name = ia2.index_name  /* Link from Rule 4 */
+    WHERE ia1.consolidation_rule = 'Key Subset'
+    AND   ia1.action = 'DISABLE'
+    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    OPTION(RECOMPILE);
+    
+    /* Rule 6: Merge includes from subset to superset indexes */
+    WITH KeySubsetSuperset AS
+    (
+        SELECT 
+            superset.database_id,
+            superset.object_id,
+            superset.index_id,
+            superset.index_name,
+            superset.included_columns AS superset_includes,
+            subset.included_columns AS subset_includes
+        FROM #index_analysis AS superset
+        JOIN #index_analysis AS subset
+          ON  superset.database_id = subset.database_id
+          AND superset.object_id = subset.object_id
+          AND subset.target_index_name = superset.index_name
+        WHERE superset.action = 'MERGE INCLUDES'
+        AND   subset.action = 'DISABLE'
+        AND   superset.consolidation_rule = 'Key Superset'
+        AND   subset.consolidation_rule = 'Key Subset'
+    )
+    UPDATE ia
+    SET ia.included_columns = 
+        CASE
+            /* If both have includes, combine them without duplicates */
+            WHEN kss.superset_includes IS NOT NULL AND kss.subset_includes IS NOT NULL
+            THEN 
+                /* Create combined includes using XML method that works with all SQL Server versions */
+                (
+                    SELECT 
+                        /* Combine both sets of includes */
+                        combined_cols = 
+                            STUFF
+                            (
+                                (
+                                    SELECT DISTINCT
+                                        N', ' + t.c.value('.', 'sysname')
+                                    FROM 
+                                    (
+                                        /* Create XML from superset includes */
+                                        SELECT 
+                                            x = CONVERT
+                                            (
+                                                xml, 
+                                                N'<c>' + 
+                                                REPLACE(kss.superset_includes, N', ', N'</c><c>') + 
+                                                N'</c>'
+                                            )
+
+                                        UNION ALL
+
+                                        /* Create XML from subset includes */
+                                        SELECT 
+                                            x = CONVERT
+                                            (
+                                                xml, 
+                                                N'<c>' + 
+                                                REPLACE(kss.subset_includes, N', ', N'</c><c>') + 
+                                                N'</c>'
+                                            )
+                                    ) AS a
+                                    /* Split XML into individual columns */
+                                    CROSS APPLY a.x.nodes('/c') AS t(c)
+                                    FOR 
+                                        XML 
+                                        PATH('')
+                                ),
+                                1, 
+                                2, 
+                                ''
+                            )
+                )
+            /* If only subset has includes, use those */
+            WHEN kss.superset_includes IS NULL AND kss.subset_includes IS NOT NULL
+            THEN kss.subset_includes
+            /* If only superset has includes or neither has includes, keep superset's includes */
+            ELSE kss.superset_includes
+        END
+    FROM #index_analysis AS ia
+    JOIN KeySubsetSuperset AS kss
+      ON  ia.database_id = kss.database_id
+      AND ia.object_id = kss.object_id
+      AND ia.index_id = kss.index_id
+    WHERE ia.action = 'MERGE INCLUDES';
 
     IF @debug = 1
     BEGIN
