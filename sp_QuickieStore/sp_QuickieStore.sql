@@ -1421,19 +1421,19 @@ BEGIN
 END;    
 
 /* Dynamic regression change column based on formatting and comparator */
-IF @regression_baseline_start_date IS NOT NULL AND @regression_comparator = 'relative' AND @format_output = 1
+IF @regression_mode = 1 AND @regression_comparator = 'relative' AND @format_output = 1
 BEGIN
     INSERT INTO 
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, 'P2');
 END;
-ELSE IF @regression_baseline_start_date IS NOT NULL AND @format_output = 1
+ELSE IF @regression_mode = 1 AND @format_output = 1
 BEGIN
     INSERT INTO 
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, 'N2');
 END;
-ELSE IF @regression_baseline_start_date IS NOT NULL
+ELSE IF @regression_mode = 1
 BEGIN
     INSERT INTO 
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
@@ -1441,7 +1441,7 @@ BEGIN
 END;
     
 /* Wait time for wait-based sorting */
-IF LOWER(@sort_order) LIKE N'%waits'
+IF @sort_order_is_a_wait = 1
 BEGIN
     INSERT INTO 
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
@@ -1459,7 +1459,7 @@ VALUES
         'n', 
         'n', 
         'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY ' + 
-        CASE WHEN @regression_baseline_start_date IS NOT NULL THEN
+        CASE WHEN @regression_mode = 1 THEN
              /* As seen when populating #regression_changes */
              CASE @regression_direction
                   WHEN 'regressed' THEN 'regression.change_since_regression_time_period'
@@ -1482,7 +1482,7 @@ VALUES
                  WHEN 'recent' THEN 'qsrs.last_execution_time'
                  WHEN 'rows' THEN 'qsrs.avg_rowcount'
                  WHEN 'plan count by hashes' THEN 'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
-                 ELSE CASE WHEN LOWER(@sort_order) LIKE N'%waits' THEN 'waits.total_query_wait_time_ms'
+                 ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN 'waits.total_query_wait_time_ms'
                  ELSE 'qsrs.avg_cpu_time' END
             END
         END + ' DESC)', 
@@ -1718,14 +1718,9 @@ SELECT
         );
 
 /*
-Set @regression_mode if the given arguments indicate that
-we are checking for regressed queries.
+@regression_mode is already set in initialization based on
+@regression_baseline_start_date
 */
-IF @regression_baseline_start_date IS NOT NULL
-BEGIN
-    SELECT
-        @regression_mode = 1;
-END;
 
 /*
 Error out if the @regression parameters do not make sense.
@@ -2344,6 +2339,34 @@ SELECT
         ISNULL(@workdays, 0),
     @include_query_hash_totals =
         ISNULL(@include_query_hash_totals, 0),
+    @sort_order_is_a_wait = 
+        CASE WHEN LOWER(@sort_order) IN
+        (
+            'cpu waits',
+            'lock waits',
+            'locks waits',
+            'latch waits',
+            'latches waits',
+            'buffer latch waits',
+            'buffer latches waits',
+            'buffer io waits',
+            'log waits',
+            'log io waits',
+            'network waits',
+            'network io waits',
+            'parallel waits',
+            'parallelism waits',
+            'memory waits',
+            'total waits'
+        )
+        THEN 1
+        ELSE 0
+        END,
+    @regression_mode = 
+        CASE WHEN @regression_baseline_start_date IS NOT NULL
+        THEN 1
+        ELSE 0
+        END,
     /*
         doing start and end date last because they're more complicated
         if start or end date is null,
@@ -3054,33 +3077,9 @@ BEGIN
        @sort_order = 'cpu';
 END;
 
-/*
-Checks if the sort order is for a wait.
-Cuts out a lot of repetition.
+/* 
+Sort order for wait was already set in initialization
 */
-IF LOWER(@sort_order) IN
-   (
-       'cpu waits',
-       'lock waits',
-       'locks waits',
-       'latch waits',
-       'latches waits',
-       'buffer latch waits',
-       'buffer latches waits',
-       'buffer io waits',
-       'log waits',
-       'log io waits',
-       'network waits',
-       'network io waits',
-       'parallel waits',
-       'parallelism waits',
-       'memory waits',
-       'total waits'
-   )
-BEGIN
-   SELECT
-       @sort_order_is_a_wait = 1;
-END;
 
 /*
 These columns are only available in 2017+
