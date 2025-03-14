@@ -1828,11 +1828,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   winner.consolidation_rule = 'Key Duplicate'
         AND   loser.consolidation_rule = 'Key Duplicate'
     )
-    UPDATE ia
-    SET ia.included_columns = 
+    UPDATE 
+        ia
+    SET 
+        ia.included_columns = 
         CASE
             /* If both have includes, combine them without duplicates */
-            WHEN mi.winner_includes IS NOT NULL AND mi.loser_includes IS NOT NULL
+            WHEN mi.winner_includes IS NOT NULL 
+            AND  mi.loser_includes IS NOT NULL
             THEN 
                 /* Create combined includes using XML method that works with all SQL Server versions */
                 (
@@ -1842,15 +1845,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             STUFF
                             (
                                 (
-                                    SELECT 
-                                        N', ' + t.c.value('.', 'NVARCHAR(4000)')
+                                    SELECT DISTINCT
+                                        N', ' + 
+                                        t.c.value('.', 'sysname')
                                     FROM 
                                     (
                                         /* Create XML from winner includes */
                                         SELECT 
                                             x = CONVERT
                                             (
-                                                XML, 
+                                                xml, 
                                                 N'<c>' + 
                                                 REPLACE(mi.winner_includes, N', ', N'</c><c>') + 
                                                 N'</c>'
@@ -1862,7 +1866,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                         SELECT 
                                             x = CONVERT
                                             (
-                                                XML, 
+                                                xml, 
                                                 N'<c>' + 
                                                 REPLACE(mi.loser_includes, N', ', N'</c><c>') + 
                                                 N'</c>'
@@ -1870,12 +1874,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     ) AS a
                                     /* Split XML into individual columns */
                                     CROSS APPLY a.x.nodes('/c') AS t(c)
-                                    /* Ensure uniqueness with GROUP BY */
-                                    GROUP BY t.c.value('.', 'NVARCHAR(4000)')
-                                    ORDER BY t.c.value('.', 'NVARCHAR(4000)')
-                                    FOR XML PATH('')
+                                    FOR 
+                                        XML 
+                                        PATH('')
                                 ),
-                                1, 2, ''
+                                1, 
+                                2, 
+                                ''
                             )
                 )
             /* If only loser has includes, use those */
