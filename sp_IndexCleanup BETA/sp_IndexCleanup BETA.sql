@@ -1415,7 +1415,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND   ic.partition_ordinal > 0
                     ORDER BY
                         ic.partition_ordinal
-                    FOR XML
+                    FOR 
+                        XML
                         PATH(''''),
                         TYPE
                   ).value(''.'', ''nvarchar(max)''),
@@ -1530,7 +1531,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     id2.key_ordinal
                 ORDER BY
                     id2.key_ordinal
-                FOR XML
+                FOR 
+                    XML
                     PATH(''),
                     TYPE
               ).value('text()[1]','nvarchar(max)'),
@@ -1553,7 +1555,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     id2.column_name
                 ORDER BY
                     id2.column_name
-                FOR XML
+                FOR 
+                    XML
                     PATH(''),
                     TYPE
               ).value('text()[1]','nvarchar(max)'),
