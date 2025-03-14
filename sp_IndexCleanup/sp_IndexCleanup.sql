@@ -2264,6 +2264,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
     
     /* Rule 7.5: Mark unique constraints that have matching nonclustered indexes for disabling */
+    /* First, mark unique constraints for disabling */
     UPDATE 
         ia_uc
     SET 
@@ -2306,6 +2307,37 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id_nc_base.index_id = ia_nc.index_id
             AND   id_nc_inner.is_included_column = 0
         )
+    OPTION(RECOMPILE);
+
+    /* Second, mark nonclustered indexes to be made unique */
+    UPDATE 
+        ia_nc
+    SET 
+        ia_nc.consolidation_rule = 'Unique Constraint Replacement',
+        ia_nc.action = N'MAKE UNIQUE' /* Mark nonclustered index to be made unique */
+    FROM #index_analysis AS ia_nc /* Nonclustered index */
+    JOIN #index_details AS id_nc /* Join to get nonclustered index details */
+      ON  id_nc.database_id = ia_nc.database_id
+      AND id_nc.object_id = ia_nc.object_id
+      AND id_nc.index_id = ia_nc.index_id
+      AND id_nc.is_unique_constraint = 0 /* This is not a unique constraint */
+      AND id_nc.is_unique = 0 /* This is not already unique */
+    WHERE EXISTS (
+        /* Find matching unique constraint that has been marked for disabling */
+        SELECT 1
+        FROM #index_analysis AS ia_uc
+        JOIN #index_details AS id_uc
+          ON  id_uc.database_id = ia_uc.database_id
+          AND id_uc.object_id = ia_uc.object_id
+          AND id_uc.index_id = ia_uc.index_id
+          AND id_uc.is_unique_constraint = 1
+        WHERE 
+            ia_uc.database_id = ia_nc.database_id
+            AND ia_uc.object_id = ia_nc.object_id
+            AND ia_uc.action = N'DISABLE'
+            AND ia_uc.target_index_name = ia_nc.index_name
+    )
+    AND ia_nc.action IS NULL /* Only update if no action has been set yet */
     OPTION(RECOMPILE);
     
     IF @debug = 1
@@ -2909,6 +2941,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     WHERE ia.action = N'DISABLE'
+    /* Exclude unique constraints - they are handled by DISABLE CONSTRAINT scripts */
+    AND NOT EXISTS
+    (
+        SELECT 
+            1/0
+        FROM #index_details AS id_uc
+        WHERE id_uc.database_id = ia.database_id
+        AND   id_uc.object_id = ia.object_id
+        AND   id_uc.index_id = ia.index_id
+        AND   id_uc.is_unique_constraint = 1
+    )
     OPTION(RECOMPILE);
 
     /* Insert compression scripts for remaining indexes */
