@@ -513,6 +513,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         target_index_name sysname NULL,
         consolidation_rule varchar(512) NULL,
         index_priority int NULL,
+        original_index_definition nvarchar(max) NULL, /* Original CREATE INDEX statement */
         INDEX c CLUSTERED (database_id, schema_id, object_id, index_id)
     );
     
@@ -1516,7 +1517,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_unique,
         key_columns,
         included_columns,
-        filter_definition
+        filter_definition,
+        original_index_definition
     )
     SELECT
         @database_id,
@@ -1583,7 +1585,93 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               2,
               ''
             ),
-        id1.filter_definition
+        id1.filter_definition,
+        /* Store the original index definition for validation */
+        original_index_definition = 
+            N'CREATE ' +
+            CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' ELSE N'' END +
+            N'INDEX ' + 
+            QUOTENAME(id1.index_name) + 
+            N' ON ' + 
+            QUOTENAME(DB_NAME(@database_id)) + 
+            N'.' +
+            QUOTENAME(id1.schema_name) + 
+            N'.' +
+            QUOTENAME(id1.table_name) + 
+            N' (' +
+            STUFF
+            (
+                (
+                    SELECT
+                        N', ' +
+                        id2.column_name +
+                        CASE
+                            WHEN id2.is_descending_key = 1
+                            THEN N' DESC'
+                            ELSE N''
+                        END
+                    FROM #index_details id2
+                    WHERE id2.object_id = id1.object_id
+                    AND   id2.index_id = id1.index_id
+                    AND   id2.is_included_column = 0
+                    GROUP BY
+                        id2.column_name,
+                        id2.is_descending_key,
+                        id2.key_ordinal
+                    ORDER BY
+                        id2.key_ordinal
+                    FOR 
+                        XML
+                        PATH(''),
+                        TYPE
+                ).value('text()[1]','nvarchar(max)'),
+                1,
+                2,
+                ''
+            ) +
+            N')' +
+            CASE 
+                WHEN EXISTS 
+                (
+                    SELECT 
+                        1/0 
+                    FROM #index_details id3
+                    WHERE id3.object_id = id1.object_id
+                    AND   id3.index_id = id1.index_id
+                    AND   id3.is_included_column = 1
+                )
+                THEN N' INCLUDE (' + 
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                N', ' +
+                                id4.column_name
+                            FROM #index_details id4
+                            WHERE id4.object_id = id1.object_id
+                            AND   id4.index_id = id1.index_id
+                            AND   id4.is_included_column = 1
+                            GROUP BY
+                                id4.column_name
+                            ORDER BY
+                                id4.column_name
+                            FOR 
+                                XML
+                                PATH(''),
+                                TYPE
+                        ).value('text()[1]','nvarchar(max)'),
+                        1,
+                        2,
+                        ''
+                    ) + 
+                    N')'
+                ELSE N''
+            END +
+            CASE 
+                WHEN id1.filter_definition IS NOT NULL
+                THEN N' WHERE ' + id1.filter_definition
+                ELSE N''
+            END
     FROM #index_details id1
     WHERE id1.is_eligible_for_dedupe = 1
     GROUP BY
@@ -2582,28 +2670,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Add superseded_by information if available */
         ia.superseded_by,
         /* Original index definition for validation */
-        original_index_definition = 
-            N'CREATE INDEX ' + 
-            QUOTENAME(ia.index_name) + 
-            N' ON ' + 
-            QUOTENAME(ia.database_name) + 
-            N'.' +
-            QUOTENAME(ia.schema_name) + 
-            N'.' +
-            QUOTENAME(ia.table_name) + 
-            N' (' +
-            ia.key_columns +
-            N')' +
-            CASE 
-                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
-                THEN N' INCLUDE (' + ia.included_columns + N')'
-                ELSE N''
-            END +
-            CASE 
-                WHEN ia.filter_definition IS NOT NULL
-                THEN N' WHERE ' + ia.filter_definition
-                ELSE N''
-            END,
+        ia.original_index_definition,
         NULL,
         NULL,
         NULL,
@@ -2708,28 +2775,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia.target_index_name,  /* Include the target index name */
         superseded_info = NULL,  /* Don't need superseded_by info for disabled indexes */
         /* Original index definition for validation */
-        original_index_definition = 
-            N'CREATE INDEX ' + 
-            QUOTENAME(ia.index_name) + 
-            N' ON ' + 
-            QUOTENAME(ia.database_name) + 
-            N'.' +
-            QUOTENAME(ia.schema_name) + 
-            N'.' +
-            QUOTENAME(ia.table_name) + 
-            N' (' +
-            ia.key_columns +
-            N')' +
-            CASE 
-                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
-                THEN N' INCLUDE (' + ia.included_columns + N')'
-                ELSE N''
-            END +
-            CASE 
-                WHEN ia.filter_definition IS NOT NULL
-                THEN N' WHERE ' + ia.filter_definition
-                ELSE N''
-            END,
+        ia.original_index_definition,
         ps.total_space_gb,
         ps.total_rows,
         index_reads = 
@@ -2804,28 +2850,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_info = NULL, /* No target index for compression scripts */
         ia.superseded_by, /* Include superseded_by info for compression scripts */
         /* Original index definition for validation */
-        original_index_definition = 
-            N'CREATE INDEX ' + 
-            QUOTENAME(ia.index_name) + 
-            N' ON ' + 
-            QUOTENAME(ia.database_name) + 
-            N'.' +
-            QUOTENAME(ia.schema_name) + 
-            N'.' +
-            QUOTENAME(ia.table_name) + 
-            N' (' +
-            ia.key_columns +
-            N')' +
-            CASE 
-                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
-                THEN N' INCLUDE (' + ia.included_columns + N')'
-                ELSE N''
-            END +
-            CASE 
-                WHEN ia.filter_definition IS NOT NULL
-                THEN N' WHERE ' + ia.filter_definition
-                ELSE N''
-            END,
+        ia.original_index_definition,
         ps_full.total_space_gb,
         ps_full.total_rows,
         index_reads =
@@ -2996,6 +3021,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         additional_info,
         target_index_name,
         superseded_info,
+        original_index_definition,
         index_size_gb,
         index_rows,
         index_reads,
@@ -3056,6 +3082,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N' GB',
         target_index_name = NULL,
         superseded_info = NULL,
+        ia.original_index_definition,
         ps.total_space_gb,
         ps.total_rows,
         index_reads =
@@ -3123,27 +3150,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         original_index_definition = 
             (
                 SELECT TOP (1)
-                    N'CREATE INDEX ' + 
-                    QUOTENAME(ia.index_name) + 
-                    N' ON ' + 
-                    QUOTENAME(ia.database_name) + 
-                    N'.' +
-                    QUOTENAME(ia.schema_name) + 
-                    N'.' +
-                    QUOTENAME(ia.table_name) + 
-                    N' (' +
-                    ia.key_columns +
-                    N')' +
-                    CASE 
-                        WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
-                        THEN N' INCLUDE (' + ia.included_columns + N')'
-                        ELSE N''
-                    END +
-                    CASE 
-                        WHEN ia.filter_definition IS NOT NULL
-                        THEN N' WHERE ' + ia.filter_definition
-                        ELSE N''
-                    END
+                    ia.original_index_definition
                 FROM #index_analysis AS ia
                 WHERE ia.database_id = ce.database_id
                 AND   ia.object_id = ce.object_id
@@ -3214,28 +3221,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE N'This index needs manual review'
             END,
         /* Original index definition for validation */
-        original_index_definition = 
-            N'CREATE INDEX ' + 
-            QUOTENAME(ia.index_name) + 
-            N' ON ' + 
-            QUOTENAME(ia.database_name) + 
-            N'.' +
-            QUOTENAME(ia.schema_name) + 
-            N'.' +
-            QUOTENAME(ia.table_name) + 
-            N' (' +
-            ia.key_columns +
-            N')' +
-            CASE 
-                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
-                THEN N' INCLUDE (' + ia.included_columns + N')'
-                ELSE N''
-            END +
-            CASE 
-                WHEN ia.filter_definition IS NOT NULL
-                THEN N' WHERE ' + ia.filter_definition
-                ELSE N''
-            END,
+        ia.original_index_definition,
         ps.total_space_gb,
         ps.total_rows,
         index_reads =
@@ -3302,28 +3288,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE NULL
             END,
         /* Original index definition for validation */
-        original_index_definition = 
-            N'CREATE INDEX ' + 
-            QUOTENAME(ia.index_name) + 
-            N' ON ' + 
-            QUOTENAME(ia.database_name) + 
-            N'.' +
-            QUOTENAME(ia.schema_name) + 
-            N'.' +
-            QUOTENAME(ia.table_name) + 
-            N' (' +
-            ia.key_columns +
-            N')' +
-            CASE 
-                WHEN ia.included_columns IS NOT NULL AND LEN(ia.included_columns) > 0
-                THEN N' INCLUDE (' + ia.included_columns + N')'
-                ELSE N''
-            END +
-            CASE 
-                WHEN ia.filter_definition IS NOT NULL
-                THEN N' WHERE ' + ia.filter_definition
-                ELSE N''
-            END,
+        ia.original_index_definition,
         ps.total_space_gb,
         ps.total_rows,
         index_reads =
