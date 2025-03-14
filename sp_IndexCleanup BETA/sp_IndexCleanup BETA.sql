@@ -654,7 +654,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         object_id = t.object_id,
         table_name = t.name,
         index_id = i.index_id,
-        index_name = ISNULL(i.name, t.table_name + N''.Heap'')
+        index_name = ISNULL(i.name, t.name + N''.Heap'')
     FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
     JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
       ON t.schema_id = s.schema_id
@@ -921,7 +921,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         os.object_id,
         table_name = t.name,
         os.index_id,
-        index_name = i.name,
+        index_name = ISNULL(i.name, t.name + N''.Heap''),
         range_scan_count = SUM(os.range_scan_count),
         singleton_lookup_count = SUM(os.singleton_lookup_count),
         forwarded_fetch_count = SUM(os.forwarded_fetch_count),
@@ -1074,7 +1074,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         s.schema_id,
         schema_name = s.name,
         table_name = t.name,
-        index_name = i.name,
+        index_name = ISNULL(i.name, t.name + N''.Heap''),
         column_name = c.name,
         i.is_primary_key,
         i.is_unique,
@@ -1326,7 +1326,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             s.schema_id,
             schema_name = s.name,
             table_name = t.name,
-            index_name = i.name,
+            index_name = ISNULL(i.name, t.name + N''.Heap''),
             ps.partition_id,
             p.partition_number,
             total_rows = ps.row_count,
