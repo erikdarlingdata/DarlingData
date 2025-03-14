@@ -1848,106 +1848,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
     END;
-    
-    /* 
-    Merge included columns for indexes marked with MERGE INCLUDES action 
-    */
-    WITH MergeIncludes AS
-    (
-        SELECT 
-            winner.database_id,
-            winner.object_id,
-            winner.index_id,
-            winner.index_name,
-            winner.included_columns AS winner_includes,
-            loser.included_columns AS loser_includes
-        FROM #index_analysis AS winner
-        JOIN #index_analysis AS loser
-          ON  winner.database_id = loser.database_id
-          AND winner.object_id = loser.object_id
-          AND loser.target_index_name = winner.index_name
-        WHERE winner.action = 'MERGE INCLUDES'
-        AND   loser.action = 'DISABLE'
-        AND   winner.consolidation_rule = 'Key Duplicate'
-        AND   loser.consolidation_rule = 'Key Duplicate'
-    )
-    UPDATE 
-        ia
-    SET 
-        ia.included_columns = 
-        CASE
-            /* If both have includes, combine them without duplicates */
-            WHEN mi.winner_includes IS NOT NULL 
-            AND  mi.loser_includes IS NOT NULL
-            THEN 
-                /* Create combined includes using XML method that works with all SQL Server versions */
-                (
-                    SELECT 
-                        /* Combine both sets of includes */
-                        combined_cols = 
-                            STUFF
-                            (
-                                (
-                                    SELECT DISTINCT
-                                        N', ' + 
-                                        t.c.value('.', 'sysname')
-                                    FROM 
-                                    (
-                                        /* Create XML from winner includes */
-                                        SELECT 
-                                            x = CONVERT
-                                            (
-                                                xml, 
-                                                N'<c>' + 
-                                                REPLACE(mi.winner_includes, N', ', N'</c><c>') + 
-                                                N'</c>'
-                                            )
-
-                                        UNION ALL
-
-                                        /* Create XML from loser includes */
-                                        SELECT 
-                                            x = CONVERT
-                                            (
-                                                xml, 
-                                                N'<c>' + 
-                                                REPLACE(mi.loser_includes, N', ', N'</c><c>') + 
-                                                N'</c>'
-                                            )
-                                    ) AS a
-                                    /* Split XML into individual columns */
-                                    CROSS APPLY a.x.nodes('/c') AS t(c)
-                                    FOR 
-                                        XML 
-                                        PATH('')
-                                ),
-                                1, 
-                                2, 
-                                ''
-                            )
-                )
-            /* If only loser has includes, use those */
-            WHEN mi.winner_includes IS NULL AND mi.loser_includes IS NOT NULL
-            THEN mi.loser_includes
-            /* If only winner has includes or neither has includes, keep winner's includes */
-            ELSE mi.winner_includes
-        END
-    FROM #index_analysis AS ia
-    JOIN MergeIncludes AS mi
-      ON  ia.database_id = mi.database_id
-      AND ia.object_id = mi.object_id
-      AND ia.index_id = mi.index_id
-    WHERE ia.action = 'MERGE INCLUDES';
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#index_analysis after merge includes',
-            ia.*
-        FROM #index_analysis AS ia
-        OPTION(RECOMPILE);
-    END;
-    
+        
     /* Rule 4: Superset/subset key columns */
     UPDATE 
         ia1
@@ -1987,6 +1888,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.is_eligible_for_dedupe = 1
     )
     OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 4',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
     
     /* Rule 5: Mark superset indexes for merging with includes from subset */
     UPDATE 
@@ -2004,6 +1914,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   ia1.action = 'DISABLE'
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
     OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 5',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
     
     /* Rule 6: Merge includes from subset to superset indexes */
     WITH KeySubsetSuperset AS
@@ -2025,11 +1944,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   superset.consolidation_rule = 'Key Superset'
         AND   subset.consolidation_rule = 'Key Subset'
     )
-    UPDATE ia
-    SET ia.included_columns = 
+    UPDATE 
+        ia
+    SET 
+        ia.included_columns = 
         CASE
             /* If both have includes, combine them without duplicates */
-            WHEN kss.superset_includes IS NOT NULL AND kss.subset_includes IS NOT NULL
+            WHEN kss.superset_includes IS NOT NULL 
+            AND kss.subset_includes IS NOT NULL
             THEN 
                 /* Create combined includes using XML method that works with all SQL Server versions */
                 (
@@ -2092,7 +2014,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#index_analysis after rule 4',
+            table_name = '#index_analysis after rule 6',
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
@@ -2125,7 +2047,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
-    /* Rule 5: Unique constraint vs. nonclustered index handling */
+    /* Rule 7: Unique constraint vs. nonclustered index handling */
     UPDATE 
         ia1
     SET 
@@ -2185,13 +2107,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#index_analysis after rule 5',
+            table_name = '#index_analysis after rule 7',
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
     END;
     
-    /* Rule 6: Identify indexes with same keys but in different order after first column */
+    /* Rule 8: Identify indexes with same keys but in different order after first column */
     /* This rule flags indexes that have the same set of key columns but ordered differently */
     /* These need manual review as they may be redundant depending on query patterns */
     UPDATE 
@@ -2273,7 +2195,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#index_analysis after rule 6',
+            table_name = '#index_analysis after rule 8',
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
