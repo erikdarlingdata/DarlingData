@@ -4299,7 +4299,9 @@ END;
             IF @log_to_table = 0
             BEGIN
                 SELECT
-                    'Error Number Ignored: ' + CONVERT(nvarchar(100), ie.error_number)
+                    error_numbers_ignored =
+                        N'Error Number Ignored: ' + 
+                        CONVERT(nvarchar(100), ie.error_number)
                 FROM #ignore_errors AS ie;
             END;
         END;
