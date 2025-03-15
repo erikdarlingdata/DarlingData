@@ -1,21 +1,25 @@
 # Erik Darling's T-SQL Coding Style Guide
 
-This document outlines the T-SQL coding style preferences for Erik Darling (Darling Data, LLC) and should be followed when writing or modifying SQL code.
+This document outlines the T-SQL coding style preferences for Erik Darling (Darling Data, LLC) and must be strictly followed when writing or modifying SQL code.
 
 ## General Formatting
 
 - **Keywords**: All SQL keywords in UPPERCASE (SELECT, FROM, WHERE, JOIN, etc.)
 - **Functions**: All SQL functions in UPPERCASE (CONVERT, ISNULL, OBJECT_ID, etc.)
+- **Data types**: 
+  - Never abbreviate data types (use INTEGER instead of INT)
+  - All data types must be lowercase (varchar, nvarchar, datetime2, bigint, etc.)
+  - Length specifications must also be lowercase: nvarchar(max), not nvarchar(MAX)
+  - Precision and scale specifications must be lowercase: decimal(38,2), not DECIMAL(38,2)
+- **Keywords**: Never abbreviate keywords (use EXECUTE instead of EXEC, TRANSACTION instead of TRAN, PROCEDURE instead of PROC)
 - **Indentation**: 4 spaces for each level of indentation (NEVER use tabs)
 - **Line breaks**: Each statement on a new line
 - **Spacing**: Consistent spacing around operators (=, <, >, etc.)
 - **Block separation**: Empty line between logical code blocks (maximum of two empty lines between statements)
 - **Quotes**: Use single quotes for string literals and N-prefix for Unicode strings (N'string')
-- **Data types**: Never abbreviate data types (use INTEGER instead of INT)
-- **Keywords**: Never abbreviate keywords (use EXECUTE instead of EXEC, TRANSACTION instead of TRAN, PROCEDURE instead of PROC)
 - **TOP syntax**: Always include parentheses, as in TOP (100) not TOP 100
 - **Object creation**: Generally use CREATE OR ALTER for objects instead of DROP/CREATE
-- **Table aliases**: Tables should always have aliases, even in simple queries
+- **Table aliases**: Tables must always have aliases, even in simple queries
 - **Column references**: Always qualify columns with their table alias
 
 ## Comments
@@ -524,7 +528,7 @@ BEGIN
         Variable declarations
         */
         DECLARE
-            @sql nvarchar(MAX) = N'',
+            @sql nvarchar(max) = N'',
             @database_id integer = NULL;
             
         /*
