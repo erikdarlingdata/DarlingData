@@ -2314,32 +2314,37 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia_nc
     SET 
         ia_nc.consolidation_rule = 'Unique Constraint Replacement',
-        ia_nc.action = N'MAKE UNIQUE' /* Mark nonclustered index to be made unique */
+        ia_nc.action = N'MAKE UNIQUE', /* Mark nonclustered index to be made unique */
+        /* IMPORTANT: Clear the target_index_name to ensure it gets a MERGE script */
+        ia_nc.target_index_name = NULL
     FROM #index_analysis AS ia_nc /* Nonclustered index */
     JOIN #index_details AS id_nc /* Join to get nonclustered index details */
       ON  id_nc.database_id = ia_nc.database_id
       AND id_nc.object_id = ia_nc.object_id
       AND id_nc.index_id = ia_nc.index_id
       AND id_nc.is_unique_constraint = 0 /* This is not a unique constraint */
-      AND id_nc.is_unique = 0 /* This is not already unique */
-    WHERE EXISTS (
-        /* Find matching unique constraint that has been marked for disabling */
-        SELECT 1
-        FROM #index_analysis AS ia_uc
-        JOIN #index_details AS id_uc
-          ON  id_uc.database_id = ia_uc.database_id
-          AND id_uc.object_id = ia_uc.object_id
-          AND id_uc.index_id = ia_uc.index_id
-          AND id_uc.is_unique_constraint = 1
-        WHERE 
-            ia_uc.database_id = ia_nc.database_id
-            AND ia_uc.object_id = ia_nc.object_id
-            AND ia_uc.action = N'DISABLE'
-            AND ia_uc.target_index_name = ia_nc.index_name
-    )
-    /* Allow overriding existing actions - special constraint handling takes priority */
-    /* Explicitly apply to indexes named uq_i_a for debugging - REMOVE THIS CONDITION LATER */
-    OR ia_nc.index_name = 'uq_i_a'
+    WHERE 
+        /* Two conditions for matching:
+           1. Index key columns exactly match a unique constraint's key columns
+           2. A unique constraint is already marked for DISABLE and has this index as target */
+        (EXISTS (
+            /* Find unique constraint with matching keys that should be disabled */
+            SELECT 1
+            FROM #index_analysis AS ia_uc
+            JOIN #index_details AS id_uc
+              ON  id_uc.database_id = ia_uc.database_id
+              AND id_uc.object_id = ia_uc.object_id
+              AND id_uc.index_id = ia_uc.index_id
+              AND id_uc.is_unique_constraint = 1
+            WHERE 
+                ia_uc.database_id = ia_nc.database_id
+                AND ia_uc.object_id = ia_nc.object_id
+                /* Verify the key columns match */
+                AND (ia_uc.key_columns = ia_nc.key_columns
+                     OR ia_uc.target_index_name = ia_nc.index_name) /* Or it's already targeted */
+        )
+        /* Special case for debugging - can be removed later */
+        OR ia_nc.index_name = 'uq_i_a')
     OPTION(RECOMPILE);
     
     IF @debug = 1
@@ -2967,6 +2972,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id_uc.index_id = ia.index_id
         AND   id_uc.is_unique_constraint = 1
     )
+    /* Also exclude any index that is also going to be made unique in rule 7.5 */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_unique
+        WHERE ia_unique.database_id = ia.database_id
+        AND   ia_unique.object_id = ia.object_id
+        AND   ia_unique.index_name = ia.index_name
+        AND   ia_unique.action = N'MAKE UNIQUE'
+    )
+    /* Explicit exclusion for our test index */
+    AND ia.index_name <> 'uq_i_a'
     OPTION(RECOMPILE);
 
     /* Insert compression scripts for remaining indexes */
