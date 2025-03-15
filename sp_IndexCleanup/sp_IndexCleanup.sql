@@ -1837,14 +1837,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia1.consolidation_rule = 'Exact Duplicate',
         ia1.target_index_name = 
             CASE 
-                WHEN ia1.index_priority >= ia2.index_priority 
+                WHEN ia1.index_priority > ia2.index_priority 
                 THEN NULL  /* This index is the keeper */
+                WHEN ia1.index_priority = ia2.index_priority AND ia1.index_name < ia2.index_name
+                THEN NULL  /* When tied, use alphabetical ordering for consistency */
                 ELSE ia2.index_name  /* Other index is the keeper */
             END,
         ia1.action = 
             CASE 
-                WHEN ia1.index_priority >= ia2.index_priority 
+                WHEN ia1.index_priority > ia2.index_priority 
                 THEN 'KEEP'  /* This index is the keeper */
+                WHEN ia1.index_priority = ia2.index_priority AND ia1.index_name < ia2.index_name
+                THEN 'KEEP'  /* When tied, use alphabetical ordering for consistency */
                 ELSE 'DISABLE'  /* Other index gets disabled */
             END
     FROM #index_analysis AS ia1
@@ -1906,6 +1910,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#index_analysis after rule 2',
             ia.*
         FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+        
+        /* Special debug for exact duplicates */
+        RAISERROR('Special debug for exact duplicates after rule 2:', 0, 0) WITH NOWAIT;
+        SELECT 
+            ia1.index_name AS index1_name,
+            ia1.action AS index1_action,
+            ia1.consolidation_rule AS index1_rule,
+            ia1.index_priority AS index1_priority,
+            ia1.target_index_name AS index1_target,
+            ia1.filter_definition AS index1_filter,
+            ia2.index_name AS index2_name,
+            ia2.action AS index2_action,
+            ia2.consolidation_rule AS index2_rule,
+            ia2.index_priority AS index2_priority,
+            ia2.target_index_name AS index2_target,
+            ia2.filter_definition AS index2_filter
+        FROM #index_analysis AS ia1
+        JOIN #index_analysis AS ia2 
+          ON  ia1.database_id = ia2.database_id
+          AND ia1.object_id = ia2.object_id
+          AND ia1.index_name <> ia2.index_name
+          AND ia1.key_columns = ia2.key_columns  /* Exact key match */
+          AND ISNULL(ia1.included_columns, '') = ISNULL(ia2.included_columns, '')  /* Exact includes match */
+          AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+        WHERE ia1.consolidation_rule = 'Exact Duplicate'
+           OR ia2.consolidation_rule = 'Exact Duplicate'
+        ORDER BY ia1.index_name
         OPTION(RECOMPILE);
     END;
 
@@ -2956,6 +2988,57 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @debug = 1
     BEGIN
         RAISERROR('Generating #index_cleanup_results insert, DISABLE', 0, 0) WITH NOWAIT;
+        
+        /* Debug for indexes that should get DISABLE scripts */
+        RAISERROR('Indexes that should get DISABLE scripts:', 0, 0) WITH NOWAIT;
+        SELECT
+            ia.index_name,
+            ia.consolidation_rule,
+            ia.action,
+            ia.target_index_name,
+            ia.is_unique,
+            ia.index_priority,
+            is_unique_constraint = 
+                CASE WHEN EXISTS (
+                    SELECT 1 
+                    FROM #index_details AS id 
+                    WHERE id.database_id = ia.database_id 
+                    AND id.object_id = ia.object_id 
+                    AND id.index_id = ia.index_id 
+                    AND id.is_unique_constraint = 1
+                ) THEN 'YES' ELSE 'NO' END,
+            make_unique_target = 
+                CASE WHEN EXISTS (
+                    SELECT 1 
+                    FROM #index_analysis AS ia_make 
+                    WHERE ia_make.database_id = ia.database_id 
+                    AND ia_make.object_id = ia.object_id 
+                    AND ia_make.action = 'MAKE UNIQUE' 
+                    AND ia_make.target_index_name = ia.index_name
+                ) THEN 'YES' ELSE 'NO' END,
+            will_get_script = 
+                CASE WHEN ia.action = 'DISABLE' AND NOT EXISTS (
+                    SELECT 1 
+                    FROM #index_details AS id_uc 
+                    WHERE id_uc.database_id = ia.database_id 
+                    AND id_uc.object_id = ia.object_id 
+                    AND id_uc.index_id = ia.index_id 
+                    AND id_uc.is_unique_constraint = 1
+                ) THEN 'YES' ELSE 'NO' END
+        FROM #index_analysis AS ia
+        WHERE ia.index_name LIKE 'ix_filtered_%' OR ia.index_name LIKE 'ix_desc_%'
+        ORDER BY ia.index_name;
+        
+        /* Debug for all indexes marked with action = DISABLE */
+        RAISERROR('All indexes with action = DISABLE:', 0, 0) WITH NOWAIT;
+        SELECT
+            ia.index_name,
+            ia.consolidation_rule,
+            ia.action,
+            ia.target_index_name
+        FROM #index_analysis AS ia
+        WHERE ia.action = 'DISABLE'
+        ORDER BY ia.index_name;
     END;
 
     INSERT INTO 
@@ -3173,6 +3256,73 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         RAISERROR('Generating #index_cleanup_results insert, CONSTRAINT', 0, 0) WITH NOWAIT;
     END;
+    
+    /* Add code to insert KEPT indexes into the results - THESE WERE MISSING! */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results insert, KEPT', 0, 0) WITH NOWAIT;
+    END;
+    
+    /* Insert KEPT indexes into results */
+    INSERT INTO 
+        #index_cleanup_results
+    (
+        result_type,
+        sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
+        script_type,
+        consolidation_rule,
+        additional_info,
+        script,
+        original_index_definition,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
+    )
+    SELECT DISTINCT
+        result_type = 'KEPT',
+        sort_order = 95, /* Put kept indexes at the end */
+        ia.database_name,
+        ia.schema_name,
+        ia.table_name,
+        ia.index_name,
+        script_type = NULL,
+        ia.consolidation_rule,
+        additional_info = 
+            CASE 
+                WHEN ia.consolidation_rule IS NOT NULL
+                THEN 'This index is being kept'
+                ELSE NULL
+            END,
+        script = NULL, /* No script for kept indexes */
+        /* Original index definition for validation */
+        ia.original_index_definition,
+        ps.total_space_gb,
+        ps.total_rows,
+        index_reads =
+            (id.user_seeks + id.user_scans + id.user_lookups),
+        id.user_updates
+    FROM #index_analysis AS ia
+    LEFT JOIN #partition_stats AS ps
+      ON  ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+    LEFT JOIN #index_details AS id
+      ON  id.database_id = ia.database_id
+      AND id.object_id = ia.object_id
+      AND id.index_id = ia.index_id
+      AND id.is_included_column = 0 /* Get only one row per index */
+      AND id.key_ordinal > 0
+    WHERE 
+        /* Include indexes marked KEEP */
+        (ia.action = 'KEEP')
+        /* And all indexes we haven't determined an action for (not disable, merge, etc.) */
+        OR (ia.action IS NULL AND ia.index_id > 0)
+    OPTION(RECOMPILE);
 
     INSERT INTO 
         #index_cleanup_results
