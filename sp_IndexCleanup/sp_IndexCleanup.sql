@@ -2338,11 +2338,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ))
     OPTION(RECOMPILE);
     
-    /* Run this update again to fix any target_index_name cross-references */
-    /* This is necessary because constraints might point to indexes and indexes might point to constraints */
-    UPDATE #index_analysis
-    SET target_index_name = NULL
-    WHERE action = N'MAKE UNIQUE';
+    /* CRITICAL: Ensure that only the unique constraints that exactly match get this treatment */
+    /* And remove any incorrect MAKE UNIQUE actions */
+    UPDATE ia
+    SET action = NULL,
+        consolidation_rule = NULL,
+        target_index_name = NULL
+    FROM #index_analysis AS ia
+    WHERE ia.action = N'MAKE UNIQUE'
+    AND NOT EXISTS (
+        /* Check if there's a unique constraint with matching keys that points to this index */
+        SELECT 1
+        FROM #index_analysis AS ia_uc
+        WHERE ia_uc.database_id = ia.database_id
+        AND ia_uc.object_id = ia.object_id
+        AND ia_uc.key_columns = ia.key_columns
+        AND ia_uc.action = N'DISABLE'
+        AND ia_uc.target_index_name = ia.index_name
+    );
     
     /* Make sure the nonclustered index has the superseded_by field set correctly */
     UPDATE ia_nc
@@ -2913,8 +2926,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
     AND   ce.can_compress = 1
     /* Only create merge scripts for the indexes that should remain after merging */
-    /* Special handling for indexes that need to be made unique (Rule 7.5) */
-    AND   (ia.target_index_name IS NULL OR ia.action = N'MAKE UNIQUE')
+    AND   ia.target_index_name IS NULL
     OPTION(RECOMPILE);
 
     /* Debug which indexes are getting MERGE scripts */
@@ -2935,7 +2947,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND ia.index_id = ce.index_id
         WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
         AND   ce.can_compress = 1
-        AND   (ia.target_index_name IS NULL OR ia.action = N'MAKE UNIQUE')
+        AND   ia.target_index_name IS NULL
         ORDER BY ia.index_name
         OPTION(RECOMPILE);
     END;
