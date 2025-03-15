@@ -27,11 +27,15 @@ Extracts only alphabetic characters (A-Z, a-z) from a string.
 
 Usage:
 ```sql
-SELECT letters_only FROM dbo.get_letters(N'abc123!@#');
+SELECT
+    gl.letters_only
+FROM dbo.get_letters(N'abc123!@#') AS gl;
 -- Returns: abc
 
 -- Self-contained version (no dependency on Numbers table)
-SELECT letters_only FROM dbo.get_letters_cte(N'abc123!@#');
+SELECT
+    gl.letters_only
+FROM dbo.get_letters_cte(N'abc123!@#') AS gl;
 -- Returns: abc
 ```
 
@@ -47,11 +51,15 @@ Extracts only numeric characters (0-9) from a string.
 
 Usage:
 ```sql
-SELECT numbers_only FROM dbo.get_numbers(N'abc123!@#');
+SELECT
+    gn.numbers_only
+FROM dbo.get_numbers(N'abc123!@#') AS gn;
 -- Returns: 123
 
 -- Self-contained version (no dependency on Numbers table)
-SELECT numbers_only FROM dbo.get_numbers_cte(N'abc123!@#');
+SELECT
+    gn.numbers_only
+FROM dbo.get_numbers_cte(N'abc123!@#') AS gn;
 -- Returns: 123
 ```
 
@@ -68,11 +76,15 @@ Removes specified characters from a string.
 
 Usage:
 ```sql
-SELECT strip_characters FROM dbo.strip_characters(N'abc123!@#', N'[0-9]');
+SELECT
+    sc.strip_characters
+FROM dbo.strip_characters(N'abc123!@#', N'[0-9]') AS sc;
 -- Returns: abc!@#
 
 -- Self-contained version (no dependency on Numbers table)
-SELECT strip_characters FROM dbo.strip_characters_cte(N'abc123!@#', N'[^a-z]');
+SELECT
+    sc.strip_characters
+FROM dbo.strip_characters_cte(N'abc123!@#', N'[^a-z]') AS sc;
 -- Returns: abc
 ```
 
