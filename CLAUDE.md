@@ -497,7 +497,146 @@ BEGIN
 END;
 ```
 
-## Example
+## Examples
+
+### Complex SELECT with Multiple JOINs, GROUP BY, and HAVING
+
+```sql
+SELECT
+    database_name = d.name,
+    index_count = COUNT(i.index_id),
+    total_size_mb = SUM(a.total_pages) * 8 / 1024,
+    read_operations = SUM(ius.user_seeks + ius.user_scans + ius.user_lookups),
+    write_operations = SUM(ius.user_updates),
+    avg_fragmentation = AVG(ps.avg_fragmentation_in_percent)
+FROM sys.databases AS d
+JOIN sys.tables AS t
+  ON t.database_id = d.database_id
+LEFT JOIN sys.indexes AS i
+  ON  i.object_id = t.object_id
+  AND i.index_id > 0
+  AND i.is_disabled = 0
+LEFT JOIN sys.dm_db_index_usage_stats AS ius
+  ON  ius.database_id = d.database_id
+  AND ius.object_id = i.object_id
+  AND ius.index_id = i.index_id
+LEFT JOIN sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') AS ps
+  ON  ps.object_id = i.object_id
+  AND ps.index_id = i.index_id
+LEFT JOIN sys.allocation_units AS a
+  ON a.container_id = i.hobt_id
+WHERE d.database_id > 4
+AND   d.is_read_only = 0
+AND   d.state_desc = N'ONLINE'
+GROUP BY
+    d.name,
+    d.create_date
+HAVING
+    COUNT(i.index_id) > 10
+ORDER BY
+    total_size_mb DESC,
+    database_name ASC
+OPTION(MAXDOP 1, RECOMPILE);
+```
+
+### CTE with Multiple Definitions and Nested Queries
+
+```sql
+WITH database_stats
+(
+    database_name,
+    recovery_model,
+    log_size_mb,
+    log_used_percent
+)
+AS
+(
+    SELECT
+        database_name = d.name,
+        recovery_model = d.recovery_model_desc,
+        log_size_mb = SUM(CASE WHEN f.type_desc = N'LOG' THEN f.size END) * 8 / 1024,
+        log_used_percent = SUM(CASE WHEN f.type_desc = N'LOG' THEN CONVERT(decimal(19,2), fileproperty(f.name, 'SpaceUsed')) / f.size * 100 END)
+    FROM sys.databases AS d
+    JOIN sys.master_files AS f
+      ON f.database_id = d.database_id
+    WHERE d.state_desc = N'ONLINE'
+    GROUP BY
+        d.name,
+        d.recovery_model_desc
+),
+database_backups AS
+(
+    SELECT
+        database_name = b.database_name,
+        last_full_backup = MAX(CASE WHEN b.type = 'D' THEN b.backup_finish_date END),
+        last_log_backup = MAX(CASE WHEN b.type = 'L' THEN b.backup_finish_date END)
+    FROM msdb.dbo.backupset AS b
+    WHERE b.backup_finish_date > DATEADD(DAY, -7, GETDATE())
+    GROUP BY
+        b.database_name
+)
+
+SELECT
+    ds.database_name,
+    ds.recovery_model,
+    ds.log_size_mb,
+    ds.log_used_percent,
+    days_since_full_backup = 
+        CASE 
+            WHEN db.last_full_backup IS NULL 
+            THEN 999 
+            ELSE DATEDIFF(DAY, db.last_full_backup, GETDATE()) 
+        END,
+    days_since_log_backup = 
+        CASE 
+            WHEN db.last_log_backup IS NULL 
+            THEN 999 
+            ELSE DATEDIFF(DAY, db.last_log_backup, GETDATE()) 
+        END
+FROM database_stats AS ds
+LEFT JOIN database_backups AS db
+  ON db.database_name = ds.database_name
+WHERE ds.log_size_mb > 100
+ORDER BY
+    log_size_mb DESC;
+```
+
+### Dynamic SQL Generation and Execution
+
+```sql
+DECLARE
+    @database_name sysname = N'AdventureWorks',
+    @table_name sysname = N'SalesOrderHeader',
+    @column_name sysname = N'OrderDate',
+    @sql nvarchar(max) = N'';
+
+/*
+Build query dynamically using proper quoting and formatting
+*/
+SET @sql = N'
+SELECT
+    order_month = DATEFROMPARTS(YEAR(' + QUOTENAME(@column_name) + N'), MONTH(' + QUOTENAME(@column_name) + N'), 1),
+    order_count = COUNT(*),
+    total_amount = SUM(TotalDue),
+    avg_amount = AVG(TotalDue)
+FROM ' + QUOTENAME(@database_name) + N'.dbo.' + QUOTENAME(@table_name) + N'
+WHERE ' + QUOTENAME(@column_name) + N' >= DATEADD(YEAR, -1, GETDATE())
+GROUP BY
+    DATEFROMPARTS(YEAR(' + QUOTENAME(@column_name) + N'), MONTH(' + QUOTENAME(@column_name) + N'), 1)
+ORDER BY
+    order_month;
+';
+
+/*
+Execute the dynamic SQL with proper parameter passing
+*/
+EXECUTE sys.sp_executesql
+    @sql,
+    N'',
+    N'';
+```
+
+### Stored Procedure with Temp Tables and Flow Control
 
 ```sql
 SET ANSI_NULLS ON;
@@ -514,6 +653,8 @@ ALTER PROCEDURE
     dbo.sp_MyProcedure
 (
     @database_name sysname = NULL, /*the database to analyze*/
+    @days_back integer = 7, /*how many days of history to analyze*/
+    @threshold_percent integer = 20, /*minimum percentage change to report*/
     @debug bit = 0, /*prints additional diagnostic information*/
     @help bit = 0 /*prints help information*/
 )
@@ -529,7 +670,9 @@ BEGIN
         */
         DECLARE
             @sql nvarchar(max) = N'',
-            @database_id integer = NULL;
+            @database_id integer = NULL,
+            @start_date datetime2(7) = DATEADD(DAY, -@days_back, GETDATE()),
+            @error_msg nvarchar(2048) = N'';
             
         /*
         Parameter validation
@@ -540,38 +683,113 @@ BEGIN
                 @database_name = DB_NAME();
         END;
             
+        IF @threshold_percent <= 0 OR @threshold_percent > 100
+        BEGIN
+            SELECT
+                @error_msg = N'@threshold_percent must be between 1 and 100.';
+                
+            RAISERROR(@error_msg, 16, 1);
+            RETURN;
+        END;
+            
         /*
         Help section
         */
         IF @help = 1
         BEGIN
             SELECT
-                help = N'This procedure analyzes database objects';
+                help = N'This procedure analyzes database performance changes';
             
             RETURN;
         END;
         
         /*
-        Main processing logic
+        Create temp tables for analysis
+        */
+        CREATE TABLE
+            #baseline_metrics
+        (
+            object_id bigint NOT NULL,
+            metric_name varchar(50) NOT NULL,
+            metric_value decimal(38,2) NOT NULL
+        );
+        
+        CREATE TABLE
+            #current_metrics
+        (
+            object_id bigint NOT NULL,
+            metric_name varchar(50) NOT NULL,
+            metric_value decimal(38,2) NOT NULL
+        );
+        
+        /*
+        Populate baseline data
+        */
+        INSERT
+            #baseline_metrics
+        WITH
+            (TABLOCK)
+        (
+            object_id,
+            metric_name,
+            metric_value
+        )
+        SELECT
+            object_id = t.object_id,
+            metric_name = 'query_cost',
+            metric_value = AVG(qs.total_elapsed_time / 1000.0)
+        FROM sys.dm_exec_query_stats AS qs
+        CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS t
+        WHERE qs.creation_time < @start_date
+        AND   t.dbid = DB_ID(@database_name)
+        GROUP BY
+            t.object_id;
+        
+        IF @debug = 1
+        BEGIN
+            SELECT
+                baseline_rows = COUNT(*)
+            FROM #baseline_metrics;
+        END;
+        
+        /*
+        Main processing logic - analyze changes
         */
         SELECT
-            object_id,
             object_name = o.name,
-            schema_name = s.name
-        FROM dbo.objects AS o
-        JOIN dbo.schemas AS s
-          ON o.schema_id = s.schema_id
-        WHERE o.type = N'U'
-        AND   o.is_ms_shipped = 0
-        GROUP BY
-            o.object_id,
-            o.name,
-            s.name
+            schema_name = s.name,
+            b.metric_name,
+            baseline_value = b.metric_value,
+            current_value = c.metric_value,
+            percent_change = 
+                CASE 
+                    WHEN b.metric_value = 0 
+                    THEN NULL
+                    ELSE (c.metric_value - b.metric_value) / b.metric_value * 100 
+                END
+        FROM #baseline_metrics AS b
+        JOIN #current_metrics AS c
+          ON  c.object_id = b.object_id
+          AND c.metric_name = b.metric_name
+        JOIN sys.objects AS o
+          ON o.object_id = b.object_id
+        JOIN sys.schemas AS s
+          ON s.schema_id = o.schema_id
+        WHERE ABS((c.metric_value - b.metric_value) / NULLIF(b.metric_value, 0) * 100) >= @threshold_percent
         ORDER BY
-            o.name
-        OPTION(RECOMPILE);
+            ABS((c.metric_value - b.metric_value) / NULLIF(b.metric_value, 0) * 100) DESC;
     END TRY
     BEGIN CATCH
+        IF OBJECT_ID('tempdb..#baseline_metrics') IS NOT NULL
+        BEGIN
+            DROP TABLE #baseline_metrics;
+        END;
+        
+        IF OBJECT_ID('tempdb..#current_metrics') IS NOT NULL
+        BEGIN
+            DROP TABLE #current_metrics;
+        END;
+        
         THROW;
     END CATCH;
 END;
