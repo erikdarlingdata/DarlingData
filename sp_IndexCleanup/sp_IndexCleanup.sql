@@ -75,7 +75,7 @@ BEGIN TRY
     END;
 
     SELECT
-        @version = '1.0',
+        @version = '1.4',
         @version_date = '20250401';
 
     SELECT
