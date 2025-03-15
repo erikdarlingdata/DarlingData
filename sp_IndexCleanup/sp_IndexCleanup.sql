@@ -1699,7 +1699,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id1.is_unique,
         id1.object_id,
         id1.index_id,
-        id1.filter_definition
+        id1.filter_definition,
+        id1.is_unique_constraint
     OPTION(RECOMPILE);
 
     IF ROWCOUNT_BIG() = 0 
@@ -2836,13 +2837,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         script =
             CASE 
                 WHEN ia.action = N'MAKE UNIQUE' 
-                THEN N'/* This index can replace a unique constraint */
-        /* Creating unique index with same keys as constraint */
-        CREATE UNIQUE '
+                THEN N'CREATE UNIQUE '
                 WHEN ia.action = N'MERGE INCLUDES'
-                THEN N'/* This index can be merged with another index */
-        /* Creating index with combined includes from both */
-        CREATE '
+                THEN N'CREATE '
                 ELSE N'CREATE '
             END +
             N'INDEX ' +
