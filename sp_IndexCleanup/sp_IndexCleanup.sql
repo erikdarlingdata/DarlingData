@@ -1588,17 +1588,33 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id1.filter_definition,
         /* Store the original index definition for validation */
         original_index_definition = 
-            N'CREATE ' +
-            CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' ELSE N'' END +
-            N'INDEX ' + 
-            QUOTENAME(id1.index_name) + 
-            N' ON ' + 
-            QUOTENAME(DB_NAME(@database_id)) + 
-            N'.' +
-            QUOTENAME(id1.schema_name) + 
-            N'.' +
-            QUOTENAME(id1.table_name) + 
-            N' (' +
+            CASE
+                /* For unique constraints, use ALTER TABLE ADD CONSTRAINT syntax */
+                WHEN id1.is_unique_constraint = 1
+                THEN
+                    N'ALTER TABLE ' + 
+                    QUOTENAME(DB_NAME(@database_id)) + 
+                    N'.' +
+                    QUOTENAME(id1.schema_name) + 
+                    N'.' +
+                    QUOTENAME(id1.table_name) + 
+                    N' ADD CONSTRAINT ' +
+                    QUOTENAME(id1.index_name) +
+                    N' UNIQUE ('
+                /* For regular indexes, use CREATE INDEX syntax */    
+                ELSE
+                    N'CREATE ' +
+                    CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' ELSE N'' END +
+                    N'INDEX ' + 
+                    QUOTENAME(id1.index_name) + 
+                    N' ON ' + 
+                    QUOTENAME(DB_NAME(@database_id)) + 
+                    N'.' +
+                    QUOTENAME(id1.schema_name) + 
+                    N'.' +
+                    QUOTENAME(id1.table_name) + 
+                    N' ('
+            END +
             STUFF
             (
                 (
@@ -2860,6 +2876,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      ia.filter_definition
                 ELSE N''
             END +
+            N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+            CASE 
+                WHEN @online = 1 
+                THEN N'ON' 
+                ELSE N'OFF' 
+            END +
+            N', DATA_COMPRESSION = PAGE)' +
             CASE 
                 WHEN ps.partition_function_name IS NOT NULL
                 THEN N' ON ' +
@@ -2871,14 +2894,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N' ON ' +
                      QUOTENAME(ps.built_on)
                 ELSE N''
-            END +
-            N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-            CASE 
-                WHEN @online = 1 
-                THEN N'ON' 
-                ELSE N'OFF' 
-            END +
-            N', DATA_COMPRESSION = PAGE);',
+            END + N';',
             /* Additional info about what this script does */
         additional_info =
             CASE
