@@ -4006,7 +4006,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating #index_cleanup_results, RESULTS', 0, 0) WITH NOWAIT;
     END;
 
-    SELECT DISTINCT
+    SELECT
         /* First, show the information needed to understand the script */
         script_type = CASE WHEN ir.result_type = 'KEPT' AND ir.script_type IS NULL THEN 'KEPT' ELSE ir.script_type END,
         ir.additional_info,
@@ -4053,12 +4053,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia.original_index_definition,
         /* Finally show the actual script */
         ir.script
-    FROM #index_cleanup_results AS ir
+    FROM 
+    (
+        /* Use a subquery with ROW_NUMBER to ensure we only get one row per index */
+        SELECT *, 
+            ROW_NUMBER() OVER(
+                PARTITION BY database_name, schema_name, table_name, index_name 
+                ORDER BY result_type DESC /* Prefer non-NULL result types */
+            ) AS rn
+        FROM #index_cleanup_results
+    ) AS ir
     LEFT JOIN #index_analysis AS ia
       ON  ir.database_name = ia.database_name
       AND ir.schema_name = ia.schema_name
       AND ir.table_name = ia.table_name
       AND ir.index_name = ia.index_name
+    WHERE ir.rn = 1 /* Take only the first row for each index */
     ORDER BY
         ir.sort_order,
         ir.database_name,
