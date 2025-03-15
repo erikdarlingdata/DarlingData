@@ -625,29 +625,29 @@ SELECT
         DATEFROMPARTS
         (
             YEAR
-            (' +
+            (t.' +
             QUOTENAME(@column_name) +
             N'),
             MONTH
-            (' +
+            (t.' +
             QUOTENAME(@column_name) +
             N'),
             1
         ),
     order_count = COUNT_BIG(*),
-    total_amount = SUM(TotalDue),
-    avg_amount = AVG(TotalDue)
-FROM ' + QUOTENAME(@database_name) + N'.dbo.' + QUOTENAME(@table_name) + N'
+    total_amount = SUM(t.TotalDue),
+    avg_amount = AVG(t.TotalDue)
+FROM ' + QUOTENAME(@database_name) + N'.dbo.' + QUOTENAME(@table_name) + N' AS t
 WHERE ' + QUOTENAME(@column_name) + N' >= DATEADD(YEAR, -1, GETDATE())
 GROUP BY
         DATEFROMPARTS
         (
             YEAR
-            (' +
+            (t.' +
             QUOTENAME(@column_name) +
             N'),
             MONTH
-            (' +
+            (t.' +
             QUOTENAME(@column_name) +
             N'),
             1
