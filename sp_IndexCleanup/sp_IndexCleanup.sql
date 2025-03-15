@@ -3317,11 +3317,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id.index_id = ia.index_id
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
-    WHERE 
+    /* Check that this index is not already in the results */
+    WHERE NOT EXISTS (
+        SELECT 1 FROM #index_cleanup_results AS ir
+        WHERE ir.database_name = ia.database_name
+        AND   ir.schema_name = ia.schema_name
+        AND   ir.table_name = ia.table_name
+        AND   ir.index_name = ia.index_name
+    )
+    /* And include only indexes that should be kept */
+    AND (
         /* Include indexes marked KEEP */
         (ia.action = 'KEEP')
         /* And all indexes we haven't determined an action for (not disable, merge, etc.) */
         OR (ia.action IS NULL AND ia.index_id > 0)
+    )
     OPTION(RECOMPILE);
 
     INSERT INTO 
@@ -3996,9 +4006,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating #index_cleanup_results, RESULTS', 0, 0) WITH NOWAIT;
     END;
 
-    SELECT
+    SELECT DISTINCT
         /* First, show the information needed to understand the script */
-        ir.script_type,
+        script_type = CASE WHEN ir.result_type = 'KEPT' AND ir.script_type IS NULL THEN 'KEPT' ELSE ir.script_type END,
         ir.additional_info,
         /* Then show identifying information for the index */
         ir.database_name,
