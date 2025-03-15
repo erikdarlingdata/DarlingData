@@ -49,28 +49,28 @@ Typical result set will show you:
 
 ```sql
 -- Basic execution for all health checks
-EXEC dbo.sp_HealthParser;
+EXECUTE dbo.sp_HealthParser;
 
 -- Check only memory-related issues
-EXEC dbo.sp_HealthParser 
+EXECUTE dbo.sp_HealthParser 
     @what_to_check = 'memory';
 
 -- Look at health issues for a specific time period
-EXEC dbo.sp_HealthParser
+EXECUTE dbo.sp_HealthParser
     @start_date = '2025-01-01 00:00:00',
     @end_date = '2025-01-02 00:00:00';
 
 -- Show only health events with warnings
-EXEC dbo.sp_HealthParser
+EXECUTE dbo.sp_HealthParser
     @warnings_only = 1;
 
 -- Focus on blocking issues for a specific database
-EXEC dbo.sp_HealthParser
+EXECUTE dbo.sp_HealthParser
     @what_to_check = 'locking',
     @database_name = 'YourDatabaseName';
 
 -- Log results to table instead of returning result sets
-EXEC dbo.sp_HealthParser
+EXECUTE dbo.sp_HealthParser
     @log_to_table = 1,
     @log_database_name = 'DBA',
     @log_schema_name = 'dbo',

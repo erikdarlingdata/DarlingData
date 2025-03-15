@@ -186,7 +186,7 @@ ON SERVER
 Once it has data collected, you can analyze it using this command:
 
 ```
-EXEC dbo.sp_HumanEventsBlockViewer
+EXECUTE dbo.sp_HumanEventsBlockViewer
     @session_name = N'blocked_process_report';
 ```
 

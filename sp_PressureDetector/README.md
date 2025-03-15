@@ -41,26 +41,26 @@ All you need to do is hit F5 to get information about:
 
 ```sql
 -- Basic execution to check all pressure types
-EXEC dbo.sp_PressureDetector;
+EXECUTE dbo.sp_PressureDetector;
 
 -- Check only CPU pressure
-EXEC dbo.sp_PressureDetector
+EXECUTE dbo.sp_PressureDetector
     @what_to_check = 'cpu';
 
 -- Check only memory pressure
-EXEC dbo.sp_PressureDetector
+EXECUTE dbo.sp_PressureDetector
     @what_to_check = 'memory';
 
 -- Skip looking at executing queries
-EXEC dbo.sp_PressureDetector
+EXECUTE dbo.sp_PressureDetector
     @skip_queries = 1;
 
 -- Take a 10-second sample of server metrics
-EXEC dbo.sp_PressureDetector
+EXECUTE dbo.sp_PressureDetector
     @sample_seconds = 10;
 
 -- Log results to a table
-EXEC dbo.sp_PressureDetector
+EXECUTE dbo.sp_PressureDetector
     @log_to_table = 1,
     @log_database_name = 'DBA',
     @log_schema_name = 'dbo';
