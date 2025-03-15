@@ -411,6 +411,7 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
 - Use semicolons at the end of statements (but only at the very end, after any query hints)
 - Apply query hints consistently (RECOMPILE, MAXDOP, etc.)
 - Always use ROWCOUNT_BIG() instead of @@ROWCOUNT
+- Always use COUNT_BIG() instead of COUNT() to avoid potential integer overflow
 - Always use CONVERT over CAST for data type conversions (except when using TRY_CAST, as TRY_CAST isn't dependent on SQL Server version)
 - Use XML for string splitting and string building (concatenation), as these methods aren't dependent on SQL Server version or database compatibility level
 - Always use cursor variables instead of normal cursors, as they don't require explicit CLOSE/DEALLOCATE statements
