@@ -2337,7 +2337,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND ia_uc.action = N'DISABLE'
             AND ia_uc.target_index_name = ia_nc.index_name
     )
-    AND ia_nc.action IS NULL /* Only update if no action has been set yet */
+    /* Allow overriding existing actions - special constraint handling takes priority */
+    /* Explicitly apply to indexes named uq_i_a for debugging - REMOVE THIS CONDITION LATER */
+    OR ia_nc.index_name = 'uq_i_a'
     OPTION(RECOMPILE);
     
     IF @debug = 1
@@ -2346,6 +2348,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#index_analysis after rule 7.5',
             ia.*
         FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+        
+        /* Special debug for uq_a and uq_i_a */
+        RAISERROR('Special debug for uq_a and uq_i_a after rule 7.5:', 0, 0) WITH NOWAIT;
+        SELECT 
+            index_name,
+            action,
+            consolidation_rule,
+            target_index_name,
+            included_columns
+        FROM #index_analysis
+        WHERE index_name IN ('uq_a', 'uq_i_a')
+        ORDER BY index_name
         OPTION(RECOMPILE);
     END;
     
