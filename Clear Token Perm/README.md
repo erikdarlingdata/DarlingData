@@ -55,9 +55,11 @@ EXECUTE dbo.ClearTokenPerm
     @CacheSizeGB = 2;
 
 -- Query the logging table to see history
-SELECT * 
-FROM dbo.ClearTokenPermLogging
-ORDER BY log_date DESC;
+SELECT
+    cl.* 
+FROM dbo.ClearTokenPermLogging AS cl
+ORDER BY
+    cl.log_date DESC;
 
 -- Clear the logging table
 TRUNCATE TABLE dbo.ClearTokenPermLogging;
