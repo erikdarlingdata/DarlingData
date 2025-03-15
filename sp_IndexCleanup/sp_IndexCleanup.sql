@@ -75,8 +75,8 @@ BEGIN TRY
     END;
 
     SELECT
-        @version = '-2147483648',
-        @version_date = '17530101';
+        @version = '1.0',
+        @version_date = '20250401';
 
     SELECT
         for_insurance_purposes = N'Read the messages pane carefully!';
