@@ -168,10 +168,41 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
   ```
 
 - **CTEs**:
-  - WITH keyword on first line
-  - CTE name aligned with leading whitespace
-  - CTE column list indented from CTE name
+  - WITH keyword on its own line
+  - CTE name indented on next line
+  - Opening parenthesis on same line as CTE name
+  - Column list indented on subsequent lines
+  - Closing parenthesis on its own line
+  - AS keyword on its own line
   - Multiple CTEs separated by commas at the end
+  ```sql
+  WITH
+      database_stats
+  (
+      database_name,
+      recovery_model,
+      log_size_mb
+  ) AS
+  (
+      SELECT
+          database_name = d.name,
+          recovery_model = d.recovery_model_desc,
+          log_size_mb = SUM(f.size) * 8 / 1024
+      FROM sys.databases AS d
+      JOIN sys.master_files AS f
+        ON f.database_id = d.database_id
+      GROUP BY
+          d.name,
+          d.recovery_model_desc
+  ),
+  second_cte
+  (
+      column_list
+  ) AS
+  (
+      query
+  )
+  ```
 
 - **Table Creation**:
   - CREATE TABLE on first line
@@ -289,6 +320,20 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
       value
   )
   ```
+  
+- **Multi-parameter functions**:
+  - For functions with multiple parameters or complex expressions, format the function name on its own line
+  - Place parameters on subsequent lines with proper indentation
+  ```sql
+  SELECT
+      formatted_date = 
+          DATEFROMPARTS
+          (
+              YEAR(date_column),
+              MONTH(date_column),
+              1
+          )
+  ```
 
 ## Code Organization
 
@@ -371,12 +416,20 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
   - Take care when initializing to ensure you don't introduce logical flaws with NULL checks
 
 - Dynamic SQL should follow specific formatting:
+  - Initial declaration with empty string
+  - Each string concatenation part on its own line
+  - Each QUOTENAME or variable reference on its own line
   ```sql
   DECLARE
       @sql nvarchar(max) = N''
 
   SET @sql += N'
-      the query ' + QUOTENAME(alias.object_name) + '
+SELECT
+    column_name = 
+        value ' + 
+    QUOTENAME(alias.object_name) + N'
+FROM
+    table_name
   ';
 
   EXECUTE sys.sp_executesql
@@ -412,6 +465,8 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
 - Apply query hints consistently (RECOMPILE, MAXDOP, etc.)
 - Always use ROWCOUNT_BIG() instead of @@ROWCOUNT
 - Always use COUNT_BIG() instead of COUNT() to avoid potential integer overflow
+  - Example: `COUNT_BIG(i.index_id)` not `COUNT(i.index_id)`
+  - Even if the result will never be large enough to overflow, use COUNT_BIG() for consistency
 - Always use CONVERT over CAST for data type conversions (except when using TRY_CAST, as TRY_CAST isn't dependent on SQL Server version)
 - Use XML for string splitting and string building (concatenation), as these methods aren't dependent on SQL Server version or database compatibility level
 - Always use cursor variables instead of normal cursors, as they don't require explicit CLOSE/DEALLOCATE statements
