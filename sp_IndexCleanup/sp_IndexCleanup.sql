@@ -2299,31 +2299,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia_nc.object_id = ia_uc.object_id
       AND ia_nc.index_name <> ia_uc.index_name /* Different index */
     WHERE 
-        /* Verify key columns match between index and unique constraint */
-        NOT EXISTS 
-        (
-            SELECT 
-                id_uc_inner.column_name 
-            FROM #index_details AS id_uc_inner
-            WHERE id_uc_inner.database_id = id_uc.database_id
-            AND   id_uc_inner.object_id = id_uc.object_id
-            AND   id_uc_inner.index_id = id_uc.index_id
-            AND   id_uc_inner.is_included_column = 0
-            
-            EXCEPT
-            
-            SELECT 
-                id_nc_inner.column_name
-            FROM #index_details AS id_nc_inner
-            JOIN #index_details AS id_nc_base
-              ON  id_nc_inner.database_id = id_nc_base.database_id
-              AND id_nc_inner.object_id = id_nc_base.object_id
-              AND id_nc_inner.index_id = id_nc_base.index_id
-            WHERE id_nc_base.database_id = ia_nc.database_id
-            AND   id_nc_base.object_id = ia_nc.object_id
-            AND   id_nc_base.index_id = ia_nc.index_id
-            AND   id_nc_inner.is_included_column = 0
-        )
+        /* Verify key columns EXACT match between index and unique constraint */
+        ia_uc.key_columns = ia_nc.key_columns
     OPTION(RECOMPILE);
 
     /* Second, mark nonclustered indexes to be made unique */
@@ -2356,12 +2333,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE 
                 ia_uc.database_id = ia_nc.database_id
                 AND ia_uc.object_id = ia_nc.object_id
-                /* Verify the key columns match */
-                AND (ia_uc.key_columns = ia_nc.key_columns
-                     OR ia_uc.target_index_name = ia_nc.index_name) /* Or it's already targeted */
-        )
-        /* Special case for debugging - can be removed later */
-        OR ia_nc.index_name = 'uq_i_a')
+                /* Check that both indexes have EXACTLY the same key columns */
+                AND ia_uc.key_columns = ia_nc.key_columns
+        ))
     OPTION(RECOMPILE);
     
     /* Run this update again to fix any target_index_name cross-references */
