@@ -557,7 +557,7 @@ CREATE TABLE
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
     plan_hash_count_for_query_hash integer NOT NULL,
-    PRIMARY KEY  CLUSTERED (database_id, plan_id, query_hash)
+    PRIMARY KEY CLUSTERED (database_id, plan_id, query_hash)
 );
 
 /*
@@ -577,7 +577,7 @@ CREATE TABLE
     plan_id bigint NOT NULL,
     from_regression_baseline varchar(3) NOT NULL,
     total_query_wait_time_ms bigint NOT NULL,
-    PRIMARY KEY  CLUSTERED(database_id, plan_id, from_regression_baseline)
+    PRIMARY KEY CLUSTERED(database_id, plan_id, from_regression_baseline)
 );
 
 /*
@@ -623,7 +623,7 @@ CREATE TABLE
     plan_id bigint NOT NULL,
     query_hash binary(8) NOT NULL,
     change_since_regression_time_period float NULL,
-    PRIMARY KEY  CLUSTERED (database_id, plan_id, query_hash)
+    PRIMARY KEY CLUSTERED (database_id, plan_id, query_hash)
 );
 
 /*
@@ -5435,7 +5435,13 @@ BEGIN
       ON  qsp.plan_id = waits.plan_id
       AND waits.from_regression_baseline = ''No''
     WHERE 1 = 1
-    AND qsq.query_hash IN (SELECT base.query_hash FROM #regression_baseline_runtime_stats AS base)
+    AND EXISTS 
+    (
+        SELECT
+            1/0
+        FROM #regression_baseline_runtime_stats AS base
+        WHERE base.query_hash = qsq.query_hash
+    )
     ' + @where_clause
       + N'
     GROUP
@@ -5625,7 +5631,7 @@ BEGIN
          + N'
             )
     ) AS plans_for_hashes
-    ON hashes_with_changes.query_hash = plans_for_hashes.query_hash
+      ON hashes_with_changes.query_hash = plans_for_hashes.query_hash
     OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
 
     IF @debug = 1
@@ -6621,9 +6627,9 @@ BEGIN
         SUM(qsrs.count_executions * qsrs.avg_rowcount)
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-        ON qsrs.plan_id = qsp.plan_id
+      ON qsrs.plan_id = qsp.plan_id
     JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-        ON qsp.query_id = qsq.query_id
+      ON qsp.query_id = qsq.query_id
     WHERE EXISTS
     (
         SELECT
@@ -6631,9 +6637,10 @@ BEGIN
         FROM #query_store_query AS qsq2
         WHERE qsq2.query_hash = qsq.query_hash
     )
-    GROUP BY qsq.query_hash
+    GROUP BY 
+        qsq.query_hash
     OPTION(RECOMPILE);        
-'
+';
 
     IF @debug = 1
     BEGIN
@@ -8268,8 +8275,8 @@ SELECT
         SELECT
             @sql += N'
     JOIN #query_hash_totals AS qht
-        ON  qsq.query_hash = qht.query_hash
-        AND qsq.database_id = qht.database_id';
+      ON  qsq.query_hash = qht.query_hash
+      AND qsq.database_id = qht.database_id';
     END;
 
     SELECT
@@ -8279,7 +8286,7 @@ SELECT
         nvarchar(MAX),
         N'
 ) AS x
-' + CASE WHEN @regression_mode = 1 THEN N' ' ELSE N'WHERE x.n = 1 ' END
+' + CASE WHEN @regression_mode = 1 THEN N'' ELSE N'WHERE x.n = 1 ' END
 + N'
 ORDER BY
     ' +

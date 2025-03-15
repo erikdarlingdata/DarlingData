@@ -2898,7 +2898,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N'ON' 
                 ELSE N'OFF' 
             END +
-            N', DATA_COMPRESSION = PAGE)' +
+            CASE 
+                WHEN ce.can_compress = 1
+                THEN ', DATA_COMPRESSION = PAGE'
+                ELSE N''
+                END +
+            N')' +
             CASE 
                 WHEN ps.partition_function_name IS NOT NULL
                 THEN N' ON ' +
@@ -3194,8 +3199,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE N' REBUILD' 
             END +
             N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
-            CASE WHEN @online = 1 THEN N'ON' ELSE N'OFF' END +
-            N', DATA_COMPRESSION = PAGE);',
+            CASE 
+                WHEN @online = 1 
+                THEN N'ON' 
+                ELSE N'OFF' 
+            END +
+            CASE 
+                WHEN ce.can_compress = 1
+                THEN ', DATA_COMPRESSION = PAGE'
+                ELSE N''
+            END +
+            N')' +
         N'Compression type: All Partitions',
         superseded_info = NULL, /* No target index for compression scripts */
         ia.superseded_by, /* Include superseded_by info for compression scripts */
@@ -3458,7 +3472,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N'ON' 
                 ELSE N'OFF' 
             END +
-            N', DATA_COMPRESSION = PAGE);',
+                        CASE 
+                WHEN ce.can_compress = 1
+                THEN ', DATA_COMPRESSION = PAGE'
+                ELSE N''
+                END +
+            N')',
             N'Compression type: Per Partition | Partition: ' + 
             CONVERT
             (
