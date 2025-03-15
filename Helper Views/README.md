@@ -26,8 +26,11 @@ A view that provides detailed information about index sizes in the current datab
 
 Usage:
 ```sql
-SELECT * FROM dbo.WhatsUpIndexes
-ORDER BY in_row_mb DESC;
+SELECT
+    w.*
+FROM dbo.WhatsUpIndexes AS w
+ORDER BY
+    w.in_row_mb DESC;
 ```
 
 ### WhatsUpLocks Function
@@ -48,10 +51,14 @@ A table-valued function that provides information about locks taken by specific 
 Usage:
 ```sql
 -- Check locks for a specific session
-SELECT * FROM dbo.WhatsUpLocks(51);
+SELECT
+    wul.*
+FROM dbo.WhatsUpLocks(51) AS wul;
 
 -- Check locks for all sessions
-SELECT * FROM dbo.WhatsUpLocks(NULL);
+SELECT
+    wul.*
+FROM dbo.WhatsUpLocks(NULL) AS wul;
 ```
 
 ### WhatsUpMemory View
@@ -66,8 +73,11 @@ A view that examines what's in SQL Server memory.
 
 Usage:
 ```sql
-SELECT * FROM dbo.WhatsUpMemory
-ORDER BY pages DESC;
+SELECT
+    wum.*
+FROM dbo.WhatsUpMemory AS wum
+ORDER BY
+    wum.pages DESC;
 ```
 
 ### tempdb_tester Procedure
