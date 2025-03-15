@@ -10,6 +10,7 @@
     - [sp_QuickieStore](#quickie-store): The fastest and most configurable way to navigate Query Store data
     - [sp_HealthParser](#health-parser): Pull all the performance-related data from the system health Extended Event
     - [sp_LogHunter](#log-hunter): Get all of the worst stuff out of your error log
+    - [sp_IndexCleanup](#index-cleanup): Identify unused and duplicate indexes
 
 ## Who are these scripts for?
 You need to troubleshoot performance problems with SQL Server, and you need to do it now. 
@@ -384,6 +385,38 @@ Current valid parameter details:
 | @debug               | bit       | dumps raw temp table contents                  | NULL, 0, 1                                                                   | 0            |
 | @version             | varchar   | OUTPUT; for support                            | OUTPUT; for support                                                          | none; OUTPUT |
 | @version_date        | datetime  | OUTPUT; for support                            | OUTPUT; for support                                                          | none; OUTPUT |
+
+[*Back to top*](#navigatory)
+
+## Index Cleanup
+
+This stored procedure helps identify unused and duplicate indexes in your SQL Server databases that could be candidates for removal. It analyzes index usage statistics and can generate scripts for removing unnecessary indexes.
+
+**IMPORTANT: This is currently a BETA VERSION.** It needs extensive testing in real environments with real indexes to address several issues:
+* Data collection accuracy
+* Deduping logic
+* Result correctness
+* Edge cases
+
+Misuse of this procedure can potentially harm your database. If you run this, only use the output to validate result correctness. **Do not run any of the output scripts without thorough review and testing**, as doing so may be harmful to your database performance.
+
+The procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT and CONCAT functions.
+
+Current valid parameter details:
+
+| Parameter Name | Data Type | Default Value | Description |
+|----------------|-----------|---------------|-------------|
+| @database_name | sysname | NULL | The name of the database you wish to analyze |
+| @schema_name | sysname | NULL | The schema name to filter indexes by |
+| @table_name | sysname | NULL | The table name to filter indexes by |
+| @min_reads | bigint | 0 | Minimum number of reads for an index to be considered used |
+| @min_writes | bigint | 0 | Minimum number of writes for an index to be considered used |
+| @min_size_gb | decimal(10,2) | 0 | Minimum size in GB for an index to be analyzed |
+| @min_rows | bigint | 0 | Minimum number of rows for a table to be analyzed |
+| @help | bit | 0 | Displays help information |
+| @debug | bit | 0 | Prints debug information during execution |
+| @version | varchar(20) | NULL | OUTPUT parameter that returns the version number of the procedure |
+| @version_date | datetime | NULL | OUTPUT parameter that returns the date this version was released |
 
 [*Back to top*](#navigatory)
 
