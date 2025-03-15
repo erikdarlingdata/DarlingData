@@ -30,28 +30,28 @@ It helps you give you a fuller, better picture of any bad stuff happening.
 
 ```sql
 -- Basic execution to search the last 7 days of error logs
-EXEC dbo.sp_LogHunter;
+EXECUTE dbo.sp_LogHunter;
 
 -- Search logs for the last 30 days
-EXEC dbo.sp_LogHunter
+EXECUTE dbo.sp_LogHunter
     @days_back = -30;
 
 -- Search a specific time period
-EXEC dbo.sp_LogHunter
+EXECUTE dbo.sp_LogHunter
     @start_date = '2025-01-01 00:00:00',
     @end_date = '2025-01-02 00:00:00';
 
 -- Search for a specific custom message
-EXEC dbo.sp_LogHunter
+EXECUTE dbo.sp_LogHunter
     @custom_message = 'login failed';
 
 -- Only search for the custom message, ignore other errors
-EXEC dbo.sp_LogHunter
+EXECUTE dbo.sp_LogHunter
     @custom_message = 'login failed',
     @custom_message_only = 1;
 
 -- Only search the current error log
-EXEC dbo.sp_LogHunter
+EXECUTE dbo.sp_LogHunter
     @first_log_only = 1;
 ```
 

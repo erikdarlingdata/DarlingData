@@ -76,35 +76,33 @@ Misuse of this procedure can harm performance. Be very careful about introducing
 
 ## Usage Examples
 
-For execution examples, see here: [Examples.sql](Examples.sql)
-
 If you set up sessions to capture long term data, you'll need an agent job set up to poll them. You can find an example of that here: [sp_Human Events Agent Job Example.sql](sp_Human%20Events%20Agent%20Job%20Example.sql)
 
 Here are some basic usage examples:
 
 ```sql
 -- Basic execution to capture queries
-EXEC dbo.sp_HumanEvents;
+EXECUTE dbo.sp_HumanEvents;
 
 -- Capture blocking events for at least 1 second
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'blocking',
     @blocking_duration_ms = 1000;
 
 -- Capture waits in a specific database
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'waits',
     @database_name = 'YourDatabase';
 
 -- Set up a permanent session for logging
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @event_type = 'query',
     @keep_alive = 1,
     @output_database_name = 'DBA',
     @output_schema_name = 'dbo';
 
 -- Clean up all sessions and tables
-EXEC dbo.sp_HumanEvents
+EXECUTE dbo.sp_HumanEvents
     @cleanup = 1,
     @output_database_name = 'DBA',
     @output_schema_name = 'dbo';
@@ -128,13 +126,13 @@ It will work on any Extended Event that captures the blocked process report. If 
 
 Enable the blocked process report:
 ```sql
-EXEC sys.sp_configure
+EXECUTE sys.sp_configure
     N'show advanced options',
     1;
 RECONFIGURE;
 GO
 
-EXEC sys.sp_configure
+EXECUTE sys.sp_configure
     N'blocked process threshold',
     5; --Seconds
 RECONFIGURE;
@@ -199,23 +197,23 @@ ON SERVER
 
 ```sql
 -- Basic usage with default session name
-EXEC dbo.sp_HumanEventsBlockViewer;
+EXECUTE dbo.sp_HumanEventsBlockViewer;
 
 -- Use with a custom extended event session name
-EXEC dbo.sp_HumanEventsBlockViewer
+EXECUTE dbo.sp_HumanEventsBlockViewer
     @session_name = N'blocked_process_report';
 
 -- Filter by a specific database
-EXEC dbo.sp_HumanEventsBlockViewer
+EXECUTE dbo.sp_HumanEventsBlockViewer
     @database_name = 'YourDatabase';
 
 -- Analyze blocking events for a specific time period
-EXEC dbo.sp_HumanEventsBlockViewer
+EXECUTE dbo.sp_HumanEventsBlockViewer
     @start_date = '2025-01-01 08:00',
     @end_date = '2025-01-01 17:00';
 
 -- Log results to permanent tables
-EXEC dbo.sp_HumanEventsBlockViewer
+EXECUTE dbo.sp_HumanEventsBlockViewer
     @log_to_table = 1,
     @log_database_name = 'DBA',
     @log_schema_name = 'dbo';
