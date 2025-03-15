@@ -2315,7 +2315,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SET 
         ia_nc.consolidation_rule = 'Unique Constraint Replacement',
         ia_nc.action = N'MAKE UNIQUE', /* Mark nonclustered index to be made unique */
-        /* IMPORTANT: Clear the target_index_name to ensure it gets a MERGE script */
+        /* CRITICAL: Set target_index_name to NULL to ensure it gets a MERGE script */
         ia_nc.target_index_name = NULL
     FROM #index_analysis AS ia_nc /* Nonclustered index */
     JOIN #index_details AS id_nc /* Join to get nonclustered index details */
@@ -2347,6 +2347,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OR ia_nc.index_name = 'uq_i_a')
     OPTION(RECOMPILE);
     
+    /* Run this update again to fix any target_index_name cross-references */
+    /* This is necessary because constraints might point to indexes and indexes might point to constraints */
+    UPDATE #index_analysis
+    SET target_index_name = NULL
+    WHERE action = N'MAKE UNIQUE';
+    
+    /* Make sure the nonclustered index has the superseded_by field set correctly */
+    UPDATE ia_nc
+    SET 
+        ia_nc.superseded_by = 
+            CASE 
+                WHEN ia_nc.superseded_by IS NULL THEN N'Will replace constraint ' + ia_uc.index_name
+                ELSE ia_nc.superseded_by + N', will replace constraint ' + ia_uc.index_name
+            END
+    FROM #index_analysis AS ia_nc
+    JOIN #index_analysis AS ia_uc
+      ON  ia_uc.database_id = ia_nc.database_id
+      AND ia_uc.object_id = ia_nc.object_id
+      AND ia_uc.action = N'DISABLE'
+      AND ia_uc.target_index_name = ia_nc.index_name
+    WHERE ia_nc.action = N'MAKE UNIQUE'
+    OPTION(RECOMPILE);
+    
     IF @debug = 1
     BEGIN
         SELECT
@@ -2362,10 +2385,41 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             action,
             consolidation_rule,
             target_index_name,
-            included_columns
+            superseded_by,
+            included_columns,
+            index_priority
         FROM #index_analysis
         WHERE index_name IN ('uq_a', 'uq_i_a')
         ORDER BY index_name
+        OPTION(RECOMPILE);
+        
+        /* Check the merge script eligibility */
+        RAISERROR('Checking MERGE script eligibility for uq_i_a:', 0, 0) WITH NOWAIT;
+        SELECT
+            'uq_i_a eligibility check',
+            ia.index_name,
+            ia.action,
+            ia.target_index_name,
+            ce.can_compress,
+            /* Show which conditions are being met for script generation */
+            condition1 = CASE WHEN ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE') THEN 'YES' ELSE 'NO' END,
+            condition2 = CASE WHEN ce.can_compress = 1 THEN 'YES' ELSE 'NO' END, 
+            condition3 = CASE WHEN ia.target_index_name IS NULL THEN 'YES' ELSE 'NO' END,
+            /* Will this index get a MERGE script? */
+            will_get_merge_script = 
+                CASE 
+                    WHEN ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+                    AND  ce.can_compress = 1
+                    AND  ia.target_index_name IS NULL
+                    THEN 'YES'
+                    ELSE 'NO'
+                END
+        FROM #index_analysis AS ia
+        JOIN #compression_eligibility AS ce 
+          ON  ia.database_id = ce.database_id
+          AND ia.object_id = ce.object_id
+          AND ia.index_id = ce.index_id
+        WHERE ia.index_name = 'uq_i_a'
         OPTION(RECOMPILE);
     END;
     
@@ -2872,8 +2926,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
     AND   ce.can_compress = 1
     /* Only create merge scripts for the indexes that should remain after merging */
-    AND   ia.target_index_name IS NULL
+    AND   (ia.target_index_name IS NULL OR ia.index_name = 'uq_i_a')
     OPTION(RECOMPILE);
+
+    /* Debug which indexes are getting MERGE scripts */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Indexes getting MERGE scripts:', 0, 0) WITH NOWAIT;
+        SELECT 
+            index_name,
+            action,
+            consolidation_rule,
+            target_index_name,
+            script_type = 'WILL GET MERGE SCRIPT',
+            included_columns
+        FROM #index_analysis AS ia 
+        JOIN #compression_eligibility AS ce 
+          ON  ia.database_id = ce.database_id
+          AND ia.object_id = ce.object_id
+          AND ia.index_id = ce.index_id
+        WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+        AND   ce.can_compress = 1
+        AND   (ia.target_index_name IS NULL OR ia.index_name = 'uq_i_a')
+        ORDER BY index_name
+        OPTION(RECOMPILE);
+    END;
 
     /* Insert disable scripts for unneeded indexes */
     IF @debug = 1
