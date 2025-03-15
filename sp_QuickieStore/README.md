@@ -77,41 +77,39 @@ Use the `@expert_mode` parameter to return additional details.
 
 ## Examples
 
-For more examples, see [Examples.sql](Examples.sql)
-
 ```sql
 -- Basic execution - returns top 10 queries by CPU
-EXEC dbo.sp_QuickieStore;
+EXECUTE dbo.sp_QuickieStore;
 
 -- Look at top 20 queries by logical reads
-EXEC dbo.sp_QuickieStore
+EXECUTE dbo.sp_QuickieStore
     @sort_order = 'logical reads',
     @top = 20;
 
 -- Search for a specific query text
-EXEC dbo.sp_QuickieStore
+EXECUTE dbo.sp_QuickieStore
     @query_text_search = 'SELECT * FROM Orders';
 
 -- Find queries from a specific procedure
-EXEC dbo.sp_QuickieStore
+EXECUTE dbo.sp_QuickieStore
     @procedure_name = 'usp_GetCustomerOrders';
 
 -- Filter to queries that executed at least 1000 times
-EXEC dbo.sp_QuickieStore
+EXECUTE dbo.sp_QuickieStore
     @execution_count = 1000;
 
 -- Show queries with a minimum duration of 500ms
-EXEC dbo.sp_QuickieStore
+EXECUTE dbo.sp_QuickieStore
     @duration_ms = 500;
 
 -- Look for regressions against a baseline period
-EXEC dbo.sp_QuickieStore
+EXECUTE dbo.sp_QuickieStore
     @regression_baseline_start_date = '2025-01-01',
     @regression_baseline_end_date = '2025-01-08',
     @regression_direction = 'regressed';
 
 -- Expert mode for additional details
-EXEC dbo.sp_QuickieStore
+EXECUTE dbo.sp_QuickieStore
     @expert_mode = 1;
 ```
 
