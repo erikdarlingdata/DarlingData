@@ -147,13 +147,13 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
   - UNION, INTERSECT, EXCEPT should have the operator between statements with blank lines
   ```sql
   SELECT
-     columns
+     a.columns
   FROM dbo.a_table AS a
 
   EXCEPT
 
   SELECT
-     columns
+     b.columns
   FROM dbo.b_table AS b;
   ```
 
@@ -260,10 +260,10 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
   UPDATE
       alias
   SET
-     col1 = value1,
-     col2 = value2
+     alias.col1 = value1,
+     alias.col2 = value2
   FROM dbo.table AS alias
-  WHERE condition;
+  WHERE alias.condition;
   ```
 
 - **DELETE statements**:
@@ -274,7 +274,7 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
   DELETE
       alias
   FROM dbo.table AS alias
-  WHERE condition;
+  WHERE alias.condition;
   ```
 
 - **Parentheses**:
@@ -376,7 +376,7 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
       @sql nvarchar(max) = N''
 
   SET @sql += N'
-      the query ' + QUOTENAME(object_name) + '
+      the query ' + QUOTENAME(alias.object_name) + '
   ';
 
   EXECUTE sys.sp_executesql
@@ -504,7 +504,7 @@ END;
 ```sql
 SELECT
     database_name = d.name,
-    index_count = COUNT(i.index_id),
+    index_count = COUNT_BIG(i.index_id),
     total_size_mb = SUM(a.total_pages) * 8 / 1024,
     read_operations = SUM(ius.user_seeks + ius.user_scans + ius.user_lookups),
     write_operations = SUM(ius.user_updates),
@@ -520,7 +520,14 @@ LEFT JOIN sys.dm_db_index_usage_stats AS ius
   ON  ius.database_id = d.database_id
   AND ius.object_id = i.object_id
   AND ius.index_id = i.index_id
-LEFT JOIN sys.dm_db_index_physical_stats(DB_ID(), NULL, NULL, NULL, 'LIMITED') AS ps
+LEFT JOIN sys.dm_db_index_physical_stats
+(
+    DB_ID(),
+    NULL,
+    NULL,
+    NULL,
+    'LIMITED'
+) AS ps
   ON  ps.object_id = i.object_id
   AND ps.index_id = i.index_id
 LEFT JOIN sys.allocation_units AS a
@@ -542,14 +549,14 @@ OPTION(MAXDOP 1, RECOMPILE);
 ### CTE with Multiple Definitions and Nested Queries
 
 ```sql
-WITH database_stats
+WITH
+    database_stats
 (
     database_name,
     recovery_model,
     log_size_mb,
     log_used_percent
-)
-AS
+) AS
 (
     SELECT
         database_name = d.name,
@@ -564,7 +571,7 @@ AS
         d.name,
         d.recovery_model_desc
 ),
-database_backups AS
+    database_backups AS
 (
     SELECT
         database_name = b.database_name,
@@ -575,7 +582,6 @@ database_backups AS
     GROUP BY
         b.database_name
 )
-
 SELECT
     ds.database_name,
     ds.recovery_model,
@@ -615,14 +621,37 @@ Build query dynamically using proper quoting and formatting
 */
 SET @sql = N'
 SELECT
-    order_month = DATEFROMPARTS(YEAR(' + QUOTENAME(@column_name) + N'), MONTH(' + QUOTENAME(@column_name) + N'), 1),
-    order_count = COUNT(*),
+    order_month =
+        DATEFROMPARTS
+        (
+            YEAR
+            (' +
+            QUOTENAME(@column_name) +
+            N'),
+            MONTH
+            (' +
+            QUOTENAME(@column_name) +
+            N'),
+            1
+        ),
+    order_count = COUNT_BIG(*),
     total_amount = SUM(TotalDue),
     avg_amount = AVG(TotalDue)
 FROM ' + QUOTENAME(@database_name) + N'.dbo.' + QUOTENAME(@table_name) + N'
 WHERE ' + QUOTENAME(@column_name) + N' >= DATEADD(YEAR, -1, GETDATE())
 GROUP BY
-    DATEFROMPARTS(YEAR(' + QUOTENAME(@column_name) + N'), MONTH(' + QUOTENAME(@column_name) + N'), 1)
+        DATEFROMPARTS
+        (
+            YEAR
+            (' +
+            QUOTENAME(@column_name) +
+            N'),
+            MONTH
+            (' +
+            QUOTENAME(@column_name) +
+            N'),
+            1
+        )
 ORDER BY
     order_month;
 ';
@@ -643,9 +672,9 @@ SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
 
-IF OBJECT_ID('dbo.sp_MyProcedure', 'P') IS NULL
+IF OBJECT_ID(N'dbo.sp_MyProcedure', N'P') IS NULL
 BEGIN
-    EXECUTE ('CREATE PROCEDURE dbo.sp_MyProcedure AS RETURN 0;');
+    EXECUTE(N'CREATE PROCEDURE dbo.sp_MyProcedure AS RETURN 138;');
 END;
 GO
 
@@ -743,7 +772,8 @@ BEGIN
         WHERE qs.creation_time < @start_date
         AND   t.dbid = DB_ID(@database_name)
         GROUP BY
-            t.object_id;
+            t.object_id
+        OPTION(RECOMPILE);
         
         IF @debug = 1
         BEGIN
@@ -780,16 +810,10 @@ BEGIN
             ABS((c.metric_value - b.metric_value) / NULLIF(b.metric_value, 0) * 100) DESC;
     END TRY
     BEGIN CATCH
-        IF OBJECT_ID('tempdb..#baseline_metrics') IS NOT NULL
+        IF @@TRANCOUNT > 0
         BEGIN
-            DROP TABLE #baseline_metrics;
-        END;
-        
-        IF OBJECT_ID('tempdb..#current_metrics') IS NOT NULL
-        BEGIN
-            DROP TABLE #current_metrics;
-        END;
-        
+            ROLLBACK;
+        END;        
         THROW;
     END CATCH;
 END;
