@@ -10,6 +10,7 @@
     - [sp_QuickieStore](#quickie-store): The fastest and most configurable way to navigate Query Store data
     - [sp_HealthParser](#health-parser): Pull all the performance-related data from the system health Extended Event
     - [sp_LogHunter](#log-hunter): Get all of the worst stuff out of your error log
+    - [sp_IndexCleanup](#index-cleanup): Identify unused and duplicate indexes
 
 ## Who are these scripts for?
 You need to troubleshoot performance problems with SQL Server, and you need to do it now. 
@@ -60,8 +61,13 @@ Current valid parameter details:
 | @minimum_disk_latency_ms   | smallint  | low bound for reporting disk latency                                           | a reasonable number of milliseconds for disk latency | 100          |
 | @cpu_utilization_threshold | smallint  | low bound for reporting high cpu utlization                                    | a reasonable cpu utlization percentage               | 50           |
 | @skip_waits                | bit       | skips waits when you do not need them on every run                             | 0 or 1                                               | 0            |
-| @skip_perfmon              | bit       | skips perfmon counters when you do not need them on every run                  | 0 or 1                                               | 0            |
-| @sample_seconds            | tinyint   | take a sample of your server's metrics                                         | a valid tinyint: 0-255                               | 0            |
+| @skip_perfmon              | bit       | skips perfmon counters when you do not need them on every run                  | a valid tinyint: 0-255                               | 0            |
+| @sample_seconds            | tinyint   | take a sample of your server's metrics                                         | 0 or 1                                               | 0            |
+| @log_to_table              | bit       | enable logging to permanent tables                                             | 0 or 1                                               | 0            |
+| @log_database_name         | sysname   | database to store logging tables                                               | valid database name                                  | NULL         |
+| @log_schema_name           | sysname   | schema to store logging tables                                                 | valid schema name                                    | NULL         |
+| @log_table_name_prefix     | sysname   | prefix for all logging tables                                                  | valid table name prefix                               | 'PressureDetector' |
+| @log_retention_days        | integer   | Number of days to keep logs, 0 = keep indefinitely                             | integer                                              | 30           |
 | @help                      | bit       | how you got here                                                               | 0 or 1                                               | 0            |
 | @debug                     | bit       | prints dynamic sql, displays parameter and variable values, and table contents | 0 or 1                                               | 0            |
 | @version                   | varchar   | OUTPUT; for support                                                            | none                                                 | none; OUTPUT |
@@ -98,28 +104,28 @@ Current valid parameter details:
 |       parameter        |   name   |                                         description                                          |                                                    valid_inputs                                                     |                    defaults                     |
 |------------------------|----------|----------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------|-------------------------------------------------|
 | @event_type            | sysname  | used to pick which session you want to run                                                   | "blocking", "query", "waits", "recompiles", "compiles" and certain variations on those words                        | "query"                                         |
-| @query_duration_ms     | int      | (>=) used to set a minimum query duration to collect data for                                | an integer                                                                                                          | 500 (ms)                                        |
+| @query_duration_ms     | integer  | (>=) used to set a minimum query duration to collect data for                                | an integer                                                                                                          | 500 (ms)                                        |
 | @query_sort_order      | nvarchar | when you use the "query" event, lets you choose which metrics to sort results by             | "cpu", "reads", "writes", "duration", "memory", "spills", and you can add "avg" to sort by averages, e.g. "avg cpu" | "cpu"                                           |
 | @skip_plans            | bit      | when you use the "query" event, lets you skip collecting actual execution plans              |1 or 0                                                                                                               | 0                                               |
-| @blocking_duration_ms  | int      | (>=) used to set a minimum blocking duration to collect data for                             | an integer                                                                                                          | 500 (ms)                                        |
+| @blocking_duration_ms  | integer  | (>=) used to set a minimum blocking duration to collect data for                             | an integer                                                                                                          | 500 (ms)                                        |
 | @wait_type             | nvarchar | (inclusive) filter to only specific wait types                                               | a single wait type, or a CSV list of wait types                                                                     | "all", which uses a list of "interesting" waits |
-| @wait_duration_ms      | int      | (>=) used to set a minimum time per wait to collect data for                                 | an integer                                                                                                          | 10 (ms)                                         |
+| @wait_duration_ms      | integer  | (>=) used to set a minimum time per wait to collect data for                                 | an integer                                                                                                          | 10 (ms)                                         |
 | @client_app_name       | sysname  | (inclusive) filter to only specific app names                                                | a stringy thing                                                                                                     | intentionally left blank                        |
 | @client_hostname       | sysname  | (inclusive) filter to only specific host names                                               | a stringy thing                                                                                                     | intentionally left blank                        |
 | @database_name         | sysname  | (inclusive) filter to only specific databases                                                | a stringy thing                                                                                                     | intentionally left blank                        |
 | @session_id            | nvarchar | (inclusive) filter to only a specific session id, or a sample of session ids                 | an integer, or "sample" to sample a workload                                                                        | intentionally left blank                        |
-| @sample_divisor        | int      | the divisor for session ids when sampling a workload, e.g. SPID % 5                          | an integer                                                                                                          | 5                                               |
+| @sample_divisor        | integer  | the divisor for session ids when sampling a workload, e.g. SPID % 5                          | an integer                                                                                                          | 5                                               |
 | @username              | sysname  | (inclusive) filter to only a specific user                                                   | a stringy thing                                                                                                     | intentionally left blank                        |
 | @object_name           | sysname  | (inclusive) to only filter to a specific object name                                         | a stringy thing                                                                                                     | intentionally left blank                        |
 | @object_schema         | sysname  | (inclusive) the schema of the object you want to filter to; only needed with blocking events | a stringy thing                                                                                                     | dbo                                             |
-| @requested_memory_mb   | int      | (>=) the memory grant a query must ask for to have data collected                            | an integer                                                                                                          | 0                                               |
-| @seconds_sample        | int      | the duration in seconds to run the event session for                                         | an integer                                                                                                          | 10                                              |
+| @requested_memory_mb   | integer  | (>=) the memory grant a query must ask for to have data collected                            | an integer                                                                                                          | 0                                               |
+| @seconds_sample        | tinyint  | the duration in seconds to run the event session for                                         | an integer                                                                                                          | 10                                              |
 | @gimme_danger          | bit      | used to override default minimums for query, wait, and blocking durations.                   | 1 or 0                                                                                                              | 0                                               |
 | @keep_alive            | bit      | creates a permanent session, either to watch live or log to a table from                     | 1 or 0                                                                                                              | 0                                               |
 | @custom_name           | nvarchar | if you want to custom name a permanent session                                               | a stringy thing                                                                                                     | intentionally left blank                        |
 | @output_database_name  | sysname  | the database you want to log data to                                                         | a valid database name                                                                                               | intentionally left blank                        |
 | @output_schema_name    | sysname  | the schema you want to log data to                                                           | a valid schema                                                                                                      | dbo                                             |
-| @delete_retention_days | int      | how many days of logged data you want to keep                                                | a POSITIVE integer                                                                                                  | 3 (days)                                        |
+| @delete_retention_days | integer  | how many days of logged data you want to keep                                                | a POSITIVE integer                                                                                                  | 3 (days)                                        |
 | @cleanup               | bit      | deletes all sessions, tables, and views. requires output database and schema.                | 1 or 0                                                                                                              | 0                                               |
 | @max_memory_kb         | bigint   | set a max ring buffer size to log data to                                                    | an integer                                                                                                          | 102400                                          |
 | @version               | varchar  | to make sure you have the most recent bits                                                   | none, output                                                                                                        | none, output                                    |
@@ -181,25 +187,35 @@ ON SERVER
 Once it has data collected, you can analyze it using this command:
 
 ```
-EXEC dbo.sp_HumanEventsBlockViewer
+EXECUTE dbo.sp_HumanEventsBlockViewer
     @session_name = N'blocked_process_report';
 ```
 
 
 Current valid parameter details:
 
-| parameter_name | data_type |                   description                   |                              valid_inputs                              |              defaults              |
-|----------------|-----------|-------------------------------------------------|------------------------------------------------------------------------|------------------------------------|
-| @session_name  | nvarchar  | name of the extended event session to pull from | extended event session name capturing sqlserver.blocked_process_report | keeper_HumanEvents_blocking        |
-| @target_type   | sysname   | target of the extended event session            | event_file or ring_buffer                                              | NULL                               |
-| @start_date    | datetime2 | filter by date                                  | a reasonable date                                                      | NULL; will shortcut to last 7 days |
-| @end_date      | datetime2 | filter by date                                  | a reasonable date                                                      | NULL                               |
-| @database_name | sysname   | filter by database name                         | a database that exists on this server                                  | NULL                               |
-| @object_name   | sysname   | filter by table name                            | a schema-prefixed table name                                           | NULL                               |
-| @help          | bit       | how you got here                                | 0 or 1                                                                 | 0                                  |
-| @debug         | bit       | dumps raw temp table contents                   | 0 or 1                                                                 | 0                                  |
-| @version       | varchar   | OUTPUT; for support                             | none; OUTPUT                                                           | none; OUTPUT                       |
-| @version_date  | datetime  | OUTPUT; for support                             | none; OUTPUT                                                           | none; OUTPUT                       |
+| parameter_name        | data_type |                   description                   |                              valid_inputs                              |              defaults              |
+|-----------------------|-----------|-------------------------------------------------|------------------------------------------------------------------------|------------------------------------|
+| @session_name         | sysname   | name of the extended event session to pull from | extended event session name capturing sqlserver.blocked_process_report | keeper_HumanEvents_blocking        |
+| @target_type          | sysname   | target of the extended event session            | event_file or ring_buffer                                              | NULL                               |
+| @start_date           | datetime2 | filter by date                                  | a reasonable date                                                      | NULL; will shortcut to last 7 days |
+| @end_date             | datetime2 | filter by date                                  | a reasonable date                                                      | NULL                               |
+| @database_name        | sysname   | filter by database name                         | a database that exists on this server                                  | NULL                               |
+| @object_name          | sysname   | filter by table name                            | a schema-prefixed table name                                           | NULL                               |
+| @target_database      | sysname   | database containing the table with BPR data     | a valid database name                                                  | NULL                               |
+| @target_schema        | sysname   | schema of the table                             | a valid schema name                                                    | NULL                               |
+| @target_table         | sysname   | table name                                      | a valid table name                                                     | NULL                               |
+| @target_column        | sysname   | column containing XML data                      | a valid column name                                                    | NULL                               |
+| @timestamp_column     | sysname   | column containing timestamp (optional)          | a valid column name                                                    | NULL                               |
+| @log_to_table         | bit       | enable logging to permanent tables              | 0 or 1                                                                 | 0                                  |
+| @log_database_name    | sysname   | database to store logging tables                | a valid database name                                                  | NULL                               |
+| @log_schema_name      | sysname   | schema to store logging tables                  | a valid schema name                                                    | NULL                               |
+| @log_table_name_prefix| sysname   | prefix for all logging tables                   | a valid table name prefix                                              | 'HumanEventsBlockViewer'           |
+| @log_retention_days   | integer   | Number of days to keep logs, 0 = keep indefinitely | a valid integer                                                    | 30                                 |
+| @help                 | bit       | how you got here                                | 0 or 1                                                                 | 0                                  |
+| @debug                | bit       | dumps raw temp table contents                   | 0 or 1                                                                 | 0                                  |
+| @version              | varchar   | OUTPUT; for support                             | none; OUTPUT                                                           | none; OUTPUT                       |
+| @version_date         | datetime  | OUTPUT; for support                             | none; OUTPUT                                                           | none; OUTPUT                       |
 
 [*Back to top*](#navigatory)
 
@@ -280,6 +296,7 @@ Current valid parameter details:
 | @regression_baseline_end_date           | datetimeoffset | the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally                          | January 1, 1753, through December 31, 9999                                                                                                                                                                                                                                                                                                                        | NULL; One week after @regression_baseline_start_date if that is specified |
 | @regression_comparator                  | varchar        | what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with any regression time period. | relative, absolute                                                                                                                                                                                                                                                                                                                                                | NULL; absolute if @regression_baseline_start_date is specified            |
 | @regression_direction                   | varchar        | when comparing against any regression baseline, what do you want the results sorted by ('magnitude', 'improved', or 'regressed')?                 | regressed, worse, improved, better, magnitude, absolute, whatever                                                                                                                                                                                                                                                                                                 | NULL; regressed if @regression_baseline_start_date is specified           |
+| @include_query_hash_totals             | bit            | will add an additional column to final output with total resource usage by query hash                                                             | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @help                                   | bit            | how you got here                                                                                                                                  | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @debug                                  | bit            | prints dynamic sql, statement length, parameter and variable values, and raw temp table contents                                                  | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
 | @troubleshoot_performance               | bit            | set statistics xml on for queries against views                                                                                                   | 0 or 1                                                                                                                                                                                                                                                                                                                                                            | 0                                                                         |
@@ -326,7 +343,12 @@ Current valid parameter details:
 | @wait_duration_ms            | bigint         | minimum wait duration                                               | the minimum duration of a wait for queries with interesting waits     | 0               |
 | @wait_round_interval_minutes | bigint         | interval to round minutes to for wait stats                         | interval to round minutes to for top wait stats by count and duration | 60              |
 | @skip_locks                  | bit            | skip the blocking and deadlocking section                           | 0 or 1                                                                | 0               |
-| @pending_task_threshold      | int            | minimum number of pending tasks to display                          | a valid integer                                                       | 10              |
+| @pending_task_threshold      | integer        | minimum number of pending tasks to display                          | a valid integer                                                       | 10              |
+| @log_to_table                | bit            | enable logging to permanent tables                                  | 0 or 1                                                                | 0               |
+| @log_database_name           | sysname        | database to store logging tables                                    | valid database name                                                   | NULL            |
+| @log_schema_name             | sysname        | schema to store logging tables                                      | valid schema name                                                     | NULL            |
+| @log_table_name_prefix       | sysname        | prefix for all logging tables                                       | valid table name prefix                                               | 'HealthParser'  |
+| @log_retention_days          | integer        | Number of days to keep logs, 0 = keep indefinitely                  | integer                                                               | 30              |
 | @debug                       | bit            | prints dynamic sql, selects from temp tables                        | 0 or 1                                                                | 0               |
 | @help                        | bit            | how you got here                                                    | 0 or 1                                                                | 0               |
 | @version                     | varchar        | OUTPUT; for support                                                 | none                                                                  | none; OUTPUT    |
@@ -353,17 +375,49 @@ Current valid parameter details:
 
 |    parameter_name    | data_type |                  description                   |                                 valid_inputs                                 |   defaults   |
 |----------------------|-----------|------------------------------------------------|------------------------------------------------------------------------------|--------------|
-| @days_back           | int       | how many days back you want to search the logs | an integer; will be converted to a negative number automatically             | -7           |
+| @days_back           | integer   | how many days back you want to search the logs | an integer; will be converted to a negative number automatically             | -7           |
 | @start_date          | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
 | @end_date            | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
 | @custom_message      | nvarchar  | if you want to search for a custom string      | something specific you want to search for. no wildcards or substitions.      | NULL         |
 | @custom_message_only | bit       | only search for the custom string              | NULL, 0, 1                                                                   | 0            |
 | @first_log_only      | bit       | only search through the first error log        | NULL, 0, 1                                                                   | 0            |
-| @language_id         | int       | to use something other than English            | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id; | 1033         |
+| @language_id         | integer   | to use something other than English            | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id; | 1033         |
 | @help                | bit       | how you got here                               | NULL, 0, 1                                                                   | 0            |
 | @debug               | bit       | dumps raw temp table contents                  | NULL, 0, 1                                                                   | 0            |
 | @version             | varchar   | OUTPUT; for support                            | OUTPUT; for support                                                          | none; OUTPUT |
 | @version_date        | datetime  | OUTPUT; for support                            | OUTPUT; for support                                                          | none; OUTPUT |
+
+[*Back to top*](#navigatory)
+
+## Index Cleanup
+
+This stored procedure helps identify unused and duplicate indexes in your SQL Server databases that could be candidates for removal. It analyzes index usage statistics and can generate scripts for removing unnecessary indexes.
+
+**IMPORTANT: This is currently a BETA VERSION.** It needs extensive testing in real environments with real indexes to address several issues:
+* Data collection accuracy
+* Deduping logic
+* Result correctness
+* Edge cases
+
+Misuse of this procedure can potentially harm your database. If you run this, only use the output to validate result correctness. **Do not run any of the output scripts without thorough review and testing**, as doing so may be harmful to your database performance.
+
+The procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT and CONCAT functions.
+
+Current valid parameter details:
+
+| Parameter Name | Data Type | Default Value | Description |
+|----------------|-----------|---------------|-------------|
+| @database_name | sysname | NULL | The name of the database you wish to analyze |
+| @schema_name | sysname | NULL | The schema name to filter indexes by |
+| @table_name | sysname | NULL | The table name to filter indexes by |
+| @min_reads | bigint | 0 | Minimum number of reads for an index to be considered used |
+| @min_writes | bigint | 0 | Minimum number of writes for an index to be considered used |
+| @min_size_gb | decimal(10,2) | 0 | Minimum size in GB for an index to be analyzed |
+| @min_rows | bigint | 0 | Minimum number of rows for a table to be analyzed |
+| @help | bit | 0 | Displays help information |
+| @debug | bit | 0 | Prints debug information during execution |
+| @version | varchar(20) | NULL | OUTPUT parameter that returns the version number of the procedure |
+| @version_date | datetime | NULL | OUTPUT parameter that returns the date this version was released |
 
 [*Back to top*](#navigatory)
 
