@@ -2926,7 +2926,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
     AND   ce.can_compress = 1
     /* Only create merge scripts for the indexes that should remain after merging */
-    AND   (ia.target_index_name IS NULL OR ia.index_name = 'uq_i_a')
+    /* Special handling for indexes that need to be made unique (Rule 7.5) */
+    AND   (ia.target_index_name IS NULL OR ia.action = N'MAKE UNIQUE')
     OPTION(RECOMPILE);
 
     /* Debug which indexes are getting MERGE scripts */
@@ -2934,12 +2935,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         RAISERROR('Indexes getting MERGE scripts:', 0, 0) WITH NOWAIT;
         SELECT 
-            index_name,
-            action,
-            consolidation_rule,
-            target_index_name,
+            ia.index_name,
+            ia.action,
+            ia.consolidation_rule,
+            ia.target_index_name,
             script_type = 'WILL GET MERGE SCRIPT',
-            included_columns
+            ia.included_columns
         FROM #index_analysis AS ia 
         JOIN #compression_eligibility AS ce 
           ON  ia.database_id = ce.database_id
@@ -2947,8 +2948,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND ia.index_id = ce.index_id
         WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
         AND   ce.can_compress = 1
-        AND   (ia.target_index_name IS NULL OR ia.index_name = 'uq_i_a')
-        ORDER BY index_name
+        AND   (ia.target_index_name IS NULL OR ia.action = N'MAKE UNIQUE')
+        ORDER BY ia.index_name
         OPTION(RECOMPILE);
     END;
 
@@ -3060,8 +3061,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia_unique.index_name = ia.index_name
         AND   ia_unique.action = N'MAKE UNIQUE'
     )
-    /* Explicit exclusion for our test index */
-    AND ia.index_name <> 'uq_i_a'
     OPTION(RECOMPILE);
 
     /* Insert compression scripts for remaining indexes */
