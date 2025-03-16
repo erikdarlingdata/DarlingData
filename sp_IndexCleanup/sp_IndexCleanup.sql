@@ -570,6 +570,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         database_id integer NOT NULL,
         database_name sysname NOT NULL,
         processed bit NOT NULL DEFAULT 0,
+        process_date datetime2(7) NULL,
         PRIMARY KEY CLUSTERED(database_id)
     );
 
@@ -4737,7 +4738,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             UPDATE 
                 #databases_to_process
             SET 
-                #databases_to_process.processed = 1
+                #databases_to_process.processed = 1,
+                #databases_to_process.process_date = SYSDATETIME()
             WHERE #databases_to_process.database_id = @database_id;
             
             /* Get next database */
@@ -4752,6 +4754,73 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Finished processing %d databases', 0, 0, @processed_count) WITH NOWAIT;
         END;
+
+        /* Create a summary table with database processing info */
+        SELECT
+            database_summary = N'Database Processing Summary',
+            processed_databases = 
+                N'Processed: ' +
+                ISNULL
+                (
+                    STUFF
+                    (
+                        (
+                            SELECT 
+                                N', ' + 
+                                dtp.database_name
+                            FROM #databases_to_process AS dtp
+                            WHERE dtp.processed = 1
+                            ORDER BY 
+                                dtp.database_name
+                            FOR 
+                                XML
+                                PATH(''),
+                                TYPE
+                        ).value('.', 'nvarchar(max)'),
+                        1, 
+                        2, 
+                        N''
+                    ),
+                    N'None'
+                ),
+            skipped_databases = 
+                N'Skipped: ' +
+                ISNULL
+                (
+                    STUFF
+                    (
+                        (
+                            SELECT 
+                                N', ' + 
+                                dtp.database_name
+                            FROM #databases_to_process AS dtp
+                            WHERE dtp.processed = 0
+                            ORDER BY 
+                                dtp.database_name
+                            FOR 
+                                XML
+                                PATH(''),
+                                TYPE
+                        ).value('.', 'nvarchar(max)'),
+                        1, 
+                        2, 
+                        N''
+                    ),
+                    N'None'
+                ),
+            stats = 
+                CASE
+                    WHEN @get_all_databases = 1
+                    THEN N'Total: ' + CONVERT(nvarchar(10), COUNT_BIG(*) OVER()) +
+                         N', Processed: ' + CONVERT(nvarchar(10), SUM(CONVERT(integer, processed)) OVER()) +
+                         N', Skipped: ' + CONVERT(nvarchar(10), COUNT_BIG(*) OVER() - SUM(CONVERT(integer, processed)) OVER())
+                    ELSE N'Single database mode'
+                END
+        FROM #databases_to_process
+        WHERE @database_count > 0 /* Return one row with summary data */
+        GROUP BY 
+            @get_all_databases /* Just to get one row */
+        OPTION(RECOMPILE);
     END; /* End of @get_all_databases = 1 section */
 END TRY
 BEGIN CATCH
