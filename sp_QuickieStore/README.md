@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # sp_QuickieStore
 
 This procedure will dig into Query Store data for a specific database, or all databases with Query Store enabled. 

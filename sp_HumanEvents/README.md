@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # Human Events Toolkit
 
 This directory contains two stored procedures for managing and analyzing Extended Events in SQL Server:
