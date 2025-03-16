@@ -4765,11 +4765,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     STUFF
                     (
                         (
-                            SELECT 
+                            SELECT
                                 N', ' + 
                                 dtp.database_name
                             FROM #databases_to_process AS dtp
                             WHERE dtp.processed = 1
+                            GROUP BY
+                                dtp.database_name
                             ORDER BY 
                                 dtp.database_name
                             FOR 
@@ -4790,11 +4792,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     STUFF
                     (
                         (
-                            SELECT 
+                            SELECT
                                 N', ' + 
                                 dtp.database_name
                             FROM #databases_to_process AS dtp
                             WHERE dtp.processed = 0
+                            GROUP BY
+                                dtp.database_name
                             ORDER BY 
                                 dtp.database_name
                             FOR 
@@ -4812,14 +4816,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CASE
                     WHEN @get_all_databases = 1
                     THEN N'Total: ' + CONVERT(nvarchar(10), COUNT_BIG(*) OVER()) +
-                         N', Processed: ' + CONVERT(nvarchar(10), SUM(CONVERT(integer, processed)) OVER()) +
-                         N', Skipped: ' + CONVERT(nvarchar(10), COUNT_BIG(*) OVER() - SUM(CONVERT(integer, processed)) OVER())
+                         N', Processed: ' + CONVERT(nvarchar(10), SUM(CONVERT(integer, dtp.processed)) OVER()) +
+                         N', Skipped: ' + CONVERT(nvarchar(10), COUNT_BIG(*) OVER() - SUM(CONVERT(integer, dtp.processed)) OVER())
                     ELSE N'Single database mode'
                 END
-        FROM #databases_to_process
+        FROM #databases_to_process AS dtp
         WHERE @database_count > 0 /* Return one row with summary data */
-        GROUP BY 
-            @get_all_databases /* Just to get one row */
+        GROUP BY
+            dtp.processed
+             /* Just to get one row */
         OPTION(RECOMPILE);
     END; /* End of @get_all_databases = 1 section */
 END TRY
