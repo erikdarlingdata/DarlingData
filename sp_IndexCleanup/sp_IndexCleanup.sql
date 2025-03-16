@@ -35,8 +35,8 @@ ALTER PROCEDURE
     @min_size_gb decimal(10,2) = 0,
     @min_rows bigint = 0,
     @get_all_databases bit = 0, /* When 1, analyzes all eligible databases on the server */
-    @include_databases nvarchar(max) = NULL, /* Comma-separated list of databases to include (used with @get_all_databases = 1) */
-    @exclude_databases nvarchar(max) = NULL, /* Comma-separated list of databases to exclude (used with @get_all_databases = 1) */
+    @include_databases nvarchar(MAX) = NULL, /* Comma-separated list of databases to include (used with @get_all_databases = 1) */
+    @exclude_databases nvarchar(MAX) = NULL, /* Comma-separated list of databases to exclude (used with @get_all_databases = 1) */
     @help bit = 'false',
     @debug bit = 'false',
     @version varchar(20) = NULL OUTPUT,
@@ -422,6 +422,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name sysname NOT NULL,
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
+        is_unique bit NULL,
         key_columns nvarchar(max) NULL,
         included_columns nvarchar(max) NULL,
         filter_definition nvarchar(max) NULL,
@@ -480,7 +481,33 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
+        reason nvarchar(200) NULL,
         PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
+    );
+
+    CREATE TABLE 
+        #key_duplicate_dedupe
+    (
+        database_id integer NOT NULL,
+        object_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_name sysname NOT NULL,
+        table_name sysname NOT NULL,
+        base_key_columns nvarchar(max) NULL,
+        filter_definition nvarchar(max) NULL,
+        winning_index_name sysname NULL,
+        index_list nvarchar(max) NULL,
+    );
+
+    CREATE TABLE 
+        #include_subset_dedupe
+    (
+        database_id integer NOT NULL,
+        object_id integer NOT NULL,
+        subset_index_name sysname NULL,
+        superset_index_name sysname NULL,
+        subset_included_columns nvarchar(max) NULL,
+        superset_included_columns nvarchar(max) NULL
     );
 
     CREATE TABLE
@@ -751,7 +778,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT 
             dtp.database_id, 
             dtp.database_name 
-        FROM #databases_to_process AS dtp.
+        FROM #databases_to_process AS dtp
         WHERE dtp.processed = 0
         ORDER BY 
             dtp.database_name;
@@ -788,6 +815,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 TRUNCATE TABLE #index_analysis;
                 TRUNCATE TABLE #index_cleanup_results;
                 TRUNCATE TABLE #compression_eligibility;
+                TRUNCATE TABLE #index_reporting_stats;
             END;
                     
             /* Process current database using existing logic */
@@ -856,278 +884,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('You cannot specify both @get_all_databases = 1 and a specific @database_name. Using @get_all_databases = 1 and ignoring @database_name.', 10, 1) WITH NOWAIT;
         SET @database_name = NULL;
     END;
-
-    /*
-    Temp tables!
-    */
-
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Creating temp tables', 0, 0) WITH NOWAIT;
-    END;
-
-    CREATE TABLE 
-        #filtered_objects
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NOT NULL,
-        can_compress bit NOT NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
-    );
-
-    CREATE TABLE
-        #operational_stats
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NOT NULL,
-        range_scan_count bigint NULL,
-        singleton_lookup_count bigint NULL,
-        forwarded_fetch_count bigint NULL,
-        lob_fetch_in_pages bigint NULL,
-        row_overflow_fetch_in_pages bigint NULL,
-        leaf_insert_count bigint NULL,
-        leaf_update_count bigint NULL,
-        leaf_delete_count bigint NULL,
-        leaf_ghost_count bigint NULL,
-        nonleaf_insert_count bigint NULL,
-        nonleaf_update_count bigint NULL,
-        nonleaf_delete_count bigint NULL,
-        leaf_allocation_count bigint NULL,
-        nonleaf_allocation_count bigint NULL,
-        row_lock_count bigint NULL,
-        row_lock_wait_count bigint NULL,
-        row_lock_wait_in_ms bigint NULL,
-        page_lock_count bigint NULL,
-        page_lock_wait_count bigint NULL,
-        page_lock_wait_in_ms bigint NULL,
-        index_lock_promotion_attempt_count bigint NULL,
-        index_lock_promotion_count bigint NULL,
-        page_latch_wait_count bigint NULL,
-        page_latch_wait_in_ms bigint NULL,
-        tree_page_latch_wait_count bigint NULL,
-        tree_page_latch_wait_in_ms bigint NULL,
-        page_io_latch_wait_count bigint NULL,
-        page_io_latch_wait_in_ms bigint NULL,
-        page_compression_attempt_count bigint NULL,
-        page_compression_success_count bigint NULL,
-        PRIMARY KEY CLUSTERED (database_id, schema_id, object_id, index_id)
-    );
-
-    CREATE TABLE
-        #partition_stats
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NULL,
-        partition_id bigint NOT NULL,
-        partition_number int NOT NULL,
-        total_rows bigint NULL,
-        total_space_gb decimal(38, 4) NULL, /* Using 4 decimal places for GB to maintain precision */
-        reserved_lob_gb decimal(38, 4) NULL, /* Using 4 decimal places for GB to maintain precision */
-        reserved_row_overflow_gb decimal(38, 4) NULL, /* Using 4 decimal places for GB to maintain precision */
-        data_compression_desc nvarchar(60) NULL,
-        built_on sysname NULL,
-        partition_function_name sysname NULL,
-        partition_columns nvarchar(max)
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id, partition_id)
-    );
-
-    CREATE TABLE
-        #index_details
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NULL,
-        column_name sysname NOT NULL,
-        is_primary_key bit NULL,
-        is_unique bit NULL,
-        is_unique_constraint bit NULL,
-        is_indexed_view integer NOT NULL,
-        is_foreign_key bit NULL,
-        is_foreign_key_reference bit NULL,
-        key_ordinal tinyint NOT NULL,
-        index_column_id integer NOT NULL,
-        is_descending_key bit NOT NULL,
-        is_included_column bit NULL,
-        filter_definition nvarchar(max) NULL,
-        is_max_length integer NOT NULL,
-        user_seeks bigint NOT NULL,
-        user_scans bigint NOT NULL,
-        user_lookups bigint NOT NULL,
-        user_updates bigint NOT NULL,
-        last_user_seek datetime NULL,
-        last_user_scan datetime NULL,
-        last_user_lookup datetime NULL,
-        last_user_update datetime NULL,
-        is_eligible_for_dedupe bit NOT NULL
-        PRIMARY KEY CLUSTERED(database_id, object_id, index_id, column_name)
-    );
-
-    CREATE TABLE
-        #index_analysis
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NULL,
-        index_name sysname NOT NULL,
-        is_unique bit NULL,
-        key_columns nvarchar(max) NULL,
-        included_columns nvarchar(max) NULL,
-        filter_definition nvarchar(max) NULL,
-        is_redundant bit NULL,
-        superseded_by nvarchar(256) NULL,
-        missing_columns nvarchar(max) NULL,
-        action nvarchar(30) NULL,
-        target_index_name sysname NULL,
-        consolidation_rule varchar(512) NULL,
-        index_priority int NULL,
-        original_index_definition nvarchar(max) NULL, /* Original CREATE INDEX statement */
-        INDEX c CLUSTERED (database_id, schema_id, object_id, index_id)
-    );
-    
-    CREATE TABLE 
-        #compression_eligibility
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NOT NULL,
-        can_compress bit NOT NULL,
-        reason nvarchar(200) NULL,
-        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
-    );
-
-    CREATE TABLE 
-        #key_duplicate_dedupe
-    (
-        database_id integer NOT NULL,
-        object_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_name sysname NOT NULL,
-        table_name sysname NOT NULL,
-        base_key_columns nvarchar(max) NULL,
-        filter_definition nvarchar(max) NULL,
-        winning_index_name sysname NULL,
-        index_list nvarchar(max) NULL,
-    );
-
-    CREATE TABLE 
-        #include_subset_dedupe
-    (
-        database_id integer NOT NULL,
-        object_id integer NOT NULL,
-        subset_index_name sysname NULL,
-        superset_index_name sysname NULL,
-        subset_included_columns nvarchar(max) NULL,
-        superset_included_columns nvarchar(max) NULL
-    );
-
-    CREATE TABLE 
-        #index_cleanup_results
-    (
-        result_type varchar(50) NOT NULL,  /* 'SUMMARY', 'MERGE', 'DISABLE', 'COMPRESS', etc. */
-        sort_order integer NOT NULL,       /* Keeps results in logical order */
-        database_name sysname NULL,
-        schema_name sysname NULL,
-        table_name sysname NULL,
-        index_name sysname NULL,
-        script_type nvarchar(50) NULL,     /* 'MERGE', 'DISABLE', 'COMPRESS', etc. */
-        consolidation_rule nvarchar(256) NULL,
-        target_index_name sysname NULL,
-        script nvarchar(max) NULL,
-        additional_info nvarchar(max) NULL, /* For stats, constraints, etc. */
-        superseded_info nvarchar(max) NULL, /* To store superseded_by information */
-        original_index_definition nvarchar(max) NULL, /* Original index definition for validation */
-        index_size_gb decimal(18,4) NULL,  /* Size of the index in GB */
-        index_rows bigint NULL,            /* Number of rows in the index */
-        index_reads bigint NULL,           /* Total reads (seeks + scans + lookups) */
-        index_writes bigint NULL           /* Total writes (updates) */
-    );
-
-    /* Create a new temp table for detailed reporting statistics */
-    CREATE TABLE 
-        #index_reporting_stats
-    (
-        summary_level varchar(20) NOT NULL,  /* 'DATABASE', 'TABLE', 'INDEX', 'SUMMARY' */
-        database_name sysname NULL,
-        schema_name sysname NULL,
-        table_name sysname NULL,
-        index_name sysname NULL,
-        server_uptime_days int NULL,
-        uptime_warning bit NULL,
-        tables_analyzed int NULL,
-        index_count int NULL,
-        total_size_gb decimal(38, 4) NULL,
-        total_rows bigint NULL,
-        unused_indexes int NULL,
-        unused_size_gb decimal(38, 4) NULL,
-        indexes_to_disable int NULL,
-        indexes_to_merge int NULL,
-        avg_indexes_per_table decimal(10, 2) NULL,
-        space_saved_gb decimal(10, 4) NULL,
-        compression_min_savings_gb decimal(10, 4) NULL,
-        compression_max_savings_gb decimal(10, 4) NULL,
-        total_min_savings_gb decimal(10, 4) NULL,
-        total_max_savings_gb decimal(10, 4) NULL,
-        /* Index usage metrics */
-        total_reads bigint NULL,
-        total_writes bigint NULL,
-        user_seeks bigint NULL,
-        user_scans bigint NULL,
-        user_lookups bigint NULL,
-        user_updates bigint NULL,
-        /* Operational stats */
-        range_scan_count bigint NULL,
-        singleton_lookup_count bigint NULL,
-        /* Lock stats */
-        row_lock_count bigint NULL,
-        row_lock_wait_count bigint NULL,
-        row_lock_wait_in_ms bigint NULL,
-        page_lock_count bigint NULL,
-        page_lock_wait_count bigint NULL,
-        page_lock_wait_in_ms bigint NULL,
-        /* Latch stats */
-        page_latch_wait_count bigint NULL,
-        page_latch_wait_in_ms bigint NULL,
-        page_io_latch_wait_count bigint NULL,
-        page_io_latch_wait_in_ms bigint NULL,
-        /* Misc stats */
-        forwarded_fetch_count bigint NULL,
-        leaf_insert_count bigint NULL,
-        leaf_update_count bigint NULL,
-        leaf_delete_count bigint NULL
-    );
-
     /*
     Start insert queries
     */
