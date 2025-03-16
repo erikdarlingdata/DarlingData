@@ -2016,6 +2016,38 @@ BEGIN
         ) AS a
         CROSS APPLY x.nodes(N'//i') AS t(c)
         WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
+        
+        /* Check for databases in both include and exclude lists */
+        IF @include_databases IS NOT NULL
+        BEGIN
+            /* Build list of conflicting databases */
+            DECLARE @conflict_list nvarchar(max) = N'';
+            
+            SELECT 
+                @conflict_list = @conflict_list + 
+                                 ed.database_name + N', '
+            FROM #exclude_databases AS ed
+            WHERE EXISTS 
+                (
+                    SELECT 1/0 
+                    FROM #include_databases AS id
+                    WHERE id.database_name = ed.database_name
+                );
+            
+            /* If we found any conflicts, raise an error */
+            IF LEN(@conflict_list) > 0
+            BEGIN
+                /* Remove trailing comma and space */
+                SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
+                
+                DECLARE @error_msg nvarchar(2000) = 
+                    N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' + 
+                    @conflict_list + N'. Please remove these databases from one of the lists.';
+                
+                RAISERROR(@error_msg, 16, 1);
+                RETURN;
+            END;
+        END;
     END;
 END;
 
