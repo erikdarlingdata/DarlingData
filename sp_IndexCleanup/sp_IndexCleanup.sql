@@ -615,6 +615,54 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     LTRIM(RTRIM(t.i.value('.', 'sysname')))
             FROM @include_xml.nodes('/i') AS t(i)
             WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> '';
+
+            /* Check for databases in both include and exclude lists */
+            IF @exclude_databases IS NOT NULL
+            BEGIN
+                SELECT 
+                    @exclude_xml = 
+                        CONVERT
+                        (
+                            xml, 
+                            '<i>' + 
+                            REPLACE
+                            (
+                                @exclude_databases, 
+                                ',', 
+                                '</i><i>'
+                            ) + 
+                            '</i>'
+                        );
+                
+                /* Build list of conflicting databases */
+                DECLARE @conflict_list nvarchar(max) = N'';
+                
+                SELECT 
+                    @conflict_list = @conflict_list + 
+                                     LTRIM(RTRIM(t.i.value('.', 'sysname'))) + N', '
+                FROM @exclude_xml.nodes('/i') AS t(i)
+                WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
+                AND EXISTS 
+                    (
+                        SELECT 1/0 
+                        FROM #database_list AS dl 
+                        WHERE dl.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
+                    );
+                
+                /* If we found any conflicts, raise an error */
+                IF LEN(@conflict_list) > 0
+                BEGIN
+                    /* Remove trailing comma and space */
+                    SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
+                    
+                    DECLARE @error_msg nvarchar(2000) = 
+                        N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' + 
+                        @conflict_list + N'. Please remove these databases from one of the lists.';
+                    
+                    RAISERROR(@error_msg, 16, 1);
+                    RETURN;
+                END;
+            END;
         END;
 
         /*
@@ -779,6 +827,33 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       FROM #databases_to_process AS dp
                       WHERE dp.database_name = dl.database_name
                   );
+        END;
+        
+        /* Also track explicitly excluded databases */
+        IF @exclude_databases IS NOT NULL
+        BEGIN
+            INSERT
+                #skipped_databases
+            (
+                database_name,
+                reason
+            )
+            SELECT
+                database_name = LTRIM(RTRIM(t.i.value('.', 'nvarchar(128)'))),
+                reason = N'Explicitly excluded by @exclude_databases parameter'
+            FROM 
+            (
+                SELECT xml_list = CONVERT(xml, N'<i>' + 
+                    REPLACE(@exclude_databases, N',', N'</i><i>') + N'</i>')
+            ) AS a
+            CROSS APPLY a.xml_list.nodes('i') AS t(i)
+            WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
+            AND EXISTS
+            (
+                SELECT 1/0
+                FROM sys.databases AS d
+                WHERE d.name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
+            );
         END;
 
         /* If no databases match criteria, exit */
