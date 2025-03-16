@@ -3209,8 +3209,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN ', DATA_COMPRESSION = PAGE'
                 ELSE N''
             END +
-            N')' +
-        N'Compression type: All Partitions',
+            N')',
+        additional_info = N'Compression type: All Partitions',
         superseded_info = NULL, /* No target index for compression scripts */
         ia.superseded_by, /* Include superseded_by info for compression scripts */
         /* Original index definition for validation */
