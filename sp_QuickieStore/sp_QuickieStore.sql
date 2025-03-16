@@ -1949,7 +1949,10 @@ BEGIN
     /* Check for contradictory parameters */
     IF @database_name IS NOT NULL
     BEGIN
-        RAISERROR(N'@database name being ignored since @get_all_databases is set to 1', 10, 1) WITH NOWAIT;
+        IF @debug = 1
+        BEGIN
+            RAISERROR(N'@database name being ignored since @get_all_databases is set to 1', 0, 0) WITH NOWAIT;
+        END;
         SET @database_name = NULL;
     END;
 
