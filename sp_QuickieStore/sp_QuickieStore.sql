@@ -9987,6 +9987,10 @@ BEGIN
             @format_output,
         get_all_databases =
             @get_all_databases,
+        include_databases =
+            @include_databases,
+        exclude_databases =
+            @exclude_databases,
         workdays =
             @workdays,
         work_start =
@@ -10160,6 +10164,52 @@ BEGIN
         SELECT
             result =
                 '#databases is empty';
+    END;
+    
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #include_databases AS id
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#include_databases',
+            id.*
+        FROM #include_databases AS id
+        ORDER BY
+            id.database_name
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#include_databases is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #exclude_databases AS ed
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#exclude_databases',
+            ed.*
+        FROM #exclude_databases AS ed
+        ORDER BY
+            ed.database_name
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#exclude_databases is empty';
     END;
 
     IF EXISTS
