@@ -119,12 +119,12 @@ EXECUTE dbo.sp_QuickieStore
 -- Get data from all databases with Query Store enabled, except for specific ones
 EXECUTE dbo.sp_QuickieStore
     @get_all_databases = 1,
-    @exclude_databases = 'TempDB, msdb';
+    @exclude_databases = 'Head, Shoulders, Knees, Toes';
 
 -- Get data from only specific databases with Query Store enabled
 EXECUTE dbo.sp_QuickieStore
     @get_all_databases = 1,
-    @include_databases = 'AdventureWorks, WideWorldImporters';
+    @include_databases = 'StacOverflow2013, StackOverflow2010';
 ```
 
 ## Resources
