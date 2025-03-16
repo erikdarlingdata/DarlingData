@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # String Functions
 
 This directory contains a set of utility functions for string manipulation in SQL Server. These functions provide efficient ways to extract or remove specific characters from strings.

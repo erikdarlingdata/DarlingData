@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # Helper Views
 
 This directory contains helper views and functions for diagnosing various SQL Server performance issues. These scripts are particularly useful for presentations and educational purposes, but can also be used in troubleshooting scenarios.

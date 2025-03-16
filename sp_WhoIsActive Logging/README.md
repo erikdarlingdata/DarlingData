@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # sp_WhoIsActive Logging
 
 This toolkit automates the collection and management of SQL Server activity data using Adam Machanic's popular sp_WhoIsActive stored procedure. It creates a comprehensive logging framework that captures server activity in daily tables and provides useful views for analysis.

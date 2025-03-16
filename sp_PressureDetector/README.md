@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # sp_PressureDetector
 
 Is your client/server relationship on the rocks? Are queries timing out, dragging along, or causing CPU fans to spin out of control?

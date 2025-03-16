@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # sp_HealthParser
 
 The system health extended event has been around for a while, hiding in the shadows, and collecting all sorts of crazy information about your SQL Server.
