@@ -34,6 +34,9 @@ ALTER PROCEDURE
     @min_writes bigint = 0,
     @min_size_gb decimal(10,2) = 0,
     @min_rows bigint = 0,
+    @get_all_databases bit = 0, /* When 1, analyzes all eligible databases on the server */
+    @include_databases nvarchar(max) = NULL, /* Comma-separated list of databases to include (used with @get_all_databases = 1) */
+    @exclude_databases nvarchar(max) = NULL, /* Comma-separated list of databases to exclude (used with @get_all_databases = 1) */
     @help bit = 'false',
     @debug bit = 'false',
     @version varchar(20) = NULL OUTPUT,
@@ -138,6 +141,9 @@ ALWAYS TEST THESE RECOMMENDATIONS IN A NON-PRODUCTION ENVIRONMENT FIRST"
                     WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
                     WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
+                    WHEN N'@get_all_databases' THEN 'when set to 1, analyzes all eligible databases on the server'
+                    WHEN N'@include_databases' THEN 'comma-separated list of databases to include (used with @get_all_databases = 1)'
+                    WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude (used with @get_all_databases = 1)'
                     WHEN N'@help' THEN 'displays this help information'
                     WHEN N'@debug' THEN 'prints debug information during execution'
                     WHEN N'@version' THEN 'returns the version number of the procedure'
@@ -154,6 +160,9 @@ ALWAYS TEST THESE RECOMMENDATIONS IN A NON-PRODUCTION ENVIRONMENT FIRST"
                     WHEN N'@min_writes' THEN 'any positive integer or 0'
                     WHEN N'@min_size_gb' THEN 'any positive decimal number or 0'
                     WHEN N'@min_rows' THEN 'any positive integer or 0'
+                    WHEN N'@get_all_databases' THEN '0 or 1'
+                    WHEN N'@include_databases' THEN 'comma-separated list of database names'
+                    WHEN N'@exclude_databases' THEN 'comma-separated list of database names'
                     WHEN N'@help' THEN '0 or 1'
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
@@ -170,6 +179,9 @@ ALWAYS TEST THESE RECOMMENDATIONS IN A NON-PRODUCTION ENVIRONMENT FIRST"
                     WHEN N'@min_writes' THEN '0'
                     WHEN N'@min_size_gb' THEN '0'
                     WHEN N'@min_rows' THEN '0'
+                    WHEN N'@get_all_databases' THEN '0'
+                    WHEN N'@include_databases' THEN 'NULL'
+                    WHEN N'@exclude_databases' THEN 'NULL'
                     WHEN N'@help' THEN 'false'
                     WHEN N'@debug' THEN 'true'
                     WHEN N'@version' THEN 'NULL'
@@ -282,28 +294,217 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
     END;
 
-    IF  @database_name IS NULL
-    AND DB_NAME() NOT IN
-        (
-            N'master',
-            N'model',
-            N'msdb',
-            N'tempdb',
-            N'rdsadmin'
-        )
-    BEGIN
-        SELECT
-            @database_name = DB_NAME();
-    END;
+    /* 
+    Create a temp table to store databases to process
+    This will handle both single database mode and multi-database mode
+    */
+    CREATE TABLE #databases_to_process
+    (
+        database_id int PRIMARY KEY,
+        database_name sysname NOT NULL,
+        processed bit NOT NULL DEFAULT 0
+    );
 
-    IF @database_name IS NOT NULL
+    /* Handle multi-database mode */
+    IF @get_all_databases = 1
     BEGIN
-        SELECT
-            @database_id = d.database_id
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Multi-database mode enabled, gathering database list...', 0, 0) WITH NOWAIT;
+        END;
+
+        /* Create a table to parse the include/exclude lists */
+        CREATE TABLE #database_list 
+        (
+            id int IDENTITY(1,1) PRIMARY KEY,
+            database_name sysname NOT NULL
+        );
+
+        /* Parse @include_databases if specified - using XML for string splitting instead of STRING_SPLIT (version compatibility) */
+        IF @include_databases IS NOT NULL
+        BEGIN
+            DECLARE @include_xml xml;
+            SELECT @include_xml = CONVERT(xml, '<i>' + REPLACE(@include_databases, ',', '</i><i>') + '</i>');
+            
+            INSERT INTO #database_list (database_name)
+            SELECT LTRIM(RTRIM(t.i.value('.', 'sysname'))) AS database_name
+            FROM @include_xml.nodes('/i') AS t(i)
+            WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> '';
+        END;
+
+        /* Get all eligible databases */
+        INSERT INTO #databases_to_process (database_id, database_name)
+        SELECT 
+            d.database_id,
+            d.name
         FROM sys.databases AS d
-        WHERE d.name = @database_name
+        WHERE d.state_desc = 'ONLINE'
+        AND d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
+        AND 
+        (
+            /* If include list is provided, only keep databases in that list */
+            (@include_databases IS NULL) OR 
+            (d.name IN (SELECT database_name FROM #database_list))
+        );
+
+        /* Create exclude list if needed - using XML for string splitting */
+        IF @exclude_databases IS NOT NULL
+        BEGIN
+            DECLARE @exclude_xml xml;
+            SELECT @exclude_xml = CONVERT(xml, '<i>' + REPLACE(@exclude_databases, ',', '</i><i>') + '</i>');
+            
+            DELETE dp
+            FROM #databases_to_process AS dp
+            WHERE EXISTS
+            (
+                SELECT 1
+                FROM @exclude_xml.nodes('/i') AS t(i)
+                WHERE dp.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
+                AND LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
+            );
+        END
+        
         OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            /* Count databases */
+            SELECT 
+                database_count = COUNT(*)
+            FROM #databases_to_process;
+            
+            /* List databases without using STRING_AGG (version compatibility) */
+            DECLARE @db_list nvarchar(MAX) = N'';
+            
+            SELECT @db_list = @db_list + database_name + N', '
+            FROM #databases_to_process
+            ORDER BY database_name;
+            
+            /* Remove trailing comma if list is not empty */
+            IF LEN(@db_list) > 0
+                SET @db_list = LEFT(@db_list, LEN(@db_list) - 1);
+                
+            RAISERROR('Databases to process: %s', 0, 0, @db_list) WITH NOWAIT;
+        END;
+
+        /* If no databases match criteria, exit */
+        IF NOT EXISTS (SELECT 1 FROM #databases_to_process)
+        BEGIN
+            RAISERROR('No eligible databases found to process with the specified filters', 16, 1) WITH NOWAIT;
+            RETURN;
+        END;
+    END
+    ELSE
+    BEGIN
+        /* Single database mode */
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Single database mode, using specified or current database', 0, 0) WITH NOWAIT;
+        END;
+
+        /* If no database name specified, use current database if not a system database */
+        IF  @database_name IS NULL
+        AND DB_NAME() NOT IN
+            (
+                N'master',
+                N'model',
+                N'msdb',
+                N'tempdb',
+                N'rdsadmin'
+            )
+        BEGIN
+            SELECT
+                @database_name = DB_NAME();
+        END;
+
+        /* Add the single database to the processing list */
+        IF @database_name IS NOT NULL
+        BEGIN
+            INSERT INTO #databases_to_process (database_id, database_name)
+            SELECT 
+                d.database_id,
+                d.name
+            FROM sys.databases AS d
+            WHERE d.name = @database_name
+            AND d.state_desc = 'ONLINE'
+            OPTION(RECOMPILE);
+
+            /* Validate the database exists and is accessible */
+            IF NOT EXISTS (SELECT 1 FROM #databases_to_process)
+            BEGIN
+                RAISERROR('The specified database %s does not exist, is not in ONLINE state, or you do not have permission to access it', 16, 1, @database_name) WITH NOWAIT;
+                RETURN;
+            END;
+        END
+        ELSE
+        BEGIN
+            RAISERROR('No valid database specified and current database is a system database. Please specify a user database.', 16, 1) WITH NOWAIT;
+            RETURN;
+        END;
+
+        /* Set @database_id for single database mode (for backward compatibility) */
+        SELECT @database_id = database_id, @database_name = database_name 
+        FROM #databases_to_process;
     END;
+    
+    /*
+    Main processing logic - either loop through all databases or process a single database
+    */
+    IF @get_all_databases = 1
+    BEGIN
+        /* Use cursor variable instead of explicit cursor declaration as per coding guidelines */
+        DECLARE @database_cursor cursor;
+        
+        DECLARE @current_database_id int,
+                @current_database_name sysname,
+                @database_count int,
+                @processed_count int = 0;
+                
+        SELECT @database_count = COUNT(*) FROM #databases_to_process;
+                
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Beginning processing for %d databases', 0, 0, @database_count) WITH NOWAIT;
+        END;
+
+        /* Set cursor variable */
+        SET @database_cursor = CURSOR LOCAL STATIC READ_ONLY FORWARD_ONLY
+        FOR 
+        SELECT database_id, database_name 
+        FROM #databases_to_process
+        WHERE processed = 0
+        ORDER BY database_name;
+
+        OPEN @database_cursor;
+        FETCH NEXT FROM @database_cursor INTO @current_database_id, @current_database_name;
+        
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SET @processed_count += 1;
+            
+            /* Update working variables for each iteration */
+            SET @database_id = @current_database_id;
+            SET @database_name = @current_database_name;
+            
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Processing database %d of %d: %s (ID: %d)', 0, 0, 
+                    @processed_count, @database_count, @database_name, @database_id) WITH NOWAIT;
+            END;
+            
+            /* Clear temp tables before processing next database */
+            IF @processed_count > 1
+            BEGIN
+                TRUNCATE TABLE #filtered_objects;
+                TRUNCATE TABLE #operational_stats;
+                TRUNCATE TABLE #partition_stats;
+                TRUNCATE TABLE #index_details;
+                TRUNCATE TABLE #index_analysis;
+                TRUNCATE TABLE #index_cleanup_results;
+                TRUNCATE TABLE #compression_eligibility;
+            END;
+                    
+            /* Process current database using existing logic */
 
     IF  @schema_name IS NULL
     AND @table_name IS NOT NULL
@@ -361,6 +562,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         RAISERROR('Parameter @min_rows cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
         SET @min_rows = 0;
+    END;
+    
+    /* Parameter validation for multi-database mode */
+    IF @get_all_databases = 1 AND @database_name IS NOT NULL
+    BEGIN
+        RAISERROR('You cannot specify both @get_all_databases = 1 and a specific @database_name. Using @get_all_databases = 1 and ignoring @database_name.', 10, 1) WITH NOWAIT;
+        SET @database_name = NULL;
     END;
 
     /*
@@ -4474,6 +4682,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.schema_name,
         irs.table_name
     OPTION(RECOMPILE);
+
+            /* Update processed flag for this database */
+            UPDATE #databases_to_process
+            SET processed = 1
+            WHERE database_id = @database_id;
+            
+            /* Get next database */
+            FETCH NEXT FROM @database_cursor INTO @current_database_id, @current_database_name;
+        END; /* End of cursor WHILE loop */
+        
+        /* Clean up cursor - cursor variables don't need explicit CLOSE/DEALLOCATE */
+        
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Finished processing %d databases', 0, 0, @processed_count) WITH NOWAIT;
+        END;
+    END; /* End of @get_all_databases = 1 section */
 
 END TRY
 BEGIN CATCH
