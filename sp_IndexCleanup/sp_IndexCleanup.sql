@@ -4264,6 +4264,68 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia.index_id = ce.index_id
     OPTION(RECOMPILE);
 
+    /* Return enhanced database impact summaries */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating enhanced summary reports', 0, 0) WITH NOWAIT;
+    END;
+
+    /*
+    Enhanced Database Impact Summary - Shows total space and performance savings
+    */
+    SELECT
+        summary_type = 'DATABASE IMPACT SUMMARY',
+        database_name = irs.database_name,
+        total_indexes = FORMAT(irs.index_count, 'N0'),
+        indexes_to_disable = FORMAT(irs.indexes_to_disable, 'N0'),
+        indexes_to_merge = FORMAT(irs.indexes_to_merge, 'N0'),
+        percent_reduction = FORMAT(((irs.indexes_to_disable + irs.indexes_to_merge) / NULLIF(CONVERT(DECIMAL(10,2), irs.index_count), 0)) * 100, 'N1') + '%',
+        current_size_gb = FORMAT(irs.total_size_gb, 'N2'),
+        space_saved_gb = FORMAT(irs.space_saved_gb, 'N2'),
+        size_reduction_percent = FORMAT((irs.space_saved_gb / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%',
+        write_operations_saved = FORMAT(irs.user_updates, 'N0'),
+        lock_operations_saved = FORMAT(irs.row_lock_count + irs.page_lock_count, 'N0'),
+        latch_operations_saved = FORMAT(irs.page_latch_wait_count + irs.page_io_latch_wait_count, 'N0')
+    FROM #index_reporting_stats AS irs
+    WHERE irs.summary_level = 'DATABASE'
+    ORDER BY irs.database_name;
+
+    /*
+    Table-Level Impact - Top tables by space savings
+    */
+    SELECT TOP(10)
+        summary_type = 'TOP TABLES BY IMPACT',
+        table_name = QUOTENAME(irs.schema_name) + '.' + QUOTENAME(irs.table_name),
+        total_indexes = FORMAT(irs.index_count, 'N0'),
+        removable_indexes = FORMAT(irs.unused_indexes, 'N0'),
+        mergeable_indexes = FORMAT(irs.indexes_to_merge, 'N0'),
+        current_size_gb = FORMAT(irs.total_size_gb, 'N2'),
+        space_saved_gb = FORMAT(irs.unused_size_gb, 'N2'),
+        percent_reduction = FORMAT((irs.unused_size_gb / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%',
+        total_write_ops = FORMAT(irs.user_updates, 'N0'),
+        write_ops_per_day = FORMAT(irs.user_updates / NULLIF(CONVERT(DECIMAL(10,2), 
+                               (SELECT TOP 1 server_uptime_days FROM #index_reporting_stats WHERE summary_level = 'DATABASE')), 0), 'N0')
+    FROM #index_reporting_stats AS irs
+    WHERE irs.summary_level = 'TABLE'
+    ORDER BY irs.unused_size_gb DESC;
+
+    /*
+    Before/After Comparison for Database
+    */
+    SELECT
+        comparison_metric = 'BEFORE/AFTER COMPARISON',
+        total_indexes_before = FORMAT(irs.index_count, 'N0'),
+        total_indexes_after = FORMAT(irs.index_count - (irs.indexes_to_disable + irs.indexes_to_merge), 'N0'),
+        index_reduction = FORMAT(((irs.indexes_to_disable + irs.indexes_to_merge) / NULLIF(CONVERT(DECIMAL(10,2), irs.index_count), 0)) * 100, 'N1') + '%',
+        size_before_gb = FORMAT(irs.total_size_gb, 'N2'),
+        size_after_gb = FORMAT(irs.total_size_gb - irs.space_saved_gb, 'N2'),
+        space_saved_gb = FORMAT(irs.space_saved_gb, 'N2'),
+        percent_space_saved = FORMAT((irs.space_saved_gb / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%',
+        daily_write_ops_saved = FORMAT(irs.user_updates / NULLIF(CONVERT(DECIMAL(10,2), irs.server_uptime_days), 0) * 
+                               ((irs.indexes_to_disable + irs.indexes_to_merge) / NULLIF(CONVERT(DECIMAL(10,2), irs.index_count), 0)), 'N0')
+    FROM #index_reporting_stats AS irs
+    WHERE irs.summary_level = 'DATABASE';
+
     /* Return streamlined reporting statistics focused on key metrics */
     IF @debug = 1
     BEGIN

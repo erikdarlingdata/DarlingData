@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # sp_LogHunter
 
 The SQL Server error log can have a lot of good information in it about what's going on, whether it's right or wrong.

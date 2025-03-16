@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # Install-All
 
 This directory contains tools to merge all the Darling Data stored procedures into a single installation file.

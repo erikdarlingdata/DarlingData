@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # Ola Stats Only Job
 
 This directory contains a script to create a SQL Server Agent job for nightly statistics updates using Ola Hallengren's maintenance solution.

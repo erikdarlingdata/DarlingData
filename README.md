@@ -1,3 +1,5 @@
+# <img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" alt="Darling Data Logo" width="300"/>
+
 # Darling Data: SQL Server Troubleshooting Scripts
 <a name="header1"></a>
 ![licence badge]

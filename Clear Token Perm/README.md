@@ -1,3 +1,5 @@
+<img src="https://erikdarling.com/wp-content/uploads/2025/08/darling-data-logo_RGB.jpg" width="300px" />
+
 # Clear Token Perm
 
 This directory contains scripts for monitoring and managing SQL Server's security token cache. The security token cache (TokenAndPermUserStore) can grow to a significant size in certain scenarios, potentially causing high memory usage and performance issues.
