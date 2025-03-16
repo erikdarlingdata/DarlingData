@@ -2558,14 +2558,36 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         result_type,
         sort_order,
+        database_name,
+        schema_name,
+        table_name,
+        index_name,
         script_type,
-        additional_info
+        additional_info,
+        target_index_name,
+        superseded_info,
+        original_index_definition,
+        index_size_gb,
+        index_rows,
+        index_reads,
+        index_writes
     )
     SELECT 
         result_type = 'SUMMARY',
         sort_order = 1,
+        database_name = '',
+        schema_name = '',
+        table_name = '',
+        index_name = '',
         script_type = 'Index Cleanup Scripts',
-        additional_info = N'A detailed index analysis report appears after these scripts'
+        additional_info = N'A detailed index analysis report appears after these scripts',
+        target_index_name = '',
+        superseded_info = '',
+        original_index_definition = '',
+        index_size_gb = 0,
+        index_rows = 0,
+        index_reads = 0,
+        index_writes = 0
     OPTION(RECOMPILE);
 
 
@@ -4048,26 +4070,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_size_gb = 
             CASE 
                 WHEN ir.result_type = 'SUMMARY' 
-                THEN NULL
-                ELSE FORMAT(ir.index_size_gb, 'N4')
+                THEN '0.0000'
+                ELSE FORMAT(ISNULL(ir.index_size_gb, 0), 'N4')
             END,
         index_rows = 
             CASE 
                 WHEN ir.result_type = 'SUMMARY' 
-                THEN NULL
-                ELSE FORMAT(ir.index_rows, 'N0')
+                THEN '0'
+                ELSE FORMAT(ISNULL(ir.index_rows, 0), 'N0')
             END,
         index_reads = 
             CASE 
                 WHEN ir.result_type = 'SUMMARY' 
-                THEN NULL
-                ELSE FORMAT(ir.index_reads, 'N0')
+                THEN '0'
+                ELSE FORMAT(ISNULL(ir.index_reads, 0), 'N0')
             END,
         index_writes = 
             CASE 
                 WHEN ir.result_type = 'SUMMARY' 
-                THEN NULL
-                ELSE FORMAT(ir.index_writes, 'N0')
+                THEN '0'
+                ELSE FORMAT(ISNULL(ir.index_writes, 0), 'N0')
             END,
         ia.original_index_definition,
         /* Finally show the actual script */
@@ -4334,7 +4356,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Percent of indexes that can be removed */
         pct_removable =
             CASE
-                WHEN irs.summary_level = 'SUMMARY' 
+                WHEN irs.summary_level = 'SUMMARY' AND irs.index_count > 0
                 THEN FORMAT(100.0 * ISNULL(irs.indexes_to_disable, 0) / NULLIF(irs.index_count, 0), 'N1') + '%'
                 WHEN irs.index_count > 0
                 THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0) / NULLIF(irs.index_count, 0), 'N1') + '%'
@@ -4357,7 +4379,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END,
             
         /* Space reduction percentage - added this as new metric */
-        space_reduction_pct = FORMAT((ISNULL(irs.space_saved_gb, 0) / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%',
+        space_reduction_pct = 
+            CASE
+                WHEN ISNULL(irs.total_size_gb, 0) > 0
+                THEN FORMAT((ISNULL(irs.space_saved_gb, 0) / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                ELSE '0.0%'
+            END,
         
         /* ===== Section 3: Table and Usage Statistics ===== */
         /* Row count */
