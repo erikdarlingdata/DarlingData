@@ -573,6 +573,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         process_date datetime2(7) NULL,
         PRIMARY KEY CLUSTERED(database_id)
     );
+    
+    /* Create a table to track databases that were requested but couldn't be processed */
+    CREATE TABLE
+        #skipped_databases
+    (
+        database_name sysname NOT NULL,
+        reason nvarchar(255) NOT NULL
+    );
 
     /* Handle multi-database mode */
     IF @get_all_databases = 1
@@ -620,27 +628,80 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> '';
         END;
 
-        /* Get all eligible databases */
-        INSERT INTO 
-            #databases_to_process 
+        /*
+        Check SQL Server engine edition and use appropriate query paths
+        */
+        IF 
         (
-            database_id, 
-            database_name
-        )
-        SELECT 
-            database_id = d.database_id,
-            database_name = d.name
-        FROM sys.databases AS d
-        WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
-        AND   d.state = 0
-        AND   d.is_in_standby = 0
-        AND   d.is_read_only = 0
-        AND 
-        (
-            /* If include list is provided, only keep databases in that list */
-            (@include_databases IS NULL) OR 
-            (d.name IN (SELECT database_name FROM #database_list))
-        );
+            SELECT 
+                CONVERT
+                (
+                    sysname, 
+                    SERVERPROPERTY('EngineEdition')
+                )
+        ) IN (5, 8) /* Azure SQL DB or Managed Instance */
+        BEGIN
+            /* Get all eligible databases for Azure SQL */
+            INSERT INTO 
+                #databases_to_process 
+            (
+                database_id, 
+                database_name
+            )
+            SELECT 
+                database_id = d.database_id,
+                database_name = d.name
+            FROM sys.databases AS d
+            WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
+            AND   d.state = 0
+            AND   d.is_in_standby = 0
+            AND   d.is_read_only = 0
+            AND   d.database_id > 4 /* Skip system databases */
+            AND 
+            (
+                /* If include list is provided, only keep databases in that list */
+                (@include_databases IS NULL) OR 
+                (d.name IN (SELECT database_name FROM #database_list))
+            );
+        END
+        ELSE /* Regular SQL Server */
+        BEGIN
+            /* Get all eligible databases with AG primary replica check */
+            INSERT INTO 
+                #databases_to_process 
+            (
+                database_id, 
+                database_name
+            )
+            SELECT 
+                database_id = d.database_id,
+                database_name = d.name
+            FROM sys.databases AS d
+            WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
+            AND   d.state = 0
+            AND   d.is_in_standby = 0
+            AND   d.is_read_only = 0
+            AND   d.database_id > 4 /* Skip system databases */
+            /* Add AG check to ensure we only process the primary replica */
+            AND   NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM sys.dm_hadr_availability_replica_states AS s
+                JOIN sys.availability_databases_cluster AS c
+                  ON  s.group_id = c.group_id
+                  AND d.name = c.database_name
+                WHERE s.is_local <> 1
+                AND   s.role_desc <> N'PRIMARY'
+                AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
+            )
+            AND 
+            (
+                /* If include list is provided, only keep databases in that list */
+                (@include_databases IS NULL) OR 
+                (d.name IN (SELECT database_name FROM #database_list))
+            );
+        END;
 
         /* Remove excluded databases if specified */
         IF @exclude_databases IS NOT NULL
@@ -685,6 +746,50 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END;
                 
             RAISERROR('Databases to process: %s', 0, 0, @db_list) WITH NOWAIT;
+        END;
+
+        /* Track databases that were requested but skipped (for better reporting) */
+        IF @include_databases IS NOT NULL
+        BEGIN
+            INSERT
+                #skipped_databases
+            (
+                database_name,
+                reason
+            )
+            SELECT
+                database_name = dl.database_name,
+                reason = 
+                    CASE 
+                        WHEN d.name IS NULL THEN N'Database does not exist'
+                        WHEN d.state <> 0 THEN N'Database not online'
+                        WHEN d.is_in_standby = 1 THEN N'Database is in standby'
+                        WHEN d.is_read_only = 1 THEN N'Database is read-only'
+                        WHEN d.database_id <= 4 THEN N'System database'
+                        WHEN EXISTS
+                             (
+                                 SELECT
+                                     1/0
+                                 FROM sys.dm_hadr_availability_replica_states AS s
+                                 JOIN sys.availability_databases_cluster AS c
+                                   ON  s.group_id = c.group_id
+                                   AND d.name = c.database_name
+                                 WHERE s.is_local <> 1
+                                 AND   s.role_desc <> N'PRIMARY'
+                                 AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
+                             ) THEN N'AG replica issue - not primary or read-write'
+                        ELSE N'Other issue'
+                    END
+            FROM #database_list AS dl
+            LEFT JOIN sys.databases AS d
+              ON dl.database_name = d.name
+            WHERE NOT EXISTS 
+                  (
+                      SELECT 
+                          1/0 
+                      FROM #databases_to_process AS dp
+                      WHERE dp.database_name = dl.database_name
+                  );
         END;
 
         /* If no databases match criteria, exit */
@@ -4519,8 +4624,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ),
                     N'None'
                 ),
-            skipped_databases = 
-                N'Skipped: ' +
+            skipped_unprocessed = 
+                N'Skipped (unprocessed): ' +
                 ISNULL
                 (
                     STUFF
@@ -4546,12 +4651,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ),
                     N'None'
                 ),
+            skipped_with_reasons = 
+                N'Skipped (excluded): ' +
+                ISNULL
+                (
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                N', ' + 
+                                sd.database_name + N' (' + sd.reason + N')'
+                            FROM #skipped_databases AS sd
+                            GROUP BY
+                                sd.database_name,
+                                sd.reason
+                            ORDER BY 
+                                sd.database_name
+                            FOR 
+                                XML
+                                PATH(''),
+                                TYPE
+                        ).value('.', 'nvarchar(max)'),
+                        1, 
+                        2, 
+                        N''
+                    ),
+                    N'None'
+                ),
             stats = 
                 CASE
                     WHEN @get_all_databases = 1
-                    THEN N'Total: ' + CONVERT(nvarchar(10), COUNT_BIG(*) OVER()) +
+                    THEN N'Total requested: ' + CONVERT(nvarchar(10), COUNT_BIG(*) OVER() + (SELECT COUNT_BIG(*) FROM #skipped_databases)) +
                          N', Processed: ' + CONVERT(nvarchar(10), SUM(CONVERT(integer, dtp.processed)) OVER()) +
-                         N', Skipped: ' + CONVERT(nvarchar(10), COUNT_BIG(*) OVER() - SUM(CONVERT(integer, dtp.processed)) OVER())
+                         N', Skipped (unprocessed): ' + CONVERT(nvarchar(10), COUNT_BIG(*) OVER() - SUM(CONVERT(integer, dtp.processed)) OVER()) +
+                         N', Skipped (excluded): ' + CONVERT(nvarchar(10), (SELECT COUNT_BIG(*) FROM #skipped_databases))
                     ELSE N'Single database mode'
                 END
         FROM #databases_to_process AS dtp
