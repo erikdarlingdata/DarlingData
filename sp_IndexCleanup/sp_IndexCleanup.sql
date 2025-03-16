@@ -788,20 +788,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 TRUNCATE TABLE #index_analysis;
                 TRUNCATE TABLE #index_cleanup_results;
                 TRUNCATE TABLE #compression_eligibility;
+                TRUNCATE TABLE #index_reporting_stats;
             END;
                     
             /* Process current database using existing logic */
 
-    IF  @schema_name IS NULL
-    AND @table_name IS NOT NULL
-    BEGIN
-        SELECT
-            @schema_name = N'dbo';
-    END;
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Processing database %s', 0, 0, @database_name) WITH NOWAIT;
+            END;
 
-    IF  @schema_name IS NOT NULL
-    AND @table_name IS NOT NULL
-    BEGIN
+            /* Continue with current database processing without recreating temp tables */
+            IF  @schema_name IS NULL
+            AND @table_name IS NOT NULL
+            BEGIN
+                SELECT
+                    @schema_name = N'dbo';
+            END;
+
+            IF  @schema_name IS NOT NULL
+            AND @table_name IS NOT NULL
+            BEGIN
         SELECT
             @full_object_name =
                 QUOTENAME(@database_name) +
