@@ -275,7 +275,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SYSDATETIME()
                 )
             FROM sys.dm_os_sys_info AS osi
-        );
+        ),
+        /* Variables for multi-database processing */
+        @database_cursor cursor,
+        @current_database_id integer,
+        @current_database_name sysname,
+        @database_count integer,
+        @processed_count integer = 0,
+        @db_list nvarchar(MAX),
+        @include_xml xml,
+        @exclude_xml xml;
         
     /* Set uptime warning flag after @uptime_days is calculated */
     SELECT 
@@ -294,15 +303,267 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
     END;
 
-    /* 
-    Create a temp table to store databases to process
-    This will handle both single database mode and multi-database mode
+    /*
+    Temp tables!
     */
-    CREATE TABLE #databases_to_process
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Creating temp tables', 0, 0) WITH NOWAIT;
+    END;
+
+    CREATE TABLE 
+        #filtered_objects
     (
-        database_id int PRIMARY KEY,
+        database_id integer NOT NULL,
         database_name sysname NOT NULL,
-        processed bit NOT NULL DEFAULT 0
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NOT NULL,
+        can_compress bit NOT NULL
+        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+    );
+
+    CREATE TABLE
+        #operational_stats
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NOT NULL,
+        range_scan_count bigint NULL,
+        singleton_lookup_count bigint NULL,
+        forwarded_fetch_count bigint NULL,
+        lob_fetch_in_pages bigint NULL,
+        row_overflow_fetch_in_pages bigint NULL,
+        leaf_insert_count bigint NULL,
+        leaf_update_count bigint NULL,
+        leaf_delete_count bigint NULL,
+        leaf_ghost_count bigint NULL,
+        nonleaf_insert_count bigint NULL,
+        nonleaf_update_count bigint NULL,
+        nonleaf_delete_count bigint NULL,
+        leaf_allocation_count bigint NULL,
+        nonleaf_allocation_count bigint NULL,
+        row_lock_count bigint NULL,
+        row_lock_wait_count bigint NULL,
+        row_lock_wait_in_ms bigint NULL,
+        page_lock_count bigint NULL,
+        page_lock_wait_count bigint NULL,
+        page_lock_wait_in_ms bigint NULL,
+        index_lock_promotion_attempt_count bigint NULL,
+        index_lock_promotion_count bigint NULL,
+        page_latch_wait_count bigint NULL,
+        page_latch_wait_in_ms bigint NULL,
+        tree_page_latch_wait_count bigint NULL,
+        tree_page_latch_wait_in_ms bigint NULL,
+        page_io_latch_wait_count bigint NULL,
+        page_io_latch_wait_in_ms bigint NULL,
+        page_compression_attempt_count bigint NULL,
+        page_compression_success_count bigint NULL,
+        PRIMARY KEY CLUSTERED (database_id, schema_id, object_id, index_id)
+    );
+
+    CREATE TABLE
+        #partition_stats
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NULL,
+        partition_id bigint NOT NULL,
+        partition_number integer NOT NULL,
+        total_rows bigint NULL,
+        total_space_gb decimal(38, 4) NULL, /* Using 4 decimal places for GB to maintain precision */
+        reserved_lob_gb decimal(38, 4) NULL, /* Using 4 decimal places for GB to maintain precision */
+        reserved_row_overflow_gb decimal(38, 4) NULL, /* Using 4 decimal places for GB to maintain precision */
+        data_compression_desc nvarchar(60) NULL,
+        built_on sysname NULL,
+        partition_function_name sysname NULL,
+        partition_columns nvarchar(max)
+        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id, partition_id)
+    );
+
+    CREATE TABLE
+        #index_details
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NULL,
+        column_name sysname NOT NULL,
+        is_primary_key bit NULL,
+        is_unique bit NULL,
+        is_unique_constraint bit NULL,
+        is_indexed_view integer NOT NULL,
+        is_foreign_key bit NULL,
+        is_foreign_key_reference bit NULL,
+        key_ordinal tinyint NOT NULL,
+        index_column_id integer NOT NULL,
+        is_descending_key bit NOT NULL,
+        is_included_column bit NULL,
+        filter_definition nvarchar(max) NULL,
+        is_max_length integer NOT NULL,
+        user_seeks bigint NOT NULL,
+        user_scans bigint NOT NULL,
+        user_lookups bigint NOT NULL,
+        user_updates bigint NOT NULL,
+        last_user_seek datetime NULL,
+        last_user_scan datetime NULL,
+        last_user_lookup datetime NULL,
+        last_user_update datetime NULL,
+        is_eligible_for_dedupe bit NOT NULL
+        PRIMARY KEY CLUSTERED(database_id, object_id, index_id, column_name)
+    );
+
+    CREATE TABLE
+        #index_analysis
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NOT NULL,
+        key_columns nvarchar(max) NULL,
+        included_columns nvarchar(max) NULL,
+        filter_definition nvarchar(max) NULL,
+        /* Query plan for original CREATE INDEX statement */
+        original_index_definition nvarchar(max) NULL,
+        /* 
+        Consolidation rule that matched (e.g., Key Duplicate, Key Subset, etc)
+        For exact duplicates, use one of: Exact Duplicate, Reverse Duplicate, or Equal Except For Filter
+        */
+        consolidation_rule nvarchar(256) NULL,
+        /* 
+        Action to take (e.g., DISABLE, MERGE INCLUDES, KEEP)
+        If NULL, no action to be taken
+        */
+        action nvarchar(100) NULL,
+        /* Target index to merge with or use instead of this one */
+        target_index_name sysname NULL,
+        /* When this is a target, the index which points to it as a supersedes in consolidation */
+        superseded_by nvarchar(4000) NULL, 
+        /* Priority score from 0-1 to determine which index to keep (higher is better) */
+        index_priority decimal(10,6) NULL
+        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
+    );
+
+    CREATE TABLE
+        #index_cleanup_results
+    (
+        result_type varchar(100) NOT NULL,
+        sort_order integer NOT NULL,
+        database_name sysname NULL,
+        schema_name sysname NULL,
+        table_name sysname NULL,
+        index_name sysname NULL,
+        script_type nvarchar(60) NULL, /* Type of script (e.g., MERGE SCRIPT, DISABLE SCRIPT, etc.) */
+        consolidation_rule nvarchar(256) NULL, /* Reason for action (e.g., Exact Duplicate, Key Subset) */
+        target_index_name sysname NULL, /* If this index is a duplicate, indicates which index is the preferred one */
+        superseded_info nvarchar(4000) NULL, /* If this is a kept index, indicates which indexes it supersedes */
+        additional_info nvarchar(max) NULL, /* Additional information about the action */
+        original_index_definition nvarchar(max) NULL, /* Original statement to create the index */
+        index_size_gb decimal(38, 4) NULL, /* Size of the index in GB */
+        index_rows bigint NULL, /* Number of rows in the index */
+        index_reads bigint NULL, /* Total reads (seeks + scans + lookups) */
+        index_writes bigint NULL, /* Total writes */
+        script nvarchar(max) NULL /* Script to execute the action */
+    );
+
+    CREATE TABLE
+        #compression_eligibility
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NOT NULL,
+        can_compress bit NOT NULL,
+        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
+    );
+
+    CREATE TABLE
+        #index_reporting_stats
+    (
+        summary_level varchar(20) NOT NULL,  /* 'DATABASE', 'TABLE', 'INDEX', 'SUMMARY' */
+        database_name sysname NULL,
+        schema_name sysname NULL,
+        table_name sysname NULL,
+        index_name sysname NULL,
+        server_uptime_days integer NULL,
+        uptime_warning bit NULL,
+        tables_analyzed integer NULL,
+        index_count integer NULL,
+        total_size_gb decimal(38, 4) NULL,
+        total_rows bigint NULL,
+        unused_indexes integer NULL,
+        unused_size_gb decimal(38, 4) NULL,
+        indexes_to_disable integer NULL,
+        indexes_to_merge integer NULL,
+        avg_indexes_per_table decimal(10, 2) NULL,
+        space_saved_gb decimal(10, 4) NULL,
+        compression_min_savings_gb decimal(10, 4) NULL,
+        compression_max_savings_gb decimal(10, 4) NULL,
+        total_min_savings_gb decimal(10, 4) NULL,
+        total_max_savings_gb decimal(10, 4) NULL,
+        /* Index usage metrics */
+        total_reads bigint NULL,
+        total_writes bigint NULL,
+        user_seeks bigint NULL,
+        user_scans bigint NULL,
+        user_lookups bigint NULL,
+        user_updates bigint NULL,
+        /* Operational stats */
+        range_scan_count bigint NULL,
+        singleton_lookup_count bigint NULL,
+        /* Lock stats */
+        row_lock_count bigint NULL,
+        row_lock_wait_count bigint NULL,
+        row_lock_wait_in_ms bigint NULL,
+        page_lock_count bigint NULL,
+        page_lock_wait_count bigint NULL,
+        page_lock_wait_in_ms bigint NULL,
+        /* Latch stats */
+        page_latch_wait_count bigint NULL,
+        page_latch_wait_in_ms bigint NULL,
+        page_io_latch_wait_count bigint NULL,
+        page_io_latch_wait_in_ms bigint NULL,
+        /* Misc stats */
+        forwarded_fetch_count bigint NULL,
+        leaf_insert_count bigint NULL,
+        leaf_update_count bigint NULL,
+        leaf_delete_count bigint NULL
+    );
+
+    /* Create a table to store databases to process */
+    CREATE TABLE 
+        #databases_to_process
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        processed bit NOT NULL DEFAULT 0,
+        PRIMARY KEY CLUSTERED(database_id)
     );
 
     /* Handle multi-database mode */
@@ -314,29 +575,39 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /* Create a table to parse the include/exclude lists */
-        CREATE TABLE #database_list 
+        CREATE TABLE 
+            #database_list 
         (
-            id int IDENTITY(1,1) PRIMARY KEY,
+            id integer IDENTITY(1,1) PRIMARY KEY,
             database_name sysname NOT NULL
         );
 
         /* Parse @include_databases if specified - using XML for string splitting instead of STRING_SPLIT (version compatibility) */
         IF @include_databases IS NOT NULL
         BEGIN
-            DECLARE @include_xml xml;
             SELECT @include_xml = CONVERT(xml, '<i>' + REPLACE(@include_databases, ',', '</i><i>') + '</i>');
             
-            INSERT INTO #database_list (database_name)
-            SELECT LTRIM(RTRIM(t.i.value('.', 'sysname'))) AS database_name
+            INSERT INTO 
+                #database_list 
+            (
+                database_name
+            )
+            SELECT 
+                database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
             FROM @include_xml.nodes('/i') AS t(i)
             WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> '';
         END;
 
         /* Get all eligible databases */
-        INSERT INTO #databases_to_process (database_id, database_name)
+        INSERT INTO 
+            #databases_to_process 
+        (
+            database_id, 
+            database_name
+        )
         SELECT 
-            d.database_id,
-            d.name
+            database_id = d.database_id,
+            database_name = d.name
         FROM sys.databases AS d
         WHERE d.state_desc = 'ONLINE'
         AND d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
@@ -347,24 +618,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (d.name IN (SELECT database_name FROM #database_list))
         );
 
-        /* Create exclude list if needed - using XML for string splitting */
+        /* Remove excluded databases if specified */
         IF @exclude_databases IS NOT NULL
         BEGIN
-            DECLARE @exclude_xml xml;
             SELECT @exclude_xml = CONVERT(xml, '<i>' + REPLACE(@exclude_databases, ',', '</i><i>') + '</i>');
             
             DELETE dp
             FROM #databases_to_process AS dp
             WHERE EXISTS
             (
-                SELECT 1
+                SELECT 
+                    1/0
                 FROM @exclude_xml.nodes('/i') AS t(i)
                 WHERE dp.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
                 AND LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
             );
-        END
-        
-        OPTION(RECOMPILE);
+        END;
 
         IF @debug = 1
         BEGIN
@@ -374,7 +643,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #databases_to_process;
             
             /* List databases without using STRING_AGG (version compatibility) */
-            DECLARE @db_list nvarchar(MAX) = N'';
+            SELECT @db_list = N'';
             
             SELECT @db_list = @db_list + database_name + N', '
             FROM #databases_to_process
@@ -420,10 +689,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Add the single database to the processing list */
         IF @database_name IS NOT NULL
         BEGIN
-            INSERT INTO #databases_to_process (database_id, database_name)
+            INSERT INTO 
+                #databases_to_process 
+            (
+                database_id, 
+                database_name
+            )
             SELECT 
-                d.database_id,
-                d.name
+                database_id = d.database_id,
+                database_name = d.name
             FROM sys.databases AS d
             WHERE d.name = @database_name
             AND d.state_desc = 'ONLINE'
@@ -443,7 +717,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /* Set @database_id for single database mode (for backward compatibility) */
-        SELECT @database_id = database_id, @database_name = database_name 
+        SELECT 
+            @database_id = database_id, 
+            @database_name = database_name 
         FROM #databases_to_process;
     END;
     
@@ -452,31 +728,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     IF @get_all_databases = 1
     BEGIN
-        /* Use cursor variable instead of explicit cursor declaration as per coding guidelines */
-        DECLARE @database_cursor cursor;
-        
-        DECLARE @current_database_id int,
-                @current_database_name sysname,
-                @database_count int,
-                @processed_count int = 0;
-                
-        SELECT @database_count = COUNT(*) FROM #databases_to_process;
+        /* Get the count of databases for reporting */
+        SELECT @database_count = COUNT(*) 
+        FROM #databases_to_process;
                 
         IF @debug = 1
         BEGIN
             RAISERROR('Beginning processing for %d databases', 0, 0, @database_count) WITH NOWAIT;
         END;
 
-        /* Set cursor variable */
+        /* Set cursor variable as per coding guidelines */
         SET @database_cursor = CURSOR LOCAL STATIC READ_ONLY FORWARD_ONLY
         FOR 
-        SELECT database_id, database_name 
+        SELECT 
+            database_id, 
+            database_name 
         FROM #databases_to_process
         WHERE processed = 0
         ORDER BY database_name;
 
         OPEN @database_cursor;
-        FETCH NEXT FROM @database_cursor INTO @current_database_id, @current_database_name;
+        FETCH NEXT FROM @database_cursor 
+        INTO @current_database_id, @current_database_name;
         
         WHILE @@FETCH_STATUS = 0
         BEGIN
@@ -4691,10 +4964,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE database_id = @database_id;
             
             /* Get next database */
-            FETCH NEXT FROM @database_cursor INTO @current_database_id, @current_database_name;
+            FETCH NEXT FROM @database_cursor 
+            INTO @current_database_id, @current_database_name;
         END; /* End of cursor WHILE loop */
-        
-        /* Clean up cursor - cursor variables don't need explicit CLOSE/DEALLOCATE */
         
         IF @debug = 1
         BEGIN
