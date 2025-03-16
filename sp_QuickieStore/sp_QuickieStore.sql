@@ -1388,7 +1388,7 @@ VALUES
     (1230, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads_mb', 'qsrs.min_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
     (1240, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads_mb', 'qsrs.max_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),  
     /* Hash totals for new physical IO reads */
-    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new', 1, 0, 'N0'),    
+    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new_with_hash_totals', 1, 0, 'N0'),    
     /* Finish adding the remaining columns (log bytes and tempdb usage) */
     /* Log bytes used */
     (1300, 'log_bytes', 'avg', 'avg_log_bytes_used_mb', 'qsrs.avg_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
@@ -1397,7 +1397,7 @@ VALUES
     (1330, 'log_bytes', 'min', 'min_log_bytes_used_mb', 'qsrs.min_log_bytes_used_mb', 1, 'new', 1, 1, 'N0'),
     (1340, 'log_bytes', 'max', 'max_log_bytes_used_mb', 'qsrs.max_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),    
     /* Hash totals for log bytes */
-    (1315, 'log_bytes', 'total_hash', 'total_log_bytes_used_mb_by_query_hash', 'SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new', 1, 0, 'N0'),    
+    (1315, 'log_bytes', 'total_hash', 'total_log_bytes_used_mb_by_query_hash', 'SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new_with_hash_totals', 1, 0, 'N0'),    
     /* TempDB usage  */
     (1400, 'tempdb', 'avg', 'avg_tempdb_space_used_mb', 'qsrs.avg_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
     (1410, 'tempdb', 'total', 'total_tempdb_space_used_mb', 'qsrs.total_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
@@ -1405,7 +1405,7 @@ VALUES
     (1430, 'tempdb', 'min', 'min_tempdb_space_used_mb', 'qsrs.min_tempdb_space_used_mb', 1, 'new', 1, 1, 'N0'),
     (1440, 'tempdb', 'max', 'max_tempdb_space_used_mb', 'qsrs.max_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),   
     /* Hash totals for tempdb */
-    (1415, 'tempdb', 'total_hash', 'total_tempdb_space_used_mb_by_query_hash', 'SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new', 1, 0, 'N0'),        
+    (1415, 'tempdb', 'total_hash', 'total_tempdb_space_used_mb_by_query_hash', 'SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new_with_hash_totals', 1, 0, 'N0'),        
     /* Context settings and sorting columns  */
     (1500, 'metadata', 'context', 'context_settings', 'qsrs.context_settings', 0, NULL, NULL, 0, NULL);
     
@@ -8065,6 +8065,8 @@ FROM
                            THEN @regression_mode
                            WHEN cd.condition_param = N'include_query_hash_totals' 
                            THEN @include_query_hash_totals
+                           WHEN cd.condition_param = N'new_with_hash_totals' 
+                           THEN CASE WHEN @new = 1 AND @include_query_hash_totals = 1 THEN 1 ELSE 0 END
                            ELSE 0
                        END = cd.condition_value
                 )
