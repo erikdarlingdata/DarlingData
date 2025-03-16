@@ -1282,6 +1282,13 @@ CREATE TABLE
     database_name sysname PRIMARY KEY
 );
 
+CREATE TABLE
+    #requested_but_skipped_databases
+(
+    database_name sysname PRIMARY KEY,
+    reason varchar(100) NOT NULL
+);
+
 /* Create a table variable to store ALL column definitions with logical ordering */
 DECLARE 
     @ColumnDefinitions table
@@ -2055,6 +2062,39 @@ BEGIN
             OR NOT EXISTS (SELECT 1/0 FROM #exclude_databases AS ed WHERE ed.database_name = d.name)
           )
     OPTION(RECOMPILE);
+    
+    /* Track which requested databases were skipped */
+    IF @include_databases IS NOT NULL AND @get_all_databases = 1
+    BEGIN
+        INSERT
+            #requested_but_skipped_databases
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            id.database_name,
+            reason = 
+                CASE 
+                    WHEN d.name IS NULL THEN 'Database does not exist'
+                    WHEN d.state <> 0 THEN 'Database not online'
+                    WHEN d.is_query_store_on = 0 THEN 'Query Store not enabled'
+                    WHEN d.is_in_standby = 1 THEN 'Database is in standby'
+                    WHEN d.is_read_only = 1 THEN 'Database is read-only'
+                    WHEN d.database_id <= 4 THEN 'System database'
+                    ELSE 'Other issue'
+                END
+        FROM #include_databases AS id
+        LEFT JOIN sys.databases AS d
+          ON id.database_name = d.name
+        WHERE NOT EXISTS 
+              (
+                  SELECT 
+                      1/0 
+                  FROM #databases AS db
+                  WHERE db.database_name = id.database_name
+              );
+    END;
 END;
 ELSE
 BEGIN
@@ -2103,6 +2143,51 @@ BEGIN
             OR NOT EXISTS (SELECT 1/0 FROM #exclude_databases AS ed WHERE ed.database_name = d.name)
           )
     OPTION(RECOMPILE);
+    
+    /* Track which requested databases were skipped */
+    IF @include_databases IS NOT NULL AND @get_all_databases = 1
+    BEGIN
+        INSERT
+            #requested_but_skipped_databases
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            id.database_name,
+            reason = 
+                CASE 
+                    WHEN d.name IS NULL THEN 'Database does not exist'
+                    WHEN d.state <> 0 THEN 'Database not online'
+                    WHEN d.is_query_store_on = 0 THEN 'Query Store not enabled'
+                    WHEN d.is_in_standby = 1 THEN 'Database is in standby'
+                    WHEN d.is_read_only = 1 THEN 'Database is read-only'
+                    WHEN d.database_id <= 4 THEN 'System database'
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM sys.dm_hadr_availability_replica_states AS s
+                             JOIN sys.availability_databases_cluster AS c
+                               ON  s.group_id = c.group_id
+                               AND d.name = c.database_name
+                             WHERE s.is_local <> 1
+                             AND   s.role_desc <> N'PRIMARY'
+                             AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
+                         ) THEN 'AG replica issues'
+                    ELSE 'Other issue'
+                END
+        FROM #include_databases AS id
+        LEFT JOIN sys.databases AS d
+          ON id.database_name = d.name
+        WHERE NOT EXISTS 
+              (
+                  SELECT 
+                      1/0 
+                  FROM #databases AS db
+                  WHERE db.database_name = id.database_name
+              );
+    END;
 END;
 
 DECLARE
@@ -9756,6 +9841,8 @@ BEGIN
     SELECT
         x.all_done,
         x.period,
+        x.databases_processed,
+        x.databases_skipped,
         x.support,
         x.help,
         x.problems,
@@ -9802,6 +9889,58 @@ BEGIN
                 ),
             all_done =
                 'brought to you by darling data!',
+            databases_processed =
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CASE
+                            WHEN @get_all_databases = 0 THEN @database_name
+                            ELSE
+                            (
+                                SELECT
+                                    database_list =
+                                    (
+                                        SELECT 
+                                            d.database_name + N', ' 
+                                        FROM #databases AS d
+                                        ORDER BY 
+                                            d.database_name
+                                        FOR XML
+                                            PATH('')
+                                    )
+                            )
+                        END,
+                        N''
+                    ),
+                    N'None'
+                ),
+            databases_skipped =
+                ISNULL
+                (
+                    NULLIF
+                    (
+                        CASE
+                            WHEN @get_all_databases = 0 THEN N''
+                            ELSE
+                            (
+                                SELECT
+                                    database_list =
+                                    (
+                                        SELECT 
+                                            rbs.database_name + N' (' + rbs.reason + N'), ' 
+                                        FROM #requested_but_skipped_databases AS rbs
+                                        ORDER BY 
+                                            rbs.database_name
+                                        FOR XML
+                                            PATH('')
+                                    )
+                            )
+                        END,
+                        N''
+                    ),
+                    N'None'
+                ),
             support =
                 'for support, head over to github',
             help =
@@ -9855,6 +9994,46 @@ BEGIN
                 ),
             all_done =
                 'https://www.erikdarling.com/',
+            databases_processed =
+                ISNULL
+                (
+                    STUFF
+                    (
+                        (
+                            SELECT 
+                                N', ' + 
+                                d.database_name 
+                            FROM #databases AS d
+                            ORDER BY 
+                                d.database_name
+                            FOR XML
+                                PATH(''),
+                                TYPE
+                        ).value('.', 'nvarchar(MAX)'),
+                        1, 2, N''
+                    ),
+                    N'None'
+                ),
+            databases_skipped =
+                ISNULL
+                (
+                    STUFF
+                    (
+                        (
+                            SELECT 
+                                N', ' + 
+                                rbs.database_name + N' (' + rbs.reason + N')' 
+                            FROM #requested_but_skipped_databases AS rbs
+                            ORDER BY 
+                                rbs.database_name
+                            FOR XML
+                                PATH(''),
+                                TYPE
+                        ).value('.', 'nvarchar(MAX)'),
+                        1, 2, N''
+                    ),
+                    N'None'
+                ),
             support =
                 'https://github.com/erikdarlingdata/DarlingData',
             help =
@@ -10208,6 +10387,29 @@ BEGIN
         SELECT
             result =
                 '#exclude_databases is empty';
+    END;
+    
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #requested_but_skipped_databases AS rsdb
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#requested_but_skipped_databases',
+            rsdb.*
+        FROM #requested_but_skipped_databases AS rsdb
+        ORDER BY
+            rsdb.database_name
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#requested_but_skipped_databases is empty';
     END;
 
     IF EXISTS
