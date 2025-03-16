@@ -4301,97 +4301,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     
     Within each category, indexes are sorted by size and impact for better prioritization.
     */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Generating #index_cleanup_results, RESULTS', 0, 0) WITH NOWAIT;
-    END;
-
-    SELECT
-        /* First, show the information needed to understand the script */
-        script_type = CASE WHEN ir.result_type = 'KEPT' AND ir.script_type IS NULL THEN 'KEPT' ELSE ir.script_type END,
-        ir.additional_info,
-        /* Then show identifying information for the index */
-        ir.database_name,
-        ir.schema_name,
-        ir.table_name,
-        ir.index_name,
-        /* Then show relationship information */
-        ir.consolidation_rule,
-        ir.target_index_name,
-        /* Include superseded_by info for winning indexes */
-        superseded_info =
-            CASE 
-                WHEN ia.superseded_by IS NOT NULL 
-                THEN ia.superseded_by 
-                ELSE ir.superseded_info 
-            END,
-        /* Add size and usage metrics */
-        index_size_gb = 
-            CASE 
-                WHEN ir.result_type = 'SUMMARY' 
-                THEN '0.0000'
-                ELSE FORMAT(ISNULL(ir.index_size_gb, 0), 'N4')
-            END,
-        index_rows = 
-            CASE 
-                WHEN ir.result_type = 'SUMMARY' 
-                THEN '0'
-                ELSE FORMAT(ISNULL(ir.index_rows, 0), 'N0')
-            END,
-        index_reads = 
-            CASE 
-                WHEN ir.result_type = 'SUMMARY' 
-                THEN '0'
-                ELSE FORMAT(ISNULL(ir.index_reads, 0), 'N0')
-            END,
-        index_writes = 
-            CASE 
-                WHEN ir.result_type = 'SUMMARY' 
-                THEN '0'
-                ELSE FORMAT(ISNULL(ir.index_writes, 0), 'N0')
-            END,
-        ia.original_index_definition,
-        /* Finally show the actual script */
-        ir.script
-    FROM 
-    (
-        /* Use a subquery with ROW_NUMBER to ensure we only get one row per index */
-        SELECT *, 
-            ROW_NUMBER() OVER(
-                PARTITION BY database_name, schema_name, table_name, index_name 
-                ORDER BY result_type DESC /* Prefer non-NULL result types */
-            ) AS rn
-        FROM #index_cleanup_results
-    ) AS ir
-    LEFT JOIN #index_analysis AS ia
-      ON  ir.database_name = ia.database_name
-      AND ir.schema_name = ia.schema_name
-      AND ir.table_name = ia.table_name
-      AND ir.index_name = ia.index_name
-    WHERE ir.rn = 1 /* Take only the first row for each index */
-    ORDER BY
-        ir.sort_order,
-        ir.database_name,
-        /* Within each sort_order group, prioritize by size and usage */
-        CASE
-            /* For SUMMARY, keep the original order */
-            WHEN ir.result_type = 'SUMMARY' 
-            THEN 0
-            /* For script categories, order by size and impact */
-            ELSE ISNULL(ir.index_size_gb, 0)
-        END DESC,
-        CASE
-            /* For SUMMARY, keep the original order */
-            WHEN ir.result_type = 'SUMMARY' 
-            THEN 0
-            /* For script categories, consider rows as secondary sort */
-            ELSE ISNULL(ir.index_rows, 0)
-        END DESC,
-        /* Then by database, schema, table, index name for consistent ordering */
-        ir.schema_name,
-        ir.table_name,
-        ir.index_name
-    OPTION(RECOMPILE);
+    /* Save the final output query for later - will run after all databases are processed */
 
     /* Insert overall summary information */
     IF @debug = 1
@@ -4827,6 +4737,99 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
              /* Just to get one row */
         OPTION(RECOMPILE);
     END; /* End of @get_all_databases = 1 section */
+    
+    /* Final unified results output - runs once after all databases processed */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating final consolidated output for all databases', 0, 0) WITH NOWAIT;
+    END;
+
+    SELECT
+        /* First, show the information needed to understand the script */
+        script_type = CASE WHEN ir.result_type = 'KEPT' AND ir.script_type IS NULL THEN 'KEPT' ELSE ir.script_type END,
+        ir.additional_info,
+        /* Then show identifying information for the index */
+        ir.database_name,
+        ir.schema_name,
+        ir.table_name,
+        ir.index_name,
+        /* Then show relationship information */
+        ir.consolidation_rule,
+        ir.target_index_name,
+        /* Include superseded_by info for winning indexes */
+        superseded_info =
+            CASE 
+                WHEN ia.superseded_by IS NOT NULL 
+                THEN ia.superseded_by 
+                ELSE ir.superseded_info 
+            END,
+        /* Add size and usage metrics */
+        index_size_gb = 
+            CASE 
+                WHEN ir.result_type = 'SUMMARY' 
+                THEN '0.0000'
+                ELSE FORMAT(ISNULL(ir.index_size_gb, 0), 'N4')
+            END,
+        index_rows = 
+            CASE 
+                WHEN ir.result_type = 'SUMMARY' 
+                THEN '0'
+                ELSE FORMAT(ISNULL(ir.index_rows, 0), 'N0')
+            END,
+        index_reads = 
+            CASE 
+                WHEN ir.result_type = 'SUMMARY' 
+                THEN '0'
+                ELSE FORMAT(ISNULL(ir.index_reads, 0), 'N0')
+            END,
+        index_writes = 
+            CASE 
+                WHEN ir.result_type = 'SUMMARY' 
+                THEN '0'
+                ELSE FORMAT(ISNULL(ir.index_writes, 0), 'N0')
+            END,
+        ia.original_index_definition,
+        /* Finally show the actual script */
+        ir.script
+    FROM 
+    (
+        /* Use a subquery with ROW_NUMBER to ensure we only get one row per index */
+        SELECT *, 
+            ROW_NUMBER() OVER(
+                PARTITION BY database_name, schema_name, table_name, index_name 
+                ORDER BY result_type DESC /* Prefer non-NULL result types */
+            ) AS rn
+        FROM #index_cleanup_results
+    ) AS ir
+    LEFT JOIN #index_analysis AS ia
+      ON  ir.database_name = ia.database_name
+      AND ir.schema_name = ia.schema_name
+      AND ir.table_name = ia.table_name
+      AND ir.index_name = ia.index_name
+    WHERE ir.rn = 1 /* Take only the first row for each index */
+    ORDER BY
+        ir.sort_order,
+        ir.database_name,
+        /* Within each sort_order group, prioritize by size and usage */
+        CASE
+            /* For SUMMARY, keep the original order */
+            WHEN ir.result_type = 'SUMMARY' 
+            THEN 0
+            /* For script categories, order by size and impact */
+            ELSE ISNULL(ir.index_size_gb, 0)
+        END DESC,
+        CASE
+            /* For SUMMARY, keep the original order */
+            WHEN ir.result_type = 'SUMMARY' 
+            THEN 0
+            /* For script categories, consider rows as secondary sort */
+            ELSE ISNULL(ir.index_rows, 0)
+        END DESC,
+        /* Then by database, schema, table, index name for consistent ordering */
+        ir.schema_name,
+        ir.table_name,
+        ir.index_name
+    OPTION(RECOMPILE);
 END TRY
 BEGIN CATCH
     THROW;
