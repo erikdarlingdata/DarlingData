@@ -2118,7 +2118,7 @@ BEGIN
     FROM sys.databases AS d
     WHERE @get_all_databases = 1
     AND   d.is_query_store_on = 1
-    AND   d.database_id > 4
+    AND   d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
     AND   d.state = 0
     AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
