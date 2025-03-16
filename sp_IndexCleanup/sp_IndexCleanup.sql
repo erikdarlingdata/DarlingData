@@ -4270,64 +4270,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating enhanced summary reports', 0, 0) WITH NOWAIT;
     END;
 
-    /*
-    Consolidated Database Impact Summary - Shows all metrics in one place
-    */
-    SELECT
-        report_section = 'DATABASE IMPACT SUMMARY',
-        server_uptime = CASE 
-                            WHEN irs.server_uptime_days < 7 
-                            THEN 'WARNING: Server uptime only ' + FORMAT(irs.server_uptime_days, 'N0') + ' days - usage data may be incomplete!' 
-                            ELSE FORMAT(irs.server_uptime_days, 'N0') + ' days'
-                        END,
-        database_name = ISNULL(irs.database_name, 'N/A'),
-        /* Index counts */
-        total_indexes = FORMAT(irs.index_count, 'N0'),
-        indexes_after_cleanup = FORMAT(irs.index_count - (irs.indexes_to_disable + irs.indexes_to_merge), 'N0'),
-        indexes_to_disable = FORMAT(irs.indexes_to_disable, 'N0'),
-        indexes_to_merge = FORMAT(irs.indexes_to_merge, 'N0'),
-        /* Space metrics */
-        current_size_gb = FORMAT(irs.total_size_gb, 'N2'),
-        size_after_cleanup_gb = FORMAT(irs.total_size_gb - irs.space_saved_gb, 'N2'),
-        space_saved_gb = FORMAT(irs.space_saved_gb, 'N2'),
-        /* Performance metrics */
-        total_rows = FORMAT(irs.total_rows, 'N0'),
-        write_operations_saved = FORMAT(ISNULL(irs.user_updates, 0), 'N0'),
-        daily_write_ops_saved = FORMAT(ISNULL(irs.user_updates / NULLIF(CONVERT(DECIMAL(10,2), irs.server_uptime_days), 0) * 
-                               ((irs.indexes_to_disable + irs.indexes_to_merge) / NULLIF(CONVERT(DECIMAL(10,2), irs.index_count), 0)), 0), 'N0'),
-        /* Percentage metrics for quick understanding */
-        index_reduction_pct = FORMAT(((irs.indexes_to_disable + irs.indexes_to_merge) / NULLIF(CONVERT(DECIMAL(10,2), irs.index_count), 0)) * 100, 'N1') + '%',
-        space_reduction_pct = FORMAT((irs.space_saved_gb / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%',
-        /* Additional metrics that may be useful */
-        lock_operations_saved = FORMAT(ISNULL(irs.row_lock_count + irs.page_lock_count, 0), 'N0'),
-        latch_operations_saved = FORMAT(ISNULL(irs.page_latch_wait_count + irs.page_io_latch_wait_count, 0), 'N0')
-    FROM #index_reporting_stats AS irs
-    WHERE irs.summary_level = 'DATABASE'
-    ORDER BY irs.database_name;
-
-    /*
-    Table-Level Impact - Top tables by space savings
-    */
-    SELECT TOP(10)
-        report_section = 'TOP TABLES BY IMPACT',
-        database_name = ISNULL(irs.database_name, 'N/A'), 
-        table_name = QUOTENAME(ISNULL(irs.schema_name, 'dbo')) + '.' + QUOTENAME(ISNULL(irs.table_name, 'Unknown')),
-        /* Index counts */
-        total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
-        removable_indexes = FORMAT(ISNULL(irs.unused_indexes, 0), 'N0'),
-        mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
-        /* Space metrics */
-        current_size_gb = FORMAT(ISNULL(irs.total_size_gb, 0), 'N2'),
-        space_saved_gb = FORMAT(ISNULL(irs.unused_size_gb, 0), 'N2'),
-        percent_reduction = FORMAT((ISNULL(irs.unused_size_gb, 0) / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%',
-        /* Performance metrics */
-        total_rows = FORMAT(ISNULL(irs.total_rows, 0), 'N0'),
-        total_write_ops = FORMAT(ISNULL(irs.user_updates, 0), 'N0'),
-        write_ops_per_day = FORMAT(ISNULL(irs.user_updates / NULLIF(CONVERT(DECIMAL(10,2), 
-                           (SELECT TOP 1 server_uptime_days FROM #index_reporting_stats WHERE summary_level = 'DATABASE')), 0), 0), 'N0')
-    FROM #index_reporting_stats AS irs
-    WHERE irs.summary_level = 'TABLE'
-    ORDER BY ISNULL(irs.unused_size_gb, 0) DESC;
+    /* 
+    This section now REPLACES the existing summary view rather than supplementing it
+    We'll modify the existing query below rather than creating new output panes
+    */ 
 
     /* Return streamlined reporting statistics focused on key metrics */
     IF @debug = 1
@@ -4336,7 +4282,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     SELECT 
-        /* Basic identification */
+        /* Basic identification with enhanced naming */
         level =
             CASE 
                 WHEN irs.summary_level = 'SUMMARY' THEN '=== OVERALL ANALYSIS ==='
@@ -4359,8 +4305,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END,
         
         /* Schema and table names (except for summary) */
-        irs.schema_name,
-        irs.table_name,
+        schema_name = ISNULL(irs.schema_name, 'N/A'),
+        table_name = ISNULL(irs.table_name, 'N/A'),
         
         /* ===== Section 1: Index Counts ===== */
         /* Tables analyzed (summary only) */
@@ -4368,82 +4314,83 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
                 THEN FORMAT(irs.tables_analyzed, 'N0')
-                ELSE NULL
+                ELSE FORMAT(0, 'N0') /* Show 0 instead of NULL */
             END,
         
         /* Total indexes */
-        total_indexes = FORMAT(irs.index_count, 'N0'),
+        total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
         
         /* Removable indexes - report consistent values across levels */
         removable_indexes =
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
-                THEN FORMAT(irs.indexes_to_disable, 'N0') /* Indexes that will be disabled based on analysis */
-                ELSE FORMAT(irs.unused_indexes, 'N0') /* Unused indexes at database/table level */
+                THEN FORMAT(ISNULL(irs.indexes_to_disable, 0), 'N0') /* Indexes that will be disabled based on analysis */
+                ELSE FORMAT(ISNULL(irs.unused_indexes, 0), 'N0') /* Unused indexes at database/table level */
             END,
         
         /* Show mergeable indexes across all levels */
-        mergeable_indexes =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY' 
-                THEN FORMAT(irs.indexes_to_merge, 'N0')
-                ELSE FORMAT(irs.indexes_to_merge, 'N0') 
-            END,
+        mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
         
         /* Percent of indexes that can be removed */
         pct_removable =
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
-                THEN FORMAT(100.0 * irs.indexes_to_disable / NULLIF(irs.index_count, 0), 'N1') + '%'
+                THEN FORMAT(100.0 * ISNULL(irs.indexes_to_disable, 0) / NULLIF(irs.index_count, 0), 'N1') + '%'
                 WHEN irs.index_count > 0
-                THEN FORMAT(100.0 * irs.unused_indexes / NULLIF(irs.index_count, 0), 'N1') + '%'
+                THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0) / NULLIF(irs.index_count, 0), 'N1') + '%'
                 ELSE '0.0%'
             END,
         
-        /* ===== Section 2: Size and Space Savings ===== */
+        /* ===== Section 2: Size and Space Savings with Before/After comparison ===== */
         /* Current size in GB */
-        current_size_gb = FORMAT(irs.total_size_gb, 'N2'),
+        current_size_gb = FORMAT(ISNULL(irs.total_size_gb, 0), 'N2'),
+        
+        /* Size after cleanup - added this as new metric */
+        size_after_cleanup_gb = FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.space_saved_gb, 0), 'N2'),
         
         /* Size that can be saved through cleanup */
-        cleanup_savings_gb =
+        space_saved_gb =
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
-                THEN FORMAT(irs.space_saved_gb, 'N2')
-                ELSE FORMAT(irs.unused_size_gb, 'N2')
+                THEN FORMAT(ISNULL(irs.space_saved_gb, 0), 'N2')
+                ELSE FORMAT(ISNULL(irs.unused_size_gb, 0), 'N2')
             END,
-        
-        /* Potential additional savings */
-        potential_savings_gb =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY' 
-                THEN FORMAT(irs.total_min_savings_gb, 'N2') + 
-                     ' - ' + 
-                     FORMAT(irs.total_max_savings_gb, 'N2')
-                ELSE FORMAT(irs.unused_size_gb, 'N2') /* Show at all levels */
-            END,
+            
+        /* Space reduction percentage - added this as new metric */
+        space_reduction_pct = FORMAT((ISNULL(irs.space_saved_gb, 0) / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%',
         
         /* ===== Section 3: Table and Usage Statistics ===== */
         /* Row count */
-        FORMAT(irs.total_rows, 'N0') AS total_rows,
+        total_rows = FORMAT(ISNULL(irs.total_rows, 0), 'N0'),
         
         /* Total reads - combined total and breakdown */
         reads_breakdown =
             CASE 
                 WHEN irs.summary_level <> 'SUMMARY' 
-                THEN FORMAT(irs.total_reads, 'N0') + 
+                THEN FORMAT(ISNULL(irs.total_reads, 0), 'N0') + 
                      ' (' + 
-                     FORMAT(irs.user_seeks, 'N0') + ' seeks, ' +
-                     FORMAT(irs.user_scans, 'N0') + ' scans, ' +
-                     FORMAT(irs.user_lookups, 'N0') + ' lookups)'
-                ELSE NULL
+                     FORMAT(ISNULL(irs.user_seeks, 0), 'N0') + ' seeks, ' +
+                     FORMAT(ISNULL(irs.user_scans, 0), 'N0') + ' scans, ' +
+                     FORMAT(ISNULL(irs.user_lookups, 0), 'N0') + ' lookups)'
+                ELSE 'N/A'
             END,
         
         /* Total writes */
         writes =
             CASE 
                 WHEN irs.summary_level <> 'SUMMARY' 
-                THEN FORMAT(irs.total_writes, 'N0')
-                ELSE NULL
+                THEN FORMAT(ISNULL(irs.total_writes, 0), 'N0')
+                ELSE 'N/A'
+            END,
+            
+        /* Daily write operations saved - added as new metric */
+        daily_write_ops_saved = 
+            CASE
+                WHEN irs.summary_level <> 'SUMMARY'
+                THEN FORMAT(ISNULL(irs.user_updates / NULLIF(CONVERT(DECIMAL(10,2), 
+                     (SELECT TOP 1 server_uptime_days FROM #index_reporting_stats WHERE summary_level = 'DATABASE')), 0) * 
+                     (ISNULL(irs.unused_indexes, 0) / NULLIF(CONVERT(DECIMAL(10,2), irs.index_count), 0)), 0), 'N0')
+                ELSE 'N/A'
             END,
         
         /* ===== Section 4: Consolidated Performance Metrics ===== */
@@ -4451,29 +4398,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         lock_wait_count =
             CASE 
                 WHEN irs.summary_level <> 'SUMMARY'
-                THEN FORMAT(irs.row_lock_wait_count + 
-                     irs.page_lock_wait_count, 'N0')
-                ELSE NULL
+                THEN FORMAT(ISNULL(irs.row_lock_wait_count, 0) + 
+                     ISNULL(irs.page_lock_wait_count, 0), 'N0')
+                ELSE '0'
             END,
         
         /* Average lock wait time in ms */
         avg_lock_wait_ms =
             CASE 
                 WHEN irs.summary_level <> 'SUMMARY' 
-                AND (irs.row_lock_wait_count + irs.page_lock_wait_count) > 0
-                THEN FORMAT(1.0 * (irs.row_lock_wait_in_ms + irs.page_lock_wait_in_ms) / 
-                     NULLIF(irs.row_lock_wait_count + irs.page_lock_wait_count, 0), 'N2')
-                ELSE NULL
+                AND (ISNULL(irs.row_lock_wait_count, 0) + ISNULL(irs.page_lock_wait_count, 0)) > 0
+                THEN FORMAT(1.0 * (ISNULL(irs.row_lock_wait_in_ms, 0) + ISNULL(irs.page_lock_wait_in_ms, 0)) / 
+                     NULLIF(ISNULL(irs.row_lock_wait_count, 0) + ISNULL(irs.page_lock_wait_count, 0), 0), 'N2')
+                ELSE '0.00'
             END,
         
         /* Combined latch wait time in ms */
         avg_latch_wait_ms =
             CASE 
                 WHEN irs.summary_level <> 'SUMMARY' 
-                AND (irs.page_latch_wait_count + irs.page_io_latch_wait_count) > 0
-                THEN FORMAT(1.0 * (irs.page_latch_wait_in_ms + irs.page_io_latch_wait_in_ms) / 
-                     NULLIF(irs.page_latch_wait_count + irs.page_io_latch_wait_count, 0), 'N2')
-                ELSE NULL
+                AND (ISNULL(irs.page_latch_wait_count, 0) + ISNULL(irs.page_io_latch_wait_count, 0)) > 0
+                THEN FORMAT(1.0 * (ISNULL(irs.page_latch_wait_in_ms, 0) + ISNULL(irs.page_io_latch_wait_in_ms, 0)) / 
+                     NULLIF(ISNULL(irs.page_latch_wait_count, 0) + ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
+                ELSE '0.00'
             END
     FROM #index_reporting_stats AS irs
     WHERE irs.summary_level IN ('SUMMARY', 'DATABASE', 'TABLE') /* Filter out INDEX level */
