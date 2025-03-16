@@ -9842,7 +9842,6 @@ BEGIN
         x.all_done,
         x.period,
         x.databases,
-        x.databases,
         x.support,
         x.help,
         x.problems,
@@ -9892,7 +9891,8 @@ BEGIN
             databases =
                 N'processed: ' +
                 CASE 
-                    WHEN @get_all_databases = 0 THEN ISNULL(@database_name, N'None')
+                    WHEN @get_all_databases = 0 
+                    THEN ISNULL(@database_name, N'None')
                     ELSE
                         ISNULL
                         (
@@ -9905,36 +9905,14 @@ BEGIN
                                     FROM #databases AS d
                                     ORDER BY 
                                         d.database_name
-                                    FOR XML
+                                    FOR 
+                                        XML
                                         PATH(''),
                                         TYPE
-                                ).value('.', 'nvarchar(MAX)'),
-                                1, 2, N''
-                            ),
-                            N'None'
-                        )
-                END,
-            databases =
-                N'skipped: ' +
-                CASE
-                    WHEN @get_all_databases = 0 THEN N'None'
-                    ELSE
-                        ISNULL
-                        (
-                            STUFF
-                            (
-                                (
-                                    SELECT 
-                                        N', ' + 
-                                        rbs.database_name + N' (' + rbs.reason + N')' 
-                                    FROM #requested_but_skipped_databases AS rbs
-                                    ORDER BY 
-                                        rbs.database_name
-                                    FOR XML
-                                        PATH(''),
-                                        TYPE
-                                ).value('.', 'nvarchar(MAX)'),
-                                1, 2, N''
+                                ).value('.', 'nvarchar(max)'),
+                                1, 
+                                2, 
+                                N''
                             ),
                             N'None'
                         )
@@ -9993,27 +9971,6 @@ BEGIN
             all_done =
                 'https://www.erikdarling.com/',
             databases =
-                N'processed: ' +
-                ISNULL
-                (
-                    STUFF
-                    (
-                        (
-                            SELECT 
-                                N', ' + 
-                                d.database_name 
-                            FROM #databases AS d
-                            ORDER BY 
-                                d.database_name
-                            FOR XML
-                                PATH(''),
-                                TYPE
-                        ).value('.', 'nvarchar(MAX)'),
-                        1, 2, N''
-                    ),
-                    N'None'
-                ),
-            databases =
                 N'skipped: ' +
                 ISNULL
                 (
@@ -10022,15 +9979,21 @@ BEGIN
                         (
                             SELECT 
                                 N', ' + 
-                                rbs.database_name + N' (' + rbs.reason + N')' 
+                                rbs.database_name + 
+                                N' (' + 
+                                rbs.reason + 
+                                N')' 
                             FROM #requested_but_skipped_databases AS rbs
                             ORDER BY 
                                 rbs.database_name
-                            FOR XML
+                            FOR 
+                                XML
                                 PATH(''),
                                 TYPE
                         ).value('.', 'nvarchar(MAX)'),
-                        1, 2, N''
+                        1, 
+                        2, 
+                        N''
                     ),
                     N'None'
                 ),
