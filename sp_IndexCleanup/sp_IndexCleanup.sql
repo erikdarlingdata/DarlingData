@@ -82,28 +82,8 @@ BEGIN TRY
         @version_date = '20250401';
 
     SELECT
-        for_insurance_purposes = N'Read the messages pane carefully!';
-
-    PRINT N'
--------------------------------------------------------------------------------------------
--------------------------------------------------------------------------------------------
--------------------------------------------------------------------------------------------
-This is the BETA VERSION of sp_IndexCleanup
-
-It needs lots of love and testing in real environments with real indexes to fix many issues:
- * Data collection
- * Deduping logic
- * Result correctness
- * Edge cases
- * May not account for specific query patterns that benefit from seemingly redundant indexes
- 
-ALWAYS TEST THESE RECOMMENDATIONS IN A NON-PRODUCTION ENVIRONMENT FIRST"
-
--------------------------------------------------------------------------------------------
--------------------------------------------------------------------------------------------
--------------------------------------------------------------------------------------------
-';
-
+        for_insurance_purposes = 
+            N'ALWAYS TEST THESE RECOMMENDATIONS IN A NON-PRODUCTION ENVIRONMENT FIRST!';
 
     /*
     Help section, for help.
