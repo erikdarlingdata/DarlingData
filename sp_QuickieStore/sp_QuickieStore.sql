@@ -1961,12 +1961,12 @@ BEGIN
         (
             database_name
         )
-        SELECT
+        SELECT DISTINCT
             database_name = 
                 LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname')))
         FROM
         (
-            SELECT DISTINCT
+            SELECT
                 x = CONVERT
                     (
                         xml, 
@@ -1992,12 +1992,12 @@ BEGIN
         (
             database_name
         )
-        SELECT
+        SELECT DISTINCT
             database_name = 
                 LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname')))
         FROM
         (
-            SELECT DISTINCT
+            SELECT
                 x = CONVERT
                     (
                         xml, 
