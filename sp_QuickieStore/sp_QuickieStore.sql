@@ -90,6 +90,8 @@ ALTER PROCEDURE
     @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/
     @format_output bit = 1, /*returns numbers formatted with commas*/
     @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them*/
+    @include_databases nvarchar(4000) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
+    @exclude_databases nvarchar(4000) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
     @work_start time(0) = '9am', /*Use this to set a specific start of your work days*/
     @work_end time(0) = '5pm', /*Use this to set a specific end of your work days*/
@@ -203,6 +205,8 @@ BEGIN
                 WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'
                 WHEN N'@format_output' THEN 'returns numbers formatted with commas'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled user databases and returns combined results from all of them'
+                WHEN N'@include_databases' THEN 'comma-separated list of databases to include (only when @get_all_databases = 1)'
+                WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude (only when @get_all_databases = 1)'
                 WHEN N'@workdays' THEN 'use this to filter out weekends and after-hours queries'
                 WHEN N'@work_start' THEN 'use this to set a specific start of your work days'
                 WHEN N'@work_end' THEN 'use this to set a specific end of your work days'
@@ -256,6 +260,8 @@ BEGIN
                 WHEN N'@hide_help_table' THEN '0 or 1'
                 WHEN N'@format_output' THEN '0 or 1'
                 WHEN N'@get_all_databases' THEN '0 or 1'
+                WHEN N'@include_databases' THEN 'a string; comma separated database names'
+                WHEN N'@exclude_databases' THEN 'a string; comma separated database names'
                 WHEN N'@workdays' THEN '0 or 1'
                 WHEN N'@work_start' THEN 'a time like 8am, 9am or something'
                 WHEN N'@work_end' THEN 'a time like 5pm, 6pm or something'
@@ -309,6 +315,8 @@ BEGIN
                 WHEN N'@hide_help_table' THEN '0'
                 WHEN N'@format_output' THEN '1'
                 WHEN N'@get_all_databases' THEN '0'
+                WHEN N'@include_databases' THEN 'NULL'
+                WHEN N'@exclude_databases' THEN 'NULL'
                 WHEN N'@workdays' THEN '0'
                 WHEN N'@work_start' THEN '9am'
                 WHEN N'@work_end' THEN '5pm'
@@ -646,6 +654,152 @@ CREATE TABLE
 /*
 Hold query hashes for ignored plans
 */
+
+/*
+Create temp tables to parse the include/exclude database lists
+*/
+IF @get_all_databases = 1
+BEGIN
+    /* Check for contradictory parameters */
+    IF @database_name IS NOT NULL
+    BEGIN
+        RAISERROR(N'@get_all_databases = 1 and @database_name is specified. These parameters are mutually exclusive. Choose one or the other.', 11, 1) WITH NOWAIT;
+        RETURN;
+    END;
+
+    /* Create tables for database filtering */
+    CREATE TABLE
+        #include_databases
+    (
+        database_name sysname PRIMARY KEY
+    );
+
+    CREATE TABLE
+        #exclude_databases
+    (
+        database_name sysname PRIMARY KEY
+    );
+
+    /* Parse @include_databases if specified using XML for compatibility */
+    IF @include_databases IS NOT NULL
+    BEGIN
+        INSERT
+            #include_databases
+        (
+            database_name
+        )
+        SELECT
+            database_name = 
+                LTRIM
+                (
+                    RTRIM(c.value(N'(./text())[1]', N'nvarchar(128)'))
+                )
+        FROM
+        (
+            SELECT
+                x = CONVERT
+                    (
+                        xml, 
+                        N'<i>' + 
+                        REPLACE
+                        (
+                            @include_databases, 
+                            N',', 
+                            N'</i><i>'
+                        ) + 
+                        N'</i>'
+                    )
+        ) AS a
+        CROSS APPLY x.nodes(N'//i') AS t(c)
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'nvarchar(128)'))) <> N'';
+    END;
+
+    /* Parse @exclude_databases if specified using XML for compatibility */
+    IF @exclude_databases IS NOT NULL
+    BEGIN
+        INSERT
+            #exclude_databases
+        (
+            database_name
+        )
+        SELECT
+            database_name = 
+                LTRIM
+                (
+                    RTRIM(c.value(N'(./text())[1]', N'nvarchar(128)'))
+                )
+        FROM
+        (
+            SELECT
+                x = CONVERT
+                    (
+                        xml, 
+                        N'<i>' + 
+                        REPLACE
+                        (
+                            @exclude_databases, 
+                            N',', 
+                            N'</i><i>'
+                        ) + 
+                        N'</i>'
+                    )
+        ) AS a
+        CROSS APPLY x.nodes(N'//i') AS t(c)
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'nvarchar(128)'))) <> N'';
+    END;
+
+    IF @debug = 1
+    BEGIN
+        IF @include_databases IS NOT NULL
+        BEGIN
+            RAISERROR(N'Include database list: %s', 0, 1, @include_databases) WITH NOWAIT;
+            
+            /* Use manual concatenation instead of STRING_AGG for compatibility */
+            DECLARE 
+                @include_list nvarchar(4000) = N'';
+                
+            SELECT 
+                @include_list = @include_list + 
+                                CASE 
+                                    WHEN @include_list = N'' 
+                                    THEN N'' 
+                                    ELSE N', ' 
+                                END + 
+                                database_name
+            FROM #include_databases
+            ORDER BY
+                database_name;
+                
+            SELECT
+                include_database_list = @include_list;
+        END;
+        
+        IF @exclude_databases IS NOT NULL
+        BEGIN
+            RAISERROR(N'Exclude database list: %s', 0, 1, @exclude_databases) WITH NOWAIT;
+            
+            /* Use manual concatenation instead of STRING_AGG for compatibility */
+            DECLARE 
+                @exclude_list nvarchar(4000) = N'';
+                
+            SELECT 
+                @exclude_list = @exclude_list + 
+                                CASE 
+                                    WHEN @exclude_list = N'' 
+                                    THEN N'' 
+                                    ELSE N', ' 
+                                END + 
+                                database_name
+            FROM #exclude_databases
+            ORDER BY
+                database_name;
+                
+            SELECT
+                exclude_database_list = @exclude_list;
+        END;
+    END;
+END;
+
 CREATE TABLE
     #ignore_query_hashes
 (
@@ -1947,6 +2101,8 @@ BEGIN
     AND   d.state = 0
     AND   d.is_in_standby = 0
     AND   d.is_read_only = 0
+    AND   (@include_databases IS NULL OR EXISTS (SELECT 1 FROM #include_databases AS id WHERE id.database_name = d.name))
+    AND   (@exclude_databases IS NULL OR NOT EXISTS (SELECT 1 FROM #exclude_databases AS ed WHERE ed.database_name = d.name))
     OPTION(RECOMPILE);
 END;
 ELSE
@@ -1987,6 +2143,8 @@ BEGIN
         AND   s.role_desc <> N'PRIMARY'
         AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
     )
+    AND   (@include_databases IS NULL OR EXISTS (SELECT 1 FROM #include_databases AS id WHERE id.database_name = d.name))
+    AND   (@exclude_databases IS NULL OR NOT EXISTS (SELECT 1 FROM #exclude_databases AS ed WHERE ed.database_name = d.name))
     OPTION(RECOMPILE);
 END;
 
