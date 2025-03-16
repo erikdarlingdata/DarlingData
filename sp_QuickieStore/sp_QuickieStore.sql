@@ -9894,16 +9894,14 @@ BEGIN CATCH
         RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
     END;
     
-    /*
-    Unquote this if you want to short-circuit the THROW;
-    command and see the @debug = 1 output instead.
-    */
-    --GOTO DEBUG;
-
-    /*
-    This reliably throws the actual error from dynamic SQL
-    */
-    THROW;
+    IF @debug = 1
+    BEGIN
+        GOTO DEBUG;
+    END;
+    IF @debug = 0
+    BEGIN;
+        THROW;
+    END;
 END CATCH;
 
 /*
