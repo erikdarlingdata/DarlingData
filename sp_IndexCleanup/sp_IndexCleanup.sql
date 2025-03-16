@@ -1,14 +1,3 @@
-/*
-EXECUTE sp_IndexCleanup
-    @database_name = 'StackOverflow2013',
-    @debug = 1;
-
-EXECUTE sp_IndexCleanup
-    @database_name = 'StackOverflow2013',
-    @table_name = 'Users',
-    @debug = 1
-*/
-
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
