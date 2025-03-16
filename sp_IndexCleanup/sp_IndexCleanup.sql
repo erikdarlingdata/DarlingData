@@ -578,14 +578,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CREATE TABLE 
             #database_list 
         (
-            id integer IDENTITY(1,1) PRIMARY KEY,
+            id integer IDENTITY PRIMARY KEY CLUSTERED,
             database_name sysname NOT NULL
         );
 
         /* Parse @include_databases if specified - using XML for string splitting instead of STRING_SPLIT (version compatibility) */
         IF @include_databases IS NOT NULL
         BEGIN
-            SELECT @include_xml = CONVERT(xml, '<i>' + REPLACE(@include_databases, ',', '</i><i>') + '</i>');
+            SELECT 
+                @include_xml = 
+                    CONVERT
+                    (
+                        xml, 
+                        '<i>' + 
+                        REPLACE
+                        (
+                            @include_databases, 
+                            ',', 
+                            '</i><i>'
+                        ) + 
+                        '</i>'
+                    );
             
             INSERT INTO 
                 #database_list 
@@ -593,7 +606,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 database_name
             )
             SELECT 
-                database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
+                database_name = 
+                    LTRIM(RTRIM(t.i.value('.', 'sysname')))
             FROM @include_xml.nodes('/i') AS t(i)
             WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> '';
         END;
@@ -609,8 +623,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             database_id = d.database_id,
             database_name = d.name
         FROM sys.databases AS d
-        WHERE d.state_desc = 'ONLINE'
-        AND d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
+        WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
+        AND   d.state = 0
+        AND   d.is_in_standby = 0
+        AND   d.is_read_only = 0
         AND 
         (
             /* If include list is provided, only keep databases in that list */
@@ -639,25 +655,32 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             /* Count databases */
             SELECT 
-                database_count = COUNT(*)
+                database_count = COUNT_BIG(*)
             FROM #databases_to_process;
             
             /* List databases without using STRING_AGG (version compatibility) */
             SELECT @db_list = N'';
             
-            SELECT @db_list = @db_list + database_name + N', '
-            FROM #databases_to_process
-            ORDER BY database_name;
+            SELECT 
+                @db_list = 
+                    @db_list + 
+                    database_name + 
+                    N', '
+            FROM #databases_to_process AS dtp
+            ORDER BY 
+                dtp.database_name;
             
             /* Remove trailing comma if list is not empty */
             IF LEN(@db_list) > 0
+            BEGIN
                 SET @db_list = LEFT(@db_list, LEN(@db_list) - 1);
+            END;
                 
             RAISERROR('Databases to process: %s', 0, 0, @db_list) WITH NOWAIT;
         END;
 
         /* If no databases match criteria, exit */
-        IF NOT EXISTS (SELECT 1 FROM #databases_to_process)
+        IF NOT EXISTS (SELECT 1/0 FROM #databases_to_process AS dtp)
         BEGIN
             RAISERROR('No eligible databases found to process with the specified filters', 16, 1) WITH NOWAIT;
             RETURN;
@@ -738,26 +761,36 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /* Set cursor variable as per coding guidelines */
-        SET @database_cursor = CURSOR LOCAL STATIC READ_ONLY FORWARD_ONLY
+        SET @database_cursor = 
+            CURSOR 
+            LOCAL 
+            STATIC 
+            READ_ONLY 
+            FORWARD_ONLY
         FOR 
         SELECT 
-            database_id, 
-            database_name 
-        FROM #databases_to_process
-        WHERE processed = 0
-        ORDER BY database_name;
+            dtp.database_id, 
+            dtp.database_name 
+        FROM #databases_to_process AS dtp.
+        WHERE dtp.processed = 0
+        ORDER BY 
+            dtp.database_name;
 
         OPEN @database_cursor;
-        FETCH NEXT FROM @database_cursor 
-        INTO @current_database_id, @current_database_name;
+        FETCH NEXT 
+        FROM @database_cursor 
+        INTO 
+            @current_database_id, 
+            @current_database_name;
         
         WHILE @@FETCH_STATUS = 0
         BEGIN
             SET @processed_count += 1;
             
             /* Update working variables for each iteration */
-            SET @database_id = @current_database_id;
-            SET @database_name = @current_database_name;
+            SELECT 
+                @database_id = @current_database_id,
+                @database_name = @current_database_name;
             
             IF @debug = 1
             BEGIN
@@ -4959,13 +4992,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
             /* Update processed flag for this database */
-            UPDATE #databases_to_process
-            SET processed = 1
-            WHERE database_id = @database_id;
+            UPDATE 
+                #databases_to_process
+            SET 
+                #databases_to_process.processed = 1
+            WHERE #databases_to_process.database_id = @database_id;
             
             /* Get next database */
-            FETCH NEXT FROM @database_cursor 
-            INTO @current_database_id, @current_database_name;
+            FETCH NEXT 
+            FROM @database_cursor 
+            INTO 
+                @current_database_id, 
+                @current_database_name;
         END; /* End of cursor WHILE loop */
         
         IF @debug = 1
@@ -4973,7 +5011,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             RAISERROR('Finished processing %d databases', 0, 0, @processed_count) WITH NOWAIT;
         END;
     END; /* End of @get_all_databases = 1 section */
-
 END TRY
 BEGIN CATCH
     THROW;
