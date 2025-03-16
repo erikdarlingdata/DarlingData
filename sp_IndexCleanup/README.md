@@ -29,6 +29,9 @@ The procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT 
 | @min_writes | bigint | 0 | Minimum number of writes for an index to be considered used |
 | @min_size_gb | decimal(10,2) | 0 | Minimum size in GB for an index to be analyzed |
 | @min_rows | bigint | 0 | Minimum number of rows for a table to be analyzed |
+| @get_all_databases | bit | 0 | When set to 1, analyzes all eligible databases on the server |
+| @include_databases | nvarchar(max) | NULL | Comma-separated list of databases to include (used with @get_all_databases = 1) |
+| @exclude_databases | nvarchar(max) | NULL | Comma-separated list of databases to exclude (used with @get_all_databases = 1) |
 | @help | bit | 0 | Displays help information |
 | @debug | bit | 0 | Prints debug information during execution |
 | @version | varchar(20) | NULL | OUTPUT parameter that returns the version number of the procedure |
@@ -53,6 +56,21 @@ EXECUTE dbo.sp_IndexCleanup
     @min_reads = 100,
     @min_writes = 10;
 
+-- Analyze all user databases on the server
+EXECUTE dbo.sp_IndexCleanup
+    @get_all_databases = 1,
+    @debug = 1;
+
+-- Analyze only specific databases
+EXECUTE dbo.sp_IndexCleanup
+    @get_all_databases = 1,
+    @include_databases = 'Database1,Database2,Database3';
+
+-- Analyze all databases except specific ones
+EXECUTE dbo.sp_IndexCleanup
+    @get_all_databases = 1,
+    @exclude_databases = 'ReportServer,TempDB2';
+
 -- Show help information
 EXECUTE dbo.sp_IndexCleanup
     @help = 1;
@@ -63,6 +81,9 @@ EXECUTE dbo.sp_IndexCleanup
 - The procedure issues a warning when server uptime is less than 14 days, as index usage stats may not be representative
 - Certain features like online index operations and compression are only available in specific SQL Server editions (Enterprise, Azure SQL DB, Managed Instance)
 - It is recommended to have a recent backup before making any index changes
+- The multi-database processing feature (@get_all_databases) analyzes each database sequentially for better performance and resource management
+- System databases (master, model, msdb, tempdb, rdsadmin) are always excluded from processing
+- When using @get_all_databases, results for all databases are combined in a single result set
 
 Copyright 2024 Darling Data, LLC  
 Released under MIT license
