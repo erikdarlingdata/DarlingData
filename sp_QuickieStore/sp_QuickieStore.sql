@@ -1160,13 +1160,13 @@ CREATE TABLE
     #query_store_plan_feedback
 (
     database_id integer NOT NULL,
-    plan_feedback_id bigint,
-    plan_id bigint,
-    feature_desc nvarchar(120),
-    feedback_data nvarchar(MAX),
-    state_desc nvarchar(120),
-    create_time datetimeoffset(7),
-    last_updated_time datetimeoffset(7)
+    plan_feedback_id bigint NOT NULL,
+    plan_id bigint NULL,
+    feature_desc nvarchar(120) NULL,
+    feedback_data nvarchar(MAX) NULL,
+    state_desc nvarchar(120) NULL,
+    create_time datetimeoffset(7) NOT NULL,
+    last_updated_time datetimeoffset(7) NULL
 );
 
 /*
@@ -1176,12 +1176,12 @@ CREATE TABLE
     #query_store_query_hints
 (
     database_id integer NOT NULL,
-    query_hint_id bigint,
-    query_id bigint,
-    query_hint_text nvarchar(MAX),
-    last_query_hint_failure_reason_desc nvarchar(256),
-    query_hint_failure_count bigint,
-    source_desc nvarchar(256)
+    query_hint_id bigint NOT NULL,
+    query_id bigint NOT NULL,
+    query_hint_text nvarchar(MAX) NULL,
+    last_query_hint_failure_reason_desc nvarchar(256) NULL,
+    query_hint_failure_count bigint NOT NULL,
+    source_desc nvarchar(256) NULL
 );
 
 /*
@@ -1191,21 +1191,21 @@ CREATE TABLE
     #query_store_query_variant
 (
     database_id integer NOT NULL,
-    query_variant_query_id bigint,
-    parent_query_id bigint,
-    dispatcher_plan_id bigint
+    query_variant_query_id bigint NOT NULL,
+    parent_query_id bigint NOT NULL,
+    dispatcher_plan_id bigint NOT NULL
 );
 
 /*
 Replicants
 */
 CREATE TABLE
-    #query_store_replicas
+    #query_store_replicas 
 (
     database_id integer NOT NULL,
-    replica_group_id bigint,
-    role_type smallint,
-    replica_name nvarchar(1288)
+    replica_group_id bigint NOT NULL,
+    role_type smallint NOT NULL,
+    replica_name nvarchar(1288) NULL
 );
 
 /*
@@ -1215,10 +1215,10 @@ CREATE TABLE
     #query_store_plan_forcing_locations
 (
     database_id integer NOT NULL,
-    plan_forcing_location_id bigint,
-    query_id bigint,
-    plan_id bigint,
-    replica_group_id bigint
+    plan_forcing_location_id bigint NOT NULL,
+    query_id bigint NOT NULL,
+    plan_id bigint NOT NULL,
+    replica_group_id bigint NOT NULL
 );
 
 /*
@@ -1227,10 +1227,10 @@ Trouble Loves Me
 CREATE TABLE
     #troubleshoot_performance
 (
-    id bigint IDENTITY,
-    current_table nvarchar(100),
-    start_time datetime,
-    end_time datetime,
+    id bigint IDENTITY PRIMARY KEY CLUSTERED,
+    current_table nvarchar(100) NOT NULL,
+    start_time datetime NOT NULL,
+    end_time datetime NOT NULL,
     runtime_ms AS
         FORMAT
         (
@@ -1241,7 +1241,7 @@ CREATE TABLE
                 end_time
             ),
             'N0'
-        )
+        ) PERSISTED NOT NULL
 );
 
 /*Gonna try gathering this based on*/
@@ -1680,7 +1680,9 @@ DECLARE
     @data_type sysname, 
     @is_include bit,
     @requires_secondary_processing bit,
-    @split_sql nvarchar(MAX);
+    @split_sql nvarchar(MAX),
+    @error_msg nvarchar(2000),
+    @conflict_list nvarchar(max);
 
 /*
 In cases where we are escaping @query_text_search and
@@ -2021,15 +2023,17 @@ BEGIN
         IF @include_databases IS NOT NULL
         BEGIN
             /* Build list of conflicting databases */
-            DECLARE @conflict_list nvarchar(max) = N'';
+            SET @conflict_list = N'';
             
             SELECT 
-                @conflict_list = @conflict_list + 
-                                 ed.database_name + N', '
+                @conflict_list = 
+                    @conflict_list + 
+                    ed.database_name + N', '
             FROM #exclude_databases AS ed
             WHERE EXISTS 
                 (
-                    SELECT 1/0 
+                    SELECT 
+                        1/0 
                     FROM #include_databases AS id
                     WHERE id.database_name = ed.database_name
                 );
@@ -2040,7 +2044,7 @@ BEGIN
                 /* Remove trailing comma and space */
                 SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
                 
-                DECLARE @error_msg nvarchar(2000) = 
+                SET @error_msg = 
                     N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' + 
                     @conflict_list + N'. Please remove these databases from one of the lists.';
                 
@@ -2103,6 +2107,8 @@ BEGIN
     BEGIN
         INSERT
             #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
         (
             database_name,
             reason
@@ -2128,7 +2134,8 @@ BEGIN
                       1/0 
                   FROM #databases AS db
                   WHERE db.database_name = id.database_name
-              );
+              )
+        OPTION(RECOMPILE);
     END;
 END;
 ELSE
@@ -2184,6 +2191,8 @@ BEGIN
     BEGIN
         INSERT
             #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
         (
             database_name,
             reason
@@ -2221,7 +2230,8 @@ BEGIN
                       1/0 
                   FROM #databases AS db
                   WHERE db.database_name = id.database_name
-              );
+              )
+        OPTION(RECOMPILE);
     END;
 END;
 
@@ -2671,19 +2681,19 @@ We set both _date_original variables earlier.
 */
     SELECT
         @regression_baseline_start_date =
-                DATEADD
-                (
-                    MINUTE,
-                    @utc_minutes_difference,
-                    @regression_baseline_start_date_original
-                ),
+            DATEADD
+            (
+                MINUTE,
+                @utc_minutes_difference,
+                @regression_baseline_start_date_original
+            ),
         @regression_baseline_end_date =
-                DATEADD
-                (
-                    MINUTE,
-                    @utc_minutes_difference,
-                    @regression_baseline_end_date_original
-                ),
+            DATEADD
+            (
+                MINUTE,
+                @utc_minutes_difference,
+                @regression_baseline_end_date_original
+            ),
         @regression_comparator =
             ISNULL(@regression_comparator, 'absolute'),
         @regression_direction =
@@ -3009,7 +3019,8 @@ FROM ' + @database_name_quoted + N'.sys.procedures AS p
 JOIN ' + @database_name_quoted + N'.sys.schemas AS s
   ON p.schema_id = s.schema_id
 WHERE s.name = @procedure_schema
-AND   p.name LIKE @procedure_name;' + @nc10;
+AND   p.name LIKE @procedure_name
+OPTION(RECOMPILE);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -3991,7 +4002,7 @@ BEGIN
             (TABLOCK)
         (
             ' + @column_name + 
-       N')
+      N')
         EXECUTE sys.sp_executesql
             @split_sql,
             N''@ids nvarchar(4000)'',
@@ -4107,7 +4118,7 @@ BEGIN
             END;
             ELSE 
             IF 
-            @param_name = 'include_sql_handles' 
+               @param_name = 'include_sql_handles' 
             OR @param_name = 'ignore_sql_handles'
             BEGIN
                 SELECT @secondary_sql = N'
@@ -5547,7 +5558,11 @@ BEGIN
         qsq.query_hash,
         /* All of these but count_executions are already floats. */
         regression_metric_average =
-            CONVERT(float, AVG(' +
+            CONVERT
+            (
+                float, 
+                AVG
+                (' +
                 CASE @sort_order
                      WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
                      WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
@@ -5560,7 +5575,9 @@ BEGIN
                      WHEN 'rows' THEN N'qsrs.avg_rowcount'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
                 END
-                + N'))
+                + N'
+                )
+            )
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
       ON qsq.query_id = qsp.query_id
@@ -5647,7 +5664,11 @@ BEGIN
         qsq.query_hash,
         /* All of these but count_executions are already floats. */
         current_metric_average =
-            CONVERT(float, AVG(' +
+            CONVERT
+            (
+                float,
+                AVG
+                (' +
                 CASE @sort_order
                      WHEN 'cpu' THEN N'qsrs.avg_cpu_time'
                      WHEN 'logical reads' THEN N'qsrs.avg_logical_io_reads'
@@ -5660,7 +5681,9 @@ BEGIN
                      WHEN 'rows' THEN N'qsrs.avg_rowcount'
                      ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'waits.total_query_wait_time_ms' ELSE N'qsrs.avg_cpu_time' END
                 END
-                + N'))
+                + N'
+               )
+            )
     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
       ON qsq.query_id = qsp.query_id
@@ -9127,7 +9150,8 @@ BEGIN
                 JOIN #query_store_plan_forcing_locations AS qspfl
                   ON qsr.replica_group_id = qspfl.replica_group_id
                 ORDER BY
-                    qsr.replica_group_id;
+                    qsr.replica_group_id
+                OPTION(RECOMPILE);;
             END;
             ELSE
                 BEGIN
