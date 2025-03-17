@@ -1241,7 +1241,7 @@ CREATE TABLE
                 end_time
             ),
             'N0'
-        ) PERSISTED NOT NULL
+        )
 );
 
 /*Gonna try gathering this based on*/
@@ -8752,7 +8752,8 @@ BEGIN
                 SELECT
                     result = '#query_store_plan_feedback is empty';
             END;
-        
+        END; /*@only_queries_with_feedback*/
+
         IF @expert_mode = 1 
         OR @only_queries_with_hints = 1
         BEGIN
@@ -8807,7 +8808,7 @@ BEGIN
                 SELECT
                     result = '#query_store_query_hints is empty';
             END;
-        END;        
+        END; /*@only_queries_with_hints*/        
         
         IF @expert_mode = 1 
         OR @only_queries_with_variants = 1
@@ -8855,7 +8856,7 @@ BEGIN
                 SELECT
                     result = '#query_store_query_variant is empty';
             END;
-        END;
+        END; /*@only_queries_with_variants*/
 
         IF
         (
@@ -8901,7 +8902,7 @@ BEGIN
                         result = 'Availability Group information is empty';
                 END;
             END;
-        END;
+        END; /*@ags_present*/
     END; /*End 2022 views*/
 
     IF @expert_mode = 1
@@ -8980,6 +8981,9 @@ BEGIN
                     last_execution_time_utc =
                         qsq.last_execution_time,
                     count_compiles = ' +
+                    CONVERT
+                    (
+                        nvarchar(max),
                         CASE 
                             WHEN @format_output = 1
                             THEN N'FORMAT(qsq.count_compiles, ''N0'')'
@@ -9098,7 +9102,8 @@ BEGIN
                             WHEN @format_output = 1
                             THEN N'FORMAT(qsq.max_compile_memory_mb, ''N0'')'
                             ELSE N'qsq.max_compile_memory_mb'
-                        END + N',
+                        END 
+                   ) + N',
                     qsq.query_hash,
                     qsq.batch_sql_handle,
                     qsqt.statement_sql_handle,
@@ -9139,225 +9144,228 @@ BEGIN
               N'@timezone sysname, @utc_offset_string nvarchar(max)',
                 @timezone, @utc_offset_string;
 
-        END; /*End compilation stats section*/
+        END; /*End compilation query section*/
         ELSE
         BEGIN
             SELECT
                 result =
                     '#query_store_query is empty';
         END;
-    END;
+    END; /*compilation stats*/
         
-        IF @rc > 0
-        BEGIN
-            SELECT
-                @current_table = 'selecting resource stats';
-                
-            SET @sql = N'';
+    IF @rc > 0
+    BEGIN
+        SELECT
+            @current_table = 'selecting resource stats';
             
-            SELECT
-                @sql =
+        SET @sql = N'';
+        
+        SELECT
+            @sql =
+        CONVERT
+        (
+            nvarchar(MAX),
+            N'
+        SELECT
+            source =
+                ''resource_stats'',
+            database_name =
+                DB_NAME(qsq.database_id),
+            qsq.query_id,
+            qsq.object_name,
+            total_grant_mb = '
+            +
             CONVERT
             (
-                nvarchar(MAX),
-                N'
-            SELECT
-                source =
-                    ''resource_stats'',
-                database_name =
-                    DB_NAME(qsq.database_id),
-                qsq.query_id,
-                qsq.object_name,
-                total_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.total_grant_mb, ''N0'')'
-                    ELSE N'qsqt.total_grant_mb'
-                END
-                + N',
-                last_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.last_grant_mb, ''N0'')'
-                    ELSE N'qsqt.last_grant_mb'
-                END
-                + N',
-                min_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.min_grant_mb, ''N0'')'
-                    ELSE N'qsqt.min_grant_mb'
-                END
-                + N',
-                max_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.max_grant_mb, ''N0'')'
-                    ELSE N'qsqt.max_grant_mb'
-                END
-                + N',
-                total_used_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.total_used_grant_mb, ''N0'')'
-                    ELSE N'qsqt.total_used_grant_mb'
-                END
-                + N',
-                last_used_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.last_used_grant_mb, ''N0'')'
-                    ELSE N'qsqt.last_used_grant_mb'
-                END
-                + N',
-                min_used_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.min_used_grant_mb, ''N0'')'
-                    ELSE N'qsqt.min_used_grant_mb'
-                END
-                + N',
-                max_used_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.max_used_grant_mb, ''N0'')'
-                    ELSE N'qsqt.max_used_grant_mb'
-                END
-                + N',
-                total_ideal_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.total_ideal_grant_mb, ''N0'')'
-                    ELSE N'qsqt.total_ideal_grant_mb'
-                END
-                + N',
-                last_ideal_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.last_ideal_grant_mb, ''N0'')'
-                    ELSE N'qsqt.last_ideal_grant_mb'
-                END
-                + N',
-                min_ideal_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.min_ideal_grant_mb, ''N0'')'
-                    ELSE N'qsqt.min_ideal_grant_mb'
-                END
-                + N',
-                max_ideal_grant_mb = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.max_ideal_grant_mb, ''N0'')'
-                    ELSE N'qsqt.max_ideal_grant_mb'
-                END
-                + N',
-                total_reserved_threads = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.total_reserved_threads, ''N0'')'
-                    ELSE N'qsqt.total_reserved_threads'
-                END
-                + N',
-                last_reserved_threads = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.last_reserved_threads, ''N0'')'
-                    ELSE N'qsqt.last_reserved_threads'
-                END
-                + N',
-                min_reserved_threads = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.min_reserved_threads, ''N0'')'
-                    ELSE N'qsqt.min_reserved_threads'
-                END
-                + N',
-                max_reserved_threads = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.max_reserved_threads, ''N0'')'
-                    ELSE N'qsqt.max_reserved_threads'
-                END
-                + N',
-                total_used_threads = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.total_used_threads, ''N0'')'
-                    ELSE N'qsqt.total_used_threads'
-                END
-                + N',
-                last_used_threads = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.last_used_threads, ''N0'')'
-                    ELSE N'qsqt.last_used_threads'
-                END
-                + N',
-                min_used_threads = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.min_used_threads, ''N0'')'
-                    ELSE N'qsqt.min_used_threads'
-                END
-                + N',
-                max_used_threads = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqt.max_used_threads, ''N0'')'
-                    ELSE N'qsqt.max_used_threads'
-                END
-                + N'
-            FROM #query_store_query AS qsq
-            JOIN #query_store_query_text AS qsqt
-              ON  qsq.query_text_id = qsqt.query_text_id
-              AND qsq.database_id = qsqt.database_id
-            WHERE
-            (
-                qsqt.total_grant_mb IS NOT NULL
-            OR qsqt.total_reserved_threads IS NOT NULL
-            )
-            ORDER BY
-                qsq.query_id
-            OPTION(RECOMPILE);'
-            );
-            
-            IF @debug = 1
-            BEGIN
-                PRINT LEN(@sql);
-                PRINT @sql;
-            END;
-            
-            EXECUTE sys.sp_executesql
-                @sql;
-
-        END; /*End resource stats query*/
-        ELSE
+                nvarchar(max),
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.total_grant_mb, ''N0'')'
+                ELSE N'qsqt.total_grant_mb'
+            END
+            + N',
+            last_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.last_grant_mb, ''N0'')'
+                ELSE N'qsqt.last_grant_mb'
+            END
+            + N',
+            min_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.min_grant_mb, ''N0'')'
+                ELSE N'qsqt.min_grant_mb'
+            END
+            + N',
+            max_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.max_grant_mb, ''N0'')'
+                ELSE N'qsqt.max_grant_mb'
+            END
+            + N',
+            total_used_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.total_used_grant_mb, ''N0'')'
+                ELSE N'qsqt.total_used_grant_mb'
+            END
+            + N',
+            last_used_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.last_used_grant_mb, ''N0'')'
+                ELSE N'qsqt.last_used_grant_mb'
+            END
+            + N',
+            min_used_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.min_used_grant_mb, ''N0'')'
+                ELSE N'qsqt.min_used_grant_mb'
+            END
+            + N',
+            max_used_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.max_used_grant_mb, ''N0'')'
+                ELSE N'qsqt.max_used_grant_mb'
+            END
+            + N',
+            total_ideal_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.total_ideal_grant_mb, ''N0'')'
+                ELSE N'qsqt.total_ideal_grant_mb'
+            END
+            + N',
+            last_ideal_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.last_ideal_grant_mb, ''N0'')'
+                ELSE N'qsqt.last_ideal_grant_mb'
+            END
+            + N',
+            min_ideal_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.min_ideal_grant_mb, ''N0'')'
+                ELSE N'qsqt.min_ideal_grant_mb'
+            END
+            + N',
+            max_ideal_grant_mb = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.max_ideal_grant_mb, ''N0'')'
+                ELSE N'qsqt.max_ideal_grant_mb'
+            END
+            + N',
+            total_reserved_threads = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.total_reserved_threads, ''N0'')'
+                ELSE N'qsqt.total_reserved_threads'
+            END
+            + N',
+            last_reserved_threads = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.last_reserved_threads, ''N0'')'
+                ELSE N'qsqt.last_reserved_threads'
+            END
+            + N',
+            min_reserved_threads = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.min_reserved_threads, ''N0'')'
+                ELSE N'qsqt.min_reserved_threads'
+            END
+            + N',
+            max_reserved_threads = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.max_reserved_threads, ''N0'')'
+                ELSE N'qsqt.max_reserved_threads'
+            END
+            + N',
+            total_used_threads = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.total_used_threads, ''N0'')'
+                ELSE N'qsqt.total_used_threads'
+            END
+            + N',
+            last_used_threads = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.last_used_threads, ''N0'')'
+                ELSE N'qsqt.last_used_threads'
+            END
+            + N',
+            min_used_threads = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.min_used_threads, ''N0'')'
+                ELSE N'qsqt.min_used_threads'
+            END
+            + N',
+            max_used_threads = '
+            +
+            CASE 
+                WHEN @format_output = 1
+                THEN N'FORMAT(qsqt.max_used_threads, ''N0'')'
+                ELSE N'qsqt.max_used_threads'
+            END
+            ) + N'
+        FROM #query_store_query AS qsq
+        JOIN #query_store_query_text AS qsqt
+          ON  qsq.query_text_id = qsqt.query_text_id
+          AND qsq.database_id = qsqt.database_id
+        WHERE
+        (
+            qsqt.total_grant_mb IS NOT NULL
+        OR qsqt.total_reserved_threads IS NOT NULL
+        )
+        ORDER BY
+            qsq.query_id
+        OPTION(RECOMPILE);'
+        );
+        
+        IF @debug = 1
         BEGIN
-            SELECT
-                result =
-                    '#dm_exec_query_stats is empty';
+            PRINT LEN(@sql);
+            PRINT @sql;
         END;
+        
+        EXECUTE sys.sp_executesql
+            @sql;
+
+    END; /*End resource stats query*/
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#dm_exec_query_stats is empty';
+    END;
 
     IF @new = 1
     BEGIN
@@ -9394,6 +9402,9 @@ BEGIN
                     qsws.wait_category_desc,
                     total_query_wait_time_ms = '
                     +
+                    CONVERT
+                    (
+                        nvarchar(max),
                     CASE 
                         WHEN @format_output = 1
                         THEN N'FORMAT(qsws.total_query_wait_time_ms, ''N0'')'
@@ -9471,7 +9482,7 @@ BEGIN
                         THEN N'FORMAT(x.max_duration_ms, ''N0'')'
                         ELSE N'x.max_duration_ms'
                     END
-                    + N'
+                    ) + N'
                 FROM #query_store_wait_stats AS qsws
                 CROSS APPLY
                 (
@@ -9529,6 +9540,9 @@ BEGIN
                     qsws.wait_category_desc,
                     total_query_wait_time_ms = '
                     +
+                    CONVERT
+                    (
+                        nvarchar(max),
                     CASE 
                         WHEN @format_output = 1
                         THEN N'FORMAT(SUM(qsws.total_query_wait_time_ms), ''N0'')'
@@ -9606,7 +9620,7 @@ BEGIN
                         THEN N'FORMAT(SUM(x.max_duration_ms), ''N0'')'
                         ELSE N'SUM(x.max_duration_ms)'
                     END
-                    + N'
+                    ) + N'
                 FROM #query_store_wait_stats AS qsws
                 CROSS APPLY
                 (
@@ -9743,7 +9757,6 @@ BEGIN
         EXECUTE sys.sp_executesql
             @sql;
     END;
-
 END; /*End Expert Mode*/
 
 IF @query_store_trouble = 1
