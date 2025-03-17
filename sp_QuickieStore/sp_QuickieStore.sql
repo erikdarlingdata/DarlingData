@@ -8651,25 +8651,30 @@ ELSE
     END;
 
 /*
-Return special things, unformatted
+Return special things: plan feedback, query hints, query variants, query text, wait stats, and query store options
+This section handles all expert mode and special output formats
+Format numeric values based on @format_output
 */
 IF
 (
-    (
-         @expert_mode = 1
-      OR
-      (
-           @only_queries_with_hints = 1
-        OR @only_queries_with_feedback = 1
-        OR @only_queries_with_variants = 1
-      )
-    )
-AND @format_output = 0
+    @expert_mode = 1
+  OR
+  (
+       @only_queries_with_hints = 1
+    OR @only_queries_with_feedback = 1
+    OR @only_queries_with_variants = 1
+  )
 )
 BEGIN
-    IF @sql_2022_views = 1
+    /*
+    SQL 2022+ features: plan feedback, query hints, and query variants
+    */
+    IF @expert_mode = 1
     BEGIN
-        IF @expert_mode = 1
+        /*
+        Handle query_store_plan_feedback
+        */
+        IF @sql_2022_views = 1
         BEGIN
             IF EXISTS
             (
@@ -8722,13 +8727,15 @@ BEGIN
                     qspf.plan_id
                 OPTION(RECOMPILE);
             END;
-            ELSE
+            ELSE IF @only_queries_with_feedback = 1
             BEGIN
                 SELECT
                     result = '#query_store_plan_feedback is empty';
             END;
-        END;
 
+        /*
+        Handle query_store_query_hints
+        */
         IF EXISTS
         (
             SELECT
@@ -8738,7 +8745,15 @@ BEGIN
         BEGIN
             SELECT
                 @current_table = 'selecting query hints';
-
+            
+            SET @sql = N'';
+            
+            SELECT
+                @sql =
+            CONVERT
+            (
+                nvarchar(MAX),
+                N'
             SELECT
                 database_name =
                     DB_NAME(qsqh.database_id),
@@ -8746,12 +8761,29 @@ BEGIN
                 qsqh.query_id,
                 qsqh.query_hint_text,
                 qsqh.last_query_hint_failure_reason_desc,
-                qsqh.query_hint_failure_count,
+                query_hint_failure_count = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqh.query_hint_failure_count, ''N0'')'
+                    ELSE N'qsqh.query_hint_failure_count'
+                END
+                + N',
                 qsqh.source_desc
             FROM #query_store_query_hints AS qsqh
             ORDER BY
                 qsqh.query_id
-            OPTION(RECOMPILE);
+            OPTION(RECOMPILE);'
+            );
+            
+            IF @debug = 1
+            BEGIN
+                PRINT LEN(@sql);
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql
+                @sql;
         END;
         ELSE
         BEGIN
@@ -8915,40 +8947,191 @@ BEGIN
         END;
     END;
 
+    /*
+    Handle resource stats
+    */
     IF @expert_mode = 1
     BEGIN
         IF @rc > 0
         BEGIN
             SELECT
                 @current_table = 'selecting resource stats';
-
+                
+            SET @sql = N'';
+            
+            SELECT
+                @sql =
+            CONVERT
+            (
+                nvarchar(MAX),
+                N'
             SELECT
                 source =
-                    'resource_stats',
+                    ''resource_stats'',
                 database_name =
                     DB_NAME(qsq.database_id),
                 qsq.query_id,
                 qsq.object_name,
-                qsqt.total_grant_mb,
-                qsqt.last_grant_mb,
-                qsqt.min_grant_mb,
-                qsqt.max_grant_mb,
-                qsqt.total_used_grant_mb,
-                qsqt.last_used_grant_mb,
-                qsqt.min_used_grant_mb,
-                qsqt.max_used_grant_mb,
-                qsqt.total_ideal_grant_mb,
-                qsqt.last_ideal_grant_mb,
-                qsqt.min_ideal_grant_mb,
-                qsqt.max_ideal_grant_mb,
-                qsqt.total_reserved_threads,
-                qsqt.last_reserved_threads,
-                qsqt.min_reserved_threads,
-                qsqt.max_reserved_threads,
-                qsqt.total_used_threads,
-                qsqt.last_used_threads,
-                qsqt.min_used_threads,
-                qsqt.max_used_threads
+                total_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.total_grant_mb, ''N0'')'
+                    ELSE N'qsqt.total_grant_mb'
+                END
+                + N',
+                last_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.last_grant_mb, ''N0'')'
+                    ELSE N'qsqt.last_grant_mb'
+                END
+                + N',
+                min_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.min_grant_mb, ''N0'')'
+                    ELSE N'qsqt.min_grant_mb'
+                END
+                + N',
+                max_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.max_grant_mb, ''N0'')'
+                    ELSE N'qsqt.max_grant_mb'
+                END
+                + N',
+                total_used_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.total_used_grant_mb, ''N0'')'
+                    ELSE N'qsqt.total_used_grant_mb'
+                END
+                + N',
+                last_used_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.last_used_grant_mb, ''N0'')'
+                    ELSE N'qsqt.last_used_grant_mb'
+                END
+                + N',
+                min_used_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.min_used_grant_mb, ''N0'')'
+                    ELSE N'qsqt.min_used_grant_mb'
+                END
+                + N',
+                max_used_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.max_used_grant_mb, ''N0'')'
+                    ELSE N'qsqt.max_used_grant_mb'
+                END
+                + N',
+                total_ideal_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.total_ideal_grant_mb, ''N0'')'
+                    ELSE N'qsqt.total_ideal_grant_mb'
+                END
+                + N',
+                last_ideal_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.last_ideal_grant_mb, ''N0'')'
+                    ELSE N'qsqt.last_ideal_grant_mb'
+                END
+                + N',
+                min_ideal_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.min_ideal_grant_mb, ''N0'')'
+                    ELSE N'qsqt.min_ideal_grant_mb'
+                END
+                + N',
+                max_ideal_grant_mb = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.max_ideal_grant_mb, ''N0'')'
+                    ELSE N'qsqt.max_ideal_grant_mb'
+                END
+                + N',
+                total_reserved_threads = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.total_reserved_threads, ''N0'')'
+                    ELSE N'qsqt.total_reserved_threads'
+                END
+                + N',
+                last_reserved_threads = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.last_reserved_threads, ''N0'')'
+                    ELSE N'qsqt.last_reserved_threads'
+                END
+                + N',
+                min_reserved_threads = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.min_reserved_threads, ''N0'')'
+                    ELSE N'qsqt.min_reserved_threads'
+                END
+                + N',
+                max_reserved_threads = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.max_reserved_threads, ''N0'')'
+                    ELSE N'qsqt.max_reserved_threads'
+                END
+                + N',
+                total_used_threads = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.total_used_threads, ''N0'')'
+                    ELSE N'qsqt.total_used_threads'
+                END
+                + N',
+                last_used_threads = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.last_used_threads, ''N0'')'
+                    ELSE N'qsqt.last_used_threads'
+                END
+                + N',
+                min_used_threads = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.min_used_threads, ''N0'')'
+                    ELSE N'qsqt.min_used_threads'
+                END
+                + N',
+                max_used_threads = '
+                +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.max_used_threads, ''N0'')'
+                    ELSE N'qsqt.max_used_threads'
+                END
+                + N'
             FROM #query_store_query AS qsq
             JOIN #query_store_query_text AS qsqt
               ON  qsq.query_text_id = qsqt.query_text_id
@@ -8960,7 +9143,17 @@ BEGIN
             )
             ORDER BY
                 qsq.query_id
-            OPTION(RECOMPILE);
+            OPTION(RECOMPILE);'
+            );
+            
+            IF @debug = 1
+            BEGIN
+                PRINT LEN(@sql);
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql
+                @sql;
 
         END; /*End resource stats query*/
         ELSE
@@ -8971,6 +9164,9 @@ BEGIN
         END;
     END;
 
+    /*
+    Handle wait stats queries
+    */
     IF @new = 1
     BEGIN
         IF @expert_mode = 1
@@ -8979,35 +9175,111 @@ BEGIN
             (
                 SELECT
                     1/0
-                    FROM #query_store_wait_stats AS qsws
+                FROM #query_store_wait_stats AS qsws
             )
             BEGIN
+                /*
+                Wait stats by query
+                */
                 SELECT
                     @current_table = 'selecting wait stats by query';
 
+                SET @sql = N'';
+                
+                SELECT
+                    @sql =
+                CONVERT
+                (
+                    nvarchar(MAX),
+                    N'
                 SELECT DISTINCT
                     source =
-                        'query_store_wait_stats_by_query',
+                        ''query_store_wait_stats_by_query'',
                     database_name =
                         DB_NAME(qsws.database_id),
                     qsws.plan_id,
                     x.object_name,
                     qsws.wait_category_desc,
-                    qsws.total_query_wait_time_ms,
-                    total_query_duration_ms =
-                        x.total_duration_ms,
-                    qsws.avg_query_wait_time_ms,
-                    avg_query_duration_ms =
-                        x.avg_duration_ms,
-                    qsws.last_query_wait_time_ms,
-                    last_query_duration_ms =
-                        x.last_duration_ms,
-                    qsws.min_query_wait_time_ms,
-                    min_query_duration_ms =
-                        x.min_duration_ms,
-                    qsws.max_query_wait_time_ms,
-                    max_query_duration_ms =
-                        x.max_duration_ms
+                    total_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(qsws.total_query_wait_time_ms, ''N0'')'
+                        ELSE N'qsws.total_query_wait_time_ms'
+                    END
+                    + N',
+                    total_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(x.total_duration_ms, ''N0'')'
+                        ELSE N'x.total_duration_ms'
+                    END
+                    + N',
+                    avg_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(qsws.avg_query_wait_time_ms, ''N0'')'
+                        ELSE N'qsws.avg_query_wait_time_ms'
+                    END
+                    + N',
+                    avg_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(x.avg_duration_ms, ''N0'')'
+                        ELSE N'x.avg_duration_ms'
+                    END
+                    + N',
+                    last_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(qsws.last_query_wait_time_ms, ''N0'')'
+                        ELSE N'qsws.last_query_wait_time_ms'
+                    END
+                    + N',
+                    last_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(x.last_duration_ms, ''N0'')'
+                        ELSE N'x.last_duration_ms'
+                    END
+                    + N',
+                    min_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(qsws.min_query_wait_time_ms, ''N0'')'
+                        ELSE N'qsws.min_query_wait_time_ms'
+                    END
+                    + N',
+                    min_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(x.min_duration_ms, ''N0'')'
+                        ELSE N'x.min_duration_ms'
+                    END
+                    + N',
+                    max_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(qsws.max_query_wait_time_ms, ''N0'')'
+                        ELSE N'qsws.max_query_wait_time_ms'
+                    END
+                    + N',
+                    max_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(x.max_duration_ms, ''N0'')'
+                        ELSE N'x.max_duration_ms'
+                    END
+                    + N'
                 FROM #query_store_wait_stats AS qsws
                 CROSS APPLY
                 (
@@ -9031,37 +9303,118 @@ BEGIN
                 ORDER BY
                     qsws.plan_id,
                     qsws.total_query_wait_time_ms DESC
-                OPTION(RECOMPILE);
+                OPTION(RECOMPILE);'
+                );
+                
+                IF @debug = 1
+                BEGIN
+                    PRINT LEN(@sql);
+                    PRINT @sql;
+                END;
+                
+                EXECUTE sys.sp_executesql
+                    @sql;
 
+                /*
+                Wait stats in total
+                */
                 SELECT
                     @current_table = 'selecting wait stats in total';
-
+                    
+                SET @sql = N'';
+                
+                SELECT
+                    @sql =
+                CONVERT
+                (
+                    nvarchar(MAX),
+                    N'
                 SELECT
                     source =
-                        'query_store_wait_stats_total',
+                        ''query_store_wait_stats_total'',
                     database_name =
                         DB_NAME(qsws.database_id),
                     qsws.wait_category_desc,
-                    total_query_wait_time_ms =
-                        SUM(qsws.total_query_wait_time_ms),
-                    total_query_duration_ms =
-                        SUM(x.total_duration_ms),
-                    avg_query_wait_time_ms =
-                        SUM(qsws.avg_query_wait_time_ms),
-                    avg_query_duration_ms =
-                        SUM(x.avg_duration_ms),
-                    last_query_wait_time_ms =
-                        SUM(qsws.last_query_wait_time_ms),
-                    last_query_duration_ms =
-                        SUM(x.last_duration_ms),
-                    min_query_wait_time_ms =
-                        SUM(qsws.min_query_wait_time_ms),
-                    min_query_duration_ms =
-                        SUM(x.min_duration_ms),
-                    max_query_wait_time_ms =
-                        SUM(qsws.max_query_wait_time_ms),
-                    max_query_duration_ms =
-                        SUM(x.max_duration_ms)
+                    total_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(qsws.total_query_wait_time_ms), ''N0'')'
+                        ELSE N'SUM(qsws.total_query_wait_time_ms)'
+                    END
+                    + N',
+                    total_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(x.total_duration_ms), ''N0'')'
+                        ELSE N'SUM(x.total_duration_ms)'
+                    END
+                    + N',
+                    avg_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(qsws.avg_query_wait_time_ms), ''N0'')'
+                        ELSE N'SUM(qsws.avg_query_wait_time_ms)'
+                    END
+                    + N',
+                    avg_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(x.avg_duration_ms), ''N0'')'
+                        ELSE N'SUM(x.avg_duration_ms)'
+                    END
+                    + N',
+                    last_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(qsws.last_query_wait_time_ms), ''N0'')'
+                        ELSE N'SUM(qsws.last_query_wait_time_ms)'
+                    END
+                    + N',
+                    last_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(x.last_duration_ms), ''N0'')'
+                        ELSE N'SUM(x.last_duration_ms)'
+                    END
+                    + N',
+                    min_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(qsws.min_query_wait_time_ms), ''N0'')'
+                        ELSE N'SUM(qsws.min_query_wait_time_ms)'
+                    END
+                    + N',
+                    min_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(x.min_duration_ms), ''N0'')'
+                        ELSE N'SUM(x.min_duration_ms)'
+                    END
+                    + N',
+                    max_query_wait_time_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(qsws.max_query_wait_time_ms), ''N0'')'
+                        ELSE N'SUM(qsws.max_query_wait_time_ms)'
+                    END
+                    + N',
+                    max_query_duration_ms = '
+                    +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(SUM(x.max_duration_ms), ''N0'')'
+                        ELSE N'SUM(x.max_duration_ms)'
+                    END
+                    + N'
                 FROM #query_store_wait_stats AS qsws
                 CROSS APPLY
                 (
@@ -9086,9 +9439,19 @@ BEGIN
                     qsws.database_id
                 ORDER BY
                     SUM(qsws.total_query_wait_time_ms) DESC
-                OPTION(RECOMPILE);
+                OPTION(RECOMPILE);'
+                );
+                
+                IF @debug = 1
+                BEGIN
+                    PRINT LEN(@sql);
+                    PRINT @sql;
+                END;
+                
+                EXECUTE sys.sp_executesql
+                    @sql;
 
-            END; /*End unformatted wait stats*/
+            END;
             ELSE
             BEGIN
                 SELECT
@@ -9235,25 +9598,9 @@ BEGIN
         EXECUTE sys.sp_executesql
             @sql;
     END;
-END; /*End expert mode format output = 0*/
-
-/*
-Return special things, formatted
+/* 
+Continue with code for special things
 */
-IF
-(
-    (
-        @expert_mode = 1
-      OR
-      (
-           @only_queries_with_hints = 1
-        OR @only_queries_with_feedback = 1
-        OR @only_queries_with_variants = 1
-      )
-    )
-AND @format_output = 1
-)
-BEGIN
     IF @sql_2022_views = 1
     BEGIN
         IF @expert_mode = 1
@@ -9590,131 +9937,11 @@ BEGIN
         END;
     END;
 
-    IF @new = 1
-    BEGIN
-        IF EXISTS
-           (
-               SELECT
-                   1/0
-                FROM #query_store_wait_stats AS qsws
-           )
-        AND @expert_mode = 1
-        BEGIN
-            SELECT
-                @current_table = 'selecting wait stats by query';
+    /*
+    Wait stats sections have already been handled above with dynamic SQL
+    */
 
-            SELECT
-                source =
-                    'query_store_wait_stats_by_query',
-                database_name =
-                    DB_NAME(qsws.database_id),
-                qsws.plan_id,
-                x.object_name,
-                qsws.wait_category_desc,
-                total_query_wait_time_ms =
-                    FORMAT(qsws.total_query_wait_time_ms, 'N0'),
-                total_query_duration_ms =
-                    FORMAT(x.total_duration_ms, 'N0'),
-                avg_query_wait_time_ms =
-                    FORMAT(qsws.avg_query_wait_time_ms, 'N0'),
-                avg_query_duration_ms =
-                    FORMAT(x.avg_duration_ms, 'N0'),
-                last_query_wait_time_ms =
-                    FORMAT(qsws.last_query_wait_time_ms, 'N0'),
-                last_query_duration_ms =
-                    FORMAT(x.last_duration_ms, 'N0'),
-                min_query_wait_time_ms =
-                    FORMAT(qsws.min_query_wait_time_ms, 'N0'),
-                min_query_duration_ms =
-                    FORMAT(x.min_duration_ms, 'N0'),
-                max_query_wait_time_ms =
-                    FORMAT(qsws.max_query_wait_time_ms, 'N0'),
-                max_query_duration_ms =
-                    FORMAT(x.max_duration_ms, 'N0')
-            FROM #query_store_wait_stats AS qsws
-            CROSS APPLY
-            (
-                SELECT
-                    qsrs.avg_duration_ms,
-                    qsrs.last_duration_ms,
-                    qsrs.min_duration_ms,
-                    qsrs.max_duration_ms,
-                    qsrs.total_duration_ms,
-                    qsq.object_name
-                FROM #query_store_runtime_stats AS qsrs
-                JOIN #query_store_plan AS qsp
-                  ON  qsrs.plan_id = qsp.plan_id
-                  AND qsrs.database_id = qsp.database_id
-                JOIN #query_store_query AS qsq
-                  ON  qsp.query_id = qsq.query_id
-                  AND qsp.database_id = qsq.database_id
-                WHERE qsws.plan_id = qsrs.plan_id
-                AND   qsws.database_id = qsrs.database_id
-            ) AS x
-            ORDER BY
-                qsws.plan_id,
-                qsws.total_query_wait_time_ms DESC
-            OPTION(RECOMPILE);
-
-            SELECT
-                @current_table = 'selecting wait stats in total';
-
-            SELECT
-                source =
-                    'query_store_wait_stats_total',
-                database_name =
-                    DB_NAME(qsws.database_id),
-                qsws.wait_category_desc,
-                total_query_wait_time_ms =
-                    FORMAT(SUM(qsws.total_query_wait_time_ms), 'N0'),
-                total_query_duration_ms =
-                    FORMAT(SUM(x.total_duration_ms), 'N0'),
-                avg_query_wait_time_ms =
-                    FORMAT(SUM(qsws.avg_query_wait_time_ms), 'N0'),
-                avg_query_duration_ms =
-                    FORMAT(SUM(x.avg_duration_ms), 'N0'),
-                last_query_wait_time_ms =
-                    FORMAT(SUM(qsws.last_query_wait_time_ms), 'N0'),
-                last_query_duration_ms =
-                    FORMAT(SUM(x.last_duration_ms), 'N0'),
-                min_query_wait_time_ms =
-                    FORMAT(SUM(qsws.min_query_wait_time_ms), 'N0'),
-                min_query_duration_ms =
-                    FORMAT(SUM(x.min_duration_ms), 'N0'),
-                max_query_wait_time_ms =
-                    FORMAT(SUM(qsws.max_query_wait_time_ms), 'N0'),
-                max_query_duration_ms =
-                    FORMAT(SUM(x.max_duration_ms), 'N0')
-            FROM #query_store_wait_stats AS qsws
-            CROSS APPLY
-            (
-                SELECT
-                    qsrs.avg_duration_ms,
-                    qsrs.last_duration_ms,
-                    qsrs.min_duration_ms,
-                    qsrs.max_duration_ms,
-                    qsrs.total_duration_ms,
-                    qsq.object_name
-                FROM #query_store_runtime_stats AS qsrs
-                JOIN #query_store_plan AS qsp
-                  ON  qsrs.plan_id = qsp.plan_id
-                  AND qsrs.database_id = qsp.database_id
-                JOIN #query_store_query AS qsq
-                  ON  qsp.query_id = qsq.query_id
-                  AND qsp.database_id = qsq.database_id
-                WHERE qsws.plan_id = qsrs.plan_id
-                AND   qsws.database_id = qsrs.database_id
-            ) AS x
-            GROUP BY
-                qsws.wait_category_desc,
-                qsws.database_id
-            ORDER BY
-                SUM(qsws.total_query_wait_time_ms) DESC
-            OPTION(RECOMPILE);
-
-        END;
-
-    END; /*End wait stats, format output = 1*/
+    END; /*End wait stats queries*/
     ELSE
     BEGIN
         SELECT
@@ -9785,87 +10012,12 @@ BEGIN
         END;
     END;
 
-    IF @expert_mode = 1
-    BEGIN
-        SELECT
-            @current_table = 'selecting query store options',
-            @sql = N'';
-
-        SELECT
-            @sql +=
-        CONVERT
-        (
-            nvarchar(MAX),
-            N'
-        SELECT
-            source =
-                ''query_store_options'',
-            database_name =
-                DB_NAME(dqso.database_id),
-            dqso.desired_state_desc,
-            dqso.actual_state_desc,
-            dqso.readonly_reason,
-            current_storage_size_mb =
-                FORMAT(dqso.current_storage_size_mb, ''N0''),
-            flush_interval_seconds =
-                FORMAT(dqso.flush_interval_seconds, ''N0''),
-            interval_length_minutes =
-                FORMAT(dqso.interval_length_minutes, ''N0''),
-            max_storage_size_mb =
-                FORMAT(dqso.max_storage_size_mb, ''N0''),
-            dqso.stale_query_threshold_days,
-            max_plans_per_query =
-                FORMAT(dqso.max_plans_per_query, ''N0''),
-            dqso.query_capture_mode_desc,'
-            +
-            CASE
-                WHEN
-                (
-                    @azure = 1
-                    OR @product_version > 13
-                )
-                THEN N'
-            dqso.wait_stats_capture_mode_desc,'
-                ELSE N''
-            END
-            +
-            CASE
-                WHEN
-                (
-                     @azure = 1
-                  OR @product_version > 14
-                )
-                THEN N'
-            capture_policy_execution_count =
-                FORMAT(dqso.capture_policy_execution_count, ''N0''),
-            capture_policy_total_compile_cpu_time_ms =
-                FORMAT(dqso.capture_policy_total_compile_cpu_time_ms, ''N0''),
-            capture_policy_total_execution_cpu_time_ms =
-               FORMAT(dqso.capture_policy_total_execution_cpu_time_ms, ''N0''),
-            capture_policy_stale_threshold_hours =
-                FORMAT(dqso.capture_policy_stale_threshold_hours, ''N0''),'
-                ELSE N''
-            END
-            );
-
-        SELECT
-            @sql += N'
-            dqso.size_based_cleanup_mode_desc
-        FROM #database_query_store_options AS dqso
-        OPTION(RECOMPILE);';
-
-
-        IF @debug = 1
-        BEGIN
-            PRINT LEN(@sql);
-            PRINT @sql;
-        END;
-
-        EXECUTE sys.sp_executesql
-            @sql;
+    /*
+    Query store options section has already been handled with dynamic SQL above
+    */
     END;
 
-END; /*End expert mode = 1, format output = 1*/
+END; /*End special output section*/
 
 IF @query_store_trouble = 1
 BEGIN
