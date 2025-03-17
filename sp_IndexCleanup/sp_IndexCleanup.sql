@@ -24,8 +24,8 @@ ALTER PROCEDURE
     @min_size_gb decimal(10,2) = 0,
     @min_rows bigint = 0,
     @get_all_databases bit = 0, /* When 1, analyzes all eligible databases on the server */
-    @include_databases nvarchar(MAX) = NULL, /* Comma-separated list of databases to include (used with @get_all_databases = 1) */
-    @exclude_databases nvarchar(MAX) = NULL, /* Comma-separated list of databases to exclude (used with @get_all_databases = 1) */
+    @include_databases nvarchar(max) = NULL, /* Comma-separated list of databases to include (used with @get_all_databases = 1) */
+    @exclude_databases nvarchar(max) = NULL, /* Comma-separated list of databases to exclude (used with @get_all_databases = 1) */
     @help bit = 'false',
     @debug bit = 'false',
     @version varchar(20) = NULL OUTPUT,
@@ -267,12 +267,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM sys.dm_os_sys_info AS osi
         ),
         /* Variables for multi-database processing */
-        @database_cursor cursor,
+        @database_cursor CURSOR,
         @current_database_id integer,
         @current_database_name sysname,
         @database_count integer = 0,
         @processed_count integer = 0,
-        @db_list nvarchar(MAX) = N'',
+        @db_list nvarchar(max) = N'',
         @include_xml xml = N'',
         @exclude_xml xml = N'',
         @conflict_list nvarchar(max) = N'',
@@ -286,14 +286,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1 
                 ELSE 0 
             END;
-
-    /*
-    Initial checks for object validity
-    */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
-    END;
 
     /*
     Temp tables!
@@ -637,7 +629,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 database_name = 
                     LTRIM(RTRIM(t.i.value('.', 'sysname')))
             FROM @include_xml.nodes('/i') AS t(i)
-            WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> '';
+            WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
+            OPTION(RECOMPILE);
 
             /* Check for databases in both include and exclude lists */
             IF @exclude_databases IS NOT NULL
@@ -671,7 +664,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             1/0 
                         FROM #database_list AS dl 
                         WHERE dl.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
-                    );
+                    )
+                OPTION(RECOMPILE);;
                 
                 /* If we found any conflicts, raise an error */
                 IF LEN(@conflict_list) > 0
@@ -704,7 +698,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             /* Get all eligible databases for Azure SQL */
             INSERT INTO 
-                #databases_to_process 
+                #databases_to_process
+            WITH
+                (TABLOCK)
             (
                 database_id, 
                 database_name
@@ -723,13 +719,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* If include list is provided, only keep databases in that list */
                 (@include_databases IS NULL) OR 
                 (d.name IN (SELECT database_name FROM #database_list))
-            );
+            )
+            OPTION(RECOMPILE);
         END
         ELSE /* Regular SQL Server */
         BEGIN
             /* Get all eligible databases with AG primary replica check */
             INSERT INTO 
                 #databases_to_process 
+            WITH
+                (TABLOCK)
             (
                 database_id, 
                 database_name
@@ -761,7 +760,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* If include list is provided, only keep databases in that list */
                 (@include_databases IS NULL) OR 
                 (d.name IN (SELECT database_name FROM #database_list))
-            );
+            )
+            OPTION(RECOMPILE);;
         END;
 
         /* Remove excluded databases if specified */
@@ -779,7 +779,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 FROM @exclude_xml.nodes('/i') AS t(i)
                 WHERE dp.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
                 AND   LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
-            );
+            )
+            OPTION(RECOMPILE);;
         END;
 
         IF @debug = 1
@@ -799,7 +800,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N', '
             FROM #databases_to_process AS dtp
             ORDER BY 
-                dtp.database_name;
+                dtp.database_name
+            OPTION(RECOMPILE);;
             
             /* Remove trailing comma if list is not empty */
             IF LEN(@db_list) > 0
@@ -815,6 +817,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             INSERT
                 #skipped_databases
+            WITH
+                (TABLOCK)
             (
                 database_name,
                 reason
@@ -851,7 +855,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                           1/0 
                       FROM #databases_to_process AS dp
                       WHERE dp.database_name = dl.database_name
-                  );
+                  )
+            OPTION(RECOMPILE);
         END;
         
         /* Also track explicitly excluded databases */
@@ -859,6 +864,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             INSERT
                 #skipped_databases
+            WITH
+                (TABLOCK)
             (
                 database_name,
                 reason
@@ -879,7 +886,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     1/0
                 FROM sys.databases AS d
                 WHERE d.name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
-            );
+            )
+            OPTION(RECOMPILE);;
         END;
 
         /* If no databases match criteria, exit */
@@ -917,6 +925,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             INSERT INTO 
                 #databases_to_process 
+            WITH
+                (TABLOCK)
             (
                 database_id, 
                 database_name
@@ -946,7 +956,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT 
             @database_id = database_id, 
             @database_name = database_name 
-        FROM #databases_to_process;
+        FROM #databases_to_process
+        OPTION(RECOMPILE);
     END;
     
     /*
@@ -955,7 +966,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @get_all_databases = 1
     BEGIN
         /* Get the count of databases for reporting */
-        SELECT @database_count = COUNT_BIG(*) 
+        SELECT 
+            @database_count = COUNT_BIG(*) 
         FROM #databases_to_process AS dtp
         OPTION(RECOMPILE);
                 
@@ -978,7 +990,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #databases_to_process AS dtp
         WHERE dtp.processed = 0
         ORDER BY 
-            dtp.database_name;
+            dtp.database_name
+        OPTION(RECOMPILE);
 
         OPEN @database_cursor;
         FETCH NEXT 
@@ -1020,6 +1033,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             IF @debug = 1
             BEGIN
                 RAISERROR('Processing database %s', 0, 0, @database_name) WITH NOWAIT;
+            END;
+
+            /* Checking parameters */
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
             END;
 
             /* Continue with current database processing without recreating temp tables */
@@ -1220,7 +1239,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OR 
             SUM(ius.user_updates) >= @min_writes
     )
-    OPTION(RECOMPILE);';
+    OPTION(RECOMPILE);
+    ';
 
     IF @debug = 1
     BEGIN
@@ -1451,7 +1471,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         t.name,
         os.index_id,
         i.name
-    OPTION(RECOMPILE);';
+    OPTION(RECOMPILE);
+    ';
 
     IF @debug = 1
     BEGIN
@@ -1633,7 +1654,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN ' + QUOTENAME(@database_name) + 
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'.sys.columns AS c
       ON  ic.object_id = c.object_id
       AND ic.column_id = c.column_id
@@ -1661,7 +1682,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ) + QUOTENAME(@database_name) + 
         CONVERT
         (
-            nvarchar(MAX), 
+            nvarchar(max), 
             N'.sys.dm_db_partition_stats ps
         WHERE ps.object_id = t.object_id
         AND   ps.index_id = 1
@@ -1689,7 +1710,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND   so.is_ms_shipped = 0
           AND   so.type = N''TF''
     )
-    OPTION(RECOMPILE);'
+    OPTION(RECOMPILE);
+    '
         );
 
     IF @debug = 1
@@ -1898,7 +1920,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   ''''
                 )
     ) AS pc
-    OPTION(RECOMPILE);';
+    OPTION(RECOMPILE);
+    ';
 
     IF @debug = 1
     BEGIN
@@ -2662,7 +2685,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  ia.database_id = kss.database_id
       AND ia.object_id = kss.object_id
       AND ia.index_id = kss.index_id
-    WHERE ia.action = N'MERGE INCLUDES';
+    WHERE ia.action = N'MERGE INCLUDES'
+    OPTION(RECOMPILE);
 
     IF @debug = 1
     BEGIN
@@ -2713,8 +2737,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #index_analysis AS ia1
     WHERE ia1.consolidation_rule IS NULL /* Not already processed */
-    AND ia1.action IS NULL /* Not already processed by earlier rules */
-    AND EXISTS 
+    AND   ia1.action IS NULL /* Not already processed by earlier rules */
+    AND   EXISTS 
     (
         /* Find nonclustered indexes */
         SELECT 
@@ -2725,7 +2749,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id1.index_id = ia1.index_id
         AND   id1.is_eligible_for_dedupe = 1
     )
-    AND EXISTS 
+    AND   EXISTS 
     (
         /* Find unique constraints with matching key columns */
         SELECT 
@@ -3108,7 +3132,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             STUFF
             (
               (
-                SELECT DISTINCT
+                SELECT
                     N', ' + 
                     inner_ia.index_name
                 FROM #index_analysis AS inner_ia
@@ -3118,6 +3142,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   ISNULL(inner_ia.filter_definition, '') = ISNULL(ia.filter_definition, '')
                 AND   inner_ia.action = N'MERGE INCLUDES'
                 AND   inner_ia.consolidation_rule = N'Key Duplicate'
+                GROUP BY
+                    inner_ia.index_name
                 ORDER BY 
                     inner_ia.index_name
                 FOR 
@@ -3172,7 +3198,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         REPLACE
         (
             kdd.index_list, 
-            ia.index_name + N', ', N''
+            ia.index_name + 
+            N', ', 
+            N''
         ) /* Remove self from list if present */
     FROM #index_analysis AS ia
     JOIN #key_duplicate_dedupe AS kdd
@@ -3308,6 +3336,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     INSERT INTO 
         #index_cleanup_results
+    WITH
+        (TABLOCK)
     (
         result_type,
         sort_order,
@@ -3555,6 +3585,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     INSERT INTO 
         #index_cleanup_results
+    WITH
+        (TABLOCK)
     (
         result_type,
         sort_order,
@@ -3668,6 +3700,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     INSERT INTO 
         #index_cleanup_results
+    WITH
+        (TABLOCK)
     (
         result_type,
         sort_order,
@@ -3790,6 +3824,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Insert KEPT indexes into results */
     INSERT INTO 
         #index_cleanup_results
+    WITH
+        (TABLOCK)
     (
         result_type,
         sort_order,
@@ -3867,6 +3903,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     INSERT INTO 
         #index_cleanup_results
+    WITH
+        (TABLOCK)
     (
         result_type,
         sort_order,
@@ -3942,6 +3980,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     INSERT INTO 
         #index_cleanup_results
+    WITH
+        (TABLOCK)
     (
         result_type,
         sort_order,
@@ -4259,6 +4299,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     INSERT INTO 
         #index_reporting_stats
+    WITH
+        (TABLOCK)
     (
         summary_level,
         database_name,
@@ -4395,6 +4437,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     INSERT INTO 
         #index_reporting_stats
+    WITH
+        (TABLOCK)
     (
         summary_level,
         database_name,
