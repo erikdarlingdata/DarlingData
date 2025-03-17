@@ -8688,91 +8688,14 @@ BEGIN
             END;
 
         /*
-        Handle query_store_query_hints
+        Query hints section has been consolidated with the dynamic SQL section below
+        that handles formatting differences
         */
-        IF EXISTS
-        (
-            SELECT
-                1/0
-            FROM #query_store_query_hints AS qsqh
-        )
-        BEGIN
-            SELECT
-                @current_table = 'selecting query hints';
-            
-            SET @sql = N'';
-            
-            SELECT
-                @sql =
-            CONVERT
-            (
-                nvarchar(MAX),
-                N'
-            SELECT
-                database_name =
-                    DB_NAME(qsqh.database_id),
-                qsqh.query_hint_id,
-                qsqh.query_id,
-                qsqh.query_hint_text,
-                qsqh.last_query_hint_failure_reason_desc,
-                query_hint_failure_count = '
-                +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqh.query_hint_failure_count, ''N0'')'
-                    ELSE N'qsqh.query_hint_failure_count'
-                END
-                + N',
-                qsqh.source_desc
-            FROM #query_store_query_hints AS qsqh
-            ORDER BY
-                qsqh.query_id
-            OPTION(RECOMPILE);'
-            );
-            
-            IF @debug = 1
-            BEGIN
-                PRINT LEN(@sql);
-                PRINT @sql;
-            END;
-            
-            EXECUTE sys.sp_executesql
-                @sql;
-        END;
-        ELSE
-        BEGIN
-            SELECT
-                result = '#query_store_query_hints is empty';
-        END;
 
-        IF @expert_mode = 1
-        BEGIN
-            IF EXISTS
-            (
-                SELECT
-                    1/0
-                FROM #query_store_query_variant AS qsqv
-            )
-            BEGIN
-                SELECT
-                    @current_table = 'selecting query variants';
-
-                SELECT
-                    database_name =
-                        DB_NAME(qsqv.database_id),
-                    qsqv.query_variant_query_id,
-                    qsqv.parent_query_id,
-                    qsqv.dispatcher_plan_id
-                FROM #query_store_query_variant AS qsqv
-                ORDER BY
-                    qsqv.parent_query_id
-                OPTION(RECOMPILE);
-            END;
-            ELSE
-            BEGIN
-                SELECT
-                    result = '#query_store_query_variant is empty';
-            END;
+        /*
+        Query variants section has been consolidated with the dynamic SQL section below
+        that handles formatting differences
+        */
         END;
     END;
 
