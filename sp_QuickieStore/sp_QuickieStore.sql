@@ -8676,56 +8676,10 @@ BEGIN
         */
         IF @sql_2022_views = 1
         BEGIN
-            IF EXISTS
-            (
-                SELECT
-                    1/0
-                FROM #query_store_plan_feedback AS qspf
-            )
-            BEGIN
-                SELECT
-                    @current_table = 'selecting plan feedback';
-
-                SELECT
-                    database_name =
-                        DB_NAME(qspf.database_id),
-                    qspf.plan_feedback_id,
-                    qspf.plan_id,
-                    qspf.feature_desc,
-                    qspf.feedback_data,
-                    qspf.state_desc,
-                    create_time =
-                        CASE
-                            WHEN @timezone IS NULL
-                            THEN
-                                SWITCHOFFSET
-                                (
-                                   qspf.create_time,
-                                   @utc_offset_string
-                                )
-                            WHEN @timezone IS NOT NULL
-                            THEN qspf.create_time AT TIME ZONE @timezone
-                        END,
-                    create_time_utc =
-                        qspf.create_time,
-                    last_updated_time =
-                        CASE
-                            WHEN @timezone IS NULL
-                            THEN
-                                SWITCHOFFSET
-                                (
-                                   qspf.last_updated_time,
-                                   @utc_offset_string
-                                )
-                            WHEN @timezone IS NOT NULL
-                            THEN qspf.last_updated_time AT TIME ZONE @timezone
-                        END,
-                    last_updated_time_utc =
-                        qspf.last_updated_time
-                FROM #query_store_plan_feedback AS qspf
-                ORDER BY
-                    qspf.plan_id
-                OPTION(RECOMPILE);
+            /*
+            Plan feedback section has been consolidated with the dynamic SQL section below
+            that handles formatting differences
+            */
             END;
             ELSE IF @only_queries_with_feedback = 1
             BEGIN
