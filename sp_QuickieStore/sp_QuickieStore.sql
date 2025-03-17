@@ -8901,7 +8901,8 @@ BEGIN
                         result = 'Availability Group information is empty';
                 END;
             END;
-        END; /*End 2022 views*/
+        END;
+    END; /*End 2022 views*/
 
     IF @expert_mode = 1
     BEGIN
@@ -9743,8 +9744,7 @@ BEGIN
             @sql;
     END;
 
-    END; 
-END; /*End Expert Mode*/;
+END; /*End Expert Mode*/
 
 IF @query_store_trouble = 1
 BEGIN
