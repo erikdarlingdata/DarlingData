@@ -8669,12 +8669,12 @@ BEGIN
     /*
     SQL 2022+ features: plan feedback, query hints, and query variants
     */
-    IF @expert_mode = 1
+    IF @sql_2022_views = 1
     BEGIN
         /*
         Handle query_store_plan_feedback
         */
-        IF @sql_2022_views = 1
+        IF @expert_mode = 1 OR @only_queries_with_feedback = 1
         BEGIN
             IF EXISTS
                (
@@ -8746,64 +8746,69 @@ BEGIN
                   N'@timezone sysname, @utc_offset_string nvarchar(max)',
                     @timezone, @utc_offset_string;
             END;
-            ELSE
+            ELSE IF @only_queries_with_feedback = 1
             BEGIN
                 SELECT
                     result = '#query_store_plan_feedback is empty';
             END;
         
-        IF EXISTS
-           (
-               SELECT
-                   1/0
-               FROM #query_store_query_hints AS qsqh
-           )
+        IF @expert_mode = 1 OR @only_queries_with_hints = 1
         BEGIN
-            SELECT
-                @current_table = 'selecting query hints';
-                
-            /*
-            Use dynamic SQL to handle formatting differences based on @format_output
-            */
-            SELECT
-                @sql = @isolation_level;
-                
-            SELECT
-                @sql += N'
-            SELECT
-                database_name =
-                    DB_NAME(qsqh.database_id),
-                qsqh.query_hint_id,
-                qsqh.query_id,
-                qsqh.query_hint_text,
-                qsqh.last_query_hint_failure_reason_desc,
-                query_hint_failure_count = ' +
-                CASE 
-                    WHEN @format_output = 1
-                    THEN N'FORMAT(qsqh.query_hint_failure_count, ''N0'')'
-                    ELSE N'qsqh.query_hint_failure_count'
-                END + N',
-                qsqh.source_desc
-            FROM #query_store_query_hints AS qsqh
-            ORDER BY
-                qsqh.query_id
-            OPTION(RECOMPILE);';
-            
-            IF @debug = 1
+            IF EXISTS
+               (
+                   SELECT
+                       1/0
+                   FROM #query_store_query_hints AS qsqh
+               )
             BEGIN
-                PRINT LEN(@sql);
-                PRINT @sql;
+                SELECT
+                    @current_table = 'selecting query hints';
+                    
+                /*
+                Use dynamic SQL to handle formatting differences based on @format_output
+                */
+                SELECT
+                    @sql = @isolation_level;
+                    
+                SELECT
+                    @sql += N'
+                SELECT
+                    database_name =
+                        DB_NAME(qsqh.database_id),
+                    qsqh.query_hint_id,
+                    qsqh.query_id,
+                    qsqh.query_hint_text,
+                    qsqh.last_query_hint_failure_reason_desc,
+                    query_hint_failure_count = ' +
+                    CASE 
+                        WHEN @format_output = 1
+                        THEN N'FORMAT(qsqh.query_hint_failure_count, ''N0'')'
+                        ELSE N'qsqh.query_hint_failure_count'
+                    END + N',
+                    qsqh.source_desc
+                FROM #query_store_query_hints AS qsqh
+                ORDER BY
+                    qsqh.query_id
+                OPTION(RECOMPILE);';
+                
+                IF @debug = 1
+                BEGIN
+                    PRINT LEN(@sql);
+                    PRINT @sql;
+                END;
+                
+                EXECUTE sys.sp_executesql
+                    @sql;
             END;
-            
-            EXECUTE sys.sp_executesql
-                @sql;
-        END;
-        ELSE
-        BEGIN
-            SELECT
-                result = '#query_store_query_hints is empty';
+            ELSE IF @only_queries_with_hints = 1
+            BEGIN
+                SELECT
+                    result = '#query_store_query_hints is empty';
+            END;
         END;        
         
+        IF @expert_mode = 1 OR @only_queries_with_variants = 1
+        BEGIN
             IF EXISTS
                (
                    SELECT
@@ -8842,58 +8847,57 @@ BEGIN
                 EXECUTE sys.sp_executesql
                     @sql;
             END;
-            ELSE
+            ELSE IF @only_queries_with_variants = 1
             BEGIN
                 SELECT
                     result = '#query_store_query_variant is empty';
             END;
+        END;
 
-            IF
-            (
-                @sql_2022_views = 1
-            AND @ags_present = 1
-            )
+        IF
+        (
+            @sql_2022_views = 1
+        AND @ags_present = 1
+        )
+        BEGIN
+            IF @expert_mode = 1
             BEGIN
-                IF @expert_mode = 1
+                IF EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #query_store_replicas AS qsr
+                    JOIN #query_store_plan_forcing_locations AS qspfl
+                      ON  qsr.replica_group_id = qspfl.replica_group_id
+                      AND qsr.database_id = qspfl.database_id
+                )
                 BEGIN
-                    IF EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #query_store_replicas AS qsr
-                        JOIN #query_store_plan_forcing_locations AS qspfl
-                          ON  qsr.replica_group_id = qspfl.replica_group_id
-                          AND qsr.database_id = qspfl.database_id
-                    )
-                    BEGIN
-                        SELECT
-                            @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
-            
-                        SELECT
-                            database_name =
-                                DB_NAME(qsr.database_id),
-                            qsr.replica_group_id,
-                            qsr.role_type,
-                            qsr.replica_name,
-                            qspfl.plan_forcing_location_id,
-                            qspfl.query_id,
-                            qspfl.plan_id,
-                            qspfl.replica_group_id
-                        FROM #query_store_replicas AS qsr
-                        JOIN #query_store_plan_forcing_locations AS qspfl
-                          ON qsr.replica_group_id = qspfl.replica_group_id
-                        ORDER BY
-                            qsr.replica_group_id
-                        OPTION(RECOMPILE);;
-                    END;
-                    ELSE
-                        BEGIN
-                            SELECT
-                                result = 'Availability Group information is empty';
-                    END;
+                    SELECT
+                        @current_table = 'selecting #query_store_replicas and #query_store_plan_forcing_locations';
+        
+                    SELECT
+                        database_name =
+                            DB_NAME(qsr.database_id),
+                        qsr.replica_group_id,
+                        qsr.role_type,
+                        qsr.replica_name,
+                        qspfl.plan_forcing_location_id,
+                        qspfl.query_id,
+                        qspfl.plan_id,
+                        qspfl.replica_group_id
+                    FROM #query_store_replicas AS qsr
+                    JOIN #query_store_plan_forcing_locations AS qspfl
+                      ON qsr.replica_group_id = qspfl.replica_group_id
+                    ORDER BY
+                        qsr.replica_group_id
+                    OPTION(RECOMPILE);
+                END;
+                ELSE
+                BEGIN
+                    SELECT
+                        result = 'Availability Group information is empty';
                 END;
             END;
-        
         END; /*End 2022 views*/
 
     IF @expert_mode = 1
