@@ -9735,14 +9735,22 @@ Continue with code for special things
         BEGIN
             SELECT
                 @current_table = 'selecting compilation stats';
-
+                
+            /*
+            Use dynamic SQL to handle formatting differences based on @format_output
+            */
+            SELECT
+                @sql = @isolation_level;
+                
+            SELECT
+                @sql += N'
             SELECT
                 x.*
             FROM
             (
                 SELECT
                     source =
-                        'compilation_stats',
+                        ''compilation_stats'',
                     database_name =
                         DB_NAME(qsq.database_id),
                     qsq.query_id,
@@ -9791,46 +9799,126 @@ Continue with code for special things
                         END,
                     last_execution_time_utc =
                         qsq.last_execution_time,
-                    count_compiles =
-                        FORMAT(qsq.count_compiles, 'N0'),
-                    avg_compile_duration_ms =
-                        FORMAT(qsq.avg_compile_duration_ms, 'N0'),
-                    total_compile_duration_ms =
-                        FORMAT(qsq.total_compile_duration_ms, 'N0'),
-                    last_compile_duration_ms =
-                        FORMAT(qsq.last_compile_duration_ms, 'N0'),
-                    avg_bind_duration_ms =
-                        FORMAT(qsq.avg_bind_duration_ms, 'N0'),
-                    total_bind_duration_ms =
-                        FORMAT(qsq.total_bind_duration_ms, 'N0'),
-                    last_bind_duration_ms =
-                        FORMAT(qsq.last_bind_duration_ms, 'N0'),
-                    avg_bind_cpu_time_ms =
-                        FORMAT(qsq.avg_bind_cpu_time_ms, 'N0'),
-                    total_bind_cpu_time_ms =
-                        FORMAT(qsq.total_bind_cpu_time_ms, 'N0'),
-                    last_bind_cpu_time_ms =
-                        FORMAT(qsq.last_bind_cpu_time_ms, 'N0'),
-                    avg_optimize_duration_ms =
-                        FORMAT(qsq.avg_optimize_duration_ms, 'N0'),
-                    total_optimize_duration_ms =
-                        FORMAT(qsq.total_optimize_duration_ms, 'N0'),
-                    last_optimize_duration_ms =
-                        FORMAT(qsq.last_optimize_duration_ms, 'N0'),
-                    avg_optimize_cpu_time_ms =
-                        FORMAT(qsq.avg_optimize_cpu_time_ms, 'N0'),
-                    total_optimize_cpu_time_ms =
-                        FORMAT(qsq.total_optimize_cpu_time_ms, 'N0'),
-                    last_optimize_cpu_time_ms =
-                        FORMAT(qsq.last_optimize_cpu_time_ms, 'N0'),
-                    avg_compile_memory_mb =
-                        FORMAT(qsq.avg_compile_memory_mb, 'N0'),
-                    total_compile_memory_mb =
-                        FORMAT(qsq.total_compile_memory_mb, 'N0'),
-                    last_compile_memory_mb =
-                        FORMAT(qsq.last_compile_memory_mb, 'N0'),
-                    max_compile_memory_mb =
-                        FORMAT(qsq.max_compile_memory_mb, 'N0'),
+                    count_compiles = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.count_compiles, ''N0'')'
+                            ELSE N'qsq.count_compiles'
+                        END + N',
+                    avg_compile_duration_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.avg_compile_duration_ms, ''N0'')'
+                            ELSE N'qsq.avg_compile_duration_ms'
+                        END + N',
+                    total_compile_duration_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.total_compile_duration_ms, ''N0'')'
+                            ELSE N'qsq.total_compile_duration_ms'
+                        END + N',
+                    last_compile_duration_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.last_compile_duration_ms, ''N0'')'
+                            ELSE N'qsq.last_compile_duration_ms'
+                        END + N',
+                    avg_bind_duration_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.avg_bind_duration_ms, ''N0'')'
+                            ELSE N'qsq.avg_bind_duration_ms'
+                        END + N',
+                    total_bind_duration_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.total_bind_duration_ms, ''N0'')'
+                            ELSE N'qsq.total_bind_duration_ms'
+                        END + N',
+                    last_bind_duration_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.last_bind_duration_ms, ''N0'')'
+                            ELSE N'qsq.last_bind_duration_ms'
+                        END + N',
+                    avg_bind_cpu_time_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.avg_bind_cpu_time_ms, ''N0'')'
+                            ELSE N'qsq.avg_bind_cpu_time_ms'
+                        END + N',
+                    total_bind_cpu_time_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.total_bind_cpu_time_ms, ''N0'')'
+                            ELSE N'qsq.total_bind_cpu_time_ms'
+                        END + N',
+                    last_bind_cpu_time_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.last_bind_cpu_time_ms, ''N0'')'
+                            ELSE N'qsq.last_bind_cpu_time_ms'
+                        END + N',
+                    avg_optimize_duration_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.avg_optimize_duration_ms, ''N0'')'
+                            ELSE N'qsq.avg_optimize_duration_ms'
+                        END + N',
+                    total_optimize_duration_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.total_optimize_duration_ms, ''N0'')'
+                            ELSE N'qsq.total_optimize_duration_ms'
+                        END + N',
+                    last_optimize_duration_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.last_optimize_duration_ms, ''N0'')'
+                            ELSE N'qsq.last_optimize_duration_ms'
+                        END + N',
+                    avg_optimize_cpu_time_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.avg_optimize_cpu_time_ms, ''N0'')'
+                            ELSE N'qsq.avg_optimize_cpu_time_ms'
+                        END + N',
+                    total_optimize_cpu_time_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.total_optimize_cpu_time_ms, ''N0'')'
+                            ELSE N'qsq.total_optimize_cpu_time_ms'
+                        END + N',
+                    last_optimize_cpu_time_ms = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.last_optimize_cpu_time_ms, ''N0'')'
+                            ELSE N'qsq.last_optimize_cpu_time_ms'
+                        END + N',
+                    avg_compile_memory_mb = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.avg_compile_memory_mb, ''N0'')'
+                            ELSE N'qsq.avg_compile_memory_mb'
+                        END + N',
+                    total_compile_memory_mb = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.total_compile_memory_mb, ''N0'')'
+                            ELSE N'qsq.total_compile_memory_mb'
+                        END + N',
+                    last_compile_memory_mb = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.last_compile_memory_mb, ''N0'')'
+                            ELSE N'qsq.last_compile_memory_mb'
+                        END + N',
+                    max_compile_memory_mb = ' +
+                        CASE 
+                            WHEN @format_output = 1
+                            THEN N'FORMAT(qsq.max_compile_memory_mb, ''N0'')'
+                            ELSE N'qsq.max_compile_memory_mb'
+                        END + N',
                     qsq.query_hash,
                     qsq.batch_sql_handle,
                     qsqt.statement_sql_handle,
@@ -9858,9 +9946,20 @@ Continue with code for special things
             WHERE x.n = 1
             ORDER BY
                 x.query_id
-            OPTION(RECOMPILE);
+            OPTION(RECOMPILE);';
+            
+            IF @debug = 1
+            BEGIN
+                PRINT LEN(@sql);
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql
+                @sql,
+              N'@timezone sysname, @utc_offset_string nvarchar(max)',
+                @timezone, @utc_offset_string;
 
-        END; /*End query store query, format output = 1*/
+        END; /*End compilation stats section*/
         ELSE
         BEGIN
             SELECT
@@ -9875,38 +9974,94 @@ Continue with code for special things
         BEGIN
             SELECT
                 @current_table = 'selecting resource stats';
-
+            
+            /*
+            Use dynamic SQL to handle formatting differences based on @format_output
+            */
+            SELECT
+                @sql = @isolation_level;
+            
+            SELECT
+                @sql += N'
             SELECT
                 source =
-                    'resource_stats',
+                    ''resource_stats'',
                 database_name =
                     DB_NAME(qsq.database_id),
                 qsq.query_id,
                 qsq.object_name,
-                total_grant_mb =
-                    FORMAT(qsqt.total_grant_mb, 'N0'),
-                last_grant_mb =
-                    FORMAT(qsqt.last_grant_mb, 'N0'),
-                min_grant_mb =
-                    FORMAT(qsqt.min_grant_mb, 'N0'),
-                max_grant_mb =
-                    FORMAT(qsqt.max_grant_mb, 'N0'),
-                total_used_grant_mb =
-                    FORMAT(qsqt.total_used_grant_mb, 'N0'),
-                last_used_grant_mb =
-                    FORMAT(qsqt.last_used_grant_mb, 'N0'),
-                min_used_grant_mb =
-                    FORMAT(qsqt.min_used_grant_mb, 'N0'),
-                max_used_grant_mb =
-                    FORMAT(qsqt.max_used_grant_mb, 'N0'),
-                total_ideal_grant_mb =
-                    FORMAT(qsqt.total_ideal_grant_mb, 'N0'),
-                last_ideal_grant_mb =
-                    FORMAT(qsqt.last_ideal_grant_mb, 'N0'),
-                min_ideal_grant_mb =
-                    FORMAT(qsqt.min_ideal_grant_mb, 'N0'),
-                max_ideal_grant_mb =
-                    FORMAT(qsqt.max_ideal_grant_mb, 'N0'),
+                total_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.total_grant_mb, ''N0'')'
+                    ELSE N'qsqt.total_grant_mb'
+                END + N',
+                last_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.last_grant_mb, ''N0'')'
+                    ELSE N'qsqt.last_grant_mb'
+                END + N',
+                min_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.min_grant_mb, ''N0'')'
+                    ELSE N'qsqt.min_grant_mb'
+                END + N',
+                max_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.max_grant_mb, ''N0'')'
+                    ELSE N'qsqt.max_grant_mb'
+                END + N',
+                total_used_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.total_used_grant_mb, ''N0'')'
+                    ELSE N'qsqt.total_used_grant_mb'
+                END + N',
+                last_used_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.last_used_grant_mb, ''N0'')'
+                    ELSE N'qsqt.last_used_grant_mb'
+                END + N',
+                min_used_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.min_used_grant_mb, ''N0'')'
+                    ELSE N'qsqt.min_used_grant_mb'
+                END + N',
+                max_used_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.max_used_grant_mb, ''N0'')'
+                    ELSE N'qsqt.max_used_grant_mb'
+                END + N',
+                total_ideal_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.total_ideal_grant_mb, ''N0'')'
+                    ELSE N'qsqt.total_ideal_grant_mb'
+                END + N',
+                last_ideal_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.last_ideal_grant_mb, ''N0'')'
+                    ELSE N'qsqt.last_ideal_grant_mb'
+                END + N',
+                min_ideal_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.min_ideal_grant_mb, ''N0'')'
+                    ELSE N'qsqt.min_ideal_grant_mb'
+                END + N',
+                max_ideal_grant_mb = ' +
+                CASE 
+                    WHEN @format_output = 1
+                    THEN N'FORMAT(qsqt.max_ideal_grant_mb, ''N0'')'
+                    ELSE N'qsqt.max_ideal_grant_mb'
+                END + N',
                 qsqt.total_reserved_threads,
                 qsqt.last_reserved_threads,
                 qsqt.min_reserved_threads,
@@ -9926,9 +10081,18 @@ Continue with code for special things
             )
             ORDER BY
                 qsq.query_id
-            OPTION(RECOMPILE);
+            OPTION(RECOMPILE);';
+            
+            IF @debug = 1
+            BEGIN
+                PRINT LEN(@sql);
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql
+                @sql;
 
-        END; /*End resource stats, format output = 1*/
+        END; /*End resource stats section*/
         ELSE
         BEGIN
             SELECT
