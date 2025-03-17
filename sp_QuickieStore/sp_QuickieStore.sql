@@ -8644,11 +8644,11 @@ OPTION(RECOMPILE);'
         @timezone;
 END; /*End runtime stats main query*/
 ELSE
-    BEGIN
-        SELECT
-            result =
-                '#query_store_runtime_stats is empty';
-    END;
+BEGIN
+    SELECT
+        result =
+            '#query_store_runtime_stats is empty';
+END;
 
 /*
 Return special things: plan feedback, query hints, query variants, query text, wait stats, and query store options
@@ -8674,7 +8674,8 @@ BEGIN
         /*
         Handle query_store_plan_feedback
         */
-        IF @expert_mode = 1 OR @only_queries_with_feedback = 1
+        IF @expert_mode = 1 
+        OR @only_queries_with_feedback = 1
         BEGIN
             IF EXISTS
                (
@@ -8752,7 +8753,8 @@ BEGIN
                     result = '#query_store_plan_feedback is empty';
             END;
         
-        IF @expert_mode = 1 OR @only_queries_with_hints = 1
+        IF @expert_mode = 1 
+        OR @only_queries_with_hints = 1
         BEGIN
             IF EXISTS
                (
@@ -8807,7 +8809,8 @@ BEGIN
             END;
         END;        
         
-        IF @expert_mode = 1 OR @only_queries_with_variants = 1
+        IF @expert_mode = 1 
+        OR @only_queries_with_variants = 1
         BEGIN
             IF EXISTS
                (
