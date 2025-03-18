@@ -2887,6 +2887,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Insert merge scripts for indexes */
     IF @debug = 1
     BEGIN
+        SELECT
+            table_name = '#index_analysis after all updates',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+
         RAISERROR('Generating #index_cleanup_results insert, MERGE', 0, 0) WITH NOWAIT;
     END;
 
