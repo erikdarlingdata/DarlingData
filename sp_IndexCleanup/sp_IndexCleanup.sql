@@ -4845,7 +4845,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
                 THEN FORMAT(ISNULL(irs.indexes_to_disable, 0), 'N0') /* Indexes that will be disabled based on analysis */
-                ELSE FORMAT(ISNULL(irs.unused_indexes, 0), 'N0') /* Unused indexes at database/table level */
+                ELSE FORMAT(ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0), 'N0') /* All removable indexes (unused + mergeable) */
             END,
         
         /* Show mergeable indexes across all levels */
@@ -4859,7 +4859,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN FORMAT(100.0 * ISNULL(irs.indexes_to_disable, 0) 
                      / NULLIF(irs.index_count, 0), 'N1') + '%'
                 WHEN irs.index_count > 0
-                THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0) 
+                THEN FORMAT(100.0 * (ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0))
                      / NULLIF(irs.index_count, 0), 'N1') + '%'
                 ELSE '0.0%'
             END,
@@ -4878,7 +4878,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
                 THEN FORMAT(ISNULL(irs.space_saved_gb, 0), 'N2')
-                ELSE FORMAT(ISNULL(irs.unused_size_gb, 0), 'N2')
+                /* Include size saved from both unused and mergeable indexes */
+                ELSE FORMAT(ISNULL(irs.unused_size_gb, 0) + ISNULL(irs.merged_size_gb, 0), 'N2')
             END,
             
         /* Space reduction percentage - added this as new metric */
@@ -4921,45 +4922,52 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         daily_write_ops_saved = 
             CASE
                 WHEN irs.summary_level <> 'SUMMARY'
-                THEN FORMAT
-                     (
-                         ISNULL
-                         (
-                             irs.user_updates / 
-                             NULLIF
+                THEN 
+                    /* For rows with any removable indexes (unused or mergeable), calculate estimated savings */
+                    CASE
+                        WHEN (ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0)) > 0
+                        THEN FORMAT
                              (
-                                 CONVERT
+                                 ISNULL
                                  (
-                                     decimal(10,2), 
+                                     irs.user_updates / 
+                                     NULLIF
                                      (
-                                       SELECT TOP (1) 
-                                           irs2.server_uptime_days 
-                                       FROM #index_reporting_stats AS irs2 
-                                       WHERE irs2.summary_level = 'DATABASE'
-                                     )
+                                         CONVERT
+                                         (
+                                             decimal(10,2), 
+                                             (
+                                               SELECT TOP (1) 
+                                                   irs2.server_uptime_days 
+                                               FROM #index_reporting_stats AS irs2 
+                                               WHERE irs2.summary_level = 'DATABASE'
+                                             )
+                                         ), 
+                                         0
+                                     ) * 
+                                     (
+                                       ISNULL
+                                       (
+                                           irs.unused_indexes + irs.indexes_to_merge, 
+                                           0
+                                       ) / 
+                                       NULLIF
+                                       (
+                                           CONVERT
+                                           (
+                                               decimal(10,2), 
+                                               irs.index_count
+                                           ), 
+                                           0
+                                       )
+                                     ), 
+                                     0
                                  ), 
-                                 0
-                             ) * 
-                             (
-                               ISNULL
-                               (
-                                   irs.unused_indexes, 
-                                   0
-                               ) / 
-                               NULLIF
-                               (
-                                   CONVERT
-                                   (
-                                       decimal(10,2), 
-                                       irs.index_count
-                                   ), 
-                                   0
-                               )
-                             ), 
-                             0
-                         ), 
-                         'N0'
-                     )
+                                 'N0'
+                             )
+                        /* Rows without removable indexes have no savings */
+                        ELSE '0'
+                    END
                 ELSE 'N/A'
             END,
         
@@ -4977,45 +4985,53 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         daily_lock_waits_saved = 
             CASE
                 WHEN irs.summary_level <> 'SUMMARY'
-                THEN FORMAT
-                     (
-                         ISNULL
-                         (
-                             (irs.row_lock_wait_count + irs.page_lock_wait_count) / 
-                             NULLIF
-                             (
-                                 CONVERT
-                                 (
-                                     decimal(10,2), 
-                                     (
-                                       SELECT TOP (1) 
-                                           irs2.server_uptime_days 
-                                       FROM #index_reporting_stats AS irs2 
-                                       WHERE irs2.summary_level = 'DATABASE'
-                                     )
-                                 ), 
-                                 0
-                             ) * 
-                             (
-                               ISNULL
-                               (
-                                   irs.unused_indexes, 
-                                   0
-                               ) / 
-                               NULLIF
-                               (
-                                   CONVERT
-                                   (
-                                       decimal(10,2), 
-                                       irs.index_count
-                                   ), 
-                                   0
-                               )
-                             ), 
-                             0
-                         ), 
-                         'N0'
-                     )
+                THEN 
+                    /* For rows with any removable indexes (unused or mergeable), calculate estimated savings */
+                    CASE
+                        WHEN (ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0)) > 0
+                        THEN 
+                            FORMAT
+                            (
+                                ISNULL
+                                (
+                                    (irs.row_lock_wait_count + irs.page_lock_wait_count) / 
+                                    NULLIF
+                                    (
+                                        CONVERT
+                                        (
+                                            decimal(10,2), 
+                                            (
+                                              SELECT TOP (1) 
+                                                  irs2.server_uptime_days 
+                                              FROM #index_reporting_stats AS irs2 
+                                              WHERE irs2.summary_level = 'DATABASE'
+                                            )
+                                        ), 
+                                        0
+                                    ) * 
+                                    (
+                                      ISNULL
+                                      (
+                                          irs.unused_indexes + irs.indexes_to_merge, 
+                                          0
+                                      ) / 
+                                      NULLIF
+                                      (
+                                          CONVERT
+                                          (
+                                              decimal(10,2), 
+                                              irs.index_count
+                                          ), 
+                                          0
+                                      )
+                                    ), 
+                                    0
+                                ), 
+                                'N0'
+                            )
+                        /* Rows without removable indexes have no savings */
+                        ELSE '0'
+                    END
                 ELSE 'N/A'
             END,
         
@@ -5045,45 +5061,53 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         daily_latch_waits_saved = 
             CASE
                 WHEN irs.summary_level <> 'SUMMARY'
-                THEN FORMAT
-                     (
-                         ISNULL
-                         (
-                             (irs.page_latch_wait_count + irs.page_io_latch_wait_count) / 
-                             NULLIF
-                             (
-                                 CONVERT
-                                 (
-                                     decimal(10,2), 
-                                     (
-                                       SELECT TOP (1) 
-                                           irs2.server_uptime_days 
-                                       FROM #index_reporting_stats AS irs2 
-                                       WHERE irs2.summary_level = 'DATABASE'
-                                     )
-                                 ), 
-                                 0
-                             ) * 
-                             (
-                                 ISNULL
-                                 (
-                                     irs.unused_indexes, 
-                                     0
-                                 ) / 
-                                 NULLIF
-                                 (
-                                     CONVERT
-                                     (
-                                         decimal(10,2), 
-                                         irs.index_count
-                                     ), 
-                                     0
-                                 )
-                             ), 
-                             0
-                         ), 
-                         'N0'
-                     )
+                THEN 
+                    /* For rows with any removable indexes (unused or mergeable), calculate estimated savings */
+                    CASE
+                        WHEN (ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0)) > 0
+                        THEN 
+                            FORMAT
+                            (
+                                ISNULL
+                                (
+                                    (irs.page_latch_wait_count + irs.page_io_latch_wait_count) / 
+                                    NULLIF
+                                    (
+                                        CONVERT
+                                        (
+                                            decimal(10,2), 
+                                            (
+                                              SELECT TOP (1) 
+                                                  irs2.server_uptime_days 
+                                              FROM #index_reporting_stats AS irs2 
+                                              WHERE irs2.summary_level = 'DATABASE'
+                                            )
+                                        ), 
+                                        0
+                                    ) * 
+                                    (
+                                        ISNULL
+                                        (
+                                            irs.unused_indexes + irs.indexes_to_merge, 
+                                            0
+                                        ) / 
+                                        NULLIF
+                                        (
+                                            CONVERT
+                                            (
+                                                decimal(10,2), 
+                                                irs.index_count
+                                            ), 
+                                            0
+                                        )
+                                    ), 
+                                    0
+                                ), 
+                                'N0'
+                            )
+                        /* Rows without removable indexes have no savings */
+                        ELSE '0'
+                    END
                 ELSE 'N/A'
             END,
         
