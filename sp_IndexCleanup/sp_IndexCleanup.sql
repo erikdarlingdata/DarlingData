@@ -81,16 +81,19 @@ BEGIN TRY
     IF @help = 1
     BEGIN
         SELECT
-            help = N'hello, i am sp_IndexCleanup - BETA'
+            help = N'hello, i am sp_IndexCleanup'
           UNION ALL
         SELECT
-            help = N'this is a script to help clean up unused and duplicate indexes'
+            help = N'this is a script to help clean up unused and duplicate indexes.'
           UNION ALL
         SELECT
-            help = N'you are currently using a beta version, and the advice should not be followed'
+            help = N'it will also give you scripted out statements to add page compression to uncompressed indexes.'
           UNION ALL
         SELECT
-            help = N'without careful analysis and consideration. it may be harmful.';
+            help = N'always validate all changes against a non-production environment!'
+          UNION ALL
+        SELECT
+            help = N'without careful analysis and consideration, index changes can negative impacts on performance.';
 
         /*
         Parameters
@@ -127,7 +130,7 @@ BEGIN TRY
                     WHEN N'@table_name' THEN 'table name or NULL for all tables'
                     WHEN N'@min_reads' THEN 'any positive integer or 0'
                     WHEN N'@min_writes' THEN 'any positive integer or 0'
-                    WHEN N'@min_size_gb' THEN 'any positive decimal number or 0'
+                    WHEN N'@min_size_gb' THEN 'any positive decimal or 0'
                     WHEN N'@min_rows' THEN 'any positive integer or 0'
                     WHEN N'@get_all_databases' THEN '0 or 1'
                     WHEN N'@include_databases' THEN 'comma-separated list of database names'
