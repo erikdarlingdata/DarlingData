@@ -23,6 +23,9 @@ ALTER PROCEDURE
     @min_writes bigint = 0,
     @min_size_gb decimal(10,2) = 0,
     @min_rows bigint = 0,
+    @get_all_databases bit = 0, /*looks for all accessible user databases and returns combined results*/
+    @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
+    @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
     @help bit = 'false',
     @debug bit = 'false',
     @version varchar(20) = NULL OUTPUT,
@@ -110,6 +113,9 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
                     WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
+                    WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases'
+                    WHEN N'@include_databases' THEN 'comma-separated list of databases to include when @get_all_databases = 1'
+                    WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude when @get_all_databases = 1'
                     WHEN N'@help' THEN 'displays this help information'
                     WHEN N'@debug' THEN 'prints debug information during execution'
                     WHEN N'@version' THEN 'returns the version number of the procedure'
@@ -126,6 +132,9 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN 'any positive integer or 0'
                     WHEN N'@min_size_gb' THEN 'any positive decimal or 0'
                     WHEN N'@min_rows' THEN 'any positive integer or 0'
+                    WHEN N'@get_all_databases' THEN '0 or 1'
+                    WHEN N'@include_databases' THEN 'comma-separated list of database names'
+                    WHEN N'@exclude_databases' THEN 'comma-separated list of database names'
                     WHEN N'@help' THEN '0 or 1'
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
@@ -142,6 +151,9 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN '0'
                     WHEN N'@min_size_gb' THEN '0'
                     WHEN N'@min_rows' THEN '0'
+                    WHEN N'@get_all_databases' THEN '0'
+                    WHEN N'@include_databases' THEN 'NULL'
+                    WHEN N'@exclude_databases' THEN 'NULL'
                     WHEN N'@help' THEN 'false'
                     WHEN N'@debug' THEN 'true'
                     WHEN N'@version' THEN 'NULL'
@@ -275,29 +287,237 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
     END;
 
-    IF  @database_name IS NULL
-    AND DB_NAME() NOT IN
-        (
-            N'master',
-            N'model',
-            N'msdb',
-            N'tempdb',
-            N'rdsadmin'
-        )
+    /* Create temp tables for database filtering */
+    CREATE TABLE #include_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY
+    );
+
+    CREATE TABLE #exclude_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY
+    );
+
+    CREATE TABLE #databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY,
+        database_id int NOT NULL
+    );
+
+    CREATE TABLE #requested_but_skipped_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY,
+        reason nvarchar(100) NOT NULL
+    );
+
+    /* Parse @include_databases comma-separated list */
+    IF @get_all_databases = 1 AND @include_databases IS NOT NULL
     BEGIN
-        SELECT
-            @database_name = DB_NAME();
+        INSERT
+            #include_databases
+        (
+            database_name
+        )
+        SELECT DISTINCT
+            database_name = 
+                LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname')))
+        FROM
+        (
+            SELECT
+                x = CONVERT
+                    (
+                        xml, 
+                        N'<i>' + 
+                        REPLACE
+                        (
+                            @include_databases, 
+                            N',', 
+                            N'</i><i>'
+                        ) + 
+                        N'</i>'
+                    )
+        ) AS a
+        CROSS APPLY x.nodes(N'//i') AS t(c)
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
+
+        IF @debug = 1
+        BEGIN
+            SELECT
+                table_name = '#include_databases',
+                id.*
+            FROM #include_databases AS id
+            OPTION(RECOMPILE);
+        END;
     END;
 
-    IF @database_name IS NOT NULL
+    /* Parse @exclude_databases comma-separated list */
+    IF @get_all_databases = 1 AND @exclude_databases IS NOT NULL
     BEGIN
+        INSERT
+            #exclude_databases
+        (
+            database_name
+        )
+        SELECT DISTINCT
+            database_name = 
+                LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname')))
+        FROM
+        (
+            SELECT
+                x = CONVERT
+                    (
+                        xml, 
+                        N'<i>' + 
+                        REPLACE
+                        (
+                            @exclude_databases, 
+                            N',', 
+                            N'</i><i>'
+                        ) + 
+                        N'</i>'
+                    )
+        ) AS a
+        CROSS APPLY x.nodes(N'//i') AS t(c)
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
+
+        IF @debug = 1
+        BEGIN
+            SELECT
+                table_name = '#exclude_databases',
+                ed.*
+            FROM #exclude_databases AS ed
+            OPTION(RECOMPILE);
+        END;
+    END;
+
+    /* Check for conflicts between include and exclude lists */
+    IF @get_all_databases = 1 
+    AND @include_databases IS NOT NULL 
+    AND @exclude_databases IS NOT NULL
+    BEGIN
+        DECLARE @conflict_list nvarchar(max) = N'';
+            
+        SELECT 
+            @conflict_list = 
+                @conflict_list + 
+                ed.database_name + N', '
+        FROM #exclude_databases AS ed
+        WHERE EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM #include_databases AS id
+                WHERE id.database_name = ed.database_name
+            );
+        
+        /* If we found any conflicts, raise an error */
+        IF LEN(@conflict_list) > 0
+        BEGIN
+            /* Remove trailing comma and space */
+            SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
+            
+            SET @error_msg = 
+                N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' + 
+                @conflict_list + N'. Please remove these databases from one of the lists.';
+            
+            RAISERROR(@error_msg, 16, 1);
+            RETURN;
+        END;
+    END;
+
+    /* Handle contradictory parameters */
+    IF @get_all_databases = 1 AND @database_name IS NOT NULL
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR(N'@database name being ignored since @get_all_databases is set to 1', 0, 0) WITH NOWAIT;
+        END;
+        SET @database_name = NULL;
+    END;
+
+    /* Build the #databases table */
+    IF @get_all_databases = 0
+    BEGIN
+        /* Default to current database if not system db */
+        IF @database_name IS NULL
+        AND DB_NAME() NOT IN
+            (
+                N'master',
+                N'model',
+                N'msdb',
+                N'tempdb',
+                N'rdsadmin'
+            )
+        BEGIN
+            SELECT
+                @database_name = DB_NAME();
+        END;
+
+        /* Single database mode */
+        IF @database_name IS NOT NULL
+        BEGIN
+            INSERT #databases
+            (
+                database_name,
+                database_id
+            )
+            SELECT
+                d.name,
+                d.database_id
+            FROM sys.databases AS d
+            WHERE d.database_id = DB_ID(@database_name)
+            AND   d.state = 0
+            AND   d.is_in_standby = 0
+            AND   d.is_read_only = 0
+            OPTION(RECOMPILE);
+
+            /* Get the database_id for backwards compatibility */
+            SELECT
+                @database_id = d.database_id
+            FROM #databases AS d;
+        END;
+    END
+    ELSE
+    BEGIN
+        /* Multi-database mode */
+        INSERT #databases
+        (
+            database_name,
+            database_id
+        )
         SELECT
-            @database_id = d.database_id
+            d.name,
+            d.database_id
         FROM sys.databases AS d
-        WHERE d.database_id = DB_ID(@database_name)
+        WHERE d.database_id > 4 /* Skip system databases */
         AND   d.state = 0
         AND   d.is_in_standby = 0
         AND   d.is_read_only = 0
+        AND   (
+                @include_databases IS NULL 
+                OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
+              )
+        AND   (
+                @exclude_databases IS NULL 
+                OR NOT EXISTS (SELECT 1/0 FROM #exclude_databases AS ed WHERE ed.database_name = d.name)
+              )
+        OPTION(RECOMPILE);
+    END;
+
+    /* Check for empty database list */
+    IF (SELECT COUNT(*) FROM #databases) = 0
+    BEGIN
+        RAISERROR('No valid databases found to process.', 16, 1);
+        RETURN;
+    END;
+
+    /* Show database list in debug mode */
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#databases',
+            d.*
+        FROM #databases AS d
         OPTION(RECOMPILE);
     END;
 
@@ -667,56 +887,92 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     );
 
     /*
+    Set up database cursor processing
+    */
+    DECLARE
+        @database_cursor CURSOR,
+        @current_database_name sysname,
+        @current_database_id int;
+    
+    /* Create a cursor to process each database */
+    SET
+        @database_cursor = 
+            CURSOR
+            LOCAL
+            SCROLL
+            DYNAMIC
+            READ_ONLY
+    FOR
+    SELECT
+        d.database_name,
+        d.database_id
+    FROM #databases AS d
+    ORDER BY d.database_name;
+    
+    OPEN @database_cursor;
+    
+    FETCH FIRST
+    FROM @database_cursor
+    INTO @current_database_name, @current_database_id;
+
+    /*
     Start insert queries
     */
-
     IF @debug = 1
     BEGIN
         RAISERROR('Generating #filtered_object insert', 0, 0) WITH NOWAIT;
-    END;    
+    END;
     
-    SELECT
-        @sql = N'
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
-
-    SELECT
-        @sql = N'
-    SELECT DISTINCT
-        @database_id,
-        database_name = DB_NAME(@database_id),
-        schema_id = t.schema_id,
-        schema_name = s.name,
-        object_id = t.object_id,
-        table_name = t.name,
-        index_id = i.index_id,
-        index_name = ISNULL(i.name, t.name + N''.Heap''),
-        can_compress = 
-            CASE 
-                WHEN p.index_id > 0 
-                AND  p.data_compression = 0 
-                THEN 1 
-                ELSE 0 
-            END
-    FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
-      ON t.schema_id = s.schema_id
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.indexes AS i
-      ON t.object_id = i.object_id
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.partitions AS p
-      ON  i.object_id = p.object_id
-      AND i.index_id = p.index_id
-    LEFT JOIN ' + QUOTENAME(@database_name) + N'.sys.dm_db_index_usage_stats AS us
-      ON  t.object_id = us.object_id
-      AND us.database_id = @database_id
-    WHERE t.is_ms_shipped = 0
-    AND   t.type <> N''TF''
-    AND   NOT EXISTS 
-    (
-        SELECT 
-            1/0
-        FROM ' + QUOTENAME(@database_name) + N'.sys.views AS v
-        WHERE v.object_id = i.object_id 
-    )';
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        /* Process current database */
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Processing database: %s (ID: %d)', 0, 0, @current_database_name, @current_database_id) WITH NOWAIT;
+        END;
+    
+        SELECT
+            @sql = N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
+    
+        SELECT
+            @sql = N'
+        SELECT DISTINCT
+            @database_id,
+            database_name = DB_NAME(@database_id),
+            schema_id = t.schema_id,
+            schema_name = s.name,
+            object_id = t.object_id,
+            table_name = t.name,
+            index_id = i.index_id,
+            index_name = ISNULL(i.name, t.name + N''.Heap''),
+            can_compress = 
+                CASE 
+                    WHEN p.index_id > 0 
+                    AND  p.data_compression = 0 
+                    THEN 1 
+                    ELSE 0 
+                END
+        FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
+          ON t.schema_id = s.schema_id
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
+          ON t.object_id = i.object_id
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.partitions AS p
+          ON  i.object_id = p.object_id
+          AND i.index_id = p.index_id
+        LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_index_usage_stats AS us
+          ON  t.object_id = us.object_id
+          AND us.database_id = @database_id
+        WHERE t.is_ms_shipped = 0
+        AND   t.type <> N''TF''
+        AND   NOT EXISTS 
+        (
+            SELECT 
+                1/0
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
+            WHERE v.object_id = i.object_id 
+        )';
       
     IF /* Check for temporal tables support */
     (
@@ -751,7 +1007,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT 
             1/0 
-        FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
+        FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
         WHERE t.object_id = i.object_id 
         AND   t.temporal_type > 0
     )';
@@ -774,8 +1030,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT 
             1/0 
-        FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats AS ps
-        JOIN ' + QUOTENAME(@database_name) + N'.sys.allocation_units AS au
+        FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.allocation_units AS au
           ON ps.partition_id = au.container_id
         WHERE ps.object_id = t.object_id
         GROUP BY 
@@ -787,7 +1043,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT 
             1/0
-        FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats AS ps
+        FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
         WHERE ps.object_id = t.object_id
         AND   ps.index_id IN (0, 1)
         GROUP BY 
@@ -799,7 +1055,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         SELECT 
             1/0
-        FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_index_usage_stats AS ius
+        FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_index_usage_stats AS ius
         WHERE ius.object_id = t.object_id
         AND   ius.database_id = @database_id
         GROUP BY 
@@ -840,12 +1096,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @min_size_gb decimal(10,2),
         @min_rows bigint,
         @object_id integer',
-        @database_id,
+        @current_database_id,
         @min_reads,
         @min_writes,
         @min_size_gb,
         @min_rows,
         @object_id;
+
+        /* Get the next database */
+        FETCH NEXT
+        FROM @database_cursor
+        INTO @current_database_name, @current_database_id;
+    END;
+
+    CLOSE @database_cursor;
+    DEALLOCATE @database_cursor;
+
+    /* Set database_id for backwards compatibility when processing single database */
+    IF @get_all_databases = 0 AND (SELECT COUNT(*) FROM #databases) = 1
+    BEGIN
+        SELECT
+            @database_id = d.database_id,
+            @database_name = d.database_name
+        FROM #databases AS d;
+    END;
 
     IF ROWCOUNT_BIG() = 0 
     BEGIN 
