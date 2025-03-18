@@ -1052,7 +1052,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /*
     Main processing logic - either loop through all databases or process a single database
     */
-    IF @get_all_databases = 1
+    
+    /* Process single database */
+    IF @get_all_databases = 0
+    BEGIN
+        /* Use the database specified in @database_name */
+        SELECT 
+            @database_id = database_id,
+            @database_name = database_name
+        FROM #databases_to_process;
+        
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Single database mode, using specified or current database: %s', 0, 0, @database_name) WITH NOWAIT;
+        END;
+        
+        /* Process the single database */
+        GOTO ProcessDatabase;
+    END
+    /* Process multiple databases */
+    ELSE IF @get_all_databases = 1
     BEGIN
         /* Get the count of databases for reporting */
         SELECT 
@@ -1118,43 +1137,61 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END;
                     
             /* Process current database using existing logic */
-
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Processing database %s', 0, 0, @database_name) WITH NOWAIT;
-            END;
-
-            IF  @schema_name IS NOT NULL
-            AND @table_name IS NOT NULL
-            BEGIN
-                SELECT
-                    @full_object_name =
-                    QUOTENAME(@database_name) +
-                    N'.' +
-                    QUOTENAME(@schema_name) +
-                    N'.' +
-                    QUOTENAME(@table_name);
-                
-                SET @object_id = OBJECT_ID(@full_object_name);
-            END;
-
-            IF @object_id IS NULL
-            BEGIN
-                RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
-                RETURN;
-            END;
+            GOTO ProcessDatabase;
+            
+        ProcessDatabaseDone:
+            /* Mark database as processed */
+            UPDATE #databases_to_process
+            SET 
+                processed = 1,
+                process_date = SYSDATETIME()
+            WHERE database_id = @database_id;
+            
+            /* Get the next database */
+            FETCH NEXT 
+            FROM @database_cursor 
+            INTO 
+                @current_database_id, 
+                @current_database_name;
         END;
-
-
+        
+        /* We've processed all databases, so we're done */
+        GOTO AllDatabasesProcessed;
+    END;
     
-    /*
-    Start insert queries
-    */
+    /* Process the current database (single or multiple) */
+    ProcessDatabase:
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Processing database %s', 0, 0, @database_name) WITH NOWAIT;
+    END;
 
+    IF  @schema_name IS NOT NULL
+    AND @table_name IS NOT NULL
+    BEGIN
+        SELECT
+            @full_object_name =
+            QUOTENAME(@database_name) +
+            N'.' +
+            QUOTENAME(@schema_name) +
+            N'.' +
+            QUOTENAME(@table_name);
+        
+        SET @object_id = OBJECT_ID(@full_object_name);
+    END;
+
+    IF @object_id IS NULL AND @full_object_name IS NOT NULL
+    BEGIN
+        RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
+        RETURN;
+    END;
+    
+    /* Generate and execute SQL to process the current database */
     IF @debug = 1
     BEGIN
         RAISERROR('Generating #filtered_object insert', 0, 0) WITH NOWAIT;
-    END;    
+    END;
     
     SELECT
         @sql = N'
@@ -5107,6 +5144,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.table_name
     OPTION(RECOMPILE);
     
+    /* If in multi-database mode, go back to process the next database */
+    IF @get_all_databases = 1
+    BEGIN
+        GOTO ProcessDatabaseDone;
+    END;
+    
+    AllDatabasesProcessed:
     /* Final unified results output - runs once after all databases processed */
     IF @debug = 1
     BEGIN
