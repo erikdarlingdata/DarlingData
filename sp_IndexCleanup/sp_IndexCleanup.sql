@@ -268,7 +268,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SYSDATETIME()
                 )
             FROM sys.dm_os_sys_info AS osi
-        );
+        ),
+        @database_cursor CURSOR,
+        @current_database_name sysname,
+        @current_database_id integer,
+        @error_msg nvarchar(2048),
+        @conflict_list nvarchar(max) = N''
         
     /* Set uptime warning flag after @uptime_days is calculated */
     SELECT 
@@ -287,240 +292,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
     END;
 
-    /* Create temp tables for database filtering */
-    CREATE TABLE #include_databases
-    (
-        database_name sysname NOT NULL PRIMARY KEY
-    );
-
-    CREATE TABLE #exclude_databases
-    (
-        database_name sysname NOT NULL PRIMARY KEY
-    );
-
-    CREATE TABLE #databases
-    (
-        database_name sysname NOT NULL PRIMARY KEY,
-        database_id int NOT NULL
-    );
-
-    CREATE TABLE #requested_but_skipped_databases
-    (
-        database_name sysname NOT NULL PRIMARY KEY,
-        reason nvarchar(100) NOT NULL
-    );
-
-    /* Parse @include_databases comma-separated list */
-    IF @get_all_databases = 1 AND @include_databases IS NOT NULL
-    BEGIN
-        INSERT
-            #include_databases
-        (
-            database_name
-        )
-        SELECT DISTINCT
-            database_name = 
-                LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname')))
-        FROM
-        (
-            SELECT
-                x = CONVERT
-                    (
-                        xml, 
-                        N'<i>' + 
-                        REPLACE
-                        (
-                            @include_databases, 
-                            N',', 
-                            N'</i><i>'
-                        ) + 
-                        N'</i>'
-                    )
-        ) AS a
-        CROSS APPLY x.nodes(N'//i') AS t(c)
-        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
-
-        IF @debug = 1
-        BEGIN
-            SELECT
-                table_name = '#include_databases',
-                id.*
-            FROM #include_databases AS id
-            OPTION(RECOMPILE);
-        END;
-    END;
-
-    /* Parse @exclude_databases comma-separated list */
-    IF @get_all_databases = 1 AND @exclude_databases IS NOT NULL
-    BEGIN
-        INSERT
-            #exclude_databases
-        (
-            database_name
-        )
-        SELECT DISTINCT
-            database_name = 
-                LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname')))
-        FROM
-        (
-            SELECT
-                x = CONVERT
-                    (
-                        xml, 
-                        N'<i>' + 
-                        REPLACE
-                        (
-                            @exclude_databases, 
-                            N',', 
-                            N'</i><i>'
-                        ) + 
-                        N'</i>'
-                    )
-        ) AS a
-        CROSS APPLY x.nodes(N'//i') AS t(c)
-        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
-
-        IF @debug = 1
-        BEGIN
-            SELECT
-                table_name = '#exclude_databases',
-                ed.*
-            FROM #exclude_databases AS ed
-            OPTION(RECOMPILE);
-        END;
-    END;
-
-    /* Check for conflicts between include and exclude lists */
-    IF @get_all_databases = 1 
-    AND @include_databases IS NOT NULL 
-    AND @exclude_databases IS NOT NULL
-    BEGIN
-        DECLARE @conflict_list nvarchar(max) = N'';
-            
-        SELECT 
-            @conflict_list = 
-                @conflict_list + 
-                ed.database_name + N', '
-        FROM #exclude_databases AS ed
-        WHERE EXISTS 
-            (
-                SELECT 
-                    1/0 
-                FROM #include_databases AS id
-                WHERE id.database_name = ed.database_name
-            );
-        
-        /* If we found any conflicts, raise an error */
-        IF LEN(@conflict_list) > 0
-        BEGIN
-            /* Remove trailing comma and space */
-            SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
-            
-            SET @error_msg = 
-                N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' + 
-                @conflict_list + N'. Please remove these databases from one of the lists.';
-            
-            RAISERROR(@error_msg, 16, 1);
-            RETURN;
-        END;
-    END;
-
-    /* Handle contradictory parameters */
-    IF @get_all_databases = 1 AND @database_name IS NOT NULL
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR(N'@database name being ignored since @get_all_databases is set to 1', 0, 0) WITH NOWAIT;
-        END;
-        SET @database_name = NULL;
-    END;
-
-    /* Build the #databases table */
-    IF @get_all_databases = 0
-    BEGIN
-        /* Default to current database if not system db */
-        IF @database_name IS NULL
-        AND DB_NAME() NOT IN
-            (
-                N'master',
-                N'model',
-                N'msdb',
-                N'tempdb',
-                N'rdsadmin'
-            )
-        BEGIN
-            SELECT
-                @database_name = DB_NAME();
-        END;
-
-        /* Single database mode */
-        IF @database_name IS NOT NULL
-        BEGIN
-            INSERT #databases
-            (
-                database_name,
-                database_id
-            )
-            SELECT
-                d.name,
-                d.database_id
-            FROM sys.databases AS d
-            WHERE d.database_id = DB_ID(@database_name)
-            AND   d.state = 0
-            AND   d.is_in_standby = 0
-            AND   d.is_read_only = 0
-            OPTION(RECOMPILE);
-
-            /* Get the database_id for backwards compatibility */
-            SELECT
-                @database_id = d.database_id
-            FROM #databases AS d;
-        END;
-    END
-    ELSE
-    BEGIN
-        /* Multi-database mode */
-        INSERT #databases
-        (
-            database_name,
-            database_id
-        )
-        SELECT
-            d.name,
-            d.database_id
-        FROM sys.databases AS d
-        WHERE d.database_id > 4 /* Skip system databases */
-        AND   d.state = 0
-        AND   d.is_in_standby = 0
-        AND   d.is_read_only = 0
-        AND   (
-                @include_databases IS NULL 
-                OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
-              )
-        AND   (
-                @exclude_databases IS NULL 
-                OR NOT EXISTS (SELECT 1/0 FROM #exclude_databases AS ed WHERE ed.database_name = d.name)
-              )
-        OPTION(RECOMPILE);
-    END;
-
-    /* Check for empty database list */
-    IF (SELECT COUNT(*) FROM #databases) = 0
-    BEGIN
-        RAISERROR('No valid databases found to process.', 16, 1);
-        RETURN;
-    END;
-
-    /* Show database list in debug mode */
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#databases',
-            d.*
-        FROM #databases AS d
-        OPTION(RECOMPILE);
-    END;
-
     IF  @schema_name IS NULL
     AND @table_name IS NOT NULL
     BEGIN
@@ -533,34 +304,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @schema_name = N'dbo';
     END;
 
-    IF  @schema_name IS NOT NULL
-    AND @table_name IS NOT NULL
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('validating object existence for %s.%s.&s.', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
-        END;
-
-        SELECT
-            @full_object_name =
-                QUOTENAME(@database_name) +
-                N'.' +
-                QUOTENAME(@schema_name) +
-                N'.' +
-                QUOTENAME(@table_name);
-
-        SELECT
-            @object_id =
-                OBJECT_ID(@full_object_name);
-
-        IF @object_id IS NULL
-        BEGIN
-            RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
-            RETURN;
-        END;
-    END;
-
-    /* Parameter validation */
     IF @min_reads < 0
     OR @min_reads IS NULL
     BEGIN
@@ -886,17 +629,261 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         leaf_delete_count bigint NULL
     );
 
+    /* Create temp tables for database filtering */
+    CREATE TABLE 
+        #include_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY
+    );
+
+    CREATE TABLE 
+        #exclude_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY
+    );
+
+    CREATE TABLE 
+        #databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY,
+        database_id int NOT NULL
+    );
+
+    CREATE TABLE 
+        #requested_but_skipped_databases
+    (
+        database_name sysname NOT NULL PRIMARY KEY,
+        reason nvarchar(100) NOT NULL
+    );
+
+    /* Parse @include_databases comma-separated list */
+    IF  @get_all_databases = 1 
+    AND @include_databases IS NOT NULL
+    BEGIN
+        INSERT
+            #include_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name
+        )
+        SELECT DISTINCT
+            database_name = 
+                LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname')))
+        FROM
+        (
+            SELECT
+                x = CONVERT
+                    (
+                        xml, 
+                        N'<i>' + 
+                        REPLACE
+                        (
+                            @include_databases, 
+                            N',', 
+                            N'</i><i>'
+                        ) + 
+                        N'</i>'
+                    )
+        ) AS a
+        CROSS APPLY x.nodes(N'//i') AS t(c)
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
+
+        IF @debug = 1
+        BEGIN
+            SELECT
+                table_name = '#include_databases',
+                id.*
+            FROM #include_databases AS id
+            OPTION(RECOMPILE);
+        END;
+    END;
+
+    /* Parse @exclude_databases comma-separated list */
+    IF  @get_all_databases = 1 
+    AND @exclude_databases IS NOT NULL
+    BEGIN
+        INSERT
+            #exclude_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name
+        )
+        SELECT DISTINCT
+            database_name = 
+                LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname')))
+        FROM
+        (
+            SELECT
+                x = CONVERT
+                    (
+                        xml, 
+                        N'<i>' + 
+                        REPLACE
+                        (
+                            @exclude_databases, 
+                            N',', 
+                            N'</i><i>'
+                        ) + 
+                        N'</i>'
+                    )
+        ) AS a
+        CROSS APPLY x.nodes(N'//i') AS t(c)
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
+
+        IF @debug = 1
+        BEGIN
+            SELECT
+                table_name = '#exclude_databases',
+                ed.*
+            FROM #exclude_databases AS ed
+            OPTION(RECOMPILE);
+        END;
+    END;
+
+    /* Check for conflicts between include and exclude lists */
+    IF  @get_all_databases = 1 
+    AND @include_databases IS NOT NULL 
+    AND @exclude_databases IS NOT NULL
+    BEGIN            
+        SELECT 
+            @conflict_list = 
+                @conflict_list + 
+                ed.database_name + N', '
+        FROM #exclude_databases AS ed
+        WHERE EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM #include_databases AS id
+                WHERE id.database_name = ed.database_name
+            );
+        
+        /* If we found any conflicts, raise an error */
+        IF LEN(@conflict_list) > 0
+        BEGIN
+            /* Remove trailing comma and space */
+            SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
+            
+            SET @error_msg = 
+                N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' + 
+                @conflict_list + N'. Please remove these databases from one of the lists.';
+            
+            RAISERROR(@error_msg, 16, 1);
+            RETURN;
+        END;
+    END;
+
+    /* Handle contradictory parameters */
+    IF  @get_all_databases = 1 
+    AND @database_name IS NOT NULL
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR(N'@database name being ignored since @get_all_databases is set to 1', 0, 0) WITH NOWAIT;
+        END;
+        SET @database_name = NULL;
+    END;
+
+    /* Build the #databases table */
+    IF @get_all_databases = 0
+    BEGIN
+        /* Default to current database if not system db */
+        IF @database_name IS NULL
+        AND DB_NAME() NOT IN
+            (
+                N'master',
+                N'model',
+                N'msdb',
+                N'tempdb',
+                N'rdsadmin'
+            )
+        BEGIN
+            SELECT
+                @database_name = DB_NAME();
+        END;
+
+        /* Single database mode */
+        IF @database_name IS NOT NULL
+        BEGIN
+            INSERT 
+                #databases
+            WITH
+                (TABLOCK)
+            (
+                database_name,
+                database_id
+            )
+            SELECT
+                d.name,
+                d.database_id
+            FROM sys.databases AS d
+            WHERE d.database_id = DB_ID(@database_name)
+            AND   d.state = 0
+            AND   d.is_in_standby = 0
+            AND   d.is_read_only = 0
+            OPTION(RECOMPILE);
+
+            /* Get the database_id for backwards compatibility */
+            SELECT
+                @database_id = d.database_id
+            FROM #databases AS d;
+        END;
+    END
+    ELSE
+    BEGIN
+        /* Multi-database mode */
+        INSERT 
+            #databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            database_id
+        )
+        SELECT
+            d.name,
+            d.database_id
+        FROM sys.databases AS d
+        WHERE d.database_id > 4 /* Skip system databases */
+        AND   d.state = 0
+        AND   d.is_in_standby = 0
+        AND   d.is_read_only = 0
+        AND   (
+                @include_databases IS NULL 
+                OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
+              )
+        AND   (
+                @exclude_databases IS NULL 
+                OR NOT EXISTS (SELECT 1/0 FROM #exclude_databases AS ed WHERE ed.database_name = d.name)
+              )
+        OPTION(RECOMPILE);
+    END;
+
+    /* Check for empty database list */
+    IF (SELECT COUNT_BIG(*) FROM #databases AS d) = 0
+    BEGIN
+        RAISERROR('No valid databases found to process.', 16, 1);
+        RETURN;
+    END;
+
+    /* Show database list in debug mode */
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#databases',
+            d.*
+        FROM #databases AS d
+        OPTION(RECOMPILE);
+    END;
+
     /*
     Set up database cursor processing
     */
-    DECLARE
-        @database_cursor CURSOR,
-        @current_database_name sysname,
-        @current_database_id int;
     
     /* Create a cursor to process each database */
-    SET
-        @database_cursor = 
+    SET @database_cursor = 
             CURSOR
             LOCAL
             SCROLL
@@ -913,7 +900,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     
     FETCH FIRST
     FROM @database_cursor
-    INTO @current_database_name, @current_database_id;
+    INTO 
+        @current_database_name, 
+        @current_database_id;
 
     /*
     Start insert queries
@@ -925,6 +914,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     
     WHILE @@FETCH_STATUS = 0
     BEGIN
+         /*Validate searched objects per-database*/
+         IF  @schema_name IS NOT NULL
+         AND @table_name IS NOT NULL
+         BEGIN
+             IF @debug = 1
+             BEGIN
+                 RAISERROR('validating object existence for %s.%s.&s.', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
+             END;
+         
+             SELECT
+                 @full_object_name =
+                     QUOTENAME(@current_database_name) +
+                     N'.' +
+                     QUOTENAME(@schema_name) +
+                     N'.' +
+                     QUOTENAME(@table_name);
+         
+             SELECT
+                 @object_id =
+                     OBJECT_ID(@full_object_name);
+         
+             IF @object_id IS NULL
+             BEGIN
+                 RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
+                 RETURN;
+             END;
+         END;
+
         /* Process current database */
         IF @debug = 1
         BEGIN
@@ -1090,7 +1107,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id int,
+      N'@database_id integer,
         @min_reads bigint,
         @min_writes bigint,
         @min_size_gb decimal(10,2),
@@ -1103,17 +1120,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @min_rows,
         @object_id;
 
-        /* Get the next database */
-        FETCH NEXT
-        FROM @database_cursor
-        INTO @current_database_name, @current_database_id;
-    END;
-
-    CLOSE @database_cursor;
-    DEALLOCATE @database_cursor;
-
     /* Set database_id for backwards compatibility when processing single database */
-    IF @get_all_databases = 0 AND (SELECT COUNT(*) FROM #databases) = 1
+    IF   @get_all_databases = 0 
+    AND (SELECT COUNT_BIG(*) FROM #databases AS d) = 1
     BEGIN
         SELECT
             @database_id = d.database_id,
@@ -1126,7 +1135,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF @debug = 1 
         BEGIN
             RAISERROR('No rows inserted into #filtered_objects, nothing to do!', 10, 0) WITH NOWAIT;
-            RETURN;
+            IF @get_all_databases = 0
+            BEGIN
+                RETURN;
+            END;
+            IF @get_all_databases = 1
+            BEGIN
+                /* Get the next database */
+                FETCH NEXT
+                FROM @database_cursor
+                INTO 
+                    @current_database_name, 
+                    @current_database_id;
+            END;
         END; 
     END;
 
@@ -4613,6 +4634,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
 
         RAISERROR('Generating #index_cleanup_results, RESULTS', 0, 0) WITH NOWAIT;
+    END;
+
+        /* Get the next database */
+        FETCH NEXT
+        FROM @database_cursor
+        INTO 
+            @current_database_name, 
+            @current_database_id;
     END;
 
     SELECT
