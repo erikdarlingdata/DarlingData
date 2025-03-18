@@ -1166,7 +1166,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
         
         /* Set up database cursor */
-        DECLARE @database_cursor CURSOR;
         SET @database_cursor = 
             CURSOR 
             LOCAL 
