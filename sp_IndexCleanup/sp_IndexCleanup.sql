@@ -26,6 +26,7 @@ ALTER PROCEDURE
     @get_all_databases bit = 0, /*looks for all accessible user databases and returns combined results*/
     @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
+    @verbose_output tinyint = 0, /* 0 -> no verbose output, 1 -> add NONUNIQUE, NONCLUSTERED type output in the original_index_defintion output */
     @help bit = 'false',
     @debug bit = 'false',
     @version varchar(20) = NULL OUTPUT,
@@ -1974,8 +1975,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* For regular indexes, use CREATE INDEX syntax */    
                 ELSE
                     N'CREATE ' +
-                    CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' ELSE N'' END +
-                    CASE WHEN id1.index_id > 0 THEN N'NONCLUSTERED ' ELSE N'' END +
+                    CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' WHEN id1.is_unique = 0 AND @verbose_output >= 1 THEN N'NONUNIQUE ' ELSE N'' END +
+                    CASE WHEN id1.index_id = 0 THEN N'CLUSTERED ' WHEN id1.index_id > 0 AND @verbose_output >= 1 THEN N'NONCLUSTERED ' ELSE N'' END +
                     N'INDEX ' + 
                     QUOTENAME(id1.index_name) + 
                     N' ON ' + 
