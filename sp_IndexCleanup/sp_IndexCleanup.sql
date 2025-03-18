@@ -23,9 +23,6 @@ ALTER PROCEDURE
     @min_writes bigint = 0,
     @min_size_gb decimal(10,2) = 0,
     @min_rows bigint = 0,
-    @get_all_databases bit = 0, /* When 1, analyzes all eligible databases on the server */
-    @include_databases nvarchar(max) = NULL, /* Comma-separated list of databases to include (used with @get_all_databases = 1) */
-    @exclude_databases nvarchar(max) = NULL, /* Comma-separated list of databases to exclude (used with @get_all_databases = 1) */
     @help bit = 'false',
     @debug bit = 'false',
     @version varchar(20) = NULL OUTPUT,
@@ -113,9 +110,6 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
                     WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
-                    WHEN N'@get_all_databases' THEN 'when set to 1, analyzes all eligible databases on the server'
-                    WHEN N'@include_databases' THEN 'comma-separated list of databases to include (used with @get_all_databases = 1)'
-                    WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude (used with @get_all_databases = 1)'
                     WHEN N'@help' THEN 'displays this help information'
                     WHEN N'@debug' THEN 'prints debug information during execution'
                     WHEN N'@version' THEN 'returns the version number of the procedure'
@@ -132,9 +126,6 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN 'any positive integer or 0'
                     WHEN N'@min_size_gb' THEN 'any positive decimal or 0'
                     WHEN N'@min_rows' THEN 'any positive integer or 0'
-                    WHEN N'@get_all_databases' THEN '0 or 1'
-                    WHEN N'@include_databases' THEN 'comma-separated list of database names'
-                    WHEN N'@exclude_databases' THEN 'comma-separated list of database names'
                     WHEN N'@help' THEN '0 or 1'
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
@@ -151,9 +142,6 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN '0'
                     WHEN N'@min_size_gb' THEN '0'
                     WHEN N'@min_rows' THEN '0'
-                    WHEN N'@get_all_databases' THEN '0'
-                    WHEN N'@include_databases' THEN 'NULL'
-                    WHEN N'@exclude_databases' THEN 'NULL'
                     WHEN N'@help' THEN 'false'
                     WHEN N'@debug' THEN 'true'
                     WHEN N'@version' THEN 'NULL'
@@ -180,7 +168,7 @@ BEGIN TRY
         RAISERROR('
 MIT License
 
-Copyright 2024 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -268,18 +256,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SYSDATETIME()
                 )
             FROM sys.dm_os_sys_info AS osi
-        ),
-        /* Variables for multi-database processing */
-        @database_cursor CURSOR,
-        @current_database_id integer,
-        @current_database_name sysname,
-        @database_count integer = 0,
-        @processed_count integer = 0,
-        @db_list nvarchar(max) = N'',
-        @include_xml xml = N'',
-        @exclude_xml xml = N'',
-        @conflict_list nvarchar(max) = N'',
-        @error_msg nvarchar(2000);
+        );
         
     /* Set uptime warning flag after @uptime_days is calculated */
     SELECT 
@@ -289,6 +266,79 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1 
                 ELSE 0 
             END;
+
+    /*
+    Initial checks for object validity
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
+    END;
+
+    IF  @database_name IS NULL
+    AND DB_NAME() NOT IN
+        (
+            N'master',
+            N'model',
+            N'msdb',
+            N'tempdb',
+            N'rdsadmin'
+        )
+    BEGIN
+        SELECT
+            @database_name = DB_NAME();
+    END;
+
+    IF @database_name IS NOT NULL
+    BEGIN
+        SELECT
+            @database_id = d.database_id
+        FROM sys.databases AS d
+        WHERE d.database_id = DB_ID(@database_name)
+        AND   d.state = 0
+        AND   d.is_in_standby = 0
+        AND   d.is_read_only = 0
+        OPTION(RECOMPILE);
+    END;
+
+    IF  @schema_name IS NULL
+    AND @table_name IS NOT NULL
+    BEGIN
+        IF @debug = 1 
+        BEGIN        
+            RAISERROR('Parameter @schema_name cannot be NULL when specifying a table, defaulting to dbo', 10, 1) WITH NOWAIT;
+        END;
+
+        SELECT
+            @schema_name = N'dbo';
+    END;
+
+    IF  @schema_name IS NOT NULL
+    AND @table_name IS NOT NULL
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('validating object existence for %s.%s.&s.', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
+        END;
+
+        SELECT
+            @full_object_name =
+                QUOTENAME(@database_name) +
+                N'.' +
+                QUOTENAME(@schema_name) +
+                N'.' +
+                QUOTENAME(@table_name);
+
+        SELECT
+            @object_id =
+                OBJECT_ID(@full_object_name);
+
+        IF @object_id IS NULL
+        BEGIN
+            RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
+            RETURN;
+        END;
+    END;
 
     /* Parameter validation */
     IF @min_reads < 0
@@ -333,26 +383,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SET @min_rows = 0;
-    END;
-
-    IF  @schema_name IS NULL
-    AND @table_name IS NOT NULL
-    BEGIN
-        IF @debug = 1 
-        BEGIN        
-            RAISERROR('Parameter @schema_name cannot be NULL when specifying a table, defaulting to dbo', 10, 1) WITH NOWAIT;
-        END;
-
-        SET @schema_name = N'dbo';
-    END;
-    
-    /* Parameter validation for multi-database mode */
-    IF  @get_all_databases = 1 
-    AND @database_name IS NOT NULL
-    BEGIN
-        RAISERROR('You cannot specify both @get_all_databases = 1 and a specific @database_name. Using @get_all_databases = 1 and ignoring @database_name.', 10, 1) WITH NOWAIT;
-        
-        SET @database_name = NULL;
     END;
 
     /*
@@ -495,11 +525,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         is_unique bit NULL,
-        key_columns nvarchar(max) NULL,
-        included_columns nvarchar(max) NULL,
-        filter_definition nvarchar(max) NULL,
+        key_columns nvarchar(MAX) NULL,
+        included_columns nvarchar(MAX) NULL,
+        filter_definition nvarchar(MAX) NULL,
         /* Query plan for original CREATE INDEX statement */
-        original_index_definition nvarchar(max) NULL,
+        original_index_definition nvarchar(MAX) NULL,
         /* 
         Consolidation rule that matched (e.g., Key Duplicate, Key Subset, etc)
         For exact duplicates, use one of: Exact Duplicate, Reverse Duplicate, or Equal Except For Filter
@@ -516,6 +546,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by nvarchar(4000) NULL, 
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
         index_priority decimal(10,6) NULL
+        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
+    );
+    
+    CREATE TABLE 
+        #compression_eligibility
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NOT NULL,
+        can_compress bit NOT NULL,
+        reason nvarchar(200) NULL,
         PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
     );
 
@@ -539,22 +585,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_reads bigint NULL, /* Total reads (seeks + scans + lookups) */
         index_writes bigint NULL, /* Total writes */
         script nvarchar(max) NULL /* Script to execute the action */
-    );
-
-    CREATE TABLE
-        #compression_eligibility
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        schema_id integer NOT NULL,
-        schema_name sysname NOT NULL,
-        object_id integer NOT NULL,
-        table_name sysname NOT NULL,
-        index_id integer NOT NULL,
-        index_name sysname NOT NULL,
-        can_compress bit NOT NULL,
-        reason nvarchar(200) NULL,
-        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
     );
 
     CREATE TABLE 
@@ -582,7 +612,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superset_included_columns nvarchar(max) NULL
     );
 
-    CREATE TABLE
+    /* Create a new temp table for detailed reporting statistics */
+    CREATE TABLE 
         #index_reporting_stats
     (
         summary_level varchar(20) NOT NULL,  /* 'DATABASE', 'TABLE', 'INDEX', 'SUMMARY' */
@@ -635,667 +666,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         leaf_delete_count bigint NULL
     );
 
-    /* Create a table to store databases to process */
-    CREATE TABLE 
-        #databases_to_process
-    (
-        database_id integer NOT NULL,
-        database_name sysname NOT NULL,
-        processed bit NOT NULL DEFAULT 0,
-        process_date datetime2(7) NULL,
-        PRIMARY KEY CLUSTERED(database_id)
-    );
-    
-    /* Create a table to track databases that were requested but couldn't be processed */
-    CREATE TABLE
-        #skipped_databases
-    (
-        database_name sysname NOT NULL,
-        reason nvarchar(255) NOT NULL
-    );
-
-    /* Create a table to parse the include/exclude lists */
-    CREATE TABLE 
-        #database_list 
-    (
-        id integer IDENTITY PRIMARY KEY CLUSTERED,
-        database_name sysname NOT NULL
-    );
-
-    /* Handle multi-database mode */
-    IF @get_all_databases = 1
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Multi-database mode enabled, gathering database list...', 0, 0) WITH NOWAIT;
-        END;
-
-        /* Parse @include_databases if specified - using XML for string splitting instead of STRING_SPLIT (version compatibility) */
-        IF @include_databases IS NOT NULL
-        IF @debug = 1
-        BEGIN
-            RAISERROR('processing included databases', 0, 0) WITH NOWAIT;
-        END;
-        BEGIN
-            SELECT 
-                @include_xml = 
-                    CONVERT
-                    (
-                        xml, 
-                        '<i>' + 
-                        REPLACE
-                        (
-                            @include_databases, 
-                            ',', 
-                            '</i><i>'
-                        ) + 
-                        '</i>'
-                    );
-            
-            INSERT INTO 
-                #database_list 
-            (
-                database_name
-            )
-            SELECT 
-                database_name = 
-                    LTRIM(RTRIM(t.i.value('.', 'sysname')))
-            FROM @include_xml.nodes('/i') AS t(i)
-            WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
-            OPTION(RECOMPILE);
-        END;
-
-        /* Check for databases in both include and exclude lists */
-        IF @exclude_databases IS NOT NULL
-        IF @debug = 1
-        BEGIN
-            RAISERROR('processing excluded databases', 0, 0) WITH NOWAIT;
-        END;
-
-        BEGIN
-            SELECT 
-                @exclude_xml = 
-                    CONVERT
-                    (
-                        xml, 
-                        '<i>' + 
-                        REPLACE
-                        (
-                            @exclude_databases, 
-                            ',', 
-                            '</i><i>'
-                        ) + 
-                        '</i>'
-                    );
-            
-            /* Build list of conflicting databases */               
-            SELECT 
-                @conflict_list = 
-                    @conflict_list + 
-                    LTRIM(RTRIM(t.i.value('.', 'sysname'))) + 
-                    N', '
-            FROM @exclude_xml.nodes('/i') AS t(i)
-            WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
-            AND EXISTS 
-                (
-                    SELECT 
-                        1/0 
-                    FROM #database_list AS dl 
-                    WHERE dl.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
-                )
-            OPTION(RECOMPILE);;
-            
-            /* If we found any conflicts, raise an error */
-            IF LEN(@conflict_list) > 0
-            BEGIN
-                /* Remove trailing comma and space */
-                SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
-                
-                SET @error_msg = 
-                    N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' + 
-                    @conflict_list + N'. Please remove these databases from one of the lists.';
-                
-                RAISERROR(@error_msg, 16, 1) WITH NOWAIT;
-                RETURN;
-            END;
-        END;
-
     /*
-    Check SQL Server engine edition and use appropriate query paths
+    Start insert queries
     */
-    IF 
-    (
-        SELECT 
-            CONVERT
-            (
-                sysname, 
-                SERVERPROPERTY('EngineEdition')
-            )
-    ) IN (5, 8) /* Azure SQL DB or Managed Instance */
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('processing databases special in azure', 0, 0) WITH NOWAIT;
-        END;
 
-        /* Get all eligible databases for Azure SQL */
-        INSERT INTO 
-            #databases_to_process
-        WITH
-            (TABLOCK)
-        (
-            database_id, 
-            database_name
-        )
-        SELECT 
-            database_id = d.database_id,
-            database_name = d.name
-        FROM sys.databases AS d
-        WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb')
-        AND   d.state = 0
-        AND   d.is_in_standby = 0
-        AND   d.is_read_only = 0
-        AND   d.database_id > 4 /* Skip system databases */
-        AND 
-        (
-            /* If include list is provided, only keep databases in that list */
-            (@include_databases IS NULL) OR 
-            (d.name IN (SELECT database_name FROM #database_list))
-        )
-        OPTION(RECOMPILE);
-    END;
-    ELSE /* Regular SQL Server */
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('processing on-prem sql server databases', 0, 0) WITH NOWAIT;
-        END;
-
-        /* Get all eligible databases with AG primary replica check */
-        INSERT INTO 
-            #databases_to_process 
-        WITH
-            (TABLOCK)
-        (
-            database_id, 
-            database_name
-        )
-        SELECT 
-            database_id = d.database_id,
-            database_name = d.name
-        FROM sys.databases AS d
-        WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
-        AND   d.state = 0
-        AND   d.is_in_standby = 0
-        AND   d.is_read_only = 0
-        AND   d.database_id > 4 /* Skip system databases */
-        /* Add AG check to ensure we only process the primary replica */
-        AND   NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM sys.dm_hadr_availability_replica_states AS s
-            JOIN sys.availability_databases_cluster AS c
-              ON  s.group_id = c.group_id
-              AND d.name = c.database_name
-            WHERE s.is_local <> 1
-            AND   s.role_desc <> N'PRIMARY'
-            AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-        )
-        AND 
-        (
-            /* If include list is provided, only keep databases in that list */
-            (@include_databases IS NULL) OR 
-            (d.name IN (SELECT database_name FROM #database_list))
-        )
-        OPTION(RECOMPILE);;
-    END;
-
-    /* Remove excluded databases if specified */
-    IF @exclude_databases IS NOT NULL
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('processing excluded databases', 0, 0) WITH NOWAIT;
-        END;
-
-        SELECT 
-            @exclude_xml = 
-                CONVERT
-                (
-                    xml, 
-                    '<i>' + 
-                    REPLACE
-                    (
-                        @exclude_databases, 
-                        ',', 
-                        '</i><i>'
-                    ) + 
-                    '</i>'
-                );
-        
-        DELETE 
-            dp
-        FROM #databases_to_process AS dp
-        WHERE EXISTS
-        (
-            SELECT 
-                1/0
-            FROM @exclude_xml.nodes('/i') AS t(i)
-            WHERE dp.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
-            AND   LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
-        )
-        OPTION(RECOMPILE);;
-    END;
-
-    IF @debug = 1
-    BEGIN
-        /* Count databases */
-        SELECT 
-            database_count = COUNT_BIG(*)
-        FROM #databases_to_process;
-        
-        /* List databases without using STRING_AGG (version compatibility) */
-        SELECT @db_list = N'';
-        
-        SELECT 
-            @db_list = 
-                @db_list + 
-                database_name + 
-                N', '
-        FROM #databases_to_process AS dtp
-        ORDER BY 
-            dtp.database_name
-        OPTION(RECOMPILE);;
-        
-        /* Remove trailing comma if list is not empty */
-        IF LEN(@db_list) > 0
-        BEGIN
-            SET @db_list = LEFT(@db_list, LEN(@db_list) - 1);
-        END;
-            
-        RAISERROR('Databases to process: %s', 0, 0, @db_list) WITH NOWAIT;
-    END;
-
-    /* Track databases that were requested but skipped (for better reporting) */
-    IF @include_databases IS NOT NULL
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('processing included databases for skip reasons', 0, 0) WITH NOWAIT;
-        END;
-
-        INSERT
-            #skipped_databases
-        WITH
-            (TABLOCK)
-        (
-            database_name,
-            reason
-        )
-        SELECT
-            database_name = dl.database_name,
-            reason = 
-                CASE 
-                    WHEN d.name IS NULL 
-                    THEN N'Database does not exist'
-                    WHEN d.state <> 0 
-                    THEN N'Database not online'
-                    WHEN d.is_in_standby = 1 
-                    THEN N'Database is in standby'
-                    WHEN d.is_read_only = 1 
-                    THEN N'Database is read-only'
-                    WHEN d.database_id <= 4 
-                    THEN N'System database'
-                    WHEN EXISTS
-                         (
-                             SELECT
-                                 1/0
-                             FROM sys.dm_hadr_availability_replica_states AS s
-                             JOIN sys.availability_databases_cluster AS c
-                               ON  s.group_id = c.group_id
-                               AND d.name = c.database_name
-                             WHERE s.is_local <> 1
-                             AND   s.role_desc <> N'PRIMARY'
-                             AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-                         ) 
-                    THEN N'AG replica issue - not primary or read-write'
-                    ELSE N'Other issue'
-                END
-        FROM #database_list AS dl
-        LEFT JOIN sys.databases AS d
-          ON dl.database_name = d.name
-        WHERE NOT EXISTS 
-              (
-                  SELECT 
-                      1/0 
-                  FROM #databases_to_process AS dp
-                  WHERE dp.database_name = dl.database_name
-              )
-        OPTION(RECOMPILE);
-    END;
-        
-    /* Also track explicitly excluded databases */
-    IF @exclude_databases IS NOT NULL
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('processing explicitly excluded databases', 0, 0) WITH NOWAIT;
-        END;
-
-        INSERT
-            #skipped_databases
-        WITH
-            (TABLOCK)
-        (
-            database_name,
-            reason
-        )
-        SELECT
-            database_name = LTRIM(RTRIM(t.i.value('.', 'nvarchar(128)'))),
-            reason = N'Explicitly excluded by @exclude_databases parameter'
-        FROM 
-        (
-            SELECT xml_list = 
-                CONVERT
-                (
-                    xml, 
-                    N'<i>' + 
-                    REPLACE
-                    (
-                        @exclude_databases, 
-                        N',', 
-                        N'</i><i>'
-                    ) + 
-                    N'</i>'
-                )
-        ) AS a
-        CROSS APPLY a.xml_list.nodes('i') AS t(i)
-        WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
-        AND EXISTS
-        (
-            SELECT 
-                1/0
-            FROM sys.databases AS d
-            WHERE d.name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
-        )
-        OPTION(RECOMPILE);
-
-        /* If no databases match criteria, exit */
-        IF NOT EXISTS (SELECT 1/0 FROM #databases_to_process AS dtp)
-        BEGIN
-            RAISERROR('No eligible databases found to process with the specified filters', 16, 1) WITH NOWAIT;
-            RETURN;
-        END;
-    END;
-    ELSE
-    BEGIN
-        /* Single database mode */
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Single database mode, using specified or current database', 0, 0) WITH NOWAIT;
-        END;
-
-        /* If no database name specified, use current database if not a system database */
-        IF  @database_name IS NULL
-        AND @get_all_databases = 0
-        AND DB_NAME() NOT IN
-            (
-                N'master',
-                N'model',
-                N'msdb',
-                N'tempdb',
-                N'rdsadmin'
-            )
-        BEGIN
-            SELECT
-                @database_name = DB_NAME();
-        END;
-
-        /*Construct the full object name*/
-        IF  @schema_name IS NOT NULL
-        AND @table_name IS NOT NULL
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('validating object existence for %s.%s.&s.', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
-            END;
-
-            SELECT
-                @full_object_name =
-                QUOTENAME(@database_name) +
-                N'.' +
-                QUOTENAME(@schema_name) +
-                N'.' +
-                QUOTENAME(@table_name);
-            
-            SET @object_id = OBJECT_ID(@full_object_name);
-        END;
-
-        IF @object_id IS NULL
-        BEGIN
-            RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
-            RETURN;
-        END;
-
-        /* Add the single database to the processing list */
-        IF @database_name IS NOT NULL
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('inserting databases to process', 0, 0) WITH NOWAIT;
-            END;
-
-            INSERT INTO 
-                #databases_to_process 
-            WITH
-                (TABLOCK)
-            (
-                database_id, 
-                database_name
-            )
-            SELECT 
-                database_id = d.database_id,
-                database_name = d.name
-            FROM sys.databases AS d
-            WHERE d.name = @database_name
-            AND   d.state_desc = N'ONLINE'
-            OPTION(RECOMPILE);
-
-            /* Validate the database exists and is accessible */
-            IF NOT EXISTS (SELECT 1/0 FROM #databases_to_process AS dtp)
-            BEGIN
-                RAISERROR('The specified database %s does not exist, is not in ONLINE state, or you do not have permission to access it', 16, 1, @database_name) WITH NOWAIT;
-                RETURN;
-            END;
-        END;
-        ELSE
-        BEGIN
-            RAISERROR('No valid database specified and current database is a system database. Please specify a user database.', 16, 1) WITH NOWAIT;
-            RETURN;
-        END;
-
-        /* Set @database_id for single database mode (for backward compatibility) */
-        SELECT 
-            @database_id = database_id, 
-            @database_name = database_name 
-        FROM #databases_to_process
-        OPTION(RECOMPILE);
-    END;
-    
-    /*
-    Main processing logic - either loop through all databases or process a single database
-    */
-    
-    /* Process single database */
-    IF @get_all_databases = 0
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('processing for @get_all_databases = 0', 0, 0) WITH NOWAIT;
-        END;
-
-        /* Use the database specified in @database_name */
-        SELECT 
-            @database_id = database_id,
-            @database_name = database_name
-        FROM #databases_to_process;
-        
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Single database mode, using specified or current database: %s', 0, 0, @database_name) WITH NOWAIT;
-        END;
-    END
-    /* Process multiple databases */
-    ELSE IF @get_all_databases = 1
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Processing all databases with @get_all_databases = 1', 0, 0) WITH NOWAIT;
-        END;
-        
-        /* Get the count of databases for reporting */
-        SELECT 
-            @database_count = COUNT_BIG(*) 
-        FROM #databases_to_process AS dtp
-        OPTION(RECOMPILE);
-        
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Beginning processing for %d databases', 0, 0, @database_count) WITH NOWAIT;
-        END;
-        
-        /* Set up database cursor */
-        SET @database_cursor = 
-            CURSOR 
-            LOCAL 
-            STATIC 
-            READ_ONLY 
-            FORWARD_ONLY
-        FOR 
-        SELECT 
-            dtp.database_id, 
-            dtp.database_name 
-        FROM #databases_to_process AS dtp
-        WHERE dtp.processed = 0
-        ORDER BY 
-            dtp.database_name
-        OPTION(RECOMPILE);
-
-        OPEN @database_cursor;
-        FETCH NEXT 
-        FROM @database_cursor 
-        INTO 
-            @database_id, 
-            @database_name;
-            
-        WHILE @@FETCH_STATUS = 0
-        BEGIN
-            /* Process current database */
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Processing database %s', 0, 0, @database_name) WITH NOWAIT;
-            END;
-            
-            /* Start main database processing logic */
-            
-            /* Check for schema/table parameters */
-            IF  @schema_name IS NOT NULL
-            AND @table_name IS NOT NULL
-            BEGIN
-                IF @debug = 1
-                BEGIN
-                    RAISERROR('validating object existence for %s.%s.%s', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
-                END;
-
-                SELECT
-                    @full_object_name =
-                    QUOTENAME(@database_name) +
-                    N'.' +
-                    QUOTENAME(@schema_name) +
-                    N'.' +
-                    QUOTENAME(@table_name);
-                
-                SET @object_id = OBJECT_ID(@full_object_name);
-                
-                IF @object_id IS NULL AND @full_object_name IS NOT NULL
-                BEGIN
-                    RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
-                    
-                    /* Skip this database and continue to the next one */
-                    GOTO NextDatabase;
-                END;
-            END;
-            
-            /* Process the current database */
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Generating #filtered_object insert for database %s', 0, 0, @database_name) WITH NOWAIT;
-            END;
-            
-            /* INSERT DATABASE PROCESSING LOGIC HERE */
-            
-            /* Rest of the database processing will go here */
-            
-            /* Update processed flag for this database */
-NextDatabase:
-            UPDATE #databases_to_process
-            SET 
-                processed = 1,
-                process_date = SYSDATETIME()
-            WHERE database_id = @database_id;
-            
-            /* Get next database */
-            FETCH NEXT 
-            FROM @database_cursor 
-            INTO 
-                @database_id, 
-                @database_name;
-        END;
-        
-        CLOSE @database_cursor;
-        DEALLOCATE @database_cursor;
-        
-        /* After processing all databases, return to show consolidated results */
-        GOTO GenerateResults;
-    END;
-    
-    /* For single database mode - process the single database */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Processing database %s', 0, 0, @database_name) WITH NOWAIT;
-    END;
-
-    IF  @schema_name IS NOT NULL
-    AND @table_name IS NOT NULL
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('validating object existence for %s.%s.%s', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
-        END;
-
-        SELECT
-            @full_object_name =
-            QUOTENAME(@database_name) +
-            N'.' +
-            QUOTENAME(@schema_name) +
-            N'.' +
-            QUOTENAME(@table_name);
-        
-        SET @object_id = OBJECT_ID(@full_object_name);
-    END;
-
-    IF @object_id IS NULL AND @full_object_name IS NOT NULL
-    BEGIN
-        RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
-        RETURN;
-    END;
-    
-    /* Generate and execute SQL to process the current database */
     IF @debug = 1
     BEGIN
         RAISERROR('Generating #filtered_object insert', 0, 0) WITH NOWAIT;
-    END;
+    END;    
     
     SELECT
         @sql = N'
@@ -1386,7 +764,7 @@ NextDatabase:
         BEGIN
             RAISERROR('adding object_id filter', 0, 0) WITH NOWAIT;
         END;
-
+        
         SELECT @sql += N'
     AND   t.object_id = @object_id';
     END;
@@ -1473,7 +851,8 @@ NextDatabase:
     BEGIN 
         IF @debug = 1 
         BEGIN
-            RAISERROR('No rows inserted into #filtered_objects', 0, 0) WITH NOWAIT; 
+            RAISERROR('No rows inserted into #filtered_objects, nothing to do!', 10, 0) WITH NOWAIT;
+            RETURN;
         END; 
     END;
 
@@ -1514,29 +893,33 @@ NextDatabase:
         fo.table_name,
         fo.index_id,
         fo.index_name,
-        1, /* Default to compressible */
-        NULL
+        can_compress = 
+            CASE 
+                 @can_compress 
+                 WHEN 0
+                 THEN 0
+                 ELSE 1
+            END,
+        reason = 
+            CASE 
+                 @can_compress 
+                 WHEN 0
+                 THEN N'SQL Server edition or version does not support compression'
+                 ELSE NULL
+            END
     FROM #filtered_objects AS fo
     WHERE fo.can_compress = 1
     OPTION(RECOMPILE);
-    
-    /* If SQL Server edition doesn't support compression, mark all as ineligible */
-    IF @can_compress = 0
+
+    IF @debug = 1
     BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('updating compression eligibility', 0, 0) WITH NOWAIT;
-        END;
-        
-        UPDATE 
-            #compression_eligibility
-        SET 
-            #compression_eligibility.can_compress = 0,
-            #compression_eligibility.reason = N'SQL Server edition or version does not support compression'
-        WHERE #compression_eligibility.can_compress = 1
+        SELECT
+            table_name = '#compression_eligibility before update',
+            ce.*
+        FROM #compression_eligibility AS ce
         OPTION(RECOMPILE);
     END;
-    
+        
     /* Check for sparse columns or incompatible data types */
     IF @can_compress = 1
     BEGIN
@@ -1584,7 +967,7 @@ NextDatabase:
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#compression_eligibility',
+            table_name = '#compression_eligibility after update',
             ce.*
         FROM #compression_eligibility AS ce
         OPTION(RECOMPILE);
@@ -1851,7 +1234,7 @@ NextDatabase:
     JOIN ' + QUOTENAME(@database_name) + 
     CONVERT
     (
-        nvarchar(max),
+        nvarchar(MAX),
         N'.sys.columns AS c
       ON  ic.object_id = c.object_id
       AND ic.column_id = c.column_id
@@ -1879,7 +1262,7 @@ NextDatabase:
     ) + QUOTENAME(@database_name) + 
         CONVERT
         (
-            nvarchar(max), 
+            nvarchar(MAX), 
             N'.sys.dm_db_partition_stats ps
         WHERE ps.object_id = t.object_id
         AND   ps.index_id = 1
@@ -1889,6 +1272,11 @@ NextDatabase:
 
     IF @object_id IS NOT NULL
     BEGIN
+        IF @debug = 1 
+        BEGIN
+            RAISERROR('adding object+id filter', 0, 0) WITH NOWAIT; 
+        END; 
+
         SELECT @sql += N'
     AND   t.object_id = @object_id';
     END;
@@ -2052,6 +1440,11 @@ NextDatabase:
 
     IF @object_id IS NOT NULL
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('adding in object_id filter', 0, 0) WITH NOWAIT;
+        END;
+
         SELECT @sql += N'
         AND   t.object_id = @object_id';
     END;
@@ -2512,17 +1905,19 @@ NextDatabase:
             CASE 
                 WHEN ia1.index_priority > ia2.index_priority 
                 THEN NULL  /* This index is the keeper */
-                WHEN ia1.index_priority = ia2.index_priority AND ia1.index_name < ia2.index_name
+                WHEN ia1.index_priority = ia2.index_priority 
+                AND  ia1.index_name < ia2.index_name
                 THEN NULL  /* When tied, use alphabetical ordering for consistency */
                 ELSE ia2.index_name  /* Other index is the keeper */
             END,
         ia1.action = 
             CASE 
                 WHEN ia1.index_priority > ia2.index_priority 
-                THEN 'KEEP'  /* This index is the keeper */
-                WHEN ia1.index_priority = ia2.index_priority AND ia1.index_name < ia2.index_name
-                THEN 'KEEP'  /* When tied, use alphabetical ordering for consistency */
-                ELSE 'DISABLE'  /* Other index gets disabled */
+                THEN N'KEEP'  /* This index is the keeper */
+                WHEN ia1.index_priority = ia2.index_priority 
+                AND  ia1.index_name < ia2.index_name
+                THEN N'KEEP'  /* When tied, use alphabetical ordering for consistency */
+                ELSE N'DISABLE'  /* Other index gets disabled */
             END
     FROM #index_analysis AS ia1
     JOIN #index_analysis AS ia2 
@@ -2642,8 +2037,8 @@ NextDatabase:
                   AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1)
                 )
                 AND ISNULL(ia1.included_columns, N'') <> ISNULL(ia2.included_columns, N'')
-                THEN 'MERGE INCLUDES'  /* Keep this index but merge includes */
-                ELSE 'DISABLE'  /* Other index is keeper, disable this one */
+                THEN N'MERGE INCLUDES'  /* Keep this index but merge includes */
+                ELSE N'DISABLE'  /* Other index is keeper, disable this one */
             END,
         /* For the winning index, set clear superseded_by text for the report */
         ia1.superseded_by = 
@@ -2654,7 +2049,7 @@ NextDatabase:
                     ia1.index_priority >= ia2.index_priority 
                   AND NOT (ia1.is_unique = 0 AND ia2.is_unique = 1)
                 )
-                THEN 'Supersedes ' + 
+                THEN N'Supersedes ' + 
                      ia2.index_name
                 ELSE NULL
             END
@@ -2775,7 +2170,15 @@ NextDatabase:
     SET 
         ia2.consolidation_rule = N'Key Superset',
         ia2.action = N'MERGE INCLUDES',  /* The wider index gets merged with includes */
-        ia2.superseded_by = COALESCE(ia2.superseded_by + ', ', '') + 'Supersedes ' + ia1.index_name
+        ia2.superseded_by = 
+            ISNULL
+            (
+                ia2.superseded_by + 
+                ', ', 
+                ''
+            ) + 
+            N'Supersedes ' + 
+            ia1.index_name
     FROM #index_analysis AS ia1
     JOIN #index_analysis AS ia2 
       ON  ia1.database_id = ia2.database_id
@@ -2796,7 +2199,8 @@ NextDatabase:
     END;
     
     /* Rule 6: Merge includes from subset to superset indexes */
-    WITH KeySubsetSuperset AS
+    WITH 
+        KeySubsetSuperset AS
     (
         SELECT 
             superset.database_id,
@@ -2822,7 +2226,7 @@ NextDatabase:
         CASE
             /* If both have includes, combine them without duplicates */
             WHEN kss.superset_includes IS NOT NULL 
-            AND  kss.subset_includes IS NOT NULL
+            AND kss.subset_includes IS NOT NULL
             THEN 
                 /* Create combined includes using XML method that works with all SQL Server versions */
                 (
@@ -2929,13 +2333,13 @@ NextDatabase:
         ia1.action = 
             CASE 
                 WHEN ia1.is_unique = 0 
-                THEN N'MAKE UNIQUE'  /* Convert to unique index */
-                ELSE N'KEEP'  /* Already unique, so just keep it */
+                THEN 'MAKE UNIQUE'  /* Convert to unique index */
+                ELSE 'KEEP'  /* Already unique, so just keep it */
             END
     FROM #index_analysis AS ia1
     WHERE ia1.consolidation_rule IS NULL /* Not already processed */
-    AND   ia1.action IS NULL /* Not already processed by earlier rules */
-    AND   EXISTS 
+    AND ia1.action IS NULL /* Not already processed by earlier rules */
+    AND EXISTS 
     (
         /* Find nonclustered indexes */
         SELECT 
@@ -2946,7 +2350,7 @@ NextDatabase:
         AND   id1.index_id = ia1.index_id
         AND   id1.is_eligible_for_dedupe = 1
     )
-    AND   EXISTS 
+    AND EXISTS 
     (
         /* Find unique constraints with matching key columns */
         SELECT 
@@ -3052,16 +2456,14 @@ NextDatabase:
     UPDATE 
         ia
     SET 
-        ia.action = NULL,
-        ia.consolidation_rule = NULL,
-        ia.target_index_name = NULL
+        action = NULL,
+        consolidation_rule = NULL,
+        target_index_name = NULL
     FROM #index_analysis AS ia
     WHERE ia.action = N'MAKE UNIQUE'
-    AND NOT EXISTS 
-    (
+    AND NOT EXISTS (
         /* Check if there's a unique constraint with matching keys that points to this index */
-        SELECT 
-            1/0
+        SELECT 1
         FROM #index_analysis AS ia_uc
         WHERE ia_uc.database_id = ia.database_id
         AND   ia_uc.object_id = ia.object_id
@@ -3077,8 +2479,11 @@ NextDatabase:
     SET 
         ia_nc.superseded_by = 
             CASE 
-                WHEN ia_nc.superseded_by IS NULL THEN N'Will replace constraint ' + ia_uc.index_name
-                ELSE ia_nc.superseded_by + N', will replace constraint ' + ia_uc.index_name
+                WHEN ia_nc.superseded_by IS NULL 
+                THEN N'Will replace constraint ' + 
+                     ia_uc.index_name
+                ELSE ia_nc.superseded_by + 
+                     N', will replace constraint ' + ia_uc.index_name
             END
     FROM #index_analysis AS ia_nc
     JOIN #index_analysis AS ia_uc
@@ -3095,51 +2500,6 @@ NextDatabase:
             table_name = '#index_analysis after rule 7.5',
             ia.*
         FROM #index_analysis AS ia
-        OPTION(RECOMPILE);
-        
-        /* Special debug for uq_a and uq_i_a */
-        RAISERROR('Special debug for uq_a and uq_i_a after rule 7.5:', 0, 0) WITH NOWAIT;
-        SELECT 
-            ia.index_name,
-            ia.action,
-            ia.consolidation_rule,
-            ia.target_index_name,
-            ia.superseded_by,
-            ia.included_columns,
-            ia.index_priority
-        FROM #index_analysis AS ia
-        WHERE ia.index_name IN (N'uq_a', N'uq_i_a')
-        ORDER BY 
-            ia.index_name
-        OPTION(RECOMPILE);
-        
-        /* Check the merge script eligibility */
-        RAISERROR('Checking MERGE script eligibility for uq_i_a:', 0, 0) WITH NOWAIT;
-        SELECT
-            'uq_i_a eligibility check',
-            ia.index_name,
-            ia.action,
-            ia.target_index_name,
-            ce.can_compress,
-            /* Show which conditions are being met for script generation */
-            condition1 = CASE WHEN ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE') THEN 'YES' ELSE 'NO' END,
-            condition2 = CASE WHEN ce.can_compress = 1 THEN 'YES' ELSE 'NO' END, 
-            condition3 = CASE WHEN ia.target_index_name IS NULL THEN 'YES' ELSE 'NO' END,
-            /* Will this index get a MERGE script? */
-            will_get_merge_script = 
-                CASE 
-                    WHEN ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
-                    AND  ce.can_compress = 1
-                    AND  ia.target_index_name IS NULL
-                    THEN 'YES'
-                    ELSE 'NO'
-                END
-        FROM #index_analysis AS ia
-        JOIN #compression_eligibility AS ce 
-          ON  ia.database_id = ce.database_id
-          AND ia.object_id = ce.object_id
-          AND ia.index_id = ce.index_id
-        WHERE ia.index_name = N'uq_i_a'
         OPTION(RECOMPILE);
     END;
     
@@ -3313,11 +2673,11 @@ NextDatabase:
                 candidate.index_name
             FROM #index_analysis AS candidate
             WHERE candidate.database_id = ia.database_id
-            AND   candidate.object_id = ia.object_id
-            AND   candidate.key_columns = ia.key_columns
-            AND   ISNULL(candidate.filter_definition, '') = ISNULL(ia.filter_definition, '')
-            AND   candidate.action = N'MERGE INCLUDES'
-            AND   candidate.consolidation_rule = N'Key Duplicate'
+              AND candidate.object_id = ia.object_id
+              AND candidate.key_columns = ia.key_columns
+              AND ISNULL(candidate.filter_definition, '') = ISNULL(ia.filter_definition, '')
+              AND candidate.action = N'MERGE INCLUDES'
+              AND candidate.consolidation_rule = N'Key Duplicate'
             ORDER BY 
                 /* Then prefer indexes with more included columns (by length as a proxy) */
                 LEN(ISNULL(candidate.included_columns, '')) DESC,
@@ -3329,16 +2689,16 @@ NextDatabase:
             STUFF
             (
               (
-                SELECT
+                SELECT 
                     N', ' + 
                     inner_ia.index_name
                 FROM #index_analysis AS inner_ia
                 WHERE inner_ia.database_id = ia.database_id
-                AND   inner_ia.object_id = ia.object_id
-                AND   inner_ia.key_columns = ia.key_columns
-                AND   ISNULL(inner_ia.filter_definition, '') = ISNULL(ia.filter_definition, '')
-                AND   inner_ia.action = N'MERGE INCLUDES'
-                AND   inner_ia.consolidation_rule = N'Key Duplicate'
+                  AND inner_ia.object_id = ia.object_id
+                  AND inner_ia.key_columns = ia.key_columns
+                  AND ISNULL(inner_ia.filter_definition, '') = ISNULL(ia.filter_definition, '')
+                  AND inner_ia.action = N'MERGE INCLUDES'
+                  AND inner_ia.consolidation_rule = N'Key Duplicate'
                 GROUP BY
                     inner_ia.index_name
                 ORDER BY 
@@ -3395,8 +2755,7 @@ NextDatabase:
         REPLACE
         (
             kdd.index_list, 
-            ia.index_name + 
-            N', ', 
+            ia.index_name + N', ', 
             N''
         ) /* Remove self from list if present */
     FROM #index_analysis AS ia
@@ -3750,22 +3109,24 @@ NextDatabase:
             will_get_script = 
                 CASE 
                     WHEN ia.action = N'DISABLE' 
-                    AND  NOT EXISTS 
+                    AND NOT EXISTS 
                     (
-                        SELECT 
-                            1/0 
+                        SELECT 1 
                         FROM #index_details AS id_uc 
                         WHERE id_uc.database_id = ia.database_id 
-                        AND   id_uc.object_id = ia.object_id 
-                        AND   id_uc.index_id = ia.index_id 
-                        AND   id_uc.is_unique_constraint = 1
+                        AND id_uc.object_id = ia.object_id 
+                        AND id_uc.index_id = ia.index_id 
+                        AND id_uc.is_unique_constraint = 1
                     ) 
                     THEN 'YES' 
                     ELSE 'NO' 
                 END
         FROM #index_analysis AS ia
+        WHERE ia.index_name LIKE 'ix_filtered_%' 
+        OR    ia.index_name LIKE 'ix_desc_%'
         ORDER BY 
-            ia.index_name;
+            ia.index_name
+        OPTION(RECOMPILE);
         
         /* Debug for all indexes marked with action = DISABLE */
         RAISERROR('All indexes with action = DISABLE:', 0, 0) WITH NOWAIT;
@@ -3777,7 +3138,8 @@ NextDatabase:
         FROM #index_analysis AS ia
         WHERE ia.action = N'DISABLE'
         ORDER BY 
-            ia.index_name;
+            ia.index_name
+        OPTION(RECOMPILE);
     END;
 
     INSERT INTO 
@@ -3808,7 +3170,7 @@ NextDatabase:
         /* Sort duplicate/subset indexes first (20), then unused indexes last (25) */
         sort_order =
             CASE 
-                WHEN ia.consolidation_rule LIKE N'Unused Index%' THEN 25
+                WHEN ia.consolidation_rule LIKE 'Unused Index%' THEN 25
                 ELSE 20
             END,
         ia.database_name,
@@ -4086,9 +3448,10 @@ NextDatabase:
         AND   ir.index_name = ia.index_name
     )
     /* And include only indexes that should be kept */
-    AND (
+    AND 
+    (
         /* Include indexes marked KEEP */
-        (ia.action = N'KEEP')
+        ia.action = N'KEEP'
         /* And all indexes we haven't determined an action for (not disable, merge, etc.) */
         OR 
         (
@@ -4391,7 +3754,8 @@ NextDatabase:
         additional_info =
             CASE
                 WHEN ia.consolidation_rule = N'Same Keys Different Order' 
-                THEN N'This index has the same key columns as ' + ISNULL(ia.target_index_name, N'(unknown)') + 
+                THEN N'This index has the same key columns as ' + 
+                     ISNULL(ia.target_index_name, N'(unknown)') + 
                      N' but in a different order. May be redundant depending on query patterns.'
                 ELSE N'This index needs manual review'
             END,
@@ -4630,8 +3994,6 @@ NextDatabase:
         RAISERROR('Generating #index_reporting_stats insert, TABLE', 0, 0) WITH NOWAIT;
     END;
 
-    /* No need for a temporary table - we'll use a simpler approach */
-
     INSERT INTO 
         #index_reporting_stats
     WITH
@@ -4778,7 +4140,97 @@ NextDatabase:
     
     Within each category, indexes are sorted by size and impact for better prioritization.
     */
-    /* Save the final output query for later - will run after all databases are processed */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results, RESULTS', 0, 0) WITH NOWAIT;
+    END;
+
+    SELECT
+        /* First, show the information needed to understand the script */
+        script_type = CASE WHEN ir.result_type = 'KEPT' AND ir.script_type IS NULL THEN 'KEPT' ELSE ir.script_type END,
+        ir.additional_info,
+        /* Then show identifying information for the index */
+        ir.database_name,
+        ir.schema_name,
+        ir.table_name,
+        ir.index_name,
+        /* Then show relationship information */
+        ir.consolidation_rule,
+        ir.target_index_name,
+        /* Include superseded_by info for winning indexes */
+        superseded_info =
+            CASE 
+                WHEN ia.superseded_by IS NOT NULL 
+                THEN ia.superseded_by 
+                ELSE ir.superseded_info 
+            END,
+        /* Add size and usage metrics */
+        index_size_gb = 
+            CASE 
+                WHEN ir.result_type = 'SUMMARY' 
+                THEN '0.0000'
+                ELSE FORMAT(ISNULL(ir.index_size_gb, 0), 'N4')
+            END,
+        index_rows = 
+            CASE 
+                WHEN ir.result_type = 'SUMMARY' 
+                THEN '0'
+                ELSE FORMAT(ISNULL(ir.index_rows, 0), 'N0')
+            END,
+        index_reads = 
+            CASE 
+                WHEN ir.result_type = 'SUMMARY' 
+                THEN '0'
+                ELSE FORMAT(ISNULL(ir.index_reads, 0), 'N0')
+            END,
+        index_writes = 
+            CASE 
+                WHEN ir.result_type = 'SUMMARY' 
+                THEN '0'
+                ELSE FORMAT(ISNULL(ir.index_writes, 0), 'N0')
+            END,
+        ia.original_index_definition,
+        /* Finally show the actual script */
+        ir.script
+    FROM 
+    (
+        /* Use a subquery with ROW_NUMBER to ensure we only get one row per index */
+        SELECT *, 
+            ROW_NUMBER() OVER(
+                PARTITION BY database_name, schema_name, table_name, index_name 
+                ORDER BY result_type DESC /* Prefer non-NULL result types */
+            ) AS rn
+        FROM #index_cleanup_results
+    ) AS ir
+    LEFT JOIN #index_analysis AS ia
+      ON  ir.database_name = ia.database_name
+      AND ir.schema_name = ia.schema_name
+      AND ir.table_name = ia.table_name
+      AND ir.index_name = ia.index_name
+    WHERE ir.rn = 1 /* Take only the first row for each index */
+    ORDER BY
+        ir.sort_order,
+        ir.database_name,
+        /* Within each sort_order group, prioritize by size and usage */
+        CASE
+            /* For SUMMARY, keep the original order */
+            WHEN ir.result_type = 'SUMMARY' 
+            THEN 0
+            /* For script categories, order by size and impact */
+            ELSE ISNULL(ir.index_size_gb, 0)
+        END DESC,
+        CASE
+            /* For SUMMARY, keep the original order */
+            WHEN ir.result_type = 'SUMMARY' 
+            THEN 0
+            /* For script categories, consider rows as secondary sort */
+            ELSE ISNULL(ir.index_rows, 0)
+        END DESC,
+        /* Then by database, schema, table, index name for consistent ordering */
+        ir.schema_name,
+        ir.table_name,
+        ir.index_name
+    OPTION(RECOMPILE);
 
     /* Insert overall summary information */
     IF @debug = 1
@@ -4943,140 +4395,7 @@ NextDatabase:
     We'll modify the existing query below rather than creating new output panes
     */ 
 
-    /* Save the overall analysis report for after all databases are processed */
-
-            /* Update processed flag for this database */
-            UPDATE 
-                #databases_to_process
-            SET 
-                #databases_to_process.processed = 1,
-                #databases_to_process.process_date = SYSDATETIME()
-            WHERE #databases_to_process.database_id = @database_id;
-            
-            /* Get next database */
-            FETCH NEXT 
-            FROM @database_cursor 
-            INTO 
-                @current_database_id, 
-                @current_database_name;
-        END; /* End of cursor WHILE loop */
-        
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Finished processing %d databases', 0, 0, @processed_count) WITH NOWAIT;
-        END;
-
-        /* Create a summary table with database processing info */
-        SELECT
-            database_summary = N'Database Processing Summary',
-            processed_databases = 
-                N'Processed: ' +
-                ISNULL
-                (
-                    STUFF
-                    (
-                        (
-                            SELECT
-                                N', ' + 
-                                dtp.database_name
-                            FROM #databases_to_process AS dtp
-                            WHERE dtp.processed = 1
-                            GROUP BY
-                                dtp.database_name
-                            ORDER BY 
-                                dtp.database_name
-                            FOR 
-                                XML
-                                PATH(''),
-                                TYPE
-                        ).value('.', 'nvarchar(max)'),
-                        1, 
-                        2, 
-                        N''
-                    ),
-                    N'None'
-                ),
-            skipped_unprocessed = 
-                N'Skipped (unprocessed): ' +
-                ISNULL
-                (
-                    STUFF
-                    (
-                        (
-                            SELECT
-                                N', ' + 
-                                dtp.database_name
-                            FROM #databases_to_process AS dtp
-                            WHERE dtp.processed = 0
-                            GROUP BY
-                                dtp.database_name
-                            ORDER BY 
-                                dtp.database_name
-                            FOR 
-                                XML
-                                PATH(''),
-                                TYPE
-                        ).value('.', 'nvarchar(max)'),
-                        1, 
-                        2, 
-                        N''
-                    ),
-                    N'None'
-                ),
-            skipped_with_reasons = 
-                N'Skipped (excluded): ' +
-                ISNULL
-                (
-                    STUFF
-                    (
-                        (
-                            SELECT
-                                N', ' + 
-                                sd.database_name + 
-                                N' (' + 
-                                sd.reason + 
-                                N')'
-                            FROM #skipped_databases AS sd
-                            GROUP BY
-                                sd.database_name,
-                                sd.reason
-                            ORDER BY 
-                                sd.database_name
-                            FOR 
-                                XML
-                                PATH(''),
-                                TYPE
-                        ).value('.', 'nvarchar(max)'),
-                        1, 
-                        2, 
-                        N''
-                    ),
-                    N'None'
-                ),
-            stats = 
-                CASE
-                    WHEN @get_all_databases = 1
-                    THEN N'Total requested: ' + 
-                         CONVERT(nvarchar(10), COUNT_BIG(*) OVER() + 
-                         (SELECT COUNT_BIG(*) FROM #skipped_databases AS sd)) +
-                         N', Processed: ' + 
-                         CONVERT(nvarchar(10), SUM(CONVERT(integer, dtp.processed)) OVER()) +
-                         N', Skipped (unprocessed): ' + 
-                         CONVERT(nvarchar(10), COUNT_BIG(*) OVER() - 
-                         SUM(CONVERT(integer, dtp.processed)) OVER()) +
-                         N', Skipped (excluded): ' + 
-                         CONVERT(nvarchar(10), (SELECT COUNT_BIG(*) FROM #skipped_databases AS sd))
-                    ELSE N'Single database mode'
-                END
-        FROM #databases_to_process AS dtp
-        WHERE @database_count > 0 /* Return one row with summary data */
-        GROUP BY
-            dtp.processed
-        OPTION(RECOMPILE);
-    END; /* End of @get_all_databases = 1 section */
-    
-GenerateResults:
-    /* Return consolidated reporting statistics for all databases processed */
+    /* Return streamlined reporting statistics focused on key metrics */
     IF @debug = 1
     BEGIN
         RAISERROR('Generating #index_reporting_stats, REPORT', 0, 0) WITH NOWAIT;
@@ -5263,113 +4582,7 @@ GenerateResults:
         irs.schema_name,
         irs.table_name
     OPTION(RECOMPILE);
-    
-    /* Final unified results output - runs once after all databases processed */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Generating final consolidated output for all databases', 0, 0) WITH NOWAIT;
-    END;
 
-    SELECT
-        /* First, show the information needed to understand the script */
-        script_type = 
-            CASE 
-                WHEN ir.result_type = 'KEPT' 
-                AND  ir.script_type IS NULL 
-                THEN 'KEPT' 
-                ELSE ir.script_type 
-            END,
-        ir.additional_info,
-        /* Then show identifying information for the index */
-        ir.database_name,
-        ir.schema_name,
-        ir.table_name,
-        ir.index_name,
-        /* Then show relationship information */
-        ir.consolidation_rule,
-        ir.target_index_name,
-        /* Include superseded_by info for winning indexes */
-        superseded_info =
-            CASE 
-                WHEN ia.superseded_by IS NOT NULL 
-                THEN ia.superseded_by 
-                ELSE ir.superseded_info 
-            END,
-        /* Add size and usage metrics */
-        index_size_gb = 
-            CASE 
-                WHEN ir.result_type = 'SUMMARY' 
-                THEN '0.0000'
-                ELSE FORMAT(ISNULL(ir.index_size_gb, 0), 'N4')
-            END,
-        index_rows = 
-            CASE 
-                WHEN ir.result_type = 'SUMMARY' 
-                THEN '0'
-                ELSE FORMAT(ISNULL(ir.index_rows, 0), 'N0')
-            END,
-        index_reads = 
-            CASE 
-                WHEN ir.result_type = 'SUMMARY' 
-                THEN '0'
-                ELSE FORMAT(ISNULL(ir.index_reads, 0), 'N0')
-            END,
-        index_writes = 
-            CASE 
-                WHEN ir.result_type = 'SUMMARY' 
-                THEN '0'
-                ELSE FORMAT(ISNULL(ir.index_writes, 0), 'N0')
-            END,
-        ia.original_index_definition,
-        /* Finally show the actual script */
-        ir.script
-    FROM 
-    (
-        /* Use a subquery with ROW_NUMBER to ensure we only get one row per index */
-        SELECT 
-            icr.*, 
-            rn =
-                ROW_NUMBER() OVER
-                (
-                    PARTITION BY 
-                        icr.database_name, 
-                        icr.schema_name, 
-                        icr.table_name, 
-                        icr.index_name 
-                    ORDER BY 
-                        icr.result_type DESC /* Prefer non-NULL result types */
-                )
-        FROM #index_cleanup_results AS icr
-    ) AS ir
-    LEFT JOIN #index_analysis AS ia
-      ON  ir.database_name = ia.database_name
-      AND ir.schema_name = ia.schema_name
-      AND ir.table_name = ia.table_name
-      AND ir.index_name = ia.index_name
-    WHERE ir.rn = 1 /* Take only the first row for each index */
-    ORDER BY
-        ir.sort_order,
-        ir.database_name,
-        /* Within each sort_order group, prioritize by size and usage */
-        CASE
-            /* For SUMMARY, keep the original order */
-            WHEN ir.result_type = 'SUMMARY' 
-            THEN 0
-            /* For script categories, order by size and impact */
-            ELSE ISNULL(ir.index_size_gb, 0)
-        END DESC,
-        CASE
-            /* For SUMMARY, keep the original order */
-            WHEN ir.result_type = 'SUMMARY' 
-            THEN 0
-            /* For script categories, consider rows as secondary sort */
-            ELSE ISNULL(ir.index_rows, 0)
-        END DESC,
-        /* Then by database, schema, table, index name for consistent ordering */
-        ir.schema_name,
-        ir.table_name,
-        ir.index_name
-    OPTION(RECOMPILE);
 END TRY
 BEGIN CATCH
     THROW;
