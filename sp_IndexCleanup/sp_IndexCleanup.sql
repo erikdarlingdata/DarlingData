@@ -1970,6 +1970,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.index_id = ia2.index_id
         AND   id2.is_eligible_for_dedupe = 1
     )
+    AND NOT EXISTS 
+    (
+         SELECT
+             1/0
+         FROM #index_details AS id1
+         JOIN #index_details AS id2
+           ON  id2.database_id = id1.database_id
+           AND id2.object_id = id1.object_id
+           AND id2.column_name = id1.column_name
+           AND id2.key_ordinal = id1.key_ordinal
+         WHERE id1.database_id = ia1.database_id
+           AND id1.object_id = ia1.object_id
+           AND id1.index_id = ia1.index_id
+           AND id2.database_id = ia2.database_id
+           AND id2.object_id = ia2.object_id
+           AND id2.index_id = ia2.index_id
+           AND id1.is_descending_key <> id2.is_descending_key  /* Different sort direction */
+    )
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -2152,6 +2170,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.object_id = ia2.object_id
         AND   id2.index_id = ia2.index_id
         AND   id2.is_eligible_for_dedupe = 1
+    )
+     AND NOT EXISTS 
+     (
+      SELECT
+          1/0
+      FROM #index_details AS id1
+      JOIN #index_details AS id2
+        ON  id2.database_id = id1.database_id
+        AND id2.object_id = id1.object_id
+        AND id2.column_name = id1.column_name
+        AND id2.key_ordinal = id1.key_ordinal
+      WHERE id1.database_id = ia1.database_id
+        AND id1.object_id = ia1.object_id
+        AND id1.index_id = ia1.index_id
+        AND id2.database_id = ia2.database_id
+        AND id2.object_id = ia2.object_id
+        AND id2.index_id = ia2.index_id
+        AND id1.is_descending_key <> id2.is_descending_key  /* Different sort direction */
     )
     OPTION(RECOMPILE);
 
@@ -3601,7 +3637,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ce.schema_name,
         ce.table_name,
         ce.index_name,
-        script_type = 'INELIGIBLE FOR COMPRESSION',
+        script_type = 'COMPRESSION INELIGIBLE',
         ce.reason,
         /* Original index definition for validation */
         original_index_definition = 
