@@ -4917,13 +4917,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE 'N/A'
             END,
             
-        /* Daily write operations saved - added as new metric */
-        daily_write_ops_saved = 
+        /* Write operations saved - added as new metric */
+        write_ops_saved = 
             CASE
                 WHEN irs.summary_level <> 'SUMMARY'
-                THEN FORMAT(ISNULL(irs.user_updates / NULLIF(CONVERT(DECIMAL(10,2), 
+                THEN FORMAT(ISNULL(irs.user_updates / 
+                     NULLIF(CONVERT(decimal(10,2), 
                      (SELECT TOP (1) irs2.server_uptime_days FROM #index_reporting_stats AS irs2 WHERE irs2.summary_level = 'DATABASE')), 0) * 
-                     (ISNULL(irs.unused_indexes, 0) / NULLIF(CONVERT(DECIMAL(10,2), irs.index_count), 0)), 0), 'N0')
+                     (ISNULL(irs.unused_indexes, 0) / NULLIF(CONVERT(decimal(10,2), irs.index_count), 0)), 0), 'N0')
                 ELSE 'N/A'
             END,
         
