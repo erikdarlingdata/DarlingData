@@ -1136,16 +1136,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SET @rc = ROWCOUNT_BIG();
 
-    /* Set database_id for backwards compatibility when processing single database */
-    IF   @get_all_databases = 0 
-    AND (SELECT COUNT_BIG(*) FROM #databases AS d) = 1
-    BEGIN
-        SELECT
-            @database_id = d.database_id,
-            @database_name = d.database_name
-        FROM #databases AS d;
-    END;
-
     IF @rc = 0 
     BEGIN 
         IF @debug = 1 
@@ -1898,8 +1888,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         original_index_definition
     )
     SELECT
-        @database_id,
-        database_name = DB_NAME(@database_id),
+        @current_database_id,
+        database_name = DB_NAME(@current_database_id),
         id1.schema_id,
         id1.schema_name,
         id1.table_name,
@@ -4648,8 +4638,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             icr.*
         FROM #index_cleanup_results AS icr
         OPTION(RECOMPILE);
-
-        RAISERROR('Generating #index_cleanup_results, RESULTS', 0, 0) WITH NOWAIT;
     END;
 
         /* Get the next database */
@@ -4658,6 +4646,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INTO 
             @current_database_name, 
             @current_database_id;
+    END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_cleanup_results, RESULTS', 0, 0) WITH NOWAIT;
     END;
 
     SELECT
