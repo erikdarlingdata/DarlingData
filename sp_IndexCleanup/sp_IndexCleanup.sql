@@ -1975,7 +1975,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* For regular indexes, use CREATE INDEX syntax */    
                 ELSE
                     N'CREATE ' +
-                    CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' WHEN id1.is_unique = 0 AND @verbose_output >= 1 THEN N'NONUNIQUE ' ELSE N'' END +
+                    CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' ELSE N'' END +
                     CASE WHEN id1.index_id = 0 THEN N'CLUSTERED ' WHEN id1.index_id > 0 AND @verbose_output >= 1 THEN N'NONCLUSTERED ' ELSE N'' END +
                     N'INDEX ' + 
                     QUOTENAME(id1.index_name) + 
