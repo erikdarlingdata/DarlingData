@@ -4799,6 +4799,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
                 THEN FORMAT(irs.tables_analyzed, 'N0')
+                WHEN irs.summary_level = 'DATABASE'
+                THEN FORMAT((SELECT COUNT_BIG(DISTINCT CONCAT(ia.schema_id, N'.', ia.object_id)) 
+                            FROM #index_analysis AS ia 
+                            WHERE ia.database_name = irs.database_name), 'N0')
+                WHEN irs.summary_level = 'TABLE'
+                THEN FORMAT(1, 'N0') /* Each table row represents 1 analyzed table */
                 ELSE FORMAT(0, 'N0') /* Show 0 instead of NULL */
             END,
         
