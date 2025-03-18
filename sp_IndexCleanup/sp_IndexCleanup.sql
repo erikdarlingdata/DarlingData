@@ -918,6 +918,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     
     WHILE @@FETCH_STATUS = 0
     BEGIN
+        /*Truncate temp tables between database iterations*/
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Truncating per-database temp tables for the next iteration', 0, 0) WITH NOWAIT;
+        END;
+
+        TRUNCATE TABLE #filtered_objects;
+        TRUNCATE TABLE #operational_stats;
+        TRUNCATE TABLE #partition_stats;
+        TRUNCATE TABLE #index_details;
+        TRUNCATE TABLE #compression_eligibility;
+        TRUNCATE TABLE #key_duplicate_dedupe;
+        TRUNCATE TABLE #include_subset_dedupe;
+
          /*Validate searched objects per-database*/
          IF  @schema_name IS NOT NULL
          AND @table_name IS NOT NULL
