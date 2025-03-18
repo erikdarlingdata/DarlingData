@@ -3380,93 +3380,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating #index_cleanup_results insert, CONSTRAINT', 0, 0) WITH NOWAIT;
     END;
     
-    /* Add code to insert KEPT indexes into the results - THESE WERE MISSING! */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Generating #index_cleanup_results insert, KEPT', 0, 0) WITH NOWAIT;
-    END;
-    
-    /* Insert KEPT indexes into results */
-    INSERT INTO 
-        #index_cleanup_results
-    WITH
-        (TABLOCK)
-    (
-        result_type,
-        sort_order,
-        database_name,
-        schema_name,
-        table_name,
-        index_name,
-        script_type,
-        consolidation_rule,
-        additional_info,
-        script,
-        original_index_definition,
-        index_size_gb,
-        index_rows,
-        index_reads,
-        index_writes
-    )
-    SELECT DISTINCT
-        result_type = 'KEPT',
-        sort_order = 95, /* Put kept indexes at the end */
-        ia.database_name,
-        ia.schema_name,
-        ia.table_name,
-        ia.index_name,
-        script_type = NULL,
-        ia.consolidation_rule,
-        additional_info = 
-            CASE 
-                WHEN ia.consolidation_rule IS NOT NULL
-                THEN 'This index is being kept'
-                ELSE NULL
-            END,
-        script = NULL, /* No script for kept indexes */
-        /* Original index definition for validation */
-        ia.original_index_definition,
-        ps.total_space_gb,
-        ps.total_rows,
-        index_reads =
-            (id.user_seeks + id.user_scans + id.user_lookups),
-        id.user_updates
-    FROM #index_analysis AS ia
-    LEFT JOIN #partition_stats AS ps
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
-    LEFT JOIN #index_details AS id
-      ON  id.database_id = ia.database_id
-      AND id.object_id = ia.object_id
-      AND id.index_id = ia.index_id
-      AND id.is_included_column = 0 /* Get only one row per index */
-      AND id.key_ordinal > 0
-    /* Check that this index is not already in the results */
-    WHERE NOT EXISTS 
-    (
-        SELECT 
-            1/0 
-        FROM #index_cleanup_results AS ir
-        WHERE ir.database_name = ia.database_name
-        AND   ir.schema_name = ia.schema_name
-        AND   ir.table_name = ia.table_name
-        AND   ir.index_name = ia.index_name
-    )
-    /* And include only indexes that should be kept */
-    AND 
-    (
-        /* Include indexes marked KEEP */
-        ia.action = N'KEEP'
-        /* And all indexes we haven't determined an action for (not disable, merge, etc.) */
-        OR 
-        (
-          ia.action IS NULL 
-          AND ia.index_id > 0
-        )
-    )
-    OPTION(RECOMPILE);
-
     INSERT INTO 
         #index_cleanup_results
     WITH
@@ -3573,7 +3486,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia.schema_name,
         ia.table_name,
         ia.index_name,
-        script_type = 'PARTITION COMPRESSION SCRIPT',
+        script_type = 'COMPRESSION SCRIPT - PARTITION',
         script = 
             N'ALTER INDEX ' +
             QUOTENAME(ia.index_name) +
@@ -3787,13 +3700,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
 
-    /* Insert indexes that are being kept (superset indexes and others) */
+    /* Insert kept indexes into results - Consolidated all kept indexes logic in one place */
     IF @debug = 1
     BEGIN
-        RAISERROR('Generating #index_cleanup_results insert, KEEP', 0, 0) WITH NOWAIT;
+        RAISERROR('Generating #index_cleanup_results insert, KEPT INDEXES', 0, 0) WITH NOWAIT;
     END;
-
-    INSERT INTO 
+  
+    INSERT INTO
         #index_cleanup_results
     WITH
         (TABLOCK)
@@ -3812,23 +3725,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_size_gb,
         index_rows,
         index_reads,
-        index_writes
+        index_writes,
+        script
     )
     SELECT DISTINCT
-        result_type = 'KEEP',
-        sort_order = 95, /* Just before END OF REPORT at 99 */
+        result_type = 'KEPT',
+        sort_order = 95, /* Put kept indexes at the end */
         ia.database_name,
         ia.schema_name,
         ia.table_name,
         ia.index_name,
-        script_type = 'KEPT',
+        script_type =
+            CASE
+                /* Add compression status to script_type */
+                WHEN ce.can_compress = 1 THEN 'KEPT - NEEDS COMPRESSION'
+                ELSE 'KEPT'
+            END,
         ia.consolidation_rule,
         ia.superseded_by,
         additional_info =
             CASE
-                WHEN ia.superseded_by IS NOT NULL 
+                WHEN ia.superseded_by IS NOT NULL
                 THEN 'This index supersedes other indexes and already has all needed columns'
-                WHEN ia.action = N'KEEP' 
+                WHEN ia.action = N'KEEP'
                 THEN 'This index is being kept'
                 ELSE NULL
             END,
@@ -3838,23 +3757,88 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.total_rows,
         index_reads =
             (id.user_seeks + id.user_scans + id.user_lookups),
-        id.user_updates
+        id.user_updates,
+        /* Include compression script directly on KEPT records when needed */
+        script =
+            CASE
+                WHEN ce.can_compress = 1
+                THEN N'ALTER INDEX ' +
+                    QUOTENAME(ia.index_name) +
+                    N' ON ' +
+                    QUOTENAME(ia.database_name) +
+                    N'.' +
+                    QUOTENAME(ia.schema_name) +
+                    N'.' +
+                    QUOTENAME(ia.table_name) +
+                    CASE
+                        WHEN ps_part.partition_function_name IS NOT NULL
+                        THEN N' REBUILD PARTITION = ALL'
+                        ELSE N' REBUILD'
+                    END +
+                    N' WITH (FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+                    CASE
+                        WHEN @online = 1
+                        THEN N'ON'
+                        ELSE N'OFF'
+                    END +
+                    N', DATA_COMPRESSION = PAGE)'
+                ELSE NULL
+            END
     FROM #index_analysis AS ia
     LEFT JOIN #partition_stats AS ps
       ON  ia.database_id = ps.database_id
       AND ia.object_id = ps.object_id
       AND ia.index_id = ps.index_id
+    LEFT JOIN
+    (
+        /* Get the partition info for each index */
+        SELECT
+            ps.database_id,
+            ps.object_id,
+            ps.index_id,
+            ps.partition_function_name
+        FROM #partition_stats ps
+        GROUP BY
+            ps.database_id,
+            ps.object_id,
+            ps.index_id,
+            ps.partition_function_name
+    )
+      AS ps_part
+      ON  ia.database_id = ps_part.database_id
+      AND ia.object_id = ps_part.object_id
+      AND ia.index_id = ps_part.index_id
     LEFT JOIN #index_details AS id
       ON  id.database_id = ia.database_id
       AND id.object_id = ia.object_id
       AND id.index_id = ia.index_id
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
-    WHERE ia.action = N'KEEP' 
-    OR 
+    LEFT JOIN #compression_eligibility AS ce
+      ON  ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id
+    /* Check that this index is not already in the results */
+    WHERE NOT EXISTS
     (
-          ia.action IS NULL 
-      AND ia.consolidation_rule IS NULL
+        SELECT
+            1/0
+        FROM #index_cleanup_results AS ir
+        WHERE ir.database_name = ia.database_name
+        AND   ir.schema_name = ia.schema_name
+        AND   ir.table_name = ia.table_name
+        AND   ir.index_name = ia.index_name
+        AND   ir.script_type NOT LIKE N'COMPRESSION%'
+    )
+    /* Include only indexes that should be kept */
+    AND
+    (
+        ia.action = N'KEEP'
+        OR
+        (
+          ia.action IS NULL
+          AND ia.index_id > 0
+        )
     )
     OPTION(RECOMPILE);
 
