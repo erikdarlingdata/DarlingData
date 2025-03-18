@@ -4152,15 +4152,167 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
 
-    /* Insert database-level summaries */
+    /* Insert overall summary information */
     IF @debug = 1
     BEGIN
-        SELECT
-            table_name = '#index_cleanup_results',
-            icr.*
-        FROM #index_cleanup_results AS icr
-        OPTION(RECOMPILE);
-        
+        RAISERROR('Generating #index_reporting_stats insert, SUMMARY', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO 
+        #index_reporting_stats
+    WITH
+        (TABLOCK)
+    (
+        summary_level,
+        server_uptime_days,
+        uptime_warning,
+        tables_analyzed,
+        index_count,
+        indexes_to_disable,
+        indexes_to_merge,
+        avg_indexes_per_table,
+        space_saved_gb,
+        compression_min_savings_gb,
+        compression_max_savings_gb,
+        total_min_savings_gb,
+        total_max_savings_gb,
+        total_rows
+    )
+    SELECT 
+        summary_level = 'SUMMARY',
+        server_uptime_days = @uptime_days,
+        uptime_warning = @uptime_warning,
+        tables_analyzed = 
+            COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
+        index_count = 
+            COUNT_BIG(*),
+        indexes_to_disable = 
+            SUM
+            (
+                CASE 
+                    WHEN ia.action = N'DISABLE' 
+                    THEN 1 
+                    ELSE 0 
+                END
+            ),
+        indexes_to_merge = 
+            SUM
+            (
+                CASE 
+                    WHEN ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE') 
+                    THEN 1 
+                    ELSE 0 
+                END
+            ),
+        avg_indexes_per_table = 
+            COUNT_BIG(*) * 1.0 / 
+            NULLIF
+            (
+                COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 
+                0
+            ),
+        /* Space savings from cleanup */
+        space_saved_gb = 
+            SUM
+            (
+                CASE 
+                    WHEN ia.action IN (N'DISABLE', N'MERGE INCLUDES', N'MAKE UNIQUE') 
+                    THEN ps.total_space_gb 
+                    ELSE 0 
+                END
+            ),
+        /* Conservative compression savings estimate (20%) */
+        compression_min_savings_gb = 
+            SUM
+            (
+                CASE 
+                    WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
+                    AND   ce.can_compress = 1 
+                    THEN ps.total_space_gb * 0.20
+                    ELSE 0 
+                END
+            ),
+        /* Optimistic compression savings estimate (60%) */
+        compression_max_savings_gb = 
+            SUM
+            (
+                CASE 
+                    WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
+                    AND   ce.can_compress = 1 
+                    THEN ps.total_space_gb * 0.60
+                    ELSE 0 
+                END
+            ),
+        /* Total conservative savings */
+        total_min_savings_gb = 
+            SUM
+            (
+                CASE 
+                    WHEN ia.action IN (N'DISABLE', N'MERGE INCLUDES', N'MAKE UNIQUE') 
+                    THEN ps.total_space_gb
+                    WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
+                    AND   ce.can_compress = 1 
+                    THEN ps.total_space_gb * 0.20
+                    ELSE 0 
+                END
+            ),
+        /* Total optimistic savings */
+        total_max_savings_gb = 
+            SUM
+            (
+                CASE 
+                    WHEN ia.action IN (N'DISABLE', N'MERGE INCLUDES', N'MAKE UNIQUE') 
+                    THEN ps.total_space_gb
+                    WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
+                    AND   ce.can_compress = 1 
+                    THEN ps.total_space_gb * 0.60
+                    ELSE 0 
+                END
+            ),
+        /* Get total rows from database unique tables */
+        total_rows = 
+        (
+            SELECT 
+                SUM(t.row_count)
+            FROM 
+            (
+                SELECT 
+                    ps_distinct.object_id,
+                    row_count = 
+                        MAX
+                        (
+                            CASE 
+                                WHEN ps_distinct.index_id IN (0, 1) 
+                                THEN ps_distinct.total_rows 
+                                ELSE 0 
+                            END
+                        )
+                FROM #partition_stats AS ps_distinct
+                WHERE ps_distinct.index_id IN (0, 1)
+                GROUP BY 
+                    ps_distinct.object_id
+            ) AS t
+        )
+    FROM #index_analysis AS ia
+    LEFT JOIN #partition_stats AS ps 
+      ON  ia.database_id = ps.database_id
+      AND ia.object_id = ps.object_id
+      AND ia.index_id = ps.index_id
+    LEFT JOIN #compression_eligibility AS ce 
+      ON  ia.database_id = ce.database_id
+      AND ia.object_id = ce.object_id
+      AND ia.index_id = ce.index_id
+    OPTION(RECOMPILE);
+
+    /* Return enhanced database impact summaries */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating enhanced summary reports', 0, 0) WITH NOWAIT;
+    END;
+
+    /* Insert database-level summaries */
+    IF @debug = 1
+    BEGIN        
         RAISERROR('Generating #index_reporting_stats insert, DATABASE', 0, 0) WITH NOWAIT;
     END;
 
@@ -4427,15 +4579,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.object_id
     OPTION(RECOMPILE);
 
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#index_reporting_stats',
-            irs.*
-        FROM #index_reporting_stats AS irs
-        OPTION(RECOMPILE);
-    END;
-
     /* We're not doing index-level summaries - focusing on database and table level reports */
 
     /* 
@@ -4457,6 +4600,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     IF @debug = 1
     BEGIN
+        SELECT
+            table_name = '#index_reporting_stats',
+            irs.*
+        FROM #index_reporting_stats AS irs
+        OPTION(RECOMPILE);
+
+        SELECT
+            table_name = '#index_cleanup_results',
+            icr.*
+        FROM #index_cleanup_results AS icr
+        OPTION(RECOMPILE);
+
         RAISERROR('Generating #index_cleanup_results, RESULTS', 0, 0) WITH NOWAIT;
     END;
 
@@ -4561,164 +4716,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ir.index_name
     OPTION(RECOMPILE);
 
-    /* Insert overall summary information */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Generating #index_reporting_stats insert, SUMMARY', 0, 0) WITH NOWAIT;
-    END;
-
-    INSERT INTO 
-        #index_reporting_stats
-    WITH
-        (TABLOCK)
-    (
-        summary_level,
-        server_uptime_days,
-        uptime_warning,
-        tables_analyzed,
-        index_count,
-        indexes_to_disable,
-        indexes_to_merge,
-        avg_indexes_per_table,
-        space_saved_gb,
-        compression_min_savings_gb,
-        compression_max_savings_gb,
-        total_min_savings_gb,
-        total_max_savings_gb,
-        total_rows
-    )
-    SELECT 
-        summary_level = 'SUMMARY',
-        server_uptime_days = @uptime_days,
-        uptime_warning = @uptime_warning,
-        tables_analyzed = 
-            COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
-        index_count = 
-            COUNT_BIG(*),
-        indexes_to_disable = 
-            SUM
-            (
-                CASE 
-                    WHEN ia.action = N'DISABLE' 
-                    THEN 1 
-                    ELSE 0 
-                END
-            ),
-        indexes_to_merge = 
-            SUM
-            (
-                CASE 
-                    WHEN ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE') 
-                    THEN 1 
-                    ELSE 0 
-                END
-            ),
-        avg_indexes_per_table = 
-            COUNT_BIG(*) * 1.0 / 
-            NULLIF
-            (
-                COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 
-                0
-            ),
-        /* Space savings from cleanup */
-        space_saved_gb = 
-            SUM
-            (
-                CASE 
-                    WHEN ia.action IN (N'DISABLE', N'MERGE INCLUDES', N'MAKE UNIQUE') 
-                    THEN ps.total_space_gb 
-                    ELSE 0 
-                END
-            ),
-        /* Conservative compression savings estimate (20%) */
-        compression_min_savings_gb = 
-            SUM
-            (
-                CASE 
-                    WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
-                    AND   ce.can_compress = 1 
-                    THEN ps.total_space_gb * 0.20
-                    ELSE 0 
-                END
-            ),
-        /* Optimistic compression savings estimate (60%) */
-        compression_max_savings_gb = 
-            SUM
-            (
-                CASE 
-                    WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
-                    AND   ce.can_compress = 1 
-                    THEN ps.total_space_gb * 0.60
-                    ELSE 0 
-                END
-            ),
-        /* Total conservative savings */
-        total_min_savings_gb = 
-            SUM
-            (
-                CASE 
-                    WHEN ia.action IN (N'DISABLE', N'MERGE INCLUDES', N'MAKE UNIQUE') 
-                    THEN ps.total_space_gb
-                    WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
-                    AND   ce.can_compress = 1 
-                    THEN ps.total_space_gb * 0.20
-                    ELSE 0 
-                END
-            ),
-        /* Total optimistic savings */
-        total_max_savings_gb = 
-            SUM
-            (
-                CASE 
-                    WHEN ia.action IN (N'DISABLE', N'MERGE INCLUDES', N'MAKE UNIQUE') 
-                    THEN ps.total_space_gb
-                    WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
-                    AND   ce.can_compress = 1 
-                    THEN ps.total_space_gb * 0.60
-                    ELSE 0 
-                END
-            ),
-        /* Get total rows from database unique tables */
-        total_rows = 
-        (
-            SELECT 
-                SUM(t.row_count)
-            FROM 
-            (
-                SELECT 
-                    ps_distinct.object_id,
-                    row_count = 
-                        MAX
-                        (
-                            CASE 
-                                WHEN ps_distinct.index_id IN (0, 1) 
-                                THEN ps_distinct.total_rows 
-                                ELSE 0 
-                            END
-                        )
-                FROM #partition_stats AS ps_distinct
-                WHERE ps_distinct.index_id IN (0, 1)
-                GROUP BY 
-                    ps_distinct.object_id
-            ) AS t
-        )
-    FROM #index_analysis AS ia
-    LEFT JOIN #partition_stats AS ps 
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
-    LEFT JOIN #compression_eligibility AS ce 
-      ON  ia.database_id = ce.database_id
-      AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id
-    OPTION(RECOMPILE);
-
-    /* Return enhanced database impact summaries */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Generating enhanced summary reports', 0, 0) WITH NOWAIT;
-    END;
-
     /* 
     This section now REPLACES the existing summary view rather than supplementing it
     We'll modify the existing query below rather than creating new output panes
@@ -4784,10 +4781,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Percent of indexes that can be removed */
         percent_removable =
             CASE
-                WHEN irs.summary_level = 'SUMMARY' AND irs.index_count > 0
-                THEN FORMAT(100.0 * ISNULL(irs.indexes_to_disable, 0) / NULLIF(irs.index_count, 0), 'N1') + '%'
+                WHEN irs.summary_level = 'SUMMARY' 
+                AND  irs.index_count > 0
+                THEN FORMAT(100.0 * ISNULL(irs.indexes_to_disable, 0) 
+                     / NULLIF(irs.index_count, 0), 'N1') + '%'
                 WHEN irs.index_count > 0
-                THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0) / NULLIF(irs.index_count, 0), 'N1') + '%'
+                THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0) 
+                     / NULLIF(irs.index_count, 0), 'N1') + '%'
                 ELSE '0.0%'
             END,
         
@@ -4796,7 +4796,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         current_size_gb = FORMAT(ISNULL(irs.total_size_gb, 0), 'N2'),
         
         /* Size after cleanup - added this as new metric */
-        size_after_cleanup_gb = FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.space_saved_gb, 0), 'N2'),
+        size_after_cleanup_gb = 
+            FORMAT(ISNULL(irs.total_size_gb, 0) - 
+            ISNULL(irs.space_saved_gb, 0), 'N2'),
         
         /* Size that can be saved through cleanup */
         space_saved_gb =
@@ -4810,7 +4812,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         space_reduction_percent = 
             CASE
                 WHEN ISNULL(irs.total_size_gb, 0) > 0
-                THEN FORMAT((ISNULL(irs.space_saved_gb, 0) / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                THEN FORMAT((ISNULL(irs.space_saved_gb, 0) / 
+                     NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
                 ELSE '0.0%'
             END,
         
