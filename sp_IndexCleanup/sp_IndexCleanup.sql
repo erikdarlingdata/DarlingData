@@ -910,6 +910,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         /* If no database name specified, use current database if not a system database */
         IF  @database_name IS NULL
+        AND @get_all_databases = 0
         AND DB_NAME() NOT IN
             (
                 N'master',
@@ -1104,7 +1105,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
     
     /* Parameter validation for multi-database mode */
-    IF @get_all_databases = 1 AND @database_name IS NOT NULL
+    IF  @get_all_databases = 1 
+    AND @database_name IS NOT NULL
     BEGIN
         RAISERROR('You cannot specify both @get_all_databases = 1 and a specific @database_name. Using @get_all_databases = 1 and ignoring @database_name.', 10, 1) WITH NOWAIT;
         SET @database_name = NULL;
