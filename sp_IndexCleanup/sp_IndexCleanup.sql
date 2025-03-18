@@ -1735,7 +1735,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 1/0
             FROM #filtered_objects AS fo
-            WHERE fo.database_id = @current_database_id
+            WHERE fo.database_id = @database_id
             AND   fo.object_id = t.object_id
         )';
 
