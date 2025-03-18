@@ -453,6 +453,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NULL,
         column_name sysname NOT NULL,
+        column_id int NOT NULL,
         is_primary_key bit NULL,
         is_unique bit NULL,
         is_unique_constraint bit NULL,
@@ -1446,6 +1447,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name = t.name,
         index_name = ISNULL(i.name, t.name + N''.Heap''),
         column_name = c.name,
+        column_id = c.column_id,
         i.is_primary_key,
         i.is_unique,
         i.is_unique_constraint,
@@ -1620,6 +1622,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         index_name,
         column_name,
+        column_id,
         is_primary_key,
         is_unique,
         is_unique_constraint,
@@ -1903,7 +1906,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               (
                 SELECT
                     N', ' +
-                    id2.column_name +
+                    QUOTENAME(id2.column_name) +
                     CASE
                         WHEN id2.is_descending_key = 1
                         THEN N' DESC'
@@ -1934,7 +1937,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               (
                 SELECT
                     N', ' +
-                    id2.column_name
+                    QUOTENAME(id2.column_name)
                 FROM #index_details id2
                 WHERE id2.object_id = id1.object_id
                 AND   id2.index_id = id1.index_id
@@ -1972,6 +1975,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE
                     N'CREATE ' +
                     CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' ELSE N'' END +
+                    CASE WHEN id1.index_id > 0 THEN N'NONCLUSTERED ' ELSE N'' END +
                     N'INDEX ' + 
                     QUOTENAME(id1.index_name) + 
                     N' ON ' + 
@@ -1987,7 +1991,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 (
                     SELECT
                         N', ' +
-                        id2.column_name +
+                        QUOTENAME(id2.column_name) +
                         CASE
                             WHEN id2.is_descending_key = 1
                             THEN N' DESC'
@@ -2029,14 +2033,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         (
                             SELECT
                                 N', ' +
-                                id4.column_name
+                                QUOTENAME(id4.column_name)
                             FROM #index_details id4
                             WHERE id4.object_id = id1.object_id
                             AND   id4.index_id = id1.index_id
                             AND   id4.is_included_column = 1
                             GROUP BY
+                                id4.column_id,
                                 id4.column_name
                             ORDER BY
+                                id4.column_id,
                                 id4.column_name
                             FOR 
                                 XML
@@ -2054,7 +2060,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN id1.filter_definition IS NOT NULL
                 THEN N' WHERE ' + id1.filter_definition
                 ELSE N''
-            END
+            END +
+            N';'
     FROM #index_details id1
     WHERE id1.is_eligible_for_dedupe = 1
     GROUP BY
