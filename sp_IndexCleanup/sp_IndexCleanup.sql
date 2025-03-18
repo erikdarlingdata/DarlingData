@@ -273,7 +273,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @current_database_name sysname,
         @current_database_id integer,
         @error_msg nvarchar(2048),
-        @conflict_list nvarchar(max) = N''
+        @conflict_list nvarchar(max) = N'',
+        @rc bigint;
         
     /* Set uptime warning flag after @uptime_days is calculated */
     SELECT 
@@ -827,7 +828,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             /* Get the database_id for backwards compatibility */
             SELECT
-                @database_id = d.database_id
+                @current_database_id = d.database_id
             FROM #databases AS d;
         END;
     END
@@ -950,7 +951,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                  FROM @database_cursor
                  INTO 
                      @current_database_name, 
-                     @current_database_id;            
+                     @current_database_id;
                  CONTINUE;
              END;
          END;
@@ -1133,6 +1134,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @min_rows,
         @object_id;
 
+    SET @rc = ROWCOUNT_BIG();
+
     /* Set database_id for backwards compatibility when processing single database */
     IF   @get_all_databases = 0 
     AND (SELECT COUNT_BIG(*) FROM #databases AS d) = 1
@@ -1143,7 +1146,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #databases AS d;
     END;
 
-    IF ROWCOUNT_BIG() = 0 
+    IF @rc = 0 
     BEGIN 
         IF @debug = 1 
         BEGIN
@@ -1160,7 +1163,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM @database_cursor
         INTO 
             @current_database_name, 
-            @current_database_id;            
+            @current_database_id;
         CONTINUE;
     END;
 
@@ -1328,18 +1331,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_io_latch_wait_in_ms = SUM(os.page_io_latch_wait_in_ms),
         page_compression_attempt_count = SUM(os.page_compression_attempt_count),
         page_compression_success_count = SUM(os.page_compression_success_count)
-    FROM ' + QUOTENAME(@database_name) + N'.sys.dm_db_index_operational_stats
+    FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_index_operational_stats
     (
         @database_id,
         @object_id,
         NULL,
         NULL
     ) AS os
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.tables AS t
+    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
       ON os.object_id = t.object_id
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
+    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
       ON t.schema_id = s.schema_id
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.indexes AS i
+    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
       ON  os.object_id = i.object_id
       AND os.index_id = i.index_id
     WHERE EXISTS
@@ -1415,7 +1418,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql,
       N'@database_id integer,
         @object_id integer',
-        @database_id,
+        @current_database_id,
         @object_id;
 
     IF ROWCOUNT_BIG() = 0 
@@ -1462,7 +1465,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 (
                     SELECT
                         1/0
-                    FROM ' + QUOTENAME(@database_name) + N'.sys.objects AS so
+                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.objects AS so
                     WHERE i.object_id = so.object_id
                     AND   so.is_ms_shipped = 0
                     AND   so.type = ''V''
@@ -1476,7 +1479,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      (
                          SELECT
                              1/0
-                         FROM ' + QUOTENAME(@database_name) + N'.sys.foreign_key_columns AS f
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.foreign_key_columns AS f
                          WHERE f.parent_column_id = c.column_id
                          AND   f.parent_object_id = c.object_id
                      )
@@ -1489,7 +1492,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      (
                          SELECT
                              1/0
-                         FROM ' + QUOTENAME(@database_name) + N'.sys.foreign_key_columns AS f
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.foreign_key_columns AS f
                          WHERE f.referenced_column_id = c.column_id
                          AND   f.referenced_object_id = c.object_id
                      )
@@ -1507,7 +1510,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      (
                          SELECT
                              1/0
-                         FROM ' + QUOTENAME(@database_name) + N'.sys.types AS t
+                         FROM ' + QUOTENAME(@current_database_name) + N'.sys.types AS t
                          WHERE  c.system_type_id = t.system_type_id
                          AND    c.user_type_id = t.user_type_id
                          AND    t.name IN (N''varchar'', N''nvarchar'')
@@ -1531,15 +1534,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN i.type = 1
                 THEN 0
             END
-    FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
+    FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
       ON t.schema_id = s.schema_id
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.indexes AS i
+    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
       ON t.object_id = i.object_id
-    JOIN ' + QUOTENAME(@database_name) + N'.sys.index_columns AS ic
+    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.index_columns AS ic
       ON  i.object_id = ic.object_id
       AND i.index_id = ic.index_id
-    JOIN ' + QUOTENAME(@database_name) + 
+    JOIN ' + QUOTENAME(@current_database_name) + 
     CONVERT
     (
         nvarchar(MAX),
@@ -1567,7 +1570,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT 
             1/0
         FROM '
-    ) + QUOTENAME(@database_name) + 
+    ) + QUOTENAME(@current_database_name) + 
         CONVERT
         (
             nvarchar(MAX), 
@@ -1598,7 +1601,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
           SELECT
               1/0
-          FROM ' + QUOTENAME(@database_name) + N'.sys.objects AS so
+          FROM ' + QUOTENAME(@current_database_name) + N'.sys.objects AS so
           WHERE i.object_id = so.object_id
           AND   so.is_ms_shipped = 0
           AND   so.type = N''TF''
@@ -1654,7 +1657,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       N'@database_id integer,
         @object_id integer,
         @min_rows integer',
-        @database_id,
+        @current_database_id,
         @object_id,
         @min_rows;
 
@@ -1723,17 +1726,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             reserved_row_overflow_gb = SUM(ps.row_overflow_reserved_page_count) * 8. / 1024. / 1024.0, /* Convert directly to GB */
             p.data_compression_desc,
             i.data_space_id
-        FROM ' + QUOTENAME(@database_name) + N'.sys.tables AS t
-        JOIN ' + QUOTENAME(@database_name) + N'.sys.indexes AS i
+        FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
           ON t.object_id = i.object_id
-        JOIN ' + QUOTENAME(@database_name) + N'.sys.schemas AS s
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
           ON t.schema_id = s.schema_id
-        JOIN ' + QUOTENAME(@database_name) + N'.sys.partitions AS p
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.partitions AS p
           ON  i.object_id = p.object_id
           AND i.index_id = p.index_id
-        JOIN ' + QUOTENAME(@database_name) + N'.sys.allocation_units AS a
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.allocation_units AS a
           ON p.partition_id = a.container_id
-        LEFT HASH JOIN ' + QUOTENAME(@database_name) + N'.sys.dm_db_partition_stats AS ps
+        LEFT HASH JOIN ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
           ON p.partition_id = ps.partition_id
         WHERE t.type <> N''TF''
         AND   i.type IN (1, 2)
@@ -1781,10 +1784,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ps.name,
             partition_function_name =
                 pf.name
-        FROM ' + QUOTENAME(@database_name) + N'.sys.filegroups AS fg
-        FULL JOIN ' + QUOTENAME(@database_name) + N'.sys.partition_schemes AS ps
+        FROM ' + QUOTENAME(@current_database_name) + N'.sys.filegroups AS fg
+        FULL JOIN ' + QUOTENAME(@current_database_name) + N'.sys.partition_schemes AS ps
           ON ps.data_space_id = fg.data_space_id
-        LEFT JOIN ' + QUOTENAME(@database_name) + N'.sys.partition_functions AS pf
+        LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.partition_functions AS pf
           ON pf.function_id = ps.function_id
         WHERE x.data_space_id = fg.data_space_id
         OR    x.data_space_id = ps.data_space_id
@@ -1799,8 +1802,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SELECT
                         N'', '' +
                         c.name
-                    FROM ' + QUOTENAME(@database_name) + N'.sys.index_columns AS ic
-                    JOIN ' + QUOTENAME(@database_name) + N'.sys.columns AS c
+                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.index_columns AS ic
+                    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
                       ON c.object_id = ic.object_id
                      AND c.column_id = ic.column_id
                     WHERE ic.object_id = x.object_id
@@ -1853,7 +1856,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql,
       N'@database_id integer,
         @object_id integer',
-        @database_id,
+        @current_database_id,
         @object_id;
 
     IF ROWCOUNT_BIG() = 0 
@@ -1967,7 +1970,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN id1.is_unique_constraint = 1
                 THEN
                     N'ALTER TABLE ' + 
-                    QUOTENAME(DB_NAME(@database_id)) + 
+                    QUOTENAME(DB_NAME(@current_database_id)) + 
                     N'.' +
                     QUOTENAME(id1.schema_name) + 
                     N'.' +
@@ -1982,7 +1985,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'INDEX ' + 
                     QUOTENAME(id1.index_name) + 
                     N' ON ' + 
-                    QUOTENAME(DB_NAME(@database_id)) + 
+                    QUOTENAME(DB_NAME(@current_database_id)) + 
                     N'.' +
                     QUOTENAME(id1.schema_name) + 
                     N'.' +
