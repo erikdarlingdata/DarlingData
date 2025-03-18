@@ -1130,6 +1130,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Process single database */
     IF @get_all_databases = 0
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('processing for @get_all_databases = 0', 0, 0) WITH NOWAIT;
+        END;
+
         /* Use the database specified in @database_name */
         SELECT 
             @database_id = database_id,
@@ -1249,6 +1254,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF  @schema_name IS NOT NULL
     AND @table_name IS NOT NULL
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('validating object existence for  %s.%s.%s', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
+        END;
+
         SELECT
             @full_object_name =
             QUOTENAME(@database_name) +
@@ -1338,6 +1348,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ) >= 13
     ) /* SQL 2016+ */
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('adding temporal table screening', 0, 0) WITH NOWAIT;
+        END;
+
         SET @sql += N'
     AND   NOT EXISTS 
     (
@@ -1352,6 +1367,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     IF @object_id IS NOT NULL
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('adding object_id filter', 0, 0) WITH NOWAIT;
+        END;
+
         SELECT @sql += N'
     AND   t.object_id = @object_id';
     END;
