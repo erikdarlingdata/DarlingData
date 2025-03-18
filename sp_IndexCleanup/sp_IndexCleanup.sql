@@ -1416,6 +1416,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* If SQL Server edition doesn't support compression, mark all as ineligible */
     IF @can_compress = 0
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('updating compression eligibility', 0, 0) WITH NOWAIT;
+        END;
+        
         UPDATE 
             #compression_eligibility
         SET 
