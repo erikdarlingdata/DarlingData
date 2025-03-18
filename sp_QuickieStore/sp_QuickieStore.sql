@@ -2103,7 +2103,8 @@ BEGIN
     OPTION(RECOMPILE);
     
     /* Track which requested databases were skipped */
-    IF @include_databases IS NOT NULL AND @get_all_databases = 1
+    IF  @include_databases IS NOT NULL 
+    AND @get_all_databases = 1
     BEGIN
         INSERT
             #requested_but_skipped_databases
@@ -2187,7 +2188,8 @@ BEGIN
     OPTION(RECOMPILE);
     
     /* Track which requested databases were skipped */
-    IF @include_databases IS NOT NULL AND @get_all_databases = 1
+    IF  @include_databases IS NOT NULL 
+    AND @get_all_databases = 1
     BEGIN
         INSERT
             #requested_but_skipped_databases
