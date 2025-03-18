@@ -21,6 +21,7 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
 - **Object creation**: Generally use CREATE OR ALTER for objects instead of DROP/CREATE
 - **Table aliases**: Tables must always have aliases, even in simple queries
 - **Column references**: Always qualify columns with their table alias
+- **Commas**: Trailing commas always. 
 
 ## Comments
 
@@ -49,7 +50,7 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
 - **SELECT statements**:
   - SELECT keyword on first line
   - Column list starts on next line, indented
-  - Leading commas for multi-line column lists
+  - Trailing commas for multi-line column lists
   - Columns aligned vertically for readability
   - FROM clause on new line at same indent level as SELECT
   - Column aliases should always use the pattern: column_name = column_expression
