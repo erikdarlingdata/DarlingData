@@ -894,7 +894,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         d.database_name,
         d.database_id
     FROM #databases AS d
-    ORDER BY d.database_name;
+    ORDER BY 
+        d.database_id;
     
     OPEN @database_cursor;
     
@@ -937,15 +938,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
          
              IF @object_id IS NULL
              BEGIN
-                 RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
-                 RETURN;
+                 RAISERROR('The object %s doesn''t seem to exist', 10, 1, @full_object_name) WITH NOWAIT;
+                 
+                 IF @get_all_databases = 0
+                 BEGIN
+                     RETURN;
+                 END;
+                 
+                 /* Get the next database and continue the loop */
+                 FETCH NEXT
+                 FROM @database_cursor
+                 INTO 
+                     @current_database_name, 
+                     @current_database_id;            
+                 CONTINUE;
              END;
          END;
 
         /* Process current database */
         IF @debug = 1
         BEGIN
-            RAISERROR('Processing database: %s (ID: %d)', 0, 0, @current_database_name, @current_database_id) WITH NOWAIT;
+            RAISERROR('Processing @current_database_name: %s and @current_database_id: %d', 0, 0, @current_database_name, @current_database_id) WITH NOWAIT;
         END;
     
         SELECT
@@ -1020,14 +1033,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SET @sql += N'
-    AND   NOT EXISTS 
-    (
-        SELECT 
-            1/0 
-        FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
-        WHERE t.object_id = i.object_id 
-        AND   t.temporal_type > 0
-    )';
+        AND   NOT EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+            WHERE t.object_id = i.object_id 
+            AND   t.temporal_type > 0
+        )';
     END;
 
 
@@ -1039,50 +1052,50 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
         
         SELECT @sql += N'
-    AND   t.object_id = @object_id';
+        AND   t.object_id = @object_id';
     END;
 
     SET @sql += N'
-    AND EXISTS 
-    (
-        SELECT 
-            1/0 
-        FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
-        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.allocation_units AS au
-          ON ps.partition_id = au.container_id
-        WHERE ps.object_id = t.object_id
-        GROUP BY 
-            ps.object_id
-        HAVING 
-            SUM(au.total_pages) * 8.0 / 1048576.0 >= @min_size_gb
-    )
-    AND EXISTS 
-    (
-        SELECT 
-            1/0
-        FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
-        WHERE ps.object_id = t.object_id
-        AND   ps.index_id IN (0, 1)
-        GROUP BY 
-            ps.object_id
-        HAVING 
-            SUM(ps.row_count) >= @min_rows
-    )    
-    AND EXISTS 
-    (
-        SELECT 
-            1/0
-        FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_index_usage_stats AS ius
-        WHERE ius.object_id = t.object_id
-        AND   ius.database_id = @database_id
-        GROUP BY 
-            ius.object_id
-        HAVING 
-            SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) >= @min_reads
-        OR 
-            SUM(ius.user_updates) >= @min_writes
-    )
-    OPTION(RECOMPILE);
+        AND EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
+            JOIN ' + QUOTENAME(@current_database_name) + N'.sys.allocation_units AS au
+              ON ps.partition_id = au.container_id
+            WHERE ps.object_id = t.object_id
+            GROUP BY 
+                ps.object_id
+            HAVING 
+                SUM(au.total_pages) * 8.0 / 1048576.0 >= @min_size_gb
+        )
+        AND EXISTS 
+        (
+            SELECT 
+                1/0
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
+            WHERE ps.object_id = t.object_id
+            AND   ps.index_id IN (0, 1)
+            GROUP BY 
+                ps.object_id
+            HAVING 
+                SUM(ps.row_count) >= @min_rows
+        )    
+        AND EXISTS 
+        (
+            SELECT 
+                1/0
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_index_usage_stats AS ius
+            WHERE ius.object_id = t.object_id
+            AND   ius.database_id = @database_id
+            GROUP BY 
+                ius.object_id
+            HAVING 
+                SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) >= @min_reads
+            OR 
+                SUM(ius.user_updates) >= @min_writes
+        )
+        OPTION(RECOMPILE);
     ';
 
     IF @debug = 1
@@ -1147,8 +1160,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM @database_cursor
         INTO 
             @current_database_name, 
-            @current_database_id;
-            
+            @current_database_id;            
         CONTINUE;
     END;
 
