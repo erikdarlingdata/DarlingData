@@ -672,6 +672,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         /* Parse @include_databases if specified - using XML for string splitting instead of STRING_SPLIT (version compatibility) */
         IF @include_databases IS NOT NULL
+        IF @debug = 1
+        BEGIN
+            RAISERROR('processing included databases', 0, 0) WITH NOWAIT;
+        END;
         BEGIN
             SELECT 
                 @include_xml = 
@@ -703,6 +707,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         /* Check for databases in both include and exclude lists */
         IF @exclude_databases IS NOT NULL
+        IF @debug = 1
+        BEGIN
+            RAISERROR('processing excluded databases', 0, 0) WITH NOWAIT;
+        END;
+
         BEGIN
             SELECT 
                 @exclude_xml = 
@@ -764,6 +773,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
     ) IN (5, 8) /* Azure SQL DB or Managed Instance */
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('processing databases special in azure', 0, 0) WITH NOWAIT;
+        END;
+
         /* Get all eligible databases for Azure SQL */
         INSERT INTO 
             #databases_to_process
@@ -792,6 +806,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
     ELSE /* Regular SQL Server */
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('processing on-prem sql server databases', 0, 0) WITH NOWAIT;
+        END;
+
         /* Get all eligible databases with AG primary replica check */
         INSERT INTO 
             #databases_to_process 
@@ -835,7 +854,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Remove excluded databases if specified */
     IF @exclude_databases IS NOT NULL
     BEGIN
-        SELECT @exclude_xml = CONVERT(xml, '<i>' + REPLACE(@exclude_databases, ',', '</i><i>') + '</i>');
+        IF @debug = 1
+        BEGIN
+            RAISERROR('processing excluded databases', 0, 0) WITH NOWAIT;
+        END;
+
+        SELECT 
+            @exclude_xml = 
+                CONVERT
+                (
+                    xml, 
+                    '<i>' + 
+                    REPLACE
+                    (
+                        @exclude_databases, 
+                        ',', 
+                        '</i><i>'
+                    ) + 
+                    '</i>'
+                );
         
         DELETE 
             dp
@@ -883,6 +920,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Track databases that were requested but skipped (for better reporting) */
     IF @include_databases IS NOT NULL
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('processing included databases for skip reasons', 0, 0) WITH NOWAIT;
+        END;
+
         INSERT
             #skipped_databases
         WITH
@@ -895,11 +937,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             database_name = dl.database_name,
             reason = 
                 CASE 
-                    WHEN d.name IS NULL THEN N'Database does not exist'
-                    WHEN d.state <> 0 THEN N'Database not online'
-                    WHEN d.is_in_standby = 1 THEN N'Database is in standby'
-                    WHEN d.is_read_only = 1 THEN N'Database is read-only'
-                    WHEN d.database_id <= 4 THEN N'System database'
+                    WHEN d.name IS NULL 
+                    THEN N'Database does not exist'
+                    WHEN d.state <> 0 
+                    THEN N'Database not online'
+                    WHEN d.is_in_standby = 1 
+                    THEN N'Database is in standby'
+                    WHEN d.is_read_only = 1 
+                    THEN N'Database is read-only'
+                    WHEN d.database_id <= 4 
+                    THEN N'System database'
                     WHEN EXISTS
                          (
                              SELECT
@@ -911,7 +958,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              WHERE s.is_local <> 1
                              AND   s.role_desc <> N'PRIMARY'
                              AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-                         ) THEN N'AG replica issue - not primary or read-write'
+                         ) 
+                    THEN N'AG replica issue - not primary or read-write'
                     ELSE N'Other issue'
                 END
         FROM #database_list AS dl
@@ -930,6 +978,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Also track explicitly excluded databases */
     IF @exclude_databases IS NOT NULL
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('processing explicitly excluded databases', 0, 0) WITH NOWAIT;
+        END;
+
         INSERT
             #skipped_databases
         WITH
@@ -943,8 +996,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             reason = N'Explicitly excluded by @exclude_databases parameter'
         FROM 
         (
-            SELECT xml_list = CONVERT(xml, N'<i>' + 
-                REPLACE(@exclude_databases, N',', N'</i><i>') + N'</i>')
+            SELECT xml_list = 
+                CONVERT
+                (
+                    xml, 
+                    N'<i>' + 
+                    REPLACE
+                    (
+                        @exclude_databases, 
+                        N',', 
+                        N'</i><i>'
+                    ) + 
+                    N'</i>'
+                )
         ) AS a
         CROSS APPLY a.xml_list.nodes('i') AS t(i)
         WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
@@ -992,6 +1056,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF  @schema_name IS NOT NULL
         AND @table_name IS NOT NULL
         BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('validating object existence for %s.%s.&s.', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
+            END;
+
             SELECT
                 @full_object_name =
                 QUOTENAME(@database_name) +
@@ -1012,6 +1081,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Add the single database to the processing list */
         IF @database_name IS NOT NULL
         BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('inserting databases to process', 0, 0) WITH NOWAIT;
+            END;
+
             INSERT INTO 
                 #databases_to_process 
             WITH
@@ -1054,6 +1128,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     IF @get_all_databases = 1
     BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('entering main processing logic for @get_all_databases = 1', 0, 0) WITH NOWAIT;
+        END;
+
         /* Get the count of databases for reporting */
         SELECT 
             @database_count = COUNT_BIG(*) 
