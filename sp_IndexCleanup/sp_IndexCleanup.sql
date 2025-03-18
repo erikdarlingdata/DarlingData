@@ -235,11 +235,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ) IN (3, 5, 8) 
                     OR 
                     (
-                          CONVERT
-                          (
-                              integer, 
-                              SERVERPROPERTY('EngineEdition')
-                          ) = 2 
+                      CONVERT
+                      (
+                          integer, 
+                          SERVERPROPERTY('EngineEdition')
+                      ) = 2 
                       AND CONVERT
                           (
                               integer, 
@@ -289,6 +289,71 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1 
                 ELSE 0 
             END;
+
+    /* Parameter validation */
+    IF @min_reads < 0
+    OR @min_reads IS NULL
+    BEGIN
+        IF @debug = 1 
+        BEGIN
+            RAISERROR('Parameter @min_reads cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
+        END;
+        
+        SET @min_reads = 0;
+    END;
+    
+    IF @min_writes < 0
+    OR @min_writes IS NULL
+    BEGIN
+        IF @debug = 1 
+        BEGIN
+            RAISERROR('Parameter @min_writes cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
+        END;
+        
+        SET @min_writes = 0;
+    END;
+    
+    IF @min_size_gb < 0
+    OR @min_size_gb IS NULL
+    BEGIN
+        IF @debug = 1 
+        BEGIN        
+            RAISERROR('Parameter @min_size_gb cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
+        END;
+
+        SET @min_size_gb = 0;
+    END;
+    
+    IF @min_rows < 0
+    OR @min_rows IS NULL
+    BEGIN
+        IF @debug = 1 
+        BEGIN        
+            RAISERROR('Parameter @min_rows cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
+        END;
+
+        SET @min_rows = 0;
+    END;
+
+    IF  @schema_name IS NULL
+    AND @table_name IS NOT NULL
+    BEGIN
+        IF @debug = 1 
+        BEGIN        
+            RAISERROR('Parameter @schema_name cannot be NULL when specifying a table, defaulting to dbo', 10, 1) WITH NOWAIT;
+        END;
+
+        SET @schema_name = N'dbo';
+    END;
+    
+    /* Parameter validation for multi-database mode */
+    IF  @get_all_databases = 1 
+    AND @database_name IS NOT NULL
+    BEGIN
+        RAISERROR('You cannot specify both @get_all_databases = 1 and a specific @database_name. Using @get_all_databases = 1 and ignoring @database_name.', 10, 1) WITH NOWAIT;
+        
+        SET @database_name = NULL;
+    END;
 
     /*
     Temp tables!
@@ -589,6 +654,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         reason nvarchar(255) NOT NULL
     );
 
+    /* Create a table to parse the include/exclude lists */
+    CREATE TABLE 
+        #database_list 
+    (
+        id integer IDENTITY PRIMARY KEY CLUSTERED,
+        database_name sysname NOT NULL
+    );
+
     /* Handle multi-database mode */
     IF @get_all_databases = 1
     BEGIN
@@ -596,14 +669,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Multi-database mode enabled, gathering database list...', 0, 0) WITH NOWAIT;
         END;
-
-        /* Create a table to parse the include/exclude lists */
-        CREATE TABLE 
-            #database_list 
-        (
-            id integer IDENTITY PRIMARY KEY CLUSTERED,
-            database_name sysname NOT NULL
-        );
 
         /* Parse @include_databases if specified - using XML for string splitting instead of STRING_SPLIT (version compatibility) */
         IF @include_databases IS NOT NULL
@@ -634,264 +699,263 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM @include_xml.nodes('/i') AS t(i)
             WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
             OPTION(RECOMPILE);
+        END;
 
-            /* Check for databases in both include and exclude lists */
-            IF @exclude_databases IS NOT NULL
-            BEGIN
-                SELECT 
-                    @exclude_xml = 
-                        CONVERT
-                        (
-                            xml, 
-                            '<i>' + 
-                            REPLACE
-                            (
-                                @exclude_databases, 
-                                ',', 
-                                '</i><i>'
-                            ) + 
-                            '</i>'
-                        );
-                
-                /* Build list of conflicting databases */               
-                SELECT 
-                    @conflict_list = 
-                        @conflict_list + 
-                        LTRIM(RTRIM(t.i.value('.', 'sysname'))) + 
-                        N', '
-                FROM @exclude_xml.nodes('/i') AS t(i)
-                WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
-                AND EXISTS 
+        /* Check for databases in both include and exclude lists */
+        IF @exclude_databases IS NOT NULL
+        BEGIN
+            SELECT 
+                @exclude_xml = 
+                    CONVERT
                     (
-                        SELECT 
-                            1/0 
-                        FROM #database_list AS dl 
-                        WHERE dl.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
-                    )
-                OPTION(RECOMPILE);;
+                        xml, 
+                        '<i>' + 
+                        REPLACE
+                        (
+                            @exclude_databases, 
+                            ',', 
+                            '</i><i>'
+                        ) + 
+                        '</i>'
+                    );
+            
+            /* Build list of conflicting databases */               
+            SELECT 
+                @conflict_list = 
+                    @conflict_list + 
+                    LTRIM(RTRIM(t.i.value('.', 'sysname'))) + 
+                    N', '
+            FROM @exclude_xml.nodes('/i') AS t(i)
+            WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
+            AND EXISTS 
+                (
+                    SELECT 
+                        1/0 
+                    FROM #database_list AS dl 
+                    WHERE dl.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
+                )
+            OPTION(RECOMPILE);;
+            
+            /* If we found any conflicts, raise an error */
+            IF LEN(@conflict_list) > 0
+            BEGIN
+                /* Remove trailing comma and space */
+                SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
                 
-                /* If we found any conflicts, raise an error */
-                IF LEN(@conflict_list) > 0
-                BEGIN
-                    /* Remove trailing comma and space */
-                    SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
-                    
-                    SET @error_msg = 
-                        N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' + 
-                        @conflict_list + N'. Please remove these databases from one of the lists.';
-                    
-                    RAISERROR(@error_msg, 16, 1) WITH NOWAIT;
-                    RETURN;
-                END;
+                SET @error_msg = 
+                    N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' + 
+                    @conflict_list + N'. Please remove these databases from one of the lists.';
+                
+                RAISERROR(@error_msg, 16, 1) WITH NOWAIT;
+                RETURN;
             END;
         END;
 
-        /*
-        Check SQL Server engine edition and use appropriate query paths
-        */
-        IF 
+    /*
+    Check SQL Server engine edition and use appropriate query paths
+    */
+    IF 
+    (
+        SELECT 
+            CONVERT
+            (
+                sysname, 
+                SERVERPROPERTY('EngineEdition')
+            )
+    ) IN (5, 8) /* Azure SQL DB or Managed Instance */
+    BEGIN
+        /* Get all eligible databases for Azure SQL */
+        INSERT INTO 
+            #databases_to_process
+        WITH
+            (TABLOCK)
+        (
+            database_id, 
+            database_name
+        )
+        SELECT 
+            database_id = d.database_id,
+            database_name = d.name
+        FROM sys.databases AS d
+        WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb')
+        AND   d.state = 0
+        AND   d.is_in_standby = 0
+        AND   d.is_read_only = 0
+        AND   d.database_id > 4 /* Skip system databases */
+        AND 
+        (
+            /* If include list is provided, only keep databases in that list */
+            (@include_databases IS NULL) OR 
+            (d.name IN (SELECT database_name FROM #database_list))
+        )
+        OPTION(RECOMPILE);
+    END;
+    ELSE /* Regular SQL Server */
+    BEGIN
+        /* Get all eligible databases with AG primary replica check */
+        INSERT INTO 
+            #databases_to_process 
+        WITH
+            (TABLOCK)
+        (
+            database_id, 
+            database_name
+        )
+        SELECT 
+            database_id = d.database_id,
+            database_name = d.name
+        FROM sys.databases AS d
+        WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
+        AND   d.state = 0
+        AND   d.is_in_standby = 0
+        AND   d.is_read_only = 0
+        AND   d.database_id > 4 /* Skip system databases */
+        /* Add AG check to ensure we only process the primary replica */
+        AND   NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM sys.dm_hadr_availability_replica_states AS s
+            JOIN sys.availability_databases_cluster AS c
+              ON  s.group_id = c.group_id
+              AND d.name = c.database_name
+            WHERE s.is_local <> 1
+            AND   s.role_desc <> N'PRIMARY'
+            AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
+        )
+        AND 
+        (
+            /* If include list is provided, only keep databases in that list */
+            (@include_databases IS NULL) OR 
+            (d.name IN (SELECT database_name FROM #database_list))
+        )
+        OPTION(RECOMPILE);;
+    END;
+
+    /* Remove excluded databases if specified */
+    IF @exclude_databases IS NOT NULL
+    BEGIN
+        SELECT @exclude_xml = CONVERT(xml, '<i>' + REPLACE(@exclude_databases, ',', '</i><i>') + '</i>');
+        
+        DELETE 
+            dp
+        FROM #databases_to_process AS dp
+        WHERE EXISTS
         (
             SELECT 
-                CONVERT
-                (
-                    sysname, 
-                    SERVERPROPERTY('EngineEdition')
-                )
-        ) IN (5, 8) /* Azure SQL DB or Managed Instance */
-        BEGIN
-            /* Get all eligible databases for Azure SQL */
-            INSERT INTO 
-                #databases_to_process
-            WITH
-                (TABLOCK)
-            (
-                database_id, 
-                database_name
-            )
-            SELECT 
-                database_id = d.database_id,
-                database_name = d.name
-            FROM sys.databases AS d
-            WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
-            AND   d.state = 0
-            AND   d.is_in_standby = 0
-            AND   d.is_read_only = 0
-            AND   d.database_id > 4 /* Skip system databases */
-            AND 
-            (
-                /* If include list is provided, only keep databases in that list */
-                (@include_databases IS NULL) OR 
-                (d.name IN (SELECT database_name FROM #database_list))
-            )
-            OPTION(RECOMPILE);
-        END
-        ELSE /* Regular SQL Server */
-        BEGIN
-            /* Get all eligible databases with AG primary replica check */
-            INSERT INTO 
-                #databases_to_process 
-            WITH
-                (TABLOCK)
-            (
-                database_id, 
-                database_name
-            )
-            SELECT 
-                database_id = d.database_id,
-                database_name = d.name
-            FROM sys.databases AS d
-            WHERE d.name NOT IN (N'master', N'model', N'msdb', N'tempdb', N'rdsadmin')
-            AND   d.state = 0
-            AND   d.is_in_standby = 0
-            AND   d.is_read_only = 0
-            AND   d.database_id > 4 /* Skip system databases */
-            /* Add AG check to ensure we only process the primary replica */
-            AND   NOT EXISTS
-            (
-                SELECT
-                    1/0
-                FROM sys.dm_hadr_availability_replica_states AS s
-                JOIN sys.availability_databases_cluster AS c
-                  ON  s.group_id = c.group_id
-                  AND d.name = c.database_name
-                WHERE s.is_local <> 1
-                AND   s.role_desc <> N'PRIMARY'
-                AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-            )
-            AND 
-            (
-                /* If include list is provided, only keep databases in that list */
-                (@include_databases IS NULL) OR 
-                (d.name IN (SELECT database_name FROM #database_list))
-            )
-            OPTION(RECOMPILE);;
-        END;
+                1/0
+            FROM @exclude_xml.nodes('/i') AS t(i)
+            WHERE dp.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
+            AND   LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
+        )
+        OPTION(RECOMPILE);;
+    END;
 
-        /* Remove excluded databases if specified */
-        IF @exclude_databases IS NOT NULL
-        BEGIN
-            SELECT @exclude_xml = CONVERT(xml, '<i>' + REPLACE(@exclude_databases, ',', '</i><i>') + '</i>');
-            
-            DELETE 
-                dp
-            FROM #databases_to_process AS dp
-            WHERE EXISTS
-            (
-                SELECT 
-                    1/0
-                FROM @exclude_xml.nodes('/i') AS t(i)
-                WHERE dp.database_name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
-                AND   LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
-            )
-            OPTION(RECOMPILE);;
-        END;
-
-        IF @debug = 1
-        BEGIN
-            /* Count databases */
-            SELECT 
-                database_count = COUNT_BIG(*)
-            FROM #databases_to_process;
-            
-            /* List databases without using STRING_AGG (version compatibility) */
-            SELECT @db_list = N'';
-            
-            SELECT 
-                @db_list = 
-                    @db_list + 
-                    database_name + 
-                    N', '
-            FROM #databases_to_process AS dtp
-            ORDER BY 
-                dtp.database_name
-            OPTION(RECOMPILE);;
-            
-            /* Remove trailing comma if list is not empty */
-            IF LEN(@db_list) > 0
-            BEGIN
-                SET @db_list = LEFT(@db_list, LEN(@db_list) - 1);
-            END;
-                
-            RAISERROR('Databases to process: %s', 0, 0, @db_list) WITH NOWAIT;
-        END;
-
-        /* Track databases that were requested but skipped (for better reporting) */
-        IF @include_databases IS NOT NULL
-        BEGIN
-            INSERT
-                #skipped_databases
-            WITH
-                (TABLOCK)
-            (
-                database_name,
-                reason
-            )
-            SELECT
-                database_name = dl.database_name,
-                reason = 
-                    CASE 
-                        WHEN d.name IS NULL THEN N'Database does not exist'
-                        WHEN d.state <> 0 THEN N'Database not online'
-                        WHEN d.is_in_standby = 1 THEN N'Database is in standby'
-                        WHEN d.is_read_only = 1 THEN N'Database is read-only'
-                        WHEN d.database_id <= 4 THEN N'System database'
-                        WHEN EXISTS
-                             (
-                                 SELECT
-                                     1/0
-                                 FROM sys.dm_hadr_availability_replica_states AS s
-                                 JOIN sys.availability_databases_cluster AS c
-                                   ON  s.group_id = c.group_id
-                                   AND d.name = c.database_name
-                                 WHERE s.is_local <> 1
-                                 AND   s.role_desc <> N'PRIMARY'
-                                 AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
-                             ) THEN N'AG replica issue - not primary or read-write'
-                        ELSE N'Other issue'
-                    END
-            FROM #database_list AS dl
-            LEFT JOIN sys.databases AS d
-              ON dl.database_name = d.name
-            WHERE NOT EXISTS 
-                  (
-                      SELECT 
-                          1/0 
-                      FROM #databases_to_process AS dp
-                      WHERE dp.database_name = dl.database_name
-                  )
-            OPTION(RECOMPILE);
-        END;
+    IF @debug = 1
+    BEGIN
+        /* Count databases */
+        SELECT 
+            database_count = COUNT_BIG(*)
+        FROM #databases_to_process;
         
-        /* Also track explicitly excluded databases */
-        IF @exclude_databases IS NOT NULL
+        /* List databases without using STRING_AGG (version compatibility) */
+        SELECT @db_list = N'';
+        
+        SELECT 
+            @db_list = 
+                @db_list + 
+                database_name + 
+                N', '
+        FROM #databases_to_process AS dtp
+        ORDER BY 
+            dtp.database_name
+        OPTION(RECOMPILE);;
+        
+        /* Remove trailing comma if list is not empty */
+        IF LEN(@db_list) > 0
         BEGIN
-            INSERT
-                #skipped_databases
-            WITH
-                (TABLOCK)
-            (
-                database_name,
-                reason
-            )
-            SELECT
-                database_name = LTRIM(RTRIM(t.i.value('.', 'nvarchar(128)'))),
-                reason = N'Explicitly excluded by @exclude_databases parameter'
-            FROM 
-            (
-                SELECT xml_list = CONVERT(xml, N'<i>' + 
-                    REPLACE(@exclude_databases, N',', N'</i><i>') + N'</i>')
-            ) AS a
-            CROSS APPLY a.xml_list.nodes('i') AS t(i)
-            WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
-            AND EXISTS
-            (
-                SELECT 
-                    1/0
-                FROM sys.databases AS d
-                WHERE d.name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
-            )
-            OPTION(RECOMPILE);;
+            SET @db_list = LEFT(@db_list, LEN(@db_list) - 1);
         END;
+            
+        RAISERROR('Databases to process: %s', 0, 0, @db_list) WITH NOWAIT;
+    END;
+
+    /* Track databases that were requested but skipped (for better reporting) */
+    IF @include_databases IS NOT NULL
+    BEGIN
+        INSERT
+            #skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = dl.database_name,
+            reason = 
+                CASE 
+                    WHEN d.name IS NULL THEN N'Database does not exist'
+                    WHEN d.state <> 0 THEN N'Database not online'
+                    WHEN d.is_in_standby = 1 THEN N'Database is in standby'
+                    WHEN d.is_read_only = 1 THEN N'Database is read-only'
+                    WHEN d.database_id <= 4 THEN N'System database'
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM sys.dm_hadr_availability_replica_states AS s
+                             JOIN sys.availability_databases_cluster AS c
+                               ON  s.group_id = c.group_id
+                               AND d.name = c.database_name
+                             WHERE s.is_local <> 1
+                             AND   s.role_desc <> N'PRIMARY'
+                             AND   DATABASEPROPERTYEX(c.database_name, N'Updateability') <> N'READ_WRITE'
+                         ) THEN N'AG replica issue - not primary or read-write'
+                    ELSE N'Other issue'
+                END
+        FROM #database_list AS dl
+        LEFT JOIN sys.databases AS d
+          ON dl.database_name = d.name
+        WHERE NOT EXISTS 
+              (
+                  SELECT 
+                      1/0 
+                  FROM #databases_to_process AS dp
+                  WHERE dp.database_name = dl.database_name
+              )
+        OPTION(RECOMPILE);
+    END;
+        
+    /* Also track explicitly excluded databases */
+    IF @exclude_databases IS NOT NULL
+    BEGIN
+        INSERT
+            #skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            database_name = LTRIM(RTRIM(t.i.value('.', 'nvarchar(128)'))),
+            reason = N'Explicitly excluded by @exclude_databases parameter'
+        FROM 
+        (
+            SELECT xml_list = CONVERT(xml, N'<i>' + 
+                REPLACE(@exclude_databases, N',', N'</i><i>') + N'</i>')
+        ) AS a
+        CROSS APPLY a.xml_list.nodes('i') AS t(i)
+        WHERE LTRIM(RTRIM(t.i.value('.', 'sysname'))) <> ''
+        AND EXISTS
+        (
+            SELECT 
+                1/0
+            FROM sys.databases AS d
+            WHERE d.name = LTRIM(RTRIM(t.i.value('.', 'sysname')))
+        )
+        OPTION(RECOMPILE);
 
         /* If no databases match criteria, exit */
         IF NOT EXISTS (SELECT 1/0 FROM #databases_to_process AS dtp)
@@ -899,7 +963,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             RAISERROR('No eligible databases found to process with the specified filters', 16, 1) WITH NOWAIT;
             RETURN;
         END;
-    END
+    END;
     ELSE
     BEGIN
         /* Single database mode */
@@ -922,6 +986,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             SELECT
                 @database_name = DB_NAME();
+        END;
+
+        /*Construct the full object name*/
+        IF  @schema_name IS NOT NULL
+        AND @table_name IS NOT NULL
+        BEGIN
+            SELECT
+                @full_object_name =
+                QUOTENAME(@database_name) +
+                N'.' +
+                QUOTENAME(@schema_name) +
+                N'.' +
+                QUOTENAME(@table_name);
+            
+            SET @object_id = OBJECT_ID(@full_object_name);
+        END;
+
+        IF @object_id IS NULL
+        BEGIN
+            RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
+            RETURN;
         END;
 
         /* Add the single database to the processing list */
@@ -949,7 +1034,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 RAISERROR('The specified database %s does not exist, is not in ONLINE state, or you do not have permission to access it', 16, 1, @database_name) WITH NOWAIT;
                 RETURN;
             END;
-        END
+        END;
         ELSE
         BEGIN
             RAISERROR('No valid database specified and current database is a system database. Please specify a user database.', 16, 1) WITH NOWAIT;
@@ -1039,78 +1124,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 RAISERROR('Processing database %s', 0, 0, @database_name) WITH NOWAIT;
             END;
 
-            /* Checking parameters */
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
-            END;
-
-            /* Continue with current database processing without recreating temp tables */
-            IF  @schema_name IS NULL
-            AND @table_name IS NOT NULL
-            BEGIN
-                SELECT
-                    @schema_name = N'dbo';
-            END;
-
             IF  @schema_name IS NOT NULL
             AND @table_name IS NOT NULL
             BEGIN
-        SELECT
-            @full_object_name =
-                QUOTENAME(@database_name) +
-                N'.' +
-                QUOTENAME(@schema_name) +
-                N'.' +
-                QUOTENAME(@table_name);
+                SELECT
+                    @full_object_name =
+                    QUOTENAME(@database_name) +
+                    N'.' +
+                    QUOTENAME(@schema_name) +
+                    N'.' +
+                    QUOTENAME(@table_name);
+                
+                SET @object_id = OBJECT_ID(@full_object_name);
+            END;
 
-        SELECT
-            @object_id =
-                OBJECT_ID(@full_object_name);
-
-        IF @object_id IS NULL
-        BEGIN
-            RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
-            RETURN;
+            IF @object_id IS NULL
+            BEGIN
+                RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
+                RETURN;
+            END;
         END;
-    END;
 
-    /* Parameter validation */
-    IF @min_reads < 0
-    OR @min_reads IS NULL
-    BEGIN
-        RAISERROR('Parameter @min_reads cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
-        SET @min_reads = 0;
-    END;
+
     
-    IF @min_writes < 0
-    OR @min_writes IS NULL
-    BEGIN
-        RAISERROR('Parameter @min_writes cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
-        SET @min_writes = 0;
-    END;
-    
-    IF @min_size_gb < 0
-    OR @min_size_gb IS NULL
-    BEGIN
-        RAISERROR('Parameter @min_size_gb cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
-        SET @min_size_gb = 0;
-    END;
-    
-    IF @min_rows < 0
-    OR @min_rows IS NULL
-    BEGIN
-        RAISERROR('Parameter @min_rows cannot be NULL or negative. Setting to 0.', 10, 1) WITH NOWAIT;
-        SET @min_rows = 0;
-    END;
-    
-    /* Parameter validation for multi-database mode */
-    IF  @get_all_databases = 1 
-    AND @database_name IS NOT NULL
-    BEGIN
-        RAISERROR('You cannot specify both @get_all_databases = 1 and a specific @database_name. Using @get_all_databases = 1 and ignoring @database_name.', 10, 1) WITH NOWAIT;
-        SET @database_name = NULL;
-    END;
     /*
     Start insert queries
     */
