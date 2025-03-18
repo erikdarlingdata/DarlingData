@@ -3861,6 +3861,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Insert database-level summaries */
     IF @debug = 1
     BEGIN
+        SELECT
+            table_name = '#index_cleanup_results',
+            icr.*
+        FROM #index_cleanup_results AS icr
+        OPTION(RECOMPILE);
+        
         RAISERROR('Generating #index_reporting_stats insert, DATABASE', 0, 0) WITH NOWAIT;
     END;
 
@@ -4127,6 +4133,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.object_id
     OPTION(RECOMPILE);
 
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_reporting_stats',
+            irs.*
+        FROM #index_reporting_stats AS irs
+        OPTION(RECOMPILE);
+    END;
+
     /* We're not doing index-level summaries - focusing on database and table level reports */
 
     /* 
@@ -4153,7 +4168,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         /* First, show the information needed to understand the script */
-        script_type = CASE WHEN ir.result_type = 'KEPT' AND ir.script_type IS NULL THEN 'KEPT' ELSE ir.script_type END,
+        script_type = 
+            CASE 
+                WHEN ir.result_type = 'KEPT' 
+                AND  ir.script_type IS NULL 
+                THEN 'KEPT' 
+                ELSE ir.script_type 
+            END,
         ir.additional_info,
         /* Then show identifying information for the index */
         ir.database_name,
@@ -4201,12 +4222,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM 
     (
         /* Use a subquery with ROW_NUMBER to ensure we only get one row per index */
-        SELECT *, 
-            ROW_NUMBER() OVER(
-                PARTITION BY database_name, schema_name, table_name, index_name 
-                ORDER BY result_type DESC /* Prefer non-NULL result types */
+        SELECT 
+            irs.*, 
+            ROW_NUMBER() OVER
+            (
+                PARTITION BY 
+                    database_name, 
+                    schema_name, 
+                    table_name, 
+                    index_name,
+                    irs.script_type
+                ORDER BY 
+                    result_type DESC /* Prefer non-NULL result types */
             ) AS rn
-        FROM #index_cleanup_results
+        FROM #index_cleanup_results AS irs
     ) AS ir
     LEFT JOIN #index_analysis AS ia
       ON  ir.database_name = ia.database_name
