@@ -1141,105 +1141,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             RAISERROR('Single database mode, using specified or current database: %s', 0, 0, @database_name) WITH NOWAIT;
         END;
         
-        /* Process the single database */
-        GOTO ProcessDatabase;
-    END
-    /* Process multiple databases */
-    ELSE IF @get_all_databases = 1
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('entering main processing logic for @get_all_databases = 1', 0, 0) WITH NOWAIT;
-        END;
-
-        /* Get the count of databases for reporting */
-        SELECT 
-            @database_count = COUNT_BIG(*) 
-        FROM #databases_to_process AS dtp
-        OPTION(RECOMPILE);
-                
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Beginning processing for %d databases', 0, 0, @database_count) WITH NOWAIT;
-        END;
-
-        /* Set cursor variable as per coding guidelines */
-        SET @database_cursor = 
-            CURSOR 
-            LOCAL 
-            STATIC 
-            READ_ONLY 
-            FORWARD_ONLY
-        FOR 
-        SELECT 
-            dtp.database_id, 
-            dtp.database_name 
-        FROM #databases_to_process AS dtp
-        WHERE dtp.processed = 0
-        ORDER BY 
-            dtp.database_name
-        OPTION(RECOMPILE);
-
-        OPEN @database_cursor;
-        FETCH NEXT 
-        FROM @database_cursor 
-        INTO 
-            @current_database_id, 
-            @current_database_name;
-        
-        WHILE @@FETCH_STATUS = 0
-        BEGIN
-            SET @processed_count += 1;
-            
-            /* Update working variables for each iteration */
-            SELECT 
-                @database_id = @current_database_id,
-                @database_name = @current_database_name;
-            
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Processing database %d of %d: %s (ID: %d)', 0, 0, 
-                    @processed_count, @database_count, @database_name, @database_id) WITH NOWAIT;
-            END;
-            
-            /* Clear temp tables before processing next database */
-            IF @processed_count > 1
-            BEGIN
-                TRUNCATE TABLE #filtered_objects;
-                TRUNCATE TABLE #operational_stats;
-                TRUNCATE TABLE #partition_stats;
-                TRUNCATE TABLE #index_details;
-                TRUNCATE TABLE #index_analysis;
-                TRUNCATE TABLE #index_cleanup_results;
-                TRUNCATE TABLE #compression_eligibility;
-                TRUNCATE TABLE #index_reporting_stats;
-            END;
-                    
-            /* Process current database using existing logic */
-            GOTO ProcessDatabase;
-            
-        ProcessDatabaseDone:
-            /* Mark database as processed */
-            UPDATE #databases_to_process
-            SET 
-                processed = 1,
-                process_date = SYSDATETIME()
-            WHERE database_id = @database_id;
-            
-            /* Get the next database */
-            FETCH NEXT 
-            FROM @database_cursor 
-            INTO 
-                @current_database_id, 
-                @current_database_name;
-        END;
-        
-        /* We've processed all databases, so we're done */
-        GOTO AllDatabasesProcessed;
     END;
     
-    /* Process the current database (single or multiple) */
-    ProcessDatabase:
+    /* Process the database - since we're in single database mode, just use the existing values */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Single database mode, using specified or current database: %s', 0, 0, @database_name) WITH NOWAIT;
+    END;
     
     IF @debug = 1
     BEGIN
@@ -5223,13 +5131,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.table_name
     OPTION(RECOMPILE);
     
-    /* If in multi-database mode, go back to process the next database */
-    IF @get_all_databases = 1
-    BEGIN
-        GOTO ProcessDatabaseDone;
-    END;
-    
-    AllDatabasesProcessed:
     /* Final unified results output - runs once after all databases processed */
     IF @debug = 1
     BEGIN
