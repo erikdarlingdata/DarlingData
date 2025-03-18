@@ -1145,15 +1145,123 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Single database mode, using specified or current database: %s', 0, 0, @database_name) WITH NOWAIT;
         END;
-        
-    END;
-    
-    /* Process the database - since we're in single database mode, just use the existing values */
-    IF @debug = 1
+    END
+    /* Process multiple databases */
+    ELSE IF @get_all_databases = 1
     BEGIN
-        RAISERROR('Single database mode, using specified or current database: %s', 0, 0, @database_name) WITH NOWAIT;
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Processing all databases with @get_all_databases = 1', 0, 0) WITH NOWAIT;
+        END;
+        
+        /* Get the count of databases for reporting */
+        SELECT 
+            @database_count = COUNT_BIG(*) 
+        FROM #databases_to_process AS dtp
+        OPTION(RECOMPILE);
+        
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Beginning processing for %d databases', 0, 0, @database_count) WITH NOWAIT;
+        END;
+        
+        /* Set up database cursor */
+        DECLARE @database_cursor CURSOR;
+        SET @database_cursor = 
+            CURSOR 
+            LOCAL 
+            STATIC 
+            READ_ONLY 
+            FORWARD_ONLY
+        FOR 
+        SELECT 
+            dtp.database_id, 
+            dtp.database_name 
+        FROM #databases_to_process AS dtp
+        WHERE dtp.processed = 0
+        ORDER BY 
+            dtp.database_name
+        OPTION(RECOMPILE);
+
+        OPEN @database_cursor;
+        FETCH NEXT 
+        FROM @database_cursor 
+        INTO 
+            @database_id, 
+            @database_name;
+            
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            /* Process current database */
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Processing database %s', 0, 0, @database_name) WITH NOWAIT;
+            END;
+            
+            /* Start main database processing logic */
+            
+            /* Check for schema/table parameters */
+            IF  @schema_name IS NOT NULL
+            AND @table_name IS NOT NULL
+            BEGIN
+                IF @debug = 1
+                BEGIN
+                    RAISERROR('validating object existence for %s.%s.%s', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
+                END;
+
+                SELECT
+                    @full_object_name =
+                    QUOTENAME(@database_name) +
+                    N'.' +
+                    QUOTENAME(@schema_name) +
+                    N'.' +
+                    QUOTENAME(@table_name);
+                
+                SET @object_id = OBJECT_ID(@full_object_name);
+                
+                IF @object_id IS NULL AND @full_object_name IS NOT NULL
+                BEGIN
+                    RAISERROR('The object %s doesn''t seem to exist', 16, 1, @full_object_name) WITH NOWAIT;
+                    
+                    /* Skip this database and continue to the next one */
+                    GOTO NextDatabase;
+                END;
+            END;
+            
+            /* Process the current database */
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Generating #filtered_object insert for database %s', 0, 0, @database_name) WITH NOWAIT;
+            END;
+            
+            /* INSERT DATABASE PROCESSING LOGIC HERE */
+            
+            /* Rest of the database processing will go here */
+            
+            /* Update processed flag for this database */
+NextDatabase:
+            UPDATE #databases_to_process
+            SET 
+                processed = 1,
+                process_date = SYSDATETIME()
+            WHERE database_id = @database_id;
+            
+            /* Get next database */
+            FETCH NEXT 
+            FROM @database_cursor 
+            INTO 
+                @database_id, 
+                @database_name;
+        END;
+        
+        CLOSE @database_cursor;
+        DEALLOCATE @database_cursor;
+        
+        /* After processing all databases, return to show consolidated results */
+        GOTO GenerateResults;
     END;
     
+    /* For single database mode - process the single database */
     IF @debug = 1
     BEGIN
         RAISERROR('Processing database %s', 0, 0, @database_name) WITH NOWAIT;
@@ -1164,7 +1272,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('validating object existence for  %s.%s.%s', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
+            RAISERROR('validating object existence for %s.%s.%s', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
         END;
 
         SELECT
@@ -4968,6 +5076,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END; /* End of @get_all_databases = 1 section */
     
+GenerateResults:
     /* Return consolidated reporting statistics for all databases processed */
     IF @debug = 1
     BEGIN
