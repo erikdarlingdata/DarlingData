@@ -4731,8 +4731,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ir.index_name = ia.index_name
     WHERE ir.rn = 1 /* Take only the first row for each index */
     ORDER BY
-        ir.sort_order,
         ir.database_name,
+        ir.sort_order,
         /* Within each sort_order group, prioritize by size and usage */
         CASE
             /* For SUMMARY, keep the original order */
@@ -4930,15 +4930,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_reporting_stats AS irs
     WHERE irs.summary_level IN ('SUMMARY', 'DATABASE', 'TABLE') /* Filter out INDEX level */
     ORDER BY 
-        /* Order by level - summary first */
+        /* Order by database name */
+        irs.database_name,
+        /* Then order by level - summary first */
         CASE 
             WHEN irs.summary_level = 'SUMMARY' THEN 0
             WHEN irs.summary_level = 'DATABASE' THEN 1
             WHEN irs.summary_level = 'TABLE' THEN 2
             ELSE 3
         END,
-        /* Then by database name */
-        irs.database_name,
         /* For tables, sort by potential savings and size */
         CASE 
             WHEN irs.summary_level = 'TABLE' THEN irs.unused_size_gb
