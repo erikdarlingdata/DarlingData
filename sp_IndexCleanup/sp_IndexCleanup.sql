@@ -920,7 +920,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
          BEGIN
              IF @debug = 1
              BEGIN
-                 RAISERROR('validating object existence for %s.%s.&s.', 0, 0, @database_name, @schema_name, @table_name) WITH NOWAIT;
+                 RAISERROR('validating object existence for %s.%s.%s.', 0, 0, @current_database_name, @schema_name, @table_name) WITH NOWAIT;
              END;
          
              SELECT
@@ -1134,21 +1134,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN 
         IF @debug = 1 
         BEGIN
-            RAISERROR('No rows inserted into #filtered_objects, nothing to do!', 10, 0) WITH NOWAIT;
-            IF @get_all_databases = 0
-            BEGIN
-                RETURN;
-            END;
-            IF @get_all_databases = 1
-            BEGIN
-                /* Get the next database */
-                FETCH NEXT
-                FROM @database_cursor
-                INTO 
-                    @current_database_name, 
-                    @current_database_id;
-            END;
-        END; 
+            RAISERROR('No rows inserted into #filtered_objects from %s, continuing to next database...', 10, 0, @current_database_name) WITH NOWAIT;
+        END;
+            
+        IF @get_all_databases = 0
+        BEGIN
+            RETURN;
+        END;
+        
+        /* Get the next database and continue the loop */
+        FETCH NEXT
+        FROM @database_cursor
+        INTO 
+            @current_database_name, 
+            @current_database_id;
+            
+        CONTINUE;
     END;
 
     IF @debug = 1
