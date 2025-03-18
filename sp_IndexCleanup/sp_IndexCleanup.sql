@@ -476,7 +476,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_lookup datetime NULL,
         last_user_update datetime NULL,
         is_eligible_for_dedupe bit NOT NULL
-        PRIMARY KEY CLUSTERED(database_id, object_id, index_id, column_name)
+        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id, column_id)
     );
 
     CREATE TABLE
@@ -512,7 +512,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by nvarchar(4000) NULL, 
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
         index_priority decimal(10,6) NULL
-        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
     );
     
     CREATE TABLE 
@@ -528,7 +528,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
         reason nvarchar(200) NULL,
-        PRIMARY KEY CLUSTERED(database_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -564,7 +564,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         base_key_columns nvarchar(max) NULL,
         filter_definition nvarchar(max) NULL,
         winning_index_name sysname NULL,
-        index_list nvarchar(max) NULL,
+        index_list nvarchar(max) NULL
     );
 
     CREATE TABLE 
@@ -924,13 +924,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             RAISERROR('Truncating per-database temp tables for the next iteration', 0, 0) WITH NOWAIT;
         END;
 
-        TRUNCATE TABLE #filtered_objects;
-        TRUNCATE TABLE #operational_stats;
-        TRUNCATE TABLE #partition_stats;
-        TRUNCATE TABLE #index_details;
-        TRUNCATE TABLE #compression_eligibility;
-        TRUNCATE TABLE #key_duplicate_dedupe;
-        TRUNCATE TABLE #include_subset_dedupe;
+        TRUNCATE TABLE 
+            #filtered_objects;
+        TRUNCATE TABLE 
+            #operational_stats;
+        TRUNCATE TABLE 
+            #partition_stats;
+        TRUNCATE TABLE 
+            #index_details;
+        TRUNCATE TABLE 
+            #compression_eligibility;
+        TRUNCATE TABLE 
+            #key_duplicate_dedupe;
+        TRUNCATE TABLE 
+            #include_subset_dedupe;
 
          /*Validate searched objects per-database*/
          IF  @schema_name IS NOT NULL
