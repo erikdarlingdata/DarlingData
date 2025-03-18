@@ -2261,6 +2261,107 @@ INTO @database_name;
 WHILE @@FETCH_STATUS = 0
 BEGIN
 /*
+These tables need to get cleared out
+to avoid result pollution and
+primary key violations
+*/
+IF @debug = 1
+BEGIN
+    RAISERROR('Truncating per-database temp tables for the next iteration', 0, 0) WITH NOWAIT;
+END;
+
+TRUNCATE TABLE
+    #regression_baseline_runtime_stats;
+
+TRUNCATE TABLE
+    #regression_current_runtime_stats;
+
+TRUNCATE TABLE
+    #distinct_plans;
+
+TRUNCATE TABLE
+    #procedure_plans;
+
+TRUNCATE TABLE
+    #procedure_object_ids;
+
+TRUNCATE TABLE
+    #maintenance_plans;
+
+TRUNCATE TABLE
+    #query_text_search;
+
+TRUNCATE TABLE
+    #query_text_search_not;
+
+TRUNCATE TABLE
+    #dm_exec_query_stats;
+
+TRUNCATE TABLE
+    #query_types;
+
+TRUNCATE TABLE
+    #wait_filter;
+
+TRUNCATE TABLE
+    #only_queries_with_hints;
+
+TRUNCATE TABLE
+    #only_queries_with_feedback;
+
+TRUNCATE TABLE
+    #only_queries_with_variants;
+
+TRUNCATE TABLE
+    #forced_plans_failures;
+
+TRUNCATE TABLE 
+    #include_plan_ids;
+
+TRUNCATE TABLE 
+    #include_query_ids;
+
+TRUNCATE TABLE 
+    #include_query_hashes;
+
+TRUNCATE TABLE 
+    #include_plan_hashes;
+
+TRUNCATE TABLE 
+    #include_sql_handles;
+
+TRUNCATE TABLE 
+    #ignore_plan_ids;
+
+TRUNCATE TABLE 
+    #ignore_query_ids;
+
+TRUNCATE TABLE 
+    #ignore_query_hashes;
+
+TRUNCATE TABLE 
+    #ignore_plan_hashes;
+
+TRUNCATE TABLE 
+    #ignore_sql_handles;
+
+TRUNCATE TABLE 
+    #only_queries_with_hints;
+
+TRUNCATE TABLE 
+    #only_queries_with_feedback;
+
+TRUNCATE TABLE 
+    #only_queries_with_variants;
+
+TRUNCATE TABLE 
+    #forced_plans_failures;
+
+TRUNCATE TABLE 
+    #query_hash_totals;
+
+
+/*
 Some variable assignment, because why not?
 */
 IF @debug = 1
@@ -8100,104 +8201,6 @@ OPTION(RECOMPILE);' + @nc10;
         END;
     END; /*End AG queries*/
 END; /*End SQL 2022 views*/
-
-/*
-These tables need to get cleared out
-to avoid result pollution and
-primary key violations
-*/
-IF @get_all_databases = 1
-BEGIN
-    TRUNCATE TABLE
-        #regression_baseline_runtime_stats;
-
-    TRUNCATE TABLE
-        #regression_current_runtime_stats;
-
-    TRUNCATE TABLE
-        #distinct_plans;
-
-    TRUNCATE TABLE
-        #procedure_plans;
-
-    TRUNCATE TABLE
-        #procedure_object_ids;
-
-    TRUNCATE TABLE
-        #maintenance_plans;
-
-    TRUNCATE TABLE
-        #query_text_search;
-
-    TRUNCATE TABLE
-        #query_text_search_not;
-
-    TRUNCATE TABLE
-        #dm_exec_query_stats;
-
-    TRUNCATE TABLE
-        #query_types;
-
-    TRUNCATE TABLE
-        #wait_filter;
-
-    TRUNCATE TABLE
-        #only_queries_with_hints;
-
-    TRUNCATE TABLE
-        #only_queries_with_feedback;
-
-    TRUNCATE TABLE
-        #only_queries_with_variants;
-
-    TRUNCATE TABLE
-        #forced_plans_failures;
-
-    TRUNCATE TABLE 
-        #include_plan_ids;
-
-    TRUNCATE TABLE 
-        #include_query_ids;
-
-    TRUNCATE TABLE 
-        #include_query_hashes;
-
-    TRUNCATE TABLE 
-        #include_plan_hashes;
-
-    TRUNCATE TABLE 
-        #include_sql_handles;
-
-    TRUNCATE TABLE 
-        #ignore_plan_ids;
-
-    TRUNCATE TABLE 
-        #ignore_query_ids;
-
-    TRUNCATE TABLE 
-        #ignore_query_hashes;
-
-    TRUNCATE TABLE 
-        #ignore_plan_hashes;
-
-    TRUNCATE TABLE 
-        #ignore_sql_handles;
-
-    TRUNCATE TABLE 
-        #only_queries_with_hints;
-
-    TRUNCATE TABLE 
-        #only_queries_with_feedback;
-
-    TRUNCATE TABLE 
-        #only_queries_with_variants;
-
-    TRUNCATE TABLE 
-        #forced_plans_failures;
-
-    TRUNCATE TABLE 
-        #query_hash_totals;
-END;
 
 FETCH NEXT
 FROM @database_cursor
