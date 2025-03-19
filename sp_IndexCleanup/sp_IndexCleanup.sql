@@ -5465,16 +5465,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             
         /* ===== Additional Space Savings from Compression ===== */
         /* Conservative compression estimate (20%) */
-        compression_min_savings_gb = FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2'),
-            
-        /* Optimistic compression estimate (60%) */
-        compression_max_savings_gb = FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2'),
-            
-        /* Total savings (removal + conservative compression) */
-        total_min_savings_gb = FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2'),
-            
-        /* Total savings (removal + optimistic compression) */
-        total_max_savings_gb = FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2'),
+        compression_savings_potential = 
+            N'minimum: ' +
+            FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2') +
+            N' GB maximum ' +
+            FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2')
+            + N'GB',
+        compression_savings_potential_total =
+            N'total minimum: ' +
+            FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2') +
+            N' GB total maximum: ' +
+            FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2') +
+            N'GB',
         
         /* ===== Section 3: Table and Usage Statistics ===== */
         /* Row count */
