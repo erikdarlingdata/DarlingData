@@ -5236,14 +5236,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ir.table_name,
         ir.index_name,
         /* Then show relationship information */
-        ir.consolidation_rule,
-        ir.target_index_name,
+        consolidation_rule = ISNULL(ir.consolidation_rule, N'N/A'),
+        target_index_name = ISNULL(ir.target_index_name, N'N/A'),
         /* Include superseded_by info for winning indexes */
         superseded_info =
             CASE 
                 WHEN ia.superseded_by IS NOT NULL 
                 THEN ia.superseded_by 
-                ELSE ir.superseded_info 
+                ELSE ISNULL(ir.superseded_info, N'N/A')
             END,
         /* Add size and usage metrics */
         index_size_gb = 
