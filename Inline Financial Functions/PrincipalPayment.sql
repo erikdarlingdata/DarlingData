@@ -24,7 +24,7 @@ AS
 RETURN
 /*
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 */
     SELECT
         PrincipalPayment =
