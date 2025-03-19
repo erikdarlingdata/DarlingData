@@ -50,7 +50,7 @@ EXECUTE sp_HumanEventsBlockViewer
     @debug = 1;
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 */
 
 IF OBJECT_ID(N'dbo.sp_HumanEventsBlockViewer', N'P') IS NULL
@@ -2780,7 +2780,7 @@ BEGIN
         check_id = -1,
         database_name = N'erikdarling.com',
         object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
-        finding_group = N'https://github.com/erikdarlingdata/DarlingData',
+        finding_group = N'https://code.erikdarling.com',
         finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
         1;
     
@@ -3611,7 +3611,7 @@ BEGIN
         check_id = 2147483647,
         database_name = N'erikdarling.com',
         object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
-        finding_group = N'https://github.com/erikdarlingdata/DarlingData',
+        finding_group = N'https://code.erikdarling.com',
         finding = N'thanks for using me!',
         2147483647;
     

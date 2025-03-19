@@ -36,7 +36,7 @@ EXECUTE sp_HumanEvents
     @debug = 1;
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 */
 
