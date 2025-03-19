@@ -15,7 +15,7 @@ I probably wouldn't run this in production, especially on servers with a lot of 
 The dm_os_buffer_descriptors DMV especially can be really slow at times
 
 
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 Copyright (c) 2025 Darling Data, LLC
 https://www.erikdarling.com/

@@ -23,7 +23,7 @@ RETURNS TABLE
 AS
 /*
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 */
 RETURN
     WITH pre AS
