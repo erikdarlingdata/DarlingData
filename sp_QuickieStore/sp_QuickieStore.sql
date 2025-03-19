@@ -1682,7 +1682,7 @@ DECLARE
     @requires_secondary_processing bit,
     @split_sql nvarchar(MAX),
     @error_msg nvarchar(2000),
-    @conflict_list nvarchar(max);
+    @conflict_list nvarchar(max) = N'';
 
 /*
 In cases where we are escaping @query_text_search and
@@ -1963,6 +1963,8 @@ BEGIN
     BEGIN
         INSERT
             #include_databases
+        WITH
+            (TABLOCK)
         (
             database_name
         )
@@ -1986,7 +1988,8 @@ BEGIN
                     )
         ) AS a
         CROSS APPLY x.nodes(N'//i') AS t(c)
-        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N''
+        OPTION(RECOMPILE);
     END;
 
     /* Parse @exclude_databases if specified using XML for compatibility */
@@ -1994,6 +1997,8 @@ BEGIN
     BEGIN
         INSERT
             #exclude_databases
+        WITH
+            (TABLOCK)
         (
             database_name
         )
@@ -2017,14 +2022,13 @@ BEGIN
                     )
         ) AS a
         CROSS APPLY x.nodes(N'//i') AS t(c)
-        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N''
+        OPTION(RECOMPILE);
         
         /* Check for databases in both include and exclude lists */
         IF @include_databases IS NOT NULL
         BEGIN
-            /* Build list of conflicting databases */
-            SET @conflict_list = N'';
-            
+            /* Build list of conflicting databases */            
             SELECT 
                 @conflict_list = 
                     @conflict_list + 
@@ -2036,7 +2040,8 @@ BEGIN
                         1/0 
                     FROM #include_databases AS id
                     WHERE id.database_name = ed.database_name
-                );
+                )
+            OPTION(RECOMPILE);
             
             /* If we found any conflicts, raise an error */
             IF LEN(@conflict_list) > 0
