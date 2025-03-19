@@ -4852,7 +4852,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
                 THEN FORMAT(ISNULL(irs.indexes_to_disable, 0), 'N0') /* Indexes that will be disabled based on analysis */
-                ELSE FORMAT(ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0), 'N0') /* All removable indexes (unused + mergeable) */
+                ELSE FORMAT(ISNULL(irs.unused_indexes, 0), 'N0') /* Unused indexes at database/table level */
             END,
         
         /* Show mergeable indexes across all levels */
@@ -4866,7 +4866,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN FORMAT(100.0 * ISNULL(irs.indexes_to_disable, 0) 
                      / NULLIF(irs.index_count, 0), 'N1') + '%'
                 WHEN irs.index_count > 0
-                THEN FORMAT(100.0 * (ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0))
+                THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0)
                      / NULLIF(irs.index_count, 0), 'N1') + '%'
                 ELSE '0.0%'
             END,
@@ -4885,8 +4885,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
                 THEN FORMAT(ISNULL(irs.space_saved_gb, 0), 'N2')
-                /* Include size saved from both unused and mergeable indexes */
-                ELSE FORMAT(ISNULL(irs.unused_size_gb, 0) + ISNULL(irs.merged_size_gb, 0), 'N2')
+                ELSE FORMAT(ISNULL(irs.unused_size_gb, 0), 'N2')
             END,
             
         /* Space reduction percentage - added this as new metric */
@@ -4930,9 +4929,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN 
-                    /* For rows with any removable indexes (unused or mergeable), calculate estimated savings */
+                    /* For rows with unused indexes, calculate estimated savings */
                     CASE
-                        WHEN (ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0)) > 0
+                        WHEN ISNULL(irs.unused_indexes, 0) > 0
                         THEN FORMAT
                              (
                                  ISNULL
@@ -4955,7 +4954,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                      (
                                        ISNULL
                                        (
-                                           irs.unused_indexes + irs.indexes_to_merge, 
+                                           irs.unused_indexes, 
                                            0
                                        ) / 
                                        NULLIF
@@ -4972,7 +4971,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                  ), 
                                  'N0'
                              )
-                        /* Rows without removable indexes have no savings */
+                        /* Rows without unused indexes have no savings */
                         ELSE '0'
                     END
                 ELSE 'N/A'
@@ -4993,9 +4992,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN 
-                    /* For rows with any removable indexes (unused or mergeable), calculate estimated savings */
+                    /* For rows with unused indexes, calculate estimated savings */
                     CASE
-                        WHEN (ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0)) > 0
+                        WHEN ISNULL(irs.unused_indexes, 0) > 0
                         THEN 
                             FORMAT
                             (
@@ -5019,7 +5018,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     (
                                       ISNULL
                                       (
-                                          irs.unused_indexes + irs.indexes_to_merge, 
+                                          irs.unused_indexes, 
                                           0
                                       ) / 
                                       NULLIF
@@ -5036,7 +5035,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 ), 
                                 'N0'
                             )
-                        /* Rows without removable indexes have no savings */
+                        /* Rows without unused indexes have no savings */
                         ELSE '0'
                     END
                 ELSE 'N/A'
@@ -5069,9 +5068,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN 
-                    /* For rows with any removable indexes (unused or mergeable), calculate estimated savings */
+                    /* For rows with unused indexes, calculate estimated savings */
                     CASE
-                        WHEN (ISNULL(irs.unused_indexes, 0) + ISNULL(irs.indexes_to_merge, 0)) > 0
+                        WHEN ISNULL(irs.unused_indexes, 0) > 0
                         THEN 
                             FORMAT
                             (
@@ -5095,7 +5094,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     (
                                         ISNULL
                                         (
-                                            irs.unused_indexes + irs.indexes_to_merge, 
+                                            irs.unused_indexes, 
                                             0
                                         ) / 
                                         NULLIF
@@ -5112,7 +5111,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 ), 
                                 'N0'
                             )
-                        /* Rows without removable indexes have no savings */
+                        /* Rows without unused indexes have no savings */
                         ELSE '0'
                     END
                 ELSE 'N/A'
