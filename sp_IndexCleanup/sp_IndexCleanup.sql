@@ -4386,6 +4386,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         indexes_to_merge,
         unused_indexes,
         unused_size_gb,
+        compression_min_savings_gb,
+        compression_max_savings_gb,
+        total_min_savings_gb,
+        total_max_savings_gb,
         total_reads,
         total_writes,
         user_seeks,
@@ -4446,6 +4450,92 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   AND subps.index_id = subia.index_id
                 WHERE subia.action = N'DISABLE'
                 AND   subia.database_id = ps.database_id
+            ),
+        /* Conservative compression savings estimate (20%) */
+        compression_min_savings_gb = 
+            (
+                SELECT 
+                    SUM(subps.total_space_gb * 0.20)
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                JOIN #compression_eligibility AS subce
+                  ON  subce.database_id = subia.database_id
+                  AND subce.object_id = subia.object_id
+                  AND subce.index_id = subia.index_id
+                WHERE (subia.action IS NULL OR subia.action = N'KEEP')
+                AND   subce.can_compress = 1
+                AND   subia.database_id = ps.database_id
+            ),
+        /* Optimistic compression savings estimate (60%) */
+        compression_max_savings_gb = 
+            (
+                SELECT 
+                    SUM(subps.total_space_gb * 0.60)
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                JOIN #compression_eligibility AS subce
+                  ON  subce.database_id = subia.database_id
+                  AND subce.object_id = subia.object_id
+                  AND subce.index_id = subia.index_id
+                WHERE (subia.action IS NULL OR subia.action = N'KEEP')
+                AND   subce.can_compress = 1
+                AND   subia.database_id = ps.database_id
+            ),
+        /* Total conservative savings */
+        total_min_savings_gb = 
+            (
+                SELECT 
+                    SUM(
+                        CASE
+                            WHEN subia.action = N'DISABLE'
+                            THEN subps.total_space_gb
+                            WHEN (subia.action IS NULL OR subia.action = N'KEEP')
+                            AND   subce.can_compress = 1
+                            THEN subps.total_space_gb * 0.20
+                            ELSE 0
+                        END
+                    )
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                LEFT JOIN #compression_eligibility AS subce
+                  ON  subce.database_id = subia.database_id
+                  AND subce.object_id = subia.object_id
+                  AND subce.index_id = subia.index_id
+                WHERE subia.database_id = ps.database_id
+            ),
+        /* Total optimistic savings */
+        total_max_savings_gb = 
+            (
+                SELECT 
+                    SUM(
+                        CASE
+                            WHEN subia.action = N'DISABLE'
+                            THEN subps.total_space_gb
+                            WHEN (subia.action IS NULL OR subia.action = N'KEEP')
+                            AND   subce.can_compress = 1
+                            THEN subps.total_space_gb * 0.60
+                            ELSE 0
+                        END
+                    )
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                LEFT JOIN #compression_eligibility AS subce
+                  ON  subce.database_id = subia.database_id
+                  AND subce.object_id = subia.object_id
+                  AND subce.index_id = subia.index_id
+                WHERE subia.database_id = ps.database_id
             ),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
         total_writes = SUM(id.user_updates),
@@ -4526,6 +4616,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         indexes_to_merge,
         unused_indexes,
         unused_size_gb,
+        compression_min_savings_gb,
+        compression_max_savings_gb,
+        total_min_savings_gb,
+        total_max_savings_gb,
         total_reads,
         total_writes,
         user_seeks,
@@ -4598,6 +4692,100 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   AND subps.index_id = subia.index_id
                 WHERE subia.action = N'DISABLE'
                 AND   subia.database_id = ps.database_id
+                AND   subia.schema_id = ps.schema_id
+                AND   subia.object_id = ps.object_id
+            ),
+        /* Conservative compression savings estimate (20%) */
+        compression_min_savings_gb = 
+            (
+                SELECT 
+                    SUM(subps.total_space_gb * 0.20)
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                JOIN #compression_eligibility AS subce
+                  ON  subce.database_id = subia.database_id
+                  AND subce.object_id = subia.object_id
+                  AND subce.index_id = subia.index_id
+                WHERE (subia.action IS NULL OR subia.action = N'KEEP')
+                AND   subce.can_compress = 1
+                AND   subia.database_id = ps.database_id
+                AND   subia.schema_id = ps.schema_id
+                AND   subia.object_id = ps.object_id
+            ),
+        /* Optimistic compression savings estimate (60%) */
+        compression_max_savings_gb = 
+            (
+                SELECT 
+                    SUM(subps.total_space_gb * 0.60)
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                JOIN #compression_eligibility AS subce
+                  ON  subce.database_id = subia.database_id
+                  AND subce.object_id = subia.object_id
+                  AND subce.index_id = subia.index_id
+                WHERE (subia.action IS NULL OR subia.action = N'KEEP')
+                AND   subce.can_compress = 1
+                AND   subia.database_id = ps.database_id
+                AND   subia.schema_id = ps.schema_id
+                AND   subia.object_id = ps.object_id
+            ),
+        /* Total conservative savings */
+        total_min_savings_gb = 
+            (
+                SELECT 
+                    SUM(
+                        CASE
+                            WHEN subia.action = N'DISABLE'
+                            THEN subps.total_space_gb
+                            WHEN (subia.action IS NULL OR subia.action = N'KEEP')
+                            AND   subce.can_compress = 1
+                            THEN subps.total_space_gb * 0.20
+                            ELSE 0
+                        END
+                    )
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                LEFT JOIN #compression_eligibility AS subce
+                  ON  subce.database_id = subia.database_id
+                  AND subce.object_id = subia.object_id
+                  AND subce.index_id = subia.index_id
+                WHERE subia.database_id = ps.database_id
+                AND   subia.schema_id = ps.schema_id
+                AND   subia.object_id = ps.object_id
+            ),
+        /* Total optimistic savings */
+        total_max_savings_gb = 
+            (
+                SELECT 
+                    SUM(
+                        CASE
+                            WHEN subia.action = N'DISABLE'
+                            THEN subps.total_space_gb
+                            WHEN (subia.action IS NULL OR subia.action = N'KEEP')
+                            AND   subce.can_compress = 1
+                            THEN subps.total_space_gb * 0.60
+                            ELSE 0
+                        END
+                    )
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                LEFT JOIN #compression_eligibility AS subce
+                  ON  subce.database_id = subia.database_id
+                  AND subce.object_id = subia.object_id
+                  AND subce.index_id = subia.index_id
+                WHERE subia.database_id = ps.database_id
                 AND   subia.schema_id = ps.schema_id
                 AND   subia.object_id = ps.object_id
             ),
@@ -4913,6 +5101,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     END
                 ELSE '0.0%'
             END,
+            
+        /* ===== Additional Space Savings from Compression ===== */
+        /* Conservative compression estimate (20%) */
+        compression_min_savings_gb = FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2'),
+            
+        /* Optimistic compression estimate (60%) */
+        compression_max_savings_gb = FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2'),
+            
+        /* Total savings (removal + conservative compression) */
+        total_min_savings_gb = FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2'),
+            
+        /* Total savings (removal + optimistic compression) */
+        total_max_savings_gb = FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2'),
         
         /* ===== Section 3: Table and Usage Statistics ===== */
         /* Row count */
