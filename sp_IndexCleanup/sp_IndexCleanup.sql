@@ -4268,12 +4268,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)), 
                 0
             ),
-        /* Space savings from cleanup */
+        /* Space savings from cleanup - only count DISABLE actions */
         space_saved_gb = 
             SUM
             (
                 CASE 
-                    WHEN ia.action IN (N'DISABLE', N'MERGE INCLUDES', N'MAKE UNIQUE') 
+                    WHEN ia.action = N'DISABLE'
                     THEN ps.total_space_gb 
                     ELSE 0 
                 END
@@ -4300,12 +4300,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ELSE 0 
                 END
             ),
-        /* Total conservative savings */
+        /* Total conservative savings - only count DISABLE actions for space savings */
         total_min_savings_gb = 
             SUM
             (
                 CASE 
-                    WHEN ia.action IN (N'DISABLE', N'MERGE INCLUDES', N'MAKE UNIQUE') 
+                    WHEN ia.action = N'DISABLE'
                     THEN ps.total_space_gb
                     WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
                     AND   ce.can_compress = 1 
@@ -4313,12 +4313,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ELSE 0 
                 END
             ),
-        /* Total optimistic savings */
+        /* Total optimistic savings - only count DISABLE actions for space savings */
         total_max_savings_gb = 
             SUM
             (
                 CASE 
-                    WHEN ia.action IN (N'DISABLE', N'MERGE INCLUDES', N'MAKE UNIQUE') 
+                    WHEN ia.action = N'DISABLE'
                     THEN ps.total_space_gb
                     WHEN (ia.action IS NULL OR ia.action = N'KEEP') 
                     AND   ce.can_compress = 1 
