@@ -4895,8 +4895,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         space_reduction_percent = 
             CASE
                 WHEN ISNULL(irs.total_size_gb, 0) > 0
-                THEN FORMAT((ISNULL(irs.space_saved_gb, 0) / 
-                     NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                THEN 
+                    CASE
+                        WHEN irs.summary_level = 'SUMMARY'
+                        THEN FORMAT((ISNULL(irs.space_saved_gb, 0) / 
+                             NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                        ELSE FORMAT((ISNULL(irs.unused_size_gb, 0) / 
+                             NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                    END
                 ELSE '0.0%'
             END,
         
