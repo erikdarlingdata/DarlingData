@@ -26,7 +26,6 @@ ALTER PROCEDURE
     @get_all_databases bit = 0, /*looks for all accessible user databases and returns combined results*/
     @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
-    @verbose_output tinyint = 0, /* 0 -> no verbose output, 1 -> add NONUNIQUE, NONCLUSTERED type output in the original_index_defintion output */
     @help bit = 'false',
     @debug bit = 'false',
     @version varchar(20) = NULL OUTPUT,
@@ -2056,7 +2055,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN id1.index_id = 1 
                         THEN N'CLUSTERED ' 
                         WHEN id1.index_id > 1 
-                        AND @verbose_output >= 1 
                         THEN N'NONCLUSTERED ' 
                         ELSE N'' 
                     END +
@@ -5465,16 +5463,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             
         /* ===== Additional Space Savings from Compression ===== */
         /* Conservative compression estimate (20%) */
-        compression_min_savings_gb = FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2'),
-            
-        /* Optimistic compression estimate (60%) */
-        compression_max_savings_gb = FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2'),
-            
-        /* Total savings (removal + conservative compression) */
-        total_min_savings_gb = FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2'),
-            
-        /* Total savings (removal + optimistic compression) */
-        total_max_savings_gb = FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2'),
+        compression_savings_potential = 
+            N'minimum: ' +
+            FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2') +
+            N' GB maximum ' +
+            FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2')
+            + N'GB',
+        compression_savings_potential_total =
+            N'total minimum: ' +
+            FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2') +
+            N' GB total maximum: ' +
+            FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2') +
+            N'GB',
         
         /* ===== Section 3: Table and Usage Statistics ===== */
         /* Row count */
