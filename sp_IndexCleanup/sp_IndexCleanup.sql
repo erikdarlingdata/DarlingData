@@ -71,10 +71,6 @@ BEGIN TRY
         @version = '1.4',
         @version_date = '20250401';
 
-    SELECT
-        for_insurance_purposes = 
-            N'ALWAYS TEST THESE RECOMMENDATIONS IN A NON-PRODUCTION ENVIRONMENT FIRST!';
-
     /*
     Help section, for help.
     Will become more helpful when out of beta.
@@ -88,13 +84,13 @@ BEGIN TRY
             help = N'this is a script to help clean up unused and duplicate indexes.'
           UNION ALL
         SELECT
-            help = N'it will also give you scripted out statements to add page compression to uncompressed indexes.'
+            help = N'it will also help you add page compression to uncompressed indexes.'
           UNION ALL
         SELECT
             help = N'always validate all changes against a non-production environment!'
           UNION ALL
         SELECT
-            help = N'without careful analysis and consideration, index changes can negative impacts on performance.';
+            help = N'please test carefully.';
 
         /*
         Parameters
@@ -209,7 +205,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     DECLARE
         /*general script variables*/
         @sql nvarchar(max) = N'',
-        @database_id integer = NULL,
         @object_id integer = NULL,
         @full_object_name nvarchar(768) = NULL,
         @uptime_warning bit = 0, /* Will set after @uptime_days is calculated */
@@ -698,6 +693,55 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 table_name = '#include_databases',
                 id.*
             FROM #include_databases AS id
+            OPTION(RECOMPILE);
+        END;
+    END;
+
+    IF  @get_all_databases = 1
+    AND @include_databases IS NOT NULL 
+    BEGIN
+        INSERT
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            id.database_name,
+            reason = 
+                CASE 
+                    WHEN d.name IS NULL 
+                    THEN 'Database does not exist'
+                    WHEN d.state <> 0 
+                    THEN 'Database not online'
+                    WHEN d.is_in_standby = 1 
+                    THEN 'Database is in standby'
+                    WHEN d.is_read_only = 1 
+                    THEN 'Database is read-only'
+                    WHEN d.database_id <= 4 
+                    THEN 'System database'
+                    ELSE 'Other issue'
+                END
+        FROM #include_databases AS id
+        LEFT JOIN sys.databases AS d
+          ON id.database_name = d.name
+        WHERE NOT EXISTS 
+              (
+                  SELECT 
+                      1/0 
+                  FROM #databases AS db
+                  WHERE db.database_name = id.database_name
+              )
+        OPTION(RECOMPILE);
+        
+        IF @debug = 1
+        BEGIN
+            SELECT
+                table_name = '#requested_but_skipped_databases',
+                rbsd.*
+            FROM #requested_but_skipped_databases AS rbsd
             OPTION(RECOMPILE);
         END;
     END;
@@ -2993,6 +3037,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         target_index_name,
         superseded_info,
         original_index_definition,
+        script,
         index_size_gb,
         index_rows,
         index_reads,
@@ -3000,17 +3045,72 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     SELECT 
         result_type = 'SUMMARY',
-        sort_order = 1,
-        database_name = '',
-        schema_name = '',
-        table_name = '',
-        index_name = '',
-        consolidation_rule = N'',
-        script_type = 'Index Cleanup Scripts',
+        sort_order = -1,
+        database_name =
+            N'processed databases: ' +
+            CASE 
+                WHEN @get_all_databases = 0 
+                THEN ISNULL(@database_name, N'None')
+                ELSE
+                    ISNULL
+                    (
+                        STUFF
+                        (
+                            (
+                                SELECT 
+                                    N', ' + 
+                                    d.database_name 
+                                FROM #databases AS d
+                                ORDER BY 
+                                    d.database_name
+                                FOR 
+                                    XML
+                                    PATH(''),
+                                    TYPE
+                            ).value('.', 'nvarchar(max)'),
+                            1, 
+                            2, 
+                            N''
+                        ),
+                        N'None'
+                    )
+            END,
+        schema_name =
+            N'skipped databases: ' +
+            ISNULL
+            (
+                STUFF
+                (
+                    (
+                        SELECT 
+                            N', ' + 
+                            rbs.database_name + 
+                            N' (' + 
+                            rbs.reason + 
+                            N')' 
+                        FROM #requested_but_skipped_databases AS rbs
+                        ORDER BY 
+                            rbs.database_name
+                        FOR 
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('.', 'nvarchar(MAX)'),
+                    1, 
+                    2, 
+                    N''
+                ),
+                N'None'
+            ),
+        table_name = N'brought to you by erikdarling.com',
+        index_name = N'for support: https://code.erikdarling.com/',
+        consolidation_rule = N'run date: ' + CONVERT(nvarchar(30), SYSDATETIME(), 120),
+        script_type = N'Index Cleanup Scripts',
         additional_info = N'A detailed index analysis report appears after these scripts',
-        target_index_name = '',
-        superseded_info = '',
-        original_index_definition = '',
+        target_index_name = N'ALWAYS TEST THESE RECOMMENDATIONS',
+        superseded_info = N'IN A NON-PRODUCTION ENVIRONMENT FIRST!',
+        original_index_definition = N'please enjoy responsibly!',
+        script = N'happy index cleaning!',
         index_size_gb = 0,
         index_rows = 0,
         index_reads = 0,
@@ -4597,6 +4697,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  ia.database_id = ce.database_id
       AND ia.object_id = ce.object_id
       AND ia.index_id = ce.index_id
+    WHERE ia.index_id > 1
     OPTION(RECOMPILE);
 
     /* Return enhanced database impact summaries */
@@ -5166,7 +5267,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN '0'
                 ELSE FORMAT(ISNULL(ir.index_writes, 0), 'N0')
             END,
-        ia.original_index_definition,
+        original_index_definition =
+            CASE 
+                WHEN ir.result_type = 'SUMMARY'
+                THEN N'please enjoy responsibly!'
+                ELSE ia.original_index_definition
+            END,
         /* Finally show the actual script */
         ir.script
     FROM 
@@ -5253,8 +5359,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END,
         
         /* Schema and table names (except for summary) */
-        schema_name = ISNULL(irs.schema_name, 'N/A'),
-        table_name = ISNULL(irs.table_name, 'N/A'),
+        schema_name = 
+            CASE 
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN ISNULL(irs.schema_name, 'ALWAYS TEST THESE RECOMMENDATIONS')
+                WHEN irs.summary_level = 'DATABASE'
+                THEN N'N/A'
+                ELSE irs.schema_name
+            END,
+        table_name = 
+            CASE 
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN ISNULL(irs.table_name, 'IN A NON-PRODUCTION ENVIRONMENT FIRST!')
+                WHEN irs.summary_level = 'DATABASE'
+                THEN N'N/A'        
+                ELSE irs.table_name
+            END,
         
         /* ===== Section 1: Index Counts ===== */
         /* Tables analyzed (summary only) */
@@ -5375,9 +5495,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Total writes */
         writes =
             CASE 
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN 'N/A'
                 WHEN irs.summary_level <> 'SUMMARY' 
                 THEN FORMAT(ISNULL(irs.total_writes, 0), 'N0')
-                ELSE 'N/A'
+                ELSE '0'
             END,
             
         /* Write operations saved - added as new metric */
@@ -5443,10 +5565,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Total count of lock waits (row + page) */
         lock_wait_count =
             CASE 
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN 'N/A'                
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN FORMAT(ISNULL(irs.row_lock_wait_count, 0) + 
                      ISNULL(irs.page_lock_wait_count, 0), 'N0')
-                ELSE 'N/A'
+                ELSE '0'
             END,
             
         /* Lock waits saved - new column */
@@ -5512,6 +5636,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Average lock wait time in ms */
         avg_lock_wait_ms =
             CASE 
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN 'N/A'                
                 WHEN irs.summary_level <> 'SUMMARY' 
                 AND (ISNULL(irs.row_lock_wait_count, 0) + 
                      ISNULL(irs.page_lock_wait_count, 0)) > 0
@@ -5525,10 +5651,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Total count of latch waits (page + io) - new column */
         latch_wait_count =
             CASE 
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN 'N/A'                
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN FORMAT(ISNULL(irs.page_latch_wait_count, 0) + 
                      ISNULL(irs.page_io_latch_wait_count, 0), 'N0')
-                ELSE 'N/A'
+                ELSE '0'
             END,
             
         /* Latch waits saved - new column */
@@ -5594,6 +5722,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Combined latch wait time in ms */
         avg_latch_wait_ms =
             CASE 
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN 'N/A'                
                 WHEN irs.summary_level <> 'SUMMARY' 
                 AND (ISNULL(irs.page_latch_wait_count, 0) + 
                      ISNULL(irs.page_io_latch_wait_count, 0)) > 0
@@ -5601,10 +5731,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      ISNULL(irs.page_io_latch_wait_in_ms, 0)) / 
                      NULLIF(ISNULL(irs.page_latch_wait_count, 0) + 
                      ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
-                ELSE 'N/A'
+                ELSE '0'
             END
     FROM #index_reporting_stats AS irs
-    WHERE irs.summary_level IN ('SUMMARY', 'DATABASE', 'TABLE') /* Filter out INDEX level */
     ORDER BY 
         /* Order by database name */
         irs.database_name,
