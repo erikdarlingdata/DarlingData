@@ -30,7 +30,7 @@ Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 */
 
 IF OBJECT_ID('dbo.sp_HealthParser') IS NULL
@@ -2916,7 +2916,7 @@ EXECUTE sp_HumanEvents
     @debug = 1;
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 */
 
@@ -7695,7 +7695,7 @@ EXECUTE sp_HumanEventsBlockViewer
     @debug = 1;
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 */
 
 IF OBJECT_ID('dbo.sp_HumanEventsBlockViewer') IS NULL
@@ -9767,7 +9767,7 @@ SELECT
     check_id = -1,
     database_name = N'erikdarling.com',
     object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
-    finding_group = N'https://github.com/erikdarlingdata/DarlingData',
+    finding_group = N'https://code.erikdarling.com',
     finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
     1;
 
@@ -10598,7 +10598,7 @@ SELECT
     check_id = 2147483647,
     database_name = N'erikdarling.com',
     object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
-    finding_group = N'https://github.com/erikdarlingdata/DarlingData',
+    finding_group = N'https://code.erikdarling.com',
     finding = N'thanks for using me!',
     2147483647;
 
@@ -12267,7 +12267,7 @@ EXECUTE sp_LogHunter
     @debug = 1;
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 EXECUTE sp_LogHunter;
 
@@ -12993,7 +12993,7 @@ EXECUTE sp_PressureDetector
     @debug = 1;
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 */
 
@@ -16106,7 +16106,7 @@ EXECUTE sp_QuickieStore
     @troubleshoot_performance = 1;
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 */
 
@@ -27237,7 +27237,7 @@ BEGIN
             all_done =
                 'https://www.erikdarling.com/',
             support =
-                'https://github.com/erikdarlingdata/DarlingData',
+                'https://code.erikdarling.com',
             help =
                 'EXECUTE sp_QuickieStore @help = 1;',
             problems =

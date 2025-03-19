@@ -13,7 +13,7 @@ GO
 This is a helper function I use in some of my presentations to look at locks taken.
 It's definitely not a replacement for sp_WhoIsActive, it just gives me what I care about at the moment.
 
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 Copyright (c) 2025 Darling Data, LLC
 https://www.erikdarling.com/
