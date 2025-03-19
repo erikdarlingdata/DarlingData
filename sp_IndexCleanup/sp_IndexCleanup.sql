@@ -5387,53 +5387,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
                 WHEN irs.summary_level = 'DATABASE'
                 THEN
-                    /* For DATABASE level, use the same calculation as TABLE level but with DATABASE row values */
-                    CASE
-                        WHEN ISNULL(irs.unused_indexes, 0) > 0
-                        THEN FORMAT
-                            (
-                                CONVERT(decimal(38,2),
-                                    ISNULL
-                                    (
-                                        irs.user_updates / 
-                                        NULLIF
-                                        (
-                                            CONVERT
-                                            (
-                                                decimal(38,2), 
-                                                (
-                                                    SELECT TOP (1) 
-                                                        irs2.server_uptime_days 
-                                                    FROM #index_reporting_stats AS irs2 
-                                                    WHERE irs2.summary_level = 'SUMMARY'
-                                                )
-                                            ), 
-                                            0
-                                        ) * 
-                                        (
-                                            ISNULL
-                                            (
-                                                irs.unused_indexes, 
-                                                0
-                                            ) / 
-                                            NULLIF
-                                            (
-                                                CONVERT
-                                                (
-                                                    decimal(38,2), 
-                                                    irs.index_count
-                                                ), 
-                                                0
-                                            )
-                                        ), 
-                                        0
+                    /* For DATABASE level, sum up the table-level values */
+                    FORMAT
+                    (
+                        (
+                            SELECT
+                                SUM
+                                (
+                                    TRY_CAST(
+                                        REPLACE(
+                                            REPLACE(
+                                                REPLACE(irt.daily_write_ops_saved, ',', ''),
+                                                'N/A', '0'),
+                                            ' ', '')
+                                        AS decimal(38,2)
                                     )
-                                ), 
-                                'N0'
-                            )
-                        /* Rows without unused indexes have no savings */
-                        ELSE '0'
-                    END
+                                )
+                            FROM #index_reporting_stats AS irt
+                            WHERE irt.summary_level = 'TABLE'
+                            AND irt.database_name = irs.database_name
+                        ),
+                        'N0'
+                    )
                 WHEN irs.summary_level = 'TABLE'
                 THEN 
                     /* For TABLE rows, calculate estimated savings */
@@ -5503,54 +5478,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
                 WHEN irs.summary_level = 'DATABASE'
                 THEN
-                    /* For DATABASE level, use the same calculation as TABLE level but with DATABASE row values */
-                    CASE
-                        WHEN ISNULL(irs.unused_indexes, 0) > 0
-                        THEN 
-                            FORMAT
-                            (
-                                CONVERT(decimal(38,2),
-                                    ISNULL
-                                    (
-                                        (irs.row_lock_wait_count + irs.page_lock_wait_count) / 
-                                        NULLIF
-                                        (
-                                            CONVERT
-                                            (
-                                                decimal(38,2), 
-                                                (
-                                                  SELECT TOP (1) 
-                                                      irs2.server_uptime_days 
-                                                  FROM #index_reporting_stats AS irs2 
-                                                  WHERE irs2.summary_level = 'SUMMARY'
-                                                )
-                                            ), 
-                                            0
-                                        ) * 
-                                        (
-                                          ISNULL
-                                          (
-                                              irs.unused_indexes, 
-                                              0
-                                          ) / 
-                                          NULLIF
-                                          (
-                                              CONVERT
-                                              (
-                                                  decimal(38,2), 
-                                                  irs.index_count
-                                              ), 
-                                              0
-                                          )
-                                        ), 
-                                        0
+                    /* For DATABASE level, sum up the table-level values */
+                    FORMAT
+                    (
+                        (
+                            SELECT
+                                SUM
+                                (
+                                    TRY_CAST(
+                                        REPLACE(
+                                            REPLACE(
+                                                REPLACE(irt.daily_lock_waits_saved, ',', ''),
+                                                'N/A', '0'),
+                                            ' ', '')
+                                        AS decimal(38,2)
                                     )
-                                ), 
-                                'N0'
-                            )
-                        /* Rows without unused indexes have no savings */
-                        ELSE '0'
-                    END
+                                )
+                            FROM #index_reporting_stats AS irt
+                            WHERE irt.summary_level = 'TABLE'
+                            AND irt.database_name = irs.database_name
+                        ),
+                        'N0'
+                    )
                 WHEN irs.summary_level = 'TABLE'
                 THEN 
                     /* For TABLE rows, calculate estimated savings */
@@ -5633,54 +5582,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
                 WHEN irs.summary_level = 'DATABASE'
                 THEN
-                    /* For DATABASE level, use the same calculation as TABLE level but with DATABASE row values */
-                    CASE
-                        WHEN ISNULL(irs.unused_indexes, 0) > 0
-                        THEN 
-                            FORMAT
-                            (
-                                CONVERT(decimal(38,2),
-                                    ISNULL
-                                    (
-                                        (irs.page_latch_wait_count + irs.page_io_latch_wait_count) / 
-                                        NULLIF
-                                        (
-                                            CONVERT
-                                            (
-                                                decimal(38,2), 
-                                                (
-                                                  SELECT TOP (1) 
-                                                      irs2.server_uptime_days 
-                                                  FROM #index_reporting_stats AS irs2 
-                                                  WHERE irs2.summary_level = 'SUMMARY'
-                                                )
-                                            ), 
-                                            0
-                                        ) * 
-                                        (
-                                            ISNULL
-                                            (
-                                                irs.unused_indexes, 
-                                                0
-                                            ) / 
-                                            NULLIF
-                                            (
-                                                CONVERT
-                                                (
-                                                    decimal(38,2), 
-                                                    irs.index_count
-                                                ), 
-                                                0
-                                            )
-                                        ), 
-                                        0
+                    /* For DATABASE level, sum up the table-level values */
+                    FORMAT
+                    (
+                        (
+                            SELECT
+                                SUM
+                                (
+                                    TRY_CAST(
+                                        REPLACE(
+                                            REPLACE(
+                                                REPLACE(irt.daily_latch_waits_saved, ',', ''),
+                                                'N/A', '0'),
+                                            ' ', '')
+                                        AS decimal(38,2)
                                     )
-                                ), 
-                                'N0'
-                            )
-                        /* Rows without unused indexes have no savings */
-                        ELSE '0'
-                    END
+                                )
+                            FROM #index_reporting_stats AS irt
+                            WHERE irt.summary_level = 'TABLE'
+                            AND irt.database_name = irs.database_name
+                        ),
+                        'N0'
+                    )
                 WHEN irs.summary_level = 'TABLE'
                 THEN 
                     /* For TABLE rows, calculate estimated savings */
