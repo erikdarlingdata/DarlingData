@@ -4436,13 +4436,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   ia.database_id = ps.database_id
             ),
         unused_size_gb = 
-            SUM
             (
-                CASE 
-                    WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 
-                    THEN ps.total_space_gb 
-                    ELSE 0 
-                END
+                SELECT 
+                    SUM(subps.total_space_gb) 
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                WHERE subia.action = N'DISABLE'
+                AND   subia.database_id = ps.database_id
             ),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
         total_writes = SUM(id.user_updates),
@@ -4585,13 +4588,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   ia.object_id = ps.object_id
             ),
         unused_size_gb = 
-            SUM
             (
-                CASE 
-                    WHEN id.user_seeks + id.user_scans + id.user_lookups = 0 
-                    THEN ps.total_space_gb 
-                    ELSE 0 
-                END
+                SELECT 
+                    SUM(subps.total_space_gb) 
+                FROM #partition_stats AS subps
+                JOIN #index_analysis AS subia
+                  ON  subps.database_id = subia.database_id
+                  AND subps.object_id = subia.object_id
+                  AND subps.index_id = subia.index_id
+                WHERE subia.action = N'DISABLE'
+                AND   subia.database_id = ps.database_id
+                AND   subia.schema_id = ps.schema_id
+                AND   subia.object_id = ps.object_id
             ),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
         total_writes = SUM(id.user_updates),
