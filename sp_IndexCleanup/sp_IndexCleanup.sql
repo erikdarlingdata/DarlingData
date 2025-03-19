@@ -5406,7 +5406,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                         CONVERT
                                                         (
                                                             decimal(38,2), 
-                                                            irs.server_uptime_days /* Use SUMMARY row's uptime */
+                                                            sd.days /* Get server_uptime_days from subquery */
                                                         ), 
                                                         0
                                                     ) * 
@@ -5433,6 +5433,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     )
                                 )
                             FROM #index_reporting_stats AS irs3
+                            CROSS JOIN (SELECT days = MAX(server_uptime_days) FROM #index_reporting_stats WHERE summary_level = 'SUMMARY') AS sd
                             WHERE irs3.summary_level = 'DATABASE'
                         ),
                         'N0'
@@ -5525,7 +5526,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                         CONVERT
                                                         (
                                                             decimal(38,2), 
-                                                            irs.server_uptime_days /* Use SUMMARY row's uptime */
+                                                            sd.days /* Get server_uptime_days from subquery */
                                                         ), 
                                                         0
                                                     ) * 
@@ -5552,6 +5553,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     )
                                 )
                             FROM #index_reporting_stats AS irs3
+                            CROSS JOIN (SELECT days = MAX(server_uptime_days) FROM #index_reporting_stats WHERE summary_level = 'SUMMARY') AS sd
                             WHERE irs3.summary_level = 'DATABASE'
                         ),
                         'N0'
@@ -5657,7 +5659,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                         CONVERT
                                                         (
                                                             decimal(38,2), 
-                                                            irs.server_uptime_days /* Use SUMMARY row's uptime */
+                                                            sd.days /* Get server_uptime_days from subquery */
                                                         ), 
                                                         0
                                                     ) * 
@@ -5684,6 +5686,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     )
                                 )
                             FROM #index_reporting_stats AS irs3
+                            CROSS JOIN (SELECT days = MAX(server_uptime_days) FROM #index_reporting_stats WHERE summary_level = 'SUMMARY') AS sd
                             WHERE irs3.summary_level = 'DATABASE'
                         ),
                         'N0'
