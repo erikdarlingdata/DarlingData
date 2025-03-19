@@ -1545,7 +1545,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN i.type = 2
                 THEN 1
-                WHEN i.type = 1
+                WHEN 
+                (
+                     i.type = 1 
+                  OR i.is_primary_key = 1
+                )
                 THEN 0
             END
     FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
