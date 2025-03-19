@@ -582,7 +582,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE 
         #index_reporting_stats
     (
-        summary_level varchar(20) NOT NULL,  /* 'DATABASE', 'TABLE', 'INDEX', 'SUMMARY' */
+        summary_level varchar(20) NOT NULL,  /* 'SUMMARY', 'TABLE', 'INDEX', 'SUMMARY' */
         database_name sysname NULL,
         schema_name sysname NULL,
         table_name sysname NULL,
@@ -4410,7 +4410,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     SELECT
         summary_level = 
-            'DATABASE',
+            'SUMMARY',
         ps.database_name,
         index_count = 
             COUNT_BIG(DISTINCT CONCAT(ps.object_id, N'.', ps.index_id)),
@@ -4828,7 +4828,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
                 THEN FORMAT(irs.tables_analyzed, 'N0')
-                WHEN irs.summary_level = 'DATABASE'
+                WHEN irs.summary_level = 'SUMMARY'
                 THEN FORMAT
                      (
                        (
@@ -4877,8 +4877,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         
         /* Size after cleanup - added this as new metric */
         size_after_cleanup_gb = 
-            FORMAT(ISNULL(irs.total_size_gb, 0) - 
-            ISNULL(irs.space_saved_gb, 0), 'N2'),
+            CASE
+                WHEN irs.summary_level = 'SUMMARY' 
+                THEN FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.space_saved_gb, 0), 'N2')
+                ELSE FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.unused_size_gb, 0), 'N2')
+            END,
         
         /* Size that can be saved through cleanup */
         space_saved_gb =
@@ -4947,7 +4950,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                    SELECT TOP (1) 
                                                        irs2.server_uptime_days 
                                                    FROM #index_reporting_stats AS irs2 
-                                                   WHERE irs2.summary_level = 'DATABASE'
+                                                   WHERE irs2.summary_level = 'SUMMARY'
                                                  )
                                              ), 
                                              0
@@ -5013,7 +5016,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                   SELECT TOP (1) 
                                                       irs2.server_uptime_days 
                                                   FROM #index_reporting_stats AS irs2 
-                                                  WHERE irs2.summary_level = 'DATABASE'
+                                                  WHERE irs2.summary_level = 'SUMMARY'
                                                 )
                                             ), 
                                             0
@@ -5091,7 +5094,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                   SELECT TOP (1) 
                                                       irs2.server_uptime_days 
                                                   FROM #index_reporting_stats AS irs2 
-                                                  WHERE irs2.summary_level = 'DATABASE'
+                                                  WHERE irs2.summary_level = 'SUMMARY'
                                                 )
                                             ), 
                                             0
@@ -5136,14 +5139,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE '0.00'
             END
     FROM #index_reporting_stats AS irs
-    WHERE irs.summary_level IN ('SUMMARY', 'DATABASE', 'TABLE') /* Filter out INDEX level */
+    WHERE irs.summary_level IN ('SUMMARY', 'SUMMARY', 'TABLE') /* Filter out INDEX level */
     ORDER BY 
         /* Order by database name */
         irs.database_name,
         /* Then order by level - summary first */
         CASE 
             WHEN irs.summary_level = 'SUMMARY' THEN 0
-            WHEN irs.summary_level = 'DATABASE' THEN 1
+            WHEN irs.summary_level = 'SUMMARY' THEN 1
             WHEN irs.summary_level = 'TABLE' THEN 2
             ELSE 3
         END,
