@@ -5305,6 +5305,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Write operations saved - added as new metric */
         daily_write_ops_saved = 
             CASE
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN
+                    /* For SUMMARY row, calculate the sum of daily write ops saved across all databases */
+                    FORMAT
+                    (
+                        (
+                            SELECT 
+                                SUM
+                                (
+                                    CONVERT
+                                    (
+                                        decimal(38,2),
+                                        CASE
+                                            WHEN ISNULL(irs3.unused_indexes, 0) > 0
+                                            THEN
+                                                ISNULL
+                                                (
+                                                    irs3.user_updates / 
+                                                    NULLIF
+                                                    (
+                                                        CONVERT
+                                                        (
+                                                            decimal(38,2), 
+                                                            irs.server_uptime_days /* Use SUMMARY row's uptime */
+                                                        ), 
+                                                        0
+                                                    ) * 
+                                                    (
+                                                        ISNULL
+                                                        (
+                                                            irs3.unused_indexes, 
+                                                            0
+                                                        ) / 
+                                                        NULLIF
+                                                        (
+                                                            CONVERT
+                                                            (
+                                                                decimal(38,2), 
+                                                                irs3.index_count
+                                                            ), 
+                                                            0
+                                                        )
+                                                    ), 
+                                                    0
+                                                )
+                                            ELSE 0
+                                        END
+                                    )
+                                )
+                            FROM #index_reporting_stats AS irs3
+                            WHERE irs3.summary_level = 'DATABASE'
+                        ),
+                        'N0'
+                    )
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN 
                     /* For rows with unused indexes, calculate estimated savings */
@@ -5354,7 +5408,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         /* Rows without unused indexes have no savings */
                         ELSE '0'
                     END
-                ELSE 'N/A'
+                ELSE '0'
             END,
         
         /* ===== Section 4: Consolidated Performance Metrics ===== */
@@ -5370,6 +5424,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Lock waits saved - new column */
         daily_lock_waits_saved = 
             CASE
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN
+                    /* For SUMMARY row, calculate the sum of daily lock waits saved across all databases */
+                    FORMAT
+                    (
+                        (
+                            SELECT 
+                                SUM
+                                (
+                                    CONVERT
+                                    (
+                                        decimal(38,2),
+                                        CASE
+                                            WHEN ISNULL(irs3.unused_indexes, 0) > 0
+                                            THEN
+                                                ISNULL
+                                                (
+                                                    (irs3.row_lock_wait_count + irs3.page_lock_wait_count) / 
+                                                    NULLIF
+                                                    (
+                                                        CONVERT
+                                                        (
+                                                            decimal(38,2), 
+                                                            irs.server_uptime_days /* Use SUMMARY row's uptime */
+                                                        ), 
+                                                        0
+                                                    ) * 
+                                                    (
+                                                        ISNULL
+                                                        (
+                                                            irs3.unused_indexes, 
+                                                            0
+                                                        ) / 
+                                                        NULLIF
+                                                        (
+                                                            CONVERT
+                                                            (
+                                                                decimal(38,2), 
+                                                                irs3.index_count
+                                                            ), 
+                                                            0
+                                                        )
+                                                    ), 
+                                                    0
+                                                )
+                                            ELSE 0
+                                        END
+                                    )
+                                )
+                            FROM #index_reporting_stats AS irs3
+                            WHERE irs3.summary_level = 'DATABASE'
+                        ),
+                        'N0'
+                    )
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN 
                     /* For rows with unused indexes, calculate estimated savings */
@@ -5420,7 +5528,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         /* Rows without unused indexes have no savings */
                         ELSE '0'
                     END
-                ELSE 'N/A'
+                ELSE '0'
             END,
         
         /* Average lock wait time in ms */
@@ -5448,9 +5556,63 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Latch waits saved - new column */
         daily_latch_waits_saved = 
             CASE
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN
+                    /* For SUMMARY row, calculate the sum of daily latch waits saved across all databases */
+                    FORMAT
+                    (
+                        (
+                            SELECT 
+                                SUM
+                                (
+                                    CONVERT
+                                    (
+                                        decimal(38,2),
+                                        CASE
+                                            WHEN ISNULL(irs3.unused_indexes, 0) > 0
+                                            THEN
+                                                ISNULL
+                                                (
+                                                    (irs3.page_latch_wait_count + irs3.page_io_latch_wait_count) / 
+                                                    NULLIF
+                                                    (
+                                                        CONVERT
+                                                        (
+                                                            decimal(38,2), 
+                                                            irs.server_uptime_days /* Use SUMMARY row's uptime */
+                                                        ), 
+                                                        0
+                                                    ) * 
+                                                    (
+                                                        ISNULL
+                                                        (
+                                                            irs3.unused_indexes, 
+                                                            0
+                                                        ) / 
+                                                        NULLIF
+                                                        (
+                                                            CONVERT
+                                                            (
+                                                                decimal(38,2), 
+                                                                irs3.index_count
+                                                            ), 
+                                                            0
+                                                        )
+                                                    ), 
+                                                    0
+                                                )
+                                            ELSE 0
+                                        END
+                                    )
+                                )
+                            FROM #index_reporting_stats AS irs3
+                            WHERE irs3.summary_level = 'DATABASE'
+                        ),
+                        'N0'
+                    )
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN 
-                    /* For rows with unused indexes, calculate estimated savings */
+                    /* For DATABASE and TABLE rows, calculate estimated savings */
                     CASE
                         WHEN ISNULL(irs.unused_indexes, 0) > 0
                         THEN 
@@ -5498,7 +5660,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         /* Rows without unused indexes have no savings */
                         ELSE '0'
                     END
-                ELSE 'N/A'
+                ELSE '0'
             END,
         
         /* Combined latch wait time in ms */
