@@ -41,7 +41,7 @@ EXECUTE sp_QuickieStore
     @troubleshoot_performance = 1;
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 */
 
@@ -9965,7 +9965,7 @@ BEGIN
                     N'None'
                 ),
             support =
-                'https://github.com/erikdarlingdata/DarlingData',
+                'https://code.erikdarling.com',
             help =
                 'EXECUTE sp_QuickieStore @help = 1;',
             problems =

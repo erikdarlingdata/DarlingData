@@ -11,7 +11,7 @@ WITH SCHEMABINDING
 AS
 /*
 For support:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 Copyright 2025 Darling Data, LLC
 https://erikdarling.com
@@ -80,7 +80,7 @@ WITH SCHEMABINDING
 AS
 /*
 For support:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 Copyright 2025 Darling Data, LLC
 https://erikdarling.com

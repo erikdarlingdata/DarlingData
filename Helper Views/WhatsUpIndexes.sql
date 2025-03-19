@@ -12,7 +12,7 @@ GO
 /*
 This is a quick one-off script I use in some presentations to look at index sizes.
 
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 Copyright (c) 2025 Darling Data, LLC
 https://www.erikdarling.com/
