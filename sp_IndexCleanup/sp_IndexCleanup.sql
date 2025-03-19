@@ -582,7 +582,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE 
         #index_reporting_stats
     (
-        summary_level varchar(20) NOT NULL,  /* 'SUMMARY', 'TABLE', 'INDEX', 'SUMMARY' */
+        summary_level varchar(20) NOT NULL,  /* 'DATABASE', 'TABLE', 'INDEX', 'SUMMARY' */
         database_name sysname NULL,
         schema_name sysname NULL,
         table_name sysname NULL,
@@ -4224,6 +4224,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         uptime_warning,
         tables_analyzed,
         index_count,
+        total_size_gb,
         indexes_to_disable,
         indexes_to_merge,
         avg_indexes_per_table,
@@ -4240,8 +4241,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         uptime_warning = @uptime_warning,
         tables_analyzed = 
             COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
-        index_count = 
-            COUNT_BIG(*),
+        index_count = COUNT_BIG(*),
+        total_size_gb = SUM(ps.total_space_gb),
         indexes_to_disable = 
             SUM
             (
@@ -4409,12 +4410,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         leaf_delete_count
     )
     SELECT
-        summary_level = 
-            'SUMMARY',
+        summary_level = 'DATABASE',
         ps.database_name,
         index_count = 
             COUNT_BIG(DISTINCT CONCAT(ps.object_id, N'.', ps.index_id)),
-        total_size_gb = SUM(ps.total_space_gb),
+        total_size_gb = SUM(DISTINCT ps.total_space_gb),
         /* Use a simple aggregation to avoid double-counting */
         /* Get actual row count by grabbing the real row count from clustered index/heap per table */
         total_rows = SUM(DISTINCT d.actual_rows),
@@ -4552,7 +4552,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.schema_name,
         ps.table_name,
         index_count = COUNT_BIG(DISTINCT ps.index_id),
-        total_size_gb = SUM(ps.total_space_gb),
+        total_size_gb = SUM(DISTINCT ps.total_space_gb),
         /* Use MAX to get the row count from the clustered index or heap */
         total_rows = 
             MAX
@@ -4799,7 +4799,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         level =
             CASE 
                 WHEN irs.summary_level = 'SUMMARY' 
-                THEN 'OVERALL ANALYSIS'
+                THEN 'ANALYZED OBJECT DETAILS'
                 ELSE irs.summary_level
             END,
         
@@ -4828,7 +4828,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN irs.summary_level = 'SUMMARY' 
                 THEN FORMAT(irs.tables_analyzed, 'N0')
-                WHEN irs.summary_level = 'SUMMARY'
+                WHEN irs.summary_level = 'DATABASE'
                 THEN FORMAT
                      (
                        (
@@ -5139,14 +5139,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE '0.00'
             END
     FROM #index_reporting_stats AS irs
-    WHERE irs.summary_level IN ('SUMMARY', 'SUMMARY', 'TABLE') /* Filter out INDEX level */
+    WHERE irs.summary_level IN ('SUMMARY', 'DATABASE', 'TABLE') /* Filter out INDEX level */
     ORDER BY 
         /* Order by database name */
         irs.database_name,
         /* Then order by level - summary first */
         CASE 
             WHEN irs.summary_level = 'SUMMARY' THEN 0
-            WHEN irs.summary_level = 'SUMMARY' THEN 1
+            WHEN irs.summary_level = 'DATABASE' THEN 1
             WHEN irs.summary_level = 'TABLE' THEN 2
             ELSE 3
         END,
