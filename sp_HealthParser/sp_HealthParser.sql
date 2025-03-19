@@ -1755,26 +1755,28 @@ AND   ca.utc_timestamp < @end_date';
             FROM #waits_queries AS wq
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'waits')
-                        THEN 'no queries with significant waits found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with a minimum duration of ' +
-                             RTRIM(@wait_duration_ms) +
-                             '.'
-                        ELSE 'no queries with significant waits found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No queries with significant waits found', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'waits')
+                            THEN 'waits skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'waits')
+                            THEN 'no queries with significant waits found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with a minimum duration of ' +
+                                 RTRIM(@wait_duration_ms) +
+                                 '.'
+                            ELSE 'no queries with significant waits found!'
+                        END;
+                
+                RAISERROR('No queries with significant waits found', 0, 0) WITH NOWAIT;
+            END;
         END;
         ELSE
         BEGIN
@@ -2006,24 +2008,26 @@ AND   ca.utc_timestamp < @end_date';
             FROM #tc AS t
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'waits')
-                        THEN 'no significant waits found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             '.'
-                        ELSE 'no significant waits found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No waits by count found', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'waits')
+                            THEN 'waits skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'waits')
+                            THEN 'no significant waits found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 '.'
+                            ELSE 'no significant waits found!'
+                        END
+                
+                RAISERROR('No waits by count found', 0, 0) WITH NOWAIT;            
+            END;
         END;
         ELSE
         BEGIN
@@ -2263,26 +2267,28 @@ AND   ca.utc_timestamp < @end_date';
             FROM #td AS t
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'waits')
-                        THEN 'no significant waits found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with a minimum average duration of ' +
-                             RTRIM(@wait_duration_ms) +
-                             '.'
-                        ELSE 'no significant waits found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No waits by duration', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'waits')
+                            THEN 'waits skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'waits')
+                            THEN 'no significant waits found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with a minimum average duration of ' +
+                                 RTRIM(@wait_duration_ms) +
+                                 '.'
+                            ELSE 'no significant waits found!'
+                        END
+                
+                RAISERROR('No waits by duration', 0, 0) WITH NOWAIT;
+            END;
         END;
         ELSE
         BEGIN
@@ -2505,11 +2511,12 @@ AND   ca.utc_timestamp < @end_date';
             i.intervalLongIos,
             i.totalLongIos,
             longestPendingRequests_duration_ms =
-                ISNULL(SUM(i.longestPendingRequests_duration_ms), 0),
+                SUM(i.longestPendingRequests_duration_ms),
             longestPendingRequests_filePath =
                 ISNULL(i.longestPendingRequests_filePath, 'N/A')
         INTO #i
         FROM #io AS i
+        WHERE i.longestPendingRequests_duration_ms IS NOT NULL
         GROUP BY
             i.event_time,
             i.state,
@@ -2527,26 +2534,27 @@ AND   ca.utc_timestamp < @end_date';
             FROM #i AS i
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'disk')
-                        THEN 'disk skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'disk')
-                        THEN 'no io issues found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no io issues found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No io data found', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'disk')
+                            THEN 'disk skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'disk')
+                            THEN 'no io issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no io issues found!'
+                        END
+                RAISERROR('No io data found', 0, 0) WITH NOWAIT;
+            END;
         END;
         ELSE
         BEGIN
@@ -2725,26 +2733,28 @@ END;
         FROM #scheduler_details AS sd
     )
     BEGIN
-        /* No results logic, only return if not logging */
-        SELECT
-            finding =
-                CASE
-                    WHEN @what_to_check NOT IN ('all', 'cpu')
-                    THEN 'cpu skipped, @what_to_check set to ' +
-                         @what_to_check
-                    WHEN @what_to_check IN ('all', 'cpu')
-                    THEN 'no cpu issues found between ' +
-                         RTRIM(CONVERT(date, @start_date)) +
-                         ' and ' +
-                         RTRIM(CONVERT(date, @end_date)) +
-                         ' with @warnings_only set to ' +
-                         RTRIM(@warnings_only) +
-                         '.'
-                    ELSE 'no cpu issues found!'
-                END
-        WHERE @log_to_table = 0;
-
-        RAISERROR('No scheduler data found', 0, 0) WITH NOWAIT;
+        IF @log_to_table = 0
+            BEGIN
+            /* No results logic, only return if not logging */
+            SELECT
+                finding =
+                    CASE
+                        WHEN @what_to_check NOT IN ('all', 'cpu')
+                        THEN 'cpu skipped, @what_to_check set to ' +
+                             @what_to_check
+                        WHEN @what_to_check IN ('all', 'cpu')
+                        THEN 'no cpu issues found between ' +
+                             RTRIM(CONVERT(date, @start_date)) +
+                             ' and ' +
+                             RTRIM(CONVERT(date, @end_date)) +
+                             ' with @warnings_only set to ' +
+                             RTRIM(@warnings_only) +
+                             '.'
+                        ELSE 'no cpu issues found!'
+                    END
+            
+            RAISERROR('No scheduler data found', 0, 0) WITH NOWAIT;
+        END;
     END;
     ELSE
     BEGIN
@@ -2930,26 +2940,28 @@ END;
             FROM #memory AS m
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'memory')
-                        THEN 'memory skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'memory')
-                        THEN 'no memory issues found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no memory issues found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No memory condition data found', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'memory')
+                            THEN 'memory skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'memory')
+                            THEN 'no memory issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no memory issues found!'
+                        END
+                
+                RAISERROR('No memory condition data found', 0, 0) WITH NOWAIT;
+            END;            
         END;
         ELSE
         BEGIN
@@ -3155,26 +3167,28 @@ END;
             FROM #memory_broker_info AS mbi
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'memory')
-                        THEN 'memory broker skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'memory')
-                        THEN 'no memory pressure events found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no memory pressure events found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No memory broker data found', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'memory')
+                            THEN 'memory broker skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'memory')
+                            THEN 'no memory pressure events found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no memory pressure events found!'
+                        END
+                
+                RAISERROR('No memory broker data found', 0, 0) WITH NOWAIT;
+            END;            
         END;
         ELSE
         BEGIN
@@ -3360,24 +3374,26 @@ END;
             FROM #memory_node_oom_info AS mnoi
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'memory')
-                        THEN 'memory node OOM skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'memory')
-                        THEN 'no memory node OOM events found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             '.'
-                        ELSE 'no memory node OOM events found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No memory oom data found', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'memory')
+                            THEN 'memory node OOM skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'memory')
+                            THEN 'no memory node OOM events found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 '.'
+                            ELSE 'no memory node OOM events found!'
+                        END
+                
+                RAISERROR('No memory oom data found', 0, 0) WITH NOWAIT;
+            END;            
         END;
         ELSE
         BEGIN
@@ -3642,26 +3658,28 @@ END;
             FROM #health AS h
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'system')
-                        THEN 'system health skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'system')
-                        THEN 'no system health issues found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no system health issues found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No system health data found', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'system')
+                            THEN 'system health skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'system')
+                            THEN 'no system health issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no system health issues found!'
+                        END
+                
+                RAISERROR('No system health data found', 0, 0) WITH NOWAIT;
+            END;            
         END;
         ELSE
         BEGIN
@@ -3835,26 +3853,28 @@ END;
             FROM #scheduler_issues AS si
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'system', 'cpu')
-                        THEN 'scheduler monitoring skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'system', 'cpu')
-                        THEN 'no scheduler issues found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no scheduler issues found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No scheduler issues data found', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'system', 'cpu')
+                            THEN 'scheduler monitoring skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'system', 'cpu')
+                            THEN 'no scheduler issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no scheduler issues found!'
+                        END
+                
+                RAISERROR('No scheduler issues data found', 0, 0) WITH NOWAIT;
+            END;            
         END;
         ELSE
         BEGIN
@@ -4059,26 +4079,28 @@ END;
             FROM #error_info AS ei
         )
         BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'system')
-                        THEN 'error reporting skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'system')
-                        THEN 'no severe errors found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no severe errors found!'
-                    END
-            WHERE @log_to_table = 0;
-
-            RAISERROR('No error data found', 0, 0) WITH NOWAIT;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'system')
+                            THEN 'error reporting skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'system')
+                            THEN 'no severe errors found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no severe errors found!'
+                        END
+                
+                RAISERROR('No error data found', 0, 0) WITH NOWAIT;
+            END;            
         END;
         ELSE
         BEGIN
