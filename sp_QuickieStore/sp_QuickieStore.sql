@@ -2118,12 +2118,18 @@ BEGIN
             id.database_name,
             reason = 
                 CASE 
-                    WHEN d.name IS NULL THEN 'Database does not exist'
-                    WHEN d.state <> 0 THEN 'Database not online'
-                    WHEN d.is_query_store_on = 0 THEN 'Query Store not enabled'
-                    WHEN d.is_in_standby = 1 THEN 'Database is in standby'
-                    WHEN d.is_read_only = 1 THEN 'Database is read-only'
-                    WHEN d.database_id <= 4 THEN 'System database'
+                    WHEN d.name IS NULL 
+                    THEN 'Database does not exist'
+                    WHEN d.state <> 0 
+                    THEN 'Database not online'
+                    WHEN d.is_query_store_on = 0 
+                    THEN 'Query Store not enabled'
+                    WHEN d.is_in_standby = 1 
+                    THEN 'Database is in standby'
+                    WHEN d.is_read_only = 1 
+                    THEN 'Database is read-only'
+                    WHEN d.database_id <= 4 
+                    THEN 'System database'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
