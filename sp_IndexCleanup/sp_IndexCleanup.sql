@@ -4799,7 +4799,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         level =
             CASE 
                 WHEN irs.summary_level = 'SUMMARY' 
-                THEN '=== OVERALL ANALYSIS ==='
+                THEN 'OVERALL ANALYSIS'
                 ELSE irs.summary_level
             END,
         
