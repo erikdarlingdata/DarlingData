@@ -1545,7 +1545,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN i.type = 2
                 THEN 1
-                WHEN i.type = 1
+                WHEN 
+                (
+                     i.type = 1 
+                  OR i.is_primary_key = 1
+                )
                 THEN 0
             END
     FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
@@ -1996,8 +2000,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* For regular indexes, use CREATE INDEX syntax */    
                 ELSE
                     N'CREATE ' +
-                    CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' ELSE N'' END +
-                    CASE WHEN id1.index_id = 1 THEN N'CLUSTERED ' WHEN id1.index_id > 1 AND @verbose_output >= 1 THEN N'NONCLUSTERED ' ELSE N'' END +
+                    CASE 
+                        WHEN id1.is_unique = 1 
+                        THEN N'UNIQUE ' 
+                    ELSE N'' 
+                    END +
+                    CASE 
+                        WHEN id1.index_id = 1 
+                        THEN N'CLUSTERED ' 
+                        WHEN id1.index_id > 1 
+                        AND @verbose_output >= 1 
+                        THEN N'NONCLUSTERED ' 
+                        ELSE N'' 
+                    END +
                     N'INDEX ' + 
                     QUOTENAME(id1.index_name) + 
                     N' ON ' + 
@@ -3697,46 +3712,105 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         included_columns = NULL, /* Clustered indexes cannot have included columns */
         filter_definition = NULL, /* Clustered indexes cannot have filters */
         original_index_definition = 
-            N'CREATE CLUSTERED INDEX ' +
-            QUOTENAME(fo.index_name) + 
-            N' ON ' + 
-            QUOTENAME(fo.database_name) + 
-            N'.' +
-            QUOTENAME(fo.schema_name) + 
-            N'.' +
-            QUOTENAME(fo.table_name) + 
-            N' (' +
-            STUFF
-            (
-              (
-                SELECT
-                    N', ' +
-                    QUOTENAME(id2.column_name) +
+            CASE 
+                WHEN id.is_primary_key = 1
+                THEN 
+                    N'ALTER TABLE ' +
+                    QUOTENAME(fo.database_name) + 
+                    N'.' +
+                    QUOTENAME(fo.schema_name) + 
+                    N'.' +
+                    QUOTENAME(fo.table_name) +
+                    N' ADD CONSTRAINT ' + 
+                    QUOTENAME(fo.index_name) + 
+                    N' PRIMARY KEY ' +
                     CASE
-                        WHEN id2.is_descending_key = 1
-                        THEN N' DESC'
-                        ELSE N''
+                        WHEN ce.index_id = 1
+                        THEN N'CLUSTERED'
+                        ELSE N'NONCLUSTERED'
                     END
-                FROM #index_details id2
-                WHERE id2.object_id = fo.object_id
-                AND   id2.index_id = fo.index_id
-                AND   id2.is_included_column = 0
-                GROUP BY
-                    id2.column_name,
-                    id2.is_descending_key,
-                    id2.key_ordinal
-                ORDER BY
-                    id2.key_ordinal
-                FOR 
-                    XML
-                    PATH(''),
-                    TYPE
-              ).value('text()[1]','nvarchar(max)'),
-              1,
-              2,
-              ''
-            ) +
-            N');'
+                    +
+                    N' (' +
+                    STUFF
+                    (
+                      (
+                        SELECT
+                            N', ' +
+                            QUOTENAME(id2.column_name) +
+                            CASE
+                                WHEN id2.is_descending_key = 1
+                                THEN N' DESC'
+                                ELSE N''
+                            END
+                        FROM #index_details id2
+                        WHERE id2.object_id = fo.object_id
+                        AND   id2.index_id = fo.index_id
+                        AND   id2.is_included_column = 0
+                        GROUP BY
+                            id2.column_name,
+                            id2.is_descending_key,
+                            id2.key_ordinal
+                        ORDER BY
+                            id2.key_ordinal
+                        FOR 
+                            XML
+                            PATH(''),
+                            TYPE
+                      ).value('text()[1]','nvarchar(max)'),
+                      1,
+                      2,
+                      ''
+                    ) +
+                    N');'
+                WHEN id.is_primary_key = 0
+                THEN N'CREATE ' +
+                    CASE
+                        WHEN id.is_unique = 1
+                        THEN N'UNIQUE '
+                        ELSE N''
+                    END +
+                N'CLUSTERED INDEX' +
+                QUOTENAME(fo.index_name) + 
+                N' ON ' + 
+                QUOTENAME(fo.database_name) + 
+                N'.' +
+                QUOTENAME(fo.schema_name) + 
+                N'.' +
+                QUOTENAME(fo.table_name) + 
+                N' (' +
+                STUFF
+                (
+                  (
+                    SELECT
+                        N', ' +
+                        QUOTENAME(id2.column_name) +
+                        CASE
+                            WHEN id2.is_descending_key = 1
+                            THEN N' DESC'
+                            ELSE N''
+                        END
+                    FROM #index_details id2
+                    WHERE id2.object_id = fo.object_id
+                    AND   id2.index_id = fo.index_id
+                    AND   id2.is_included_column = 0
+                    GROUP BY
+                        id2.column_name,
+                        id2.is_descending_key,
+                        id2.key_ordinal
+                    ORDER BY
+                        id2.key_ordinal
+                    FOR 
+                        XML
+                        PATH(''),
+                        TYPE
+                  ).value('text()[1]','nvarchar(max)'),
+                  1,
+                  2,
+                  ''
+                ) +
+                N');'
+            ELSE N''
+        END
     FROM #filtered_objects AS fo
     JOIN #index_details AS id
       ON  id.database_id = fo.database_id
@@ -3747,7 +3821,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  ce.database_id = fo.database_id
       AND ce.object_id = fo.object_id
       AND ce.index_id = fo.index_id
-    WHERE fo.index_id = 1 /* Clustered indexes only */
+    WHERE 
+    (
+         fo.index_id = 1 /* Clustered indexes only */
+      OR id.is_primary_key = 1
+    )
     AND   ce.can_compress = 1 /* Only those eligible for compression */
     /* Only add if not already in #index_analysis */
     AND   NOT EXISTS
