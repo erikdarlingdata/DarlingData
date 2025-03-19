@@ -5386,29 +5386,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN irs.summary_level = 'SUMMARY'
                 THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
                 WHEN irs.summary_level = 'DATABASE'
-                THEN
-                    /* For DATABASE level, sum up the table-level values */
-                    FORMAT
-                    (
-                        (
-                            SELECT
-                                SUM
-                                (
-                                    TRY_CAST(
-                                        REPLACE(
-                                            REPLACE(
-                                                REPLACE(irt.daily_write_ops_saved, ',', ''),
-                                                'N/A', '0'),
-                                            ' ', '')
-                                        AS decimal(38,2)
-                                    )
-                                )
-                            FROM #index_reporting_stats AS irt
-                            WHERE irt.summary_level = 'TABLE'
-                            AND irt.database_name = irs.database_name
-                        ),
-                        'N0'
-                    )
+                THEN 'N/A'
                 WHEN irs.summary_level = 'TABLE'
                 THEN 
                     /* For TABLE rows, calculate estimated savings */
@@ -5468,7 +5446,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN FORMAT(ISNULL(irs.row_lock_wait_count, 0) + 
                      ISNULL(irs.page_lock_wait_count, 0), 'N0')
-                ELSE '0'
+                ELSE 'N/A'
             END,
             
         /* Lock waits saved - new column */
@@ -5477,29 +5455,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN irs.summary_level = 'SUMMARY'
                 THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
                 WHEN irs.summary_level = 'DATABASE'
-                THEN
-                    /* For DATABASE level, sum up the table-level values */
-                    FORMAT
-                    (
-                        (
-                            SELECT
-                                SUM
-                                (
-                                    TRY_CAST(
-                                        REPLACE(
-                                            REPLACE(
-                                                REPLACE(irt.daily_lock_waits_saved, ',', ''),
-                                                'N/A', '0'),
-                                            ' ', '')
-                                        AS decimal(38,2)
-                                    )
-                                )
-                            FROM #index_reporting_stats AS irt
-                            WHERE irt.summary_level = 'TABLE'
-                            AND irt.database_name = irs.database_name
-                        ),
-                        'N0'
-                    )
+                THEN 'N/A'
                 WHEN irs.summary_level = 'TABLE'
                 THEN 
                     /* For TABLE rows, calculate estimated savings */
@@ -5563,7 +5519,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      ISNULL(irs.page_lock_wait_in_ms, 0)) / 
                      NULLIF(ISNULL(irs.row_lock_wait_count, 0) + 
                      ISNULL(irs.page_lock_wait_count, 0), 0), 'N2')
-                ELSE '0.00'
+                ELSE '0'
             END,
         
         /* Total count of latch waits (page + io) - new column */
@@ -5572,7 +5528,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN irs.summary_level <> 'SUMMARY'
                 THEN FORMAT(ISNULL(irs.page_latch_wait_count, 0) + 
                      ISNULL(irs.page_io_latch_wait_count, 0), 'N0')
-                ELSE '0'
+                ELSE 'N/A'
             END,
             
         /* Latch waits saved - new column */
@@ -5581,29 +5537,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN irs.summary_level = 'SUMMARY'
                 THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
                 WHEN irs.summary_level = 'DATABASE'
-                THEN
-                    /* For DATABASE level, sum up the table-level values */
-                    FORMAT
-                    (
-                        (
-                            SELECT
-                                SUM
-                                (
-                                    TRY_CAST(
-                                        REPLACE(
-                                            REPLACE(
-                                                REPLACE(irt.daily_latch_waits_saved, ',', ''),
-                                                'N/A', '0'),
-                                            ' ', '')
-                                        AS decimal(38,2)
-                                    )
-                                )
-                            FROM #index_reporting_stats AS irt
-                            WHERE irt.summary_level = 'TABLE'
-                            AND irt.database_name = irs.database_name
-                        ),
-                        'N0'
-                    )
+                THEN 'N/A'
                 WHEN irs.summary_level = 'TABLE'
                 THEN 
                     /* For TABLE rows, calculate estimated savings */
@@ -5667,7 +5601,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      ISNULL(irs.page_io_latch_wait_in_ms, 0)) / 
                      NULLIF(ISNULL(irs.page_latch_wait_count, 0) + 
                      ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
-                ELSE '0.00'
+                ELSE 'N/A'
             END
     FROM #index_reporting_stats AS irs
     WHERE irs.summary_level IN ('SUMMARY', 'DATABASE', 'TABLE') /* Filter out INDEX level */
