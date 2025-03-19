@@ -5384,36 +5384,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         daily_write_ops_saved = 
             CASE
                 WHEN irs.summary_level = 'SUMMARY'
+                THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
+                WHEN irs.summary_level = 'DATABASE'
                 THEN
-                    /* For SUMMARY row, calculate the sum of daily write ops saved across all databases */
+                    /* For DATABASE level, calculate based on sum of unused indexes from tables */
                     FORMAT
                     (
                         (
-                            SELECT 
+                            SELECT
                                 SUM
                                 (
                                     CONVERT
                                     (
                                         decimal(38,2),
                                         CASE
-                                            WHEN ISNULL(irs3.unused_indexes, 0) > 0
+                                            WHEN ISNULL(irt.unused_indexes, 0) > 0
                                             THEN
                                                 ISNULL
                                                 (
-                                                    irs3.user_updates / 
+                                                    irt.user_updates / 
                                                     NULLIF
                                                     (
                                                         CONVERT
                                                         (
-                                                            decimal(38,2), 
-                                                            sd.days /* Get server_uptime_days from subquery */
-                                                        ), 
+                                                            decimal(38,2),
+                                                            (
+                                                                SELECT TOP (1) 
+                                                                    irs2.server_uptime_days 
+                                                                FROM #index_reporting_stats AS irs2 
+                                                                WHERE irs2.summary_level = 'SUMMARY'
+                                                            )
+                                                        ),
                                                         0
                                                     ) * 
                                                     (
                                                         ISNULL
                                                         (
-                                                            irs3.unused_indexes, 
+                                                            irt.unused_indexes, 
                                                             0
                                                         ) / 
                                                         NULLIF
@@ -5421,26 +5428,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                             CONVERT
                                                             (
                                                                 decimal(38,2), 
-                                                                irs3.index_count
-                                                            ), 
+                                                                irt.index_count
+                                                            ),
                                                             0
                                                         )
-                                                    ), 
+                                                    ),
                                                     0
                                                 )
                                             ELSE 0
                                         END
                                     )
                                 )
-                            FROM #index_reporting_stats AS irs3
-                            CROSS JOIN (SELECT days = MAX(server_uptime_days) FROM #index_reporting_stats WHERE summary_level = 'SUMMARY') AS sd
-                            WHERE irs3.summary_level = 'DATABASE'
+                            FROM #index_reporting_stats AS irt
+                            WHERE irt.summary_level = 'TABLE'
+                            AND irt.database_name = irs.database_name
                         ),
                         'N0'
                     )
-                WHEN irs.summary_level <> 'SUMMARY'
+                WHEN irs.summary_level = 'TABLE'
                 THEN 
-                    /* For rows with unused indexes, calculate estimated savings */
+                    /* For TABLE rows, calculate estimated savings */
                     CASE
                         WHEN ISNULL(irs.unused_indexes, 0) > 0
                         THEN FORMAT
@@ -5504,36 +5511,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         daily_lock_waits_saved = 
             CASE
                 WHEN irs.summary_level = 'SUMMARY'
+                THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
+                WHEN irs.summary_level = 'DATABASE'
                 THEN
-                    /* For SUMMARY row, calculate the sum of daily lock waits saved across all databases */
+                    /* For DATABASE level, calculate based on sum of unused indexes from tables */
                     FORMAT
                     (
                         (
-                            SELECT 
+                            SELECT
                                 SUM
                                 (
                                     CONVERT
                                     (
                                         decimal(38,2),
                                         CASE
-                                            WHEN ISNULL(irs3.unused_indexes, 0) > 0
+                                            WHEN ISNULL(irt.unused_indexes, 0) > 0
                                             THEN
                                                 ISNULL
                                                 (
-                                                    (irs3.row_lock_wait_count + irs3.page_lock_wait_count) / 
+                                                    (irt.row_lock_wait_count + irt.page_lock_wait_count) / 
                                                     NULLIF
                                                     (
                                                         CONVERT
                                                         (
-                                                            decimal(38,2), 
-                                                            sd.days /* Get server_uptime_days from subquery */
-                                                        ), 
+                                                            decimal(38,2),
+                                                            (
+                                                                SELECT TOP (1) 
+                                                                    irs2.server_uptime_days 
+                                                                FROM #index_reporting_stats AS irs2 
+                                                                WHERE irs2.summary_level = 'SUMMARY'
+                                                            )
+                                                        ),
                                                         0
                                                     ) * 
                                                     (
                                                         ISNULL
                                                         (
-                                                            irs3.unused_indexes, 
+                                                            irt.unused_indexes, 
                                                             0
                                                         ) / 
                                                         NULLIF
@@ -5541,26 +5555,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                             CONVERT
                                                             (
                                                                 decimal(38,2), 
-                                                                irs3.index_count
-                                                            ), 
+                                                                irt.index_count
+                                                            ),
                                                             0
                                                         )
-                                                    ), 
+                                                    ),
                                                     0
                                                 )
                                             ELSE 0
                                         END
                                     )
                                 )
-                            FROM #index_reporting_stats AS irs3
-                            CROSS JOIN (SELECT days = MAX(server_uptime_days) FROM #index_reporting_stats WHERE summary_level = 'SUMMARY') AS sd
-                            WHERE irs3.summary_level = 'DATABASE'
+                            FROM #index_reporting_stats AS irt
+                            WHERE irt.summary_level = 'TABLE'
+                            AND irt.database_name = irs.database_name
                         ),
                         'N0'
                     )
-                WHEN irs.summary_level <> 'SUMMARY'
+                WHEN irs.summary_level = 'TABLE'
                 THEN 
-                    /* For rows with unused indexes, calculate estimated savings */
+                    /* For TABLE rows, calculate estimated savings */
                     CASE
                         WHEN ISNULL(irs.unused_indexes, 0) > 0
                         THEN 
@@ -5637,36 +5651,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         daily_latch_waits_saved = 
             CASE
                 WHEN irs.summary_level = 'SUMMARY'
+                THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
+                WHEN irs.summary_level = 'DATABASE'
                 THEN
-                    /* For SUMMARY row, calculate the sum of daily latch waits saved across all databases */
+                    /* For DATABASE level, calculate based on sum of unused indexes from tables */
                     FORMAT
                     (
                         (
-                            SELECT 
+                            SELECT
                                 SUM
                                 (
                                     CONVERT
                                     (
                                         decimal(38,2),
                                         CASE
-                                            WHEN ISNULL(irs3.unused_indexes, 0) > 0
+                                            WHEN ISNULL(irt.unused_indexes, 0) > 0
                                             THEN
                                                 ISNULL
                                                 (
-                                                    (irs3.page_latch_wait_count + irs3.page_io_latch_wait_count) / 
+                                                    (irt.page_latch_wait_count + irt.page_io_latch_wait_count) / 
                                                     NULLIF
                                                     (
                                                         CONVERT
                                                         (
-                                                            decimal(38,2), 
-                                                            sd.days /* Get server_uptime_days from subquery */
-                                                        ), 
+                                                            decimal(38,2),
+                                                            (
+                                                                SELECT TOP (1) 
+                                                                    irs2.server_uptime_days 
+                                                                FROM #index_reporting_stats AS irs2 
+                                                                WHERE irs2.summary_level = 'SUMMARY'
+                                                            )
+                                                        ),
                                                         0
                                                     ) * 
                                                     (
                                                         ISNULL
                                                         (
-                                                            irs3.unused_indexes, 
+                                                            irt.unused_indexes, 
                                                             0
                                                         ) / 
                                                         NULLIF
@@ -5674,26 +5695,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                             CONVERT
                                                             (
                                                                 decimal(38,2), 
-                                                                irs3.index_count
-                                                            ), 
+                                                                irt.index_count
+                                                            ),
                                                             0
                                                         )
-                                                    ), 
+                                                    ),
                                                     0
                                                 )
                                             ELSE 0
                                         END
                                     )
                                 )
-                            FROM #index_reporting_stats AS irs3
-                            CROSS JOIN (SELECT days = MAX(server_uptime_days) FROM #index_reporting_stats WHERE summary_level = 'SUMMARY') AS sd
-                            WHERE irs3.summary_level = 'DATABASE'
+                            FROM #index_reporting_stats AS irt
+                            WHERE irt.summary_level = 'TABLE'
+                            AND irt.database_name = irs.database_name
                         ),
                         'N0'
                     )
-                WHEN irs.summary_level <> 'SUMMARY'
+                WHEN irs.summary_level = 'TABLE'
                 THEN 
-                    /* For DATABASE and TABLE rows, calculate estimated savings */
+                    /* For TABLE rows, calculate estimated savings */
                     CASE
                         WHEN ISNULL(irs.unused_indexes, 0) > 0
                         THEN 
