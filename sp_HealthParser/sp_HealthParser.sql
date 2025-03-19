@@ -29,7 +29,7 @@ Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 */
 
 IF OBJECT_ID(N'dbo.sp_HealthParser', N'P') IS NULL
@@ -50,6 +50,11 @@ ALTER PROCEDURE
     @wait_round_interval_minutes bigint = 60, /*Nearest interval to round wait stats to*/
     @skip_locks bit = 0, /*Skip the blocking and deadlocks*/
     @pending_task_threshold integer = 10, /*Minimum number of pending tasks to care about*/
+    @log_to_table bit = 0, /*enable logging to permanent tables*/
+    @log_database_name sysname = NULL, /*database to store logging tables*/
+    @log_schema_name sysname = NULL, /*schema to store logging tables*/
+    @log_table_name_prefix sysname = 'HealthParser', /*prefix for all logging tables*/
+    @log_retention_days integer = 30, /*Number of days to keep logs, 0 = keep indefinitely*/
     @debug bit = 0, /*Select from temp tables to get event data in raw xml*/
     @help bit = 0, /*Get help*/
     @version varchar(30) = NULL OUTPUT, /*Script version*/
@@ -65,8 +70,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '2.1',
-        @version_date = '20250101';
+        @version = '2.4',
+        @version_date = '20250401';
 
     IF @help = 1
     BEGIN
@@ -97,6 +102,11 @@ BEGIN
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
                     WHEN N'@skip_locks' THEN N'skip the blocking and deadlocking section'
                     WHEN N'@pending_task_threshold' THEN N'minimum number of pending tasks to display'
+                    WHEN N'@log_to_table' THEN N'enable logging to permanent tables instead of returning results'
+                    WHEN N'@log_database_name' THEN N'database to store logging tables'
+                    WHEN N'@log_schema_name' THEN N'schema to store logging tables'
+                    WHEN N'@log_table_name_prefix' THEN N'prefix for all logging tables'
+                    WHEN N'@log_retention_days' THEN N'how many days of data to retain'
                     WHEN N'@version' THEN N'OUTPUT; for support'
                     WHEN N'@version_date' THEN N'OUTPUT; for support'
                     WHEN N'@help' THEN N'how you got here'
@@ -114,6 +124,11 @@ BEGIN
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for top wait stats by count and duration'
                     WHEN N'@skip_locks' THEN N'0 or 1'
                     WHEN N'@pending_task_threshold' THEN N'a valid integer'
+                    WHEN N'@log_to_table' THEN N'0 or 1'
+                    WHEN N'@log_database_name' THEN N'any valid database name'
+                    WHEN N'@log_schema_name' THEN N'any valid schema name'
+                    WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
+                    WHEN N'@log_retention_days' THEN N'a positive integer'
                     WHEN N'@version' THEN N'none'
                     WHEN N'@version_date' THEN N'none'
                     WHEN N'@help' THEN N'0 or 1'
@@ -131,15 +146,20 @@ BEGIN
                     WHEN N'@wait_round_interval_minutes' THEN N'60'
                     WHEN N'@skip_locks' THEN N'0'
                     WHEN N'@pending_task_threshold' THEN N'10'
+                    WHEN N'@log_to_table' THEN N'0'
+                    WHEN N'@log_database_name' THEN N'NULL (current database)'
+                    WHEN N'@log_schema_name' THEN N'NULL (dbo)'
+                    WHEN N'@log_table_name_prefix' THEN N'HealthParser'
+                    WHEN N'@log_retention_days' THEN N'30'
                     WHEN N'@version' THEN N'none; OUTPUT'
                     WHEN N'@version_date' THEN N'none; OUTPUT'
                     WHEN N'@help' THEN N'0'
                     WHEN N'@debug' THEN N'0'
                 END
         FROM sys.all_parameters AS ap
-        INNER JOIN sys.all_objects AS o
+        JOIN sys.all_objects AS o
           ON ap.object_id = o.object_id
-        INNER JOIN sys.types AS t
+        JOIN sys.types AS t
           ON  ap.system_type_id = t.system_type_id
           AND ap.user_type_id = t.user_type_id
         WHERE o.name = N'sp_HealthParser'
@@ -171,20 +191,20 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
 FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-', 0, 1) WITH NOWAIT;
+', 0, 0) WITH NOWAIT;
 
         RETURN;
     END; /*End help section*/
 
     IF @debug = 1
     BEGIN
-        RAISERROR('Declaring variables', 0, 1) WITH NOWAIT;
+        RAISERROR('Declaring variables', 0, 0) WITH NOWAIT;
     END;
 
     DECLARE
-        @sql nvarchar(MAX) =
+        @sql nvarchar(max) =
             N'',
-        @params nvarchar(MAX) =
+        @params nvarchar(max) =
             N'@start_date datetimeoffset(7),
               @end_date datetimeoffset(7)',
         @azure bit  =
@@ -192,7 +212,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         SERVERPROPERTY('EngineEdition')
                     ) = 5
                 THEN 1
@@ -204,7 +224,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN
                     CONVERT
                     (
-                        int,
+                        integer,
                         SERVERPROPERTY('EngineEdition')
                     ) = 8
                 THEN 1
@@ -212,8 +232,39 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END,
         @mi_msg nchar(1),
         @dbid integer =
-            DB_ID(@database_name);
-
+            DB_ID(@database_name),
+        @timestamp_utc_mode tinyint,
+        @sql_template nvarchar(max) = N'',
+        @time_filter nvarchar(max) = N'',
+        @cross_apply nvarchar(max) = N'',
+        @collection_cursor CURSOR,
+        @area_name varchar(20),
+        @object_name sysname,
+        @temp_table sysname,
+        @insert_list sysname,
+        @collection_sql nvarchar(max),
+        /*Log to table stuff*/       
+        @log_table_significant_waits sysname, 
+        @log_table_waits_by_count sysname,
+        @log_table_waits_by_duration sysname,
+        @log_table_io_issues sysname,
+        @log_table_cpu_tasks sysname,
+        @log_table_memory_conditions sysname,
+        @log_table_memory_broker sysname,
+        @log_table_memory_node_oom sysname,
+        @log_table_system_health sysname,
+        @log_table_scheduler_issues sysname,
+        @log_table_severe_errors sysname,    
+        @cleanup_date datetime2(7),
+        @check_sql nvarchar(max) = N'',
+        @create_sql nvarchar(max) = N'',
+        @insert_sql nvarchar(max) = N'',
+        @log_database_schema nvarchar(1024),
+        @max_event_time datetime2(7), 
+        @dsql nvarchar(max) = N'',
+        @mdsql_template nvarchar(max) = N'',
+        @mdsql_execute nvarchar(MAX) = N'';
+        
     IF @azure = 1
     BEGIN
         RAISERROR('This won''t work in Azure because it''s horrible', 11, 1) WITH NOWAIT;
@@ -222,7 +273,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     IF @debug = 1
     BEGIN
-        RAISERROR('Fixing variables', 0, 1) WITH NOWAIT;
+        RAISERROR('Fixing parameters and variables', 0, 0) WITH NOWAIT;
     END;
 
     SELECT
@@ -296,35 +347,149 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @azure_msg =
             CONVERT(nchar(1), @azure),
         @mi_msg =
-            CONVERT(nchar(1), @mi);
+            CONVERT(nchar(1), @mi),
+        @timestamp_utc_mode  =
+            CASE 
+                WHEN EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM sys.all_columns AS ac
+                    WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
+                    AND   ac.name = N'timestamp_utc'
+                )                            
+                THEN 1 +
+                    CASE 
+                        WHEN 
+                            PARSENAME
+                            (
+                                CONVERT
+                                (
+                                    sysname, 
+                                    SERVERPROPERTY('PRODUCTVERSION')
+                                ), 
+                                4
+                            ) > 17
+                        THEN 1
+                        ELSE 0
+                    END +
+                    CASE
+                        WHEN @mi = 1
+                        THEN 1
+                        ELSE 0
+                    END
+                ELSE 0
+            END,
+        @sql_template += N'
+    INSERT INTO
+        {temp_table}
+    WITH
+        (TABLOCK)
+    (
+        {insert_list}
+    )
+    SELECT
+        {object_name} =
+            ISNULL
+            (
+                xml.{object_name},
+                CONVERT(xml, N''<event>event</event>'')
+            )
+    FROM
+    (
+        SELECT
+            {object_name} =
+                TRY_CAST(fx.event_data AS xml)
+        FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
+        WHERE fx.object_name = N''{object_name}'' {time_filter}
+    ) AS xml
+    {cross_apply}
+    OPTION(RECOMPILE);
+',
+        @mdsql_template = N'
+            IF OBJECT_ID(''{table_check}'', ''U'') IS NOT NULL
+            BEGIN
+                SELECT 
+                    @max_event_time = 
+                        ISNULL
+                        (
+                            MAX({date_column}),
+                            DATEADD
+                            (
+                                MINUTE,
+                                DATEDIFF
+                                (
+                                    MINUTE,
+                                    SYSDATETIME(),
+                                    GETUTCDATE()
+                                ),
+                                DATEADD
+                                (
+                                    DAY,
+                                    -1,
+                                    SYSDATETIME()
+                                )
+                            )
+                        )
+                FROM {table_check};
+            END;
+            ';
 
+    IF @timestamp_utc_mode = 0
+    BEGIN
+        /* Pre-2017 handling */
+        SET @time_filter = N'';
+        SET @cross_apply = N'CROSS APPLY xml.{object_name}.nodes(''/event'') AS e(x)
+CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
+WHERE ca.utc_timestamp >= @start_date
+AND   ca.utc_timestamp < @end_date';
+    END;
+    ELSE 
+    BEGIN
+        /* 2017+ handling */
+        SET @cross_apply = N'CROSS APPLY xml.{object_name}.nodes(''/event'') AS e(x)';
+        
+        IF @timestamp_utc_mode = 1
+            SET @time_filter = N'
+    AND CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date';
+        ELSE
+            SET @time_filter = '
+    AND fx.timestamp_utc BETWEEN @start_date AND @end_date';
+    END;
+
+    SET @sql_template = 
+        REPLACE
+        (
+            REPLACE
+            (
+                @sql_template, 
+                '{time_filter}', 
+                @time_filter
+            ),
+            '{cross_apply}', 
+            @cross_apply
+        );
+    
     /*If any parameters that expect non-NULL default values get passed in with NULLs, fix them*/
     SELECT
-        @what_to_check = ISNULL(@what_to_check, 'all'),
+        @what_to_check = LOWER(ISNULL(@what_to_check, 'all')),
         @warnings_only = ISNULL(@warnings_only, 0),
         @wait_duration_ms = ISNULL(@wait_duration_ms, 0),
         @wait_round_interval_minutes = ISNULL(@wait_round_interval_minutes, 60),
         @skip_locks = ISNULL(@skip_locks, 0),
         @pending_task_threshold = ISNULL(@pending_task_threshold, 10);
 
-    SELECT
-       @what_to_check = LOWER(@what_to_check);
-
+    /*Validate what to check*/
     IF @what_to_check NOT IN
-       (
-           'all',
-           'waits',
-           'disk',
-           'cpu',
-           'memory',
-           'system',
-           'blocking',
-           'blocks',
-           'deadlock',
-           'deadlocks',
-           'locking',
-           'locks'
-       )
+        (
+            'all',
+            'cpu',
+            'disk',
+            'locking',
+            'memory',
+            'system',
+            'waits'
+        )
     BEGIN
         SELECT
             @what_to_check =
@@ -332,21 +497,718 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHEN @what_to_check = 'wait'
                     THEN 'waits'
                     WHEN @what_to_check IN
-                         ('blocking', 'blocks', 'deadlock', 'deadlocks', 'lock', 'locks')
+                         (
+                           'blocking', 'blocks', 
+                           'deadlock', 'deadlocks', 
+                           'lock', 'locks'
+                         )
                     THEN 'locking'
                     ELSE 'all'
                 END;
     END;
 
+    /* Validate logging parameters */
+    IF @log_to_table = 1
+    BEGIN    
+        SELECT 
+            /* Default database name to current database if not specified */
+            @log_database_name = ISNULL(@log_database_name, DB_NAME()),        
+            /* Default schema name to dbo if not specified */
+            @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+            @log_retention_days = 
+                CASE 
+                    WHEN @log_retention_days < 0 
+                    THEN ABS(@log_retention_days) 
+                    ELSE @log_retention_days 
+                END;
+        
+        /* Validate database exists */
+        IF NOT EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM sys.databases AS d
+            WHERE d.name = @log_database_name
+        )
+        BEGIN
+            RAISERROR('The specified logging database %s does not exist. Logging will be disabled.', 11, 1, @log_database_name) WITH NOWAIT;
+            RETURN;
+        END;
+    
+        SET
+            @log_database_schema = 
+                QUOTENAME(@log_database_name) +
+                N'.' +
+                QUOTENAME(@log_schema_name) +
+                N'.';
+        
+        /* Generate fully qualified table names */
+        SELECT
+            @log_table_significant_waits = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_SignificantWaits'),
+            @log_table_waits_by_count = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_WaitsByCount'),
+            @log_table_waits_by_duration = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_WaitsByDuration'),
+            @log_table_io_issues = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_IOIssues'),
+            @log_table_cpu_tasks = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_CPUTasks'),
+            @log_table_memory_conditions = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_MemoryConditions'),
+            @log_table_memory_broker = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_MemoryBroker'),
+            @log_table_memory_node_oom = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_MemoryNodeOOM'),
+            @log_table_system_health = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_SystemHealth'),
+            @log_table_scheduler_issues = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_SchedulerIssues'),
+            @log_table_severe_errors = 
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_SevereErrors');
+        
+        /* Check if schema exists and create it if needed */
+        SET @check_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                WHERE s.name = @schema_name
+            )
+            BEGIN
+                DECLARE 
+                    @create_schema_sql nvarchar(max) = N''CREATE SCHEMA '' + QUOTENAME(@schema_name);
+                
+                EXECUTE ' + QUOTENAME(@log_database_name) + N'.sys.sp_executesql @create_schema_sql;
+                IF @debug = 1 BEGIN RAISERROR(''Created schema %s in database %s for logging.'', 0, 1, @schema_name, @db_name) WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @check_sql, 
+          N'@schema_name sysname, 
+            @db_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_database_name,
+            @debug;
+    
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_SignificantWaits''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_significant_waits + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    wait_type nvarchar(60) NULL,
+                    duration_ms nvarchar(30) NULL,
+                    signal_duration_ms nvarchar(30) NULL,
+                    wait_resource nvarchar(256) NULL,
+                    query_text xml NULL,
+                    session_id integer NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for significant waits logging.'', 0, 1, ''' + @log_table_significant_waits + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+
+        /* Create WaitsByCount table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_WaitsByCount''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_waits_by_count + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time_rounded datetime2(7) NULL,
+                    wait_type nvarchar(60) NULL,
+                    waits nvarchar(30) NULL,
+                    average_wait_time_ms nvarchar(30) NULL,
+                    max_wait_time_ms nvarchar(30) NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for waits by count logging.'', 0, 1, ''' + @log_table_waits_by_count + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+            
+        /* Create WaitsByDuration table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_WaitsByDuration''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_waits_by_duration + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time_rounded datetime2(7) NULL,
+                    wait_type nvarchar(60) NULL,
+                    average_wait_time_ms nvarchar(30) NULL,
+                    max_wait_time_ms nvarchar(30) NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for waits by duration logging.'', 0, 1, ''' + @log_table_waits_by_duration + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+            
+        /* Create IOIssues table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_IOIssues''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_io_issues + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    state nvarchar(256) NULL,
+                    ioLatchTimeouts bigint NULL,
+                    intervalLongIos bigint NULL,
+                    totalLongIos bigint NULL,
+                    longestPendingRequests_duration_ms nvarchar(30) NULL,
+                    longestPendingRequests_filePath nvarchar(500) NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for IO issues logging.'', 0, 1, ''' + @log_table_io_issues + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+            
+        /* Create CPUTasks table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_CPUTasks''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_cpu_tasks + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    state nvarchar(256) NULL,
+                    maxWorkers bigint NULL,
+                    workersCreated bigint NULL,
+                    workersIdle bigint NULL,
+                    tasksCompletedWithinInterval bigint NULL,
+                    pendingTasks bigint NULL,
+                    oldestPendingTaskWaitingTime bigint NULL,
+                    hasUnresolvableDeadlockOccurred bit NULL,
+                    hasDeadlockedSchedulersOccurred bit NULL,
+                    didBlockingOccur bit NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU tasks logging.'', 0, 1, ''' + @log_table_cpu_tasks + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+            
+        /* Create MemoryConditions table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_MemoryConditions''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_memory_conditions + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    lastNotification nvarchar(128) NULL,
+                    outOfMemoryExceptions bigint NULL,
+                    isAnyPoolOutOfMemory bit NULL,
+                    processOutOfMemoryPeriod bigint NULL,
+                    name nvarchar(128) NULL,
+                    available_physical_memory_gb bigint NULL,
+                    available_virtual_memory_gb bigint NULL,
+                    available_paging_file_gb bigint NULL,
+                    working_set_gb bigint NULL,
+                    percent_of_committed_memory_in_ws bigint NULL,
+                    page_faults bigint NULL,
+                    system_physical_memory_high bigint NULL,
+                    system_physical_memory_low bigint NULL,
+                    process_physical_memory_low bigint NULL,
+                    process_virtual_memory_low bigint NULL,
+                    vm_reserved_gb bigint NULL,
+                    vm_committed_gb bigint NULL,
+                    locked_pages_allocated bigint NULL,
+                    large_pages_allocated bigint NULL,
+                    emergency_memory_gb bigint NULL,
+                    emergency_memory_in_use_gb bigint NULL,
+                    target_committed_gb bigint NULL,
+                    current_committed_gb bigint NULL,
+                    pages_allocated bigint NULL,
+                    pages_reserved bigint NULL,
+                    pages_free bigint NULL,
+                    pages_in_use bigint NULL,
+                    page_alloc_potential bigint NULL,
+                    numa_growth_phase bigint NULL,
+                    last_oom_factor bigint NULL,
+                    last_os_error bigint NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory conditions logging.'', 0, 1, ''' + @log_table_memory_conditions + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+            
+        /* Create MemoryBroker table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_MemoryBroker''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_memory_broker + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    node_id int NULL,
+                    memory_available_gb nvarchar(30) NULL,
+                    memory_requested_gb nvarchar(30) NULL,
+                    memory_allocator nvarchar(256) NULL,
+                    memory_allocation_type nvarchar(256) NULL,
+                    memory_clerk_name nvarchar(256) NULL,
+                    os_error int NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory broker logging.'', 0, 1, ''' + @log_table_memory_broker + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+            
+        /* Create MemoryNodeOOM table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_MemoryNodeOOM''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_memory_node_oom + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    node_id int NULL,
+                    memory_available_kb nvarchar(30) NULL,
+                    memory_requested_kb nvarchar(30) NULL,
+                    memory_available_mb nvarchar(30) NULL,
+                    memory_requested_mb nvarchar(30) NULL,
+                    memory_allocator nvarchar(256) NULL,
+                    memory_allocation_type nvarchar(256) NULL,
+                    memory_clerk_name nvarchar(256) NULL,
+                    os_error int NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory node OOM logging.'', 0, 1, ''' + @log_table_memory_node_oom + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+            
+        /* Create SystemHealth table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_SystemHealth''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_system_health + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    state nvarchar(256) NULL,
+                    spinlockBackoffs bigint NULL,
+                    sickSpinlockType nvarchar(256) NULL,
+                    sickSpinlockTypeAfterAv nvarchar(256) NULL,
+                    latchWarnings bigint NULL,
+                    isAccessViolationOccurred bigint NULL,
+                    writeAccessViolationCount bigint NULL,
+                    totalDumpRequests bigint NULL,
+                    intervalDumpRequests bigint NULL,
+                    nonYieldingTasksReported bigint NULL,
+                    pageFaults bigint NULL,
+                    systemCpuUtilization bigint NULL,
+                    sqlCpuUtilization bigint NULL,
+                    BadPagesDetected bigint NULL,
+                    BadPagesFixed bigint NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for system health logging.'', 0, 1, ''' + @log_table_system_health + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+            
+        /* Create SchedulerIssues table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_SchedulerIssues''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_scheduler_issues + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    scheduler_id int NULL,
+                    cpu_id int NULL,
+                    status nvarchar(256) NULL,
+                    is_online bit NULL,
+                    is_runnable bit NULL,
+                    is_running bit NULL,
+                    non_yielding_time_ms nvarchar(30) NULL,
+                    thread_quantum_ms nvarchar(30) NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for scheduler issues logging.'', 0, 1, ''' + @log_table_scheduler_issues + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+            
+        /* Create SevereErrors table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_SevereErrors''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_severe_errors + N' 
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    error_number int NULL,
+                    severity int NULL,
+                    state int NULL,
+                    message nvarchar(max) NULL,
+                    database_name sysname NULL,
+                    database_id int NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for severe errors logging.'', 0, 1, ''' + @log_table_severe_errors + N''') WITH NOWAIT; END;
+            END';
+    
+        EXECUTE sys.sp_executesql 
+            @create_sql, 
+          N'@schema_name sysname, 
+            @table_name sysname,
+            @debug bit', 
+            @log_schema_name, 
+            @log_table_name_prefix,
+            @debug;
+
+        /* Handle log retention if specified */
+        IF @log_to_table = 1 AND @log_retention_days > 0
+        BEGIN            
+            IF @debug = 1 
+            BEGIN 
+                RAISERROR('Cleaning up log tables older than %i days', 0, 1, @log_retention_days) WITH NOWAIT; 
+            END;
+
+            SET @cleanup_date = 
+                DATEADD
+                (
+                    DAY, 
+                    -@log_retention_days, 
+                    SYSDATETIME()
+                );
+            
+            /* Clean up each log table */
+            SET @dsql = N'
+    DELETE FROM ' + @log_table_significant_waits + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_waits_by_count + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_waits_by_duration + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_io_issues + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_cpu_tasks + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_memory_conditions + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_memory_broker + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_memory_node_oom + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_system_health + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_scheduler_issues + '
+    WHERE collection_time < @cleanup_date;
+    
+    DELETE FROM ' + @log_table_severe_errors + '
+    WHERE collection_time < @cleanup_date;
+            ';
+            
+            IF @debug = 1 
+            BEGIN 
+                PRINT @dsql; 
+            END;
+            
+            EXECUTE sys.sp_executesql 
+                @dsql, 
+              N'@cleanup_date datetime2(7)', 
+                @cleanup_date;
+            
+            IF @debug = 1 
+            BEGIN 
+                RAISERROR('Log cleanup complete', 0, 0) WITH NOWAIT; 
+            END;
+        END;
+    END;
+
     IF @debug = 1
     BEGIN
-        RAISERROR('Creating temp tables', 0, 1) WITH NOWAIT;
+        RAISERROR('Creating temp tables', 0, 0) WITH NOWAIT;
+    END;
+
+    DECLARE 
+        @collection_areas table 
+    (
+        id tinyint IDENTITY PRIMARY KEY CLUSTERED,
+        area_name varchar(20) NOT NULL,
+        object_name sysname NOT NULL,
+        temp_table sysname NOT NULL,
+        insert_list sysname NOT NULL,
+        should_collect bit NOT NULL DEFAULT 0,
+        is_processed bit NOT NULL DEFAULT 0
+    );
+    
+    INSERT INTO 
+        @collection_areas 
+    (
+        area_name, 
+        object_name,
+        temp_table,
+        insert_list,
+        should_collect
+    )
+    SELECT
+        v.area_name,
+        v.object_name,
+        v.temp_table,
+        v.insert_list,
+        should_collect =
+            CASE 
+                WHEN @what_to_check = 'all' 
+                THEN 
+                    CASE
+                        WHEN v.area_name = 'locking'
+                        AND  @skip_locks = 1 
+                        THEN 0
+                        ELSE 1
+                    END
+                WHEN @what_to_check = v.area_name 
+                THEN 1
+                ELSE 0
+            END
+    FROM
+    (
+    VALUES 
+        ('cpu', 'scheduler_monitor_system_health', '#scheduler_monitor', 'scheduler_monitor'),
+        ('disk', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
+        ('locking', 'xml_deadlock_report', '#xml_deadlock_report', 'xml_deadlock_report'),
+        ('locking', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
+        ('waits', 'wait_info', '#wait_info', 'wait_info'),
+        ('system', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
+        ('system', 'error_reported', '#error_reported', 'error_reported'),
+        ('memory', 'memory_broker_ring_buffer_recorded', '#memory_broker', 'memory_broker'),
+        ('memory', 'memory_node_oom_ring_buffer_recorded', '#memory_node_oom', 'memory_node_oom')
+    ) AS v(area_name, object_name, temp_table, insert_list);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '@collection_areas',
+            ca.*
+        FROM @collection_areas AS ca
+        ORDER BY
+            ca.id
+        OPTION(RECOMPILE);
     END;
 
     CREATE TABLE
-        #ignore
+        #ignore_waits
     (
-        wait_type nvarchar(60)
+        wait_type nvarchar(60) NOT NULL
+    );
+
+    CREATE TABLE 
+        #ignore_errors 
+    (
+        error_number integer NOT NULL
     );
 
     CREATE TABLE
@@ -368,6 +1230,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     );
 
     CREATE TABLE
+        #blocking_xml
+    (
+        event_time datetime2 NOT NULL,
+        human_events_xml xml NOT NULL
+    );
+
+    CREATE TABLE
         #x
     (
         x xml NOT NULL
@@ -379,16 +1248,42 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ring_buffer xml NOT NULL
     );
 
+    CREATE TABLE
+        #scheduler_monitor
+    (
+        scheduler_monitor xml NOT NULL
+    );
+
+    CREATE TABLE
+        #error_reported
+    (
+        error_reported xml NOT NULL
+    );
+
+    CREATE TABLE
+        #memory_broker
+    (
+        memory_broker xml NOT NULL
+    );
+
+    CREATE TABLE
+        #memory_node_oom
+    (
+        memory_node_oom xml NOT NULL
+    );
+
     /*The more you ignore waits, the worser they get*/
     IF @what_to_check IN ('all', 'waits')
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('Inserting ignorable waits to #ignore', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting ignorable waits to #ignore_waits', 0, 0) WITH NOWAIT;
         END;
 
         INSERT
-            #ignore WITH(TABLOCKX)
+            #ignore_waits 
+        WITH
+            (TABLOCKX)
         (
             wait_type
         )
@@ -416,8 +1311,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'SQLTRACE_BUFFER_FLUSH', N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP', N'SQLTRACE_WAIT_ENTRIES', N'UCS_SESSION_REGISTRATION',
             N'VDI_CLIENT_OTHER', N'WAIT_FOR_RESULTS', N'WAIT_XTP_CKPT_CLOSE', N'WAIT_XTP_HOST_WAIT',
             N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', N'WAIT_XTP_RECOVERY', N'WAITFOR', N'WAITFOR_TASKSHUTDOWN',
-            N'XE_DISPATCHER_JOIN', N'XE_DISPATCHER_WAIT', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF',
-            N'XE_TIMER_EVENT'
+            N'XE_DISPATCHER_JOIN', N'XE_DISPATCHER_WAIT', N'XE_FILE_TARGET_TVF', N'XE_LIVE_TARGET_TVF', N'XE_TIMER_EVENT'
         )
         OPTION(RECOMPILE);
     END; /*End waits ignore*/
@@ -425,367 +1319,125 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#ignore',
+            table_name = '#ignore_waits',
             i.*
-        FROM #ignore AS i ORDER BY i.wait_type
+        FROM #ignore_waits AS i ORDER BY i.wait_type
         OPTION(RECOMPILE);
     END;
 
-    /*
-    The column timestamp_utc is 2017+ only, but terribly broken:
-    https://dba.stackexchange.com/q/323147/32281
-    https://feedback.azure.com/d365community/idea/5f8e52d6-f3d2-ec11-a81b-6045bd7ac9f9
-    */
-    IF EXISTS
-    (
-        SELECT
-            1/0
-        FROM sys.all_columns AS ac
-        WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-        AND   ac.name = N'timestamp_utc'
-    )
-    AND @mi = 0
+    /* First, ensure we're working with the correct collection areas */
+    IF @debug = 1
     BEGIN
-        /*Grab data from the wait info component*/
-        IF @what_to_check IN ('all', 'waits')
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking waits for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
-            END;
-
-            SELECT
-                @sql = N'
-            SELECT
-                wait_info =
-                    ISNULL
-                    (
-                        xml.wait_info,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    wait_info =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''wait_info''
-                AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-            ) AS xml
-            CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE);';
-
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-
-            INSERT INTO
-                #wait_info WITH (TABLOCKX)
-            (
-                wait_info
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-
-        /*Grab data from the sp_server_diagnostics_component_result component*/
-        SELECT
-            @sql = N'
-        SELECT
-            sp_server_diagnostics_component_result =
-                ISNULL
+        RAISERROR('Beginning collection loop for system_health data', 0, 0) WITH NOWAIT;
+    END;
+    
+    /* Declare a cursor to process each collection area */
+    SET @collection_cursor = 
+        CURSOR 
+        LOCAL
+        SCROLL
+        DYNAMIC
+        READ_ONLY
+    FOR 
+    SELECT 
+        ca.area_name, 
+        ca.object_name, 
+        ca.temp_table,
+        ca.insert_list
+    FROM @collection_areas AS ca
+    WHERE ca.should_collect = 1
+    AND   ca.is_processed = 0
+    ORDER BY 
+        ca.id;
+        
+    OPEN @collection_cursor;
+    
+    FETCH NEXT 
+    FROM @collection_cursor 
+    INTO 
+        @area_name, 
+        @object_name, 
+        @temp_table,
+        @insert_list;
+    
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        /* Build the SQL statement for this collection area */
+        SET 
+            @collection_sql = 
+                REPLACE
                 (
-                    xml.sp_server_diagnostics_component_result,
-                    CONVERT(xml, N''<event>event</event>'')
-                )
-        FROM
-        (
-            SELECT
-                sp_server_diagnostics_component_result =
-                    TRY_CAST(fx.event_data AS xml)
-            FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-            WHERE fx.object_name = N''sp_server_diagnostics_component_result''
-            AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-        ) AS xml
-        CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
-        OPTION(RECOMPILE);';
-
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @sql_template, 
+                            '{object_name}', 
+                            @object_name
+                        ), 
+                        '{temp_table}',
+                        @temp_table
+                    ),
+                    '{insert_list}',
+                    @insert_list
+                );
+        
         IF @debug = 1
         BEGIN
-            PRINT @sql;
-            RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
+            RAISERROR('Collecting data for area: %s, object: %s, target table: %s', 0, 1, @area_name, @object_name, @temp_table) WITH NOWAIT;
+            PRINT @collection_sql;
+        END;
+        
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Executing collection SQL', 0, 0) WITH NOWAIT;
             SET STATISTICS XML ON;
         END;
-
-        INSERT INTO
-            #sp_server_diagnostics_component_result WITH(TABLOCKX)
-        (
-            sp_server_diagnostics_component_result
-        )
-        EXECUTE sys.sp_executesql
-            @sql,
+        
+        EXECUTE sys.sp_executesql 
+            @collection_sql,
             @params,
             @start_date,
             @end_date;
-
+        
         IF @debug = 1
         BEGIN
             SET STATISTICS XML OFF;
         END;
 
-        /*Grab data from the xml_deadlock_report component*/
-        IF
-        (
-             @what_to_check IN ('all', 'locking')
-         AND @skip_locks = 0
-        )
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking locking for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
-            END;
-
-            SELECT
-                @sql = N'
-            SELECT
-                xml_deadlock_report =
-                    ISNULL
-                    (
-                        xml.xml_deadlock_report,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    xml_deadlock_report =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''xml_deadlock_report''
-                AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date
-            ) AS xml
-            CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
-            OPTION(RECOMPILE);';
-
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-
-            INSERT INTO
-                #xml_deadlock_report WITH(TABLOCKX)
-            (
-                xml_deadlock_report
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    END; /*End 2016+ data collection*/
-
-    IF NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM sys.all_columns AS ac
-        WHERE ac.object_id = OBJECT_ID(N'sys.fn_xe_file_target_read_file')
-        AND   ac.name = N'timestamp_utc'
-    )
-    AND @mi = 0
+        UPDATE 
+            @collection_areas
+        SET 
+            is_processed = 1
+        WHERE temp_table = @temp_table
+        AND   should_collect = 1;
+        
+        FETCH NEXT 
+        FROM @collection_cursor 
+        INTO 
+            @area_name, 
+            @object_name, 
+            @temp_table,
+            @insert_list;
+    END;
+    
+    IF @debug = 1
     BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Checking waits for not Managed Instance, up to 2016', 0, 1) WITH NOWAIT;
-        END;
-
-        /*Grab data from the wait info component*/
-        IF @what_to_check IN ('all', 'waits')
-        BEGIN
-           SELECT
-               @sql = N'
-           SELECT
-               wait_info =
-                   ISNULL
-                   (
-                       xml.wait_info,
-                       CONVERT(xml, N''<event>event</event>'')
-                   )
-           FROM
-           (
-               SELECT
-                   wait_info =
-                       TRY_CAST(fx.event_data AS xml)
-               FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-               WHERE fx.object_name = N''wait_info''
-           ) AS xml
-           CROSS APPLY xml.wait_info.nodes(''/event'') AS e(x)
-           CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-           WHERE ca.utc_timestamp >= @start_date
-           AND   ca.utc_timestamp < @end_date
-           OPTION(RECOMPILE);';
-
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-
-           INSERT INTO
-               #wait_info WITH (TABLOCKX)
-           (
-               wait_info
-           )
-           EXECUTE sys.sp_executesql
-               @sql,
-               @params,
-               @start_date,
-               @end_date;
-
-           IF @debug = 1 BEGIN SET STATISTICS XML OFF; END;
-       END;
-
-        /*Grab data from the sp_server_diagnostics_component_result component*/
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Checking sp_server_diagnostics_component_result for not Managed Instance, 2017+', 0, 1) WITH NOWAIT;
-        END;
-
-        SELECT
-            @sql = N'
-        SELECT
-            sp_server_diagnostics_component_result =
-                ISNULL
-                (
-                    xml.sp_server_diagnostics_component_result,
-                    CONVERT(xml, N''<event>event</event>'')
-                )
-        FROM
-        (
-            SELECT
-                sp_server_diagnostics_component_result =
-                    TRY_CAST(fx.event_data AS xml)
-            FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-            WHERE fx.object_name = N''sp_server_diagnostics_component_result''
-        ) AS xml
-        CROSS APPLY xml.sp_server_diagnostics_component_result.nodes(''/event'') AS e(x)
-        CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-        WHERE ca.utc_timestamp >= @start_date
-        AND   ca.utc_timestamp < @end_date
-        OPTION(RECOMPILE);';
-
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
-            PRINT @sql;
-            SET STATISTICS XML ON;
-        END;
-
-        INSERT INTO
-            #sp_server_diagnostics_component_result WITH(TABLOCKX)
-        (
-            sp_server_diagnostics_component_result
-        )
-        EXECUTE sys.sp_executesql
-            @sql,
-            @params,
-            @start_date,
-            @end_date;
-
-        IF @debug = 1
-        BEGIN
-            SET STATISTICS XML OFF;
-        END;
-
-        /*Grab data from the xml_deadlock_report component*/
-        IF
-        (
-             @what_to_check IN ('all', 'locking')
-         AND @skip_locks = 0
-        )
-        BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR('Checking locking for not Managed Instance', 0, 1) WITH NOWAIT;
-            END;
-
-            SELECT
-                @sql = N'
-            SELECT
-                xml_deadlock_report =
-                    ISNULL
-                    (
-                        xml.xml_deadlock_report,
-                        CONVERT(xml, N''<event>event</event>'')
-                    )
-            FROM
-            (
-                SELECT
-                    xml_deadlock_report =
-                        TRY_CAST(fx.event_data AS xml)
-                FROM sys.fn_xe_file_target_read_file(N''system_health*.xel'', NULL, NULL, NULL) AS fx
-                WHERE fx.object_name = N''xml_deadlock_report''
-            ) AS xml
-            CROSS APPLY xml.xml_deadlock_report.nodes(''/event'') AS e(x)
-            CROSS APPLY (SELECT x.value( ''(@timestamp)[1]'', ''datetimeoffset'' )) ca ([utc_timestamp])
-            WHERE ca.utc_timestamp >= @start_date
-            AND   ca.utc_timestamp < @end_date
-            OPTION(RECOMPILE);';
-
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-                RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
-                SET STATISTICS XML ON;
-            END;
-
-            INSERT INTO
-                #xml_deadlock_report WITH(TABLOCKX)
-            (
-                xml_deadlock_report
-            )
-            EXECUTE sys.sp_executesql
-                @sql,
-                @params,
-                @start_date,
-                @end_date;
-
-            IF @debug = 1
-            BEGIN
-                SET STATISTICS XML OFF;
-            END;
-        END;
-    END; /*End < 2017 collection*/
+        RAISERROR('Data collection complete', 0, 0) WITH NOWAIT;
+    END;
 
     IF @mi = 1
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('Starting Managed Instance analysis', 0, 1) WITH NOWAIT;
-            RAISERROR('Inserting #x', 0, 1) WITH NOWAIT;
+            RAISERROR('Starting Managed Instance analysis', 0, 0) WITH NOWAIT;
+            RAISERROR('Inserting #x', 0, 0) WITH NOWAIT;
         END;
 
         INSERT
-            #x WITH(TABLOCKX)
+            #x 
+        WITH
+            (TABLOCKX)
         (
             x
         )
@@ -813,30 +1465,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Inserting #ring_buffer', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting #ring_buffer', 0, 0) WITH NOWAIT;
         END;
 
         INSERT
-            #ring_buffer WITH(TABLOCKX)
+            #ring_buffer 
+        WITH
+            (TABLOCKX)
         (
             ring_buffer
         )
         SELECT
             x = e.x.query('.')
-        FROM
-        (
-            SELECT
-                x
-            FROM #x
-        ) AS x
+        FROM #x AS x
         CROSS APPLY x.x.nodes('//event') AS e(x)
         WHERE 1 = 1
         AND   e.x.exist('@timestamp[.>= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
         AND   e.x.exist('@name[.= "security_error_ring_buffer_recorded"]') = 0
-        AND   e.x.exist('@name[.= "error_reported"]') = 0
-        AND   e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 0
         AND   e.x.exist('@name[.= "connectivity_ring_buffer_recorded"]') = 0
-        AND   e.x.exist('@name[.= "scheduler_monitor_system_health_ring_buffer_recorded"]') = 0
         OPTION(RECOMPILE);
 
         IF @debug = 1
@@ -851,12 +1497,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             IF @debug = 1
             BEGIN
-                RAISERROR('Checking Managed Instance waits', 0, 1) WITH NOWAIT;
-                RAISERROR('Inserting #wait_info', 0, 1) WITH NOWAIT;
+                RAISERROR('Checking Managed Instance waits', 0, 0) WITH NOWAIT;
+                RAISERROR('Inserting #wait_info', 0, 0) WITH NOWAIT;
             END;
 
             INSERT
-                #wait_info WITH(TABLOCKX)
+                #wait_info 
+            WITH
+                (TABLOCKX)
             (
                 wait_info
             )
@@ -867,24 +1515,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE e.x.exist('@name[.= "wait_info"]') = 1
             OPTION(RECOMPILE);
         END;
-
-        IF @debug = 1
+        IF @what_to_check IN ('all', 'disk', 'locking', 'system', 'memory')
         BEGIN
-            RAISERROR('Checking Managed Instance sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
-            RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 1) WITH NOWAIT;
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance sp_server_diagnostics_component_result', 0, 0) WITH NOWAIT;
+                RAISERROR('Inserting #sp_server_diagnostics_component_result', 0, 0) WITH NOWAIT;
+            END;
+            
+            INSERT
+                #sp_server_diagnostics_component_result 
+            WITH
+                (TABLOCKX)
+            (
+                sp_server_diagnostics_component_result
+            )
+            SELECT
+                e.x.query('.')
+            FROM #ring_buffer AS rb
+            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+            WHERE e.x.exist('@name[.= "sp_server_diagnostics_component_result"]') = 1
+            OPTION(RECOMPILE);
         END;
-
-        INSERT
-            #sp_server_diagnostics_component_result WITH(TABLOCKX)
-        (
-            sp_server_diagnostics_component_result
-        )
-        SELECT
-            e.x.query('.')
-        FROM #ring_buffer AS rb
-        CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
-        WHERE e.x.exist('@name[.= "sp_server_diagnostics_component_result"]') = 1
-        OPTION(RECOMPILE);
 
         IF
         (
@@ -892,14 +1544,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
          AND @skip_locks = 0
         )
         BEGIN
-        IF @debug = 1
+            IF @debug = 1
             BEGIN
-                RAISERROR('Checking Managed Instance deadlocks', 0, 1) WITH NOWAIT;
-                RAISERROR('Inserting #xml_deadlock_report', 0, 1) WITH NOWAIT;
+                RAISERROR('Checking Managed Instance deadlocks', 0, 0) WITH NOWAIT;
+                RAISERROR('Inserting #xml_deadlock_report', 0, 0) WITH NOWAIT;
             END;
-
+            
             INSERT
-                #xml_deadlock_report WITH(TABLOCKX)
+                #xml_deadlock_report 
+            WITH
+                (TABLOCKX)
             (
                 xml_deadlock_report
             )
@@ -910,6 +1564,79 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE e.x.exist('@name[.= "xml_deadlock_report"]') = 1
             OPTION(RECOMPILE);
         END;
+
+        /* Add scheduler_monitor collection for MI */
+        IF @what_to_check IN ('all', 'system', 'cpu')
+        BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance scheduler monitor', 0, 0) WITH NOWAIT;
+                RAISERROR('Inserting #scheduler_monitor', 0, 0) WITH NOWAIT;
+            END;
+        
+            INSERT
+                #scheduler_monitor 
+            WITH
+                (TABLOCKX)
+            (
+                scheduler_monitor
+            )
+            SELECT
+                e.x.query('.')
+            FROM #ring_buffer AS rb
+            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+            WHERE e.x.exist('@name[.= "scheduler_monitor_system_health"]') = 1
+            OPTION(RECOMPILE);
+        END;
+
+        /* Add error_reported collection for MI */
+        IF @what_to_check IN ('all', 'system')
+        BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance error reported events', 0, 0) WITH NOWAIT;
+                RAISERROR('Inserting #error_reported', 0, 0) WITH NOWAIT;
+            END;
+        
+            INSERT
+                #error_reported 
+            WITH
+                (TABLOCKX)
+            (
+                error_reported
+            )
+            SELECT
+                e.x.query('.')
+            FROM #ring_buffer AS rb
+            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+            WHERE e.x.exist('@name[.= "error_reported"]') = 1
+            OPTION(RECOMPILE);
+        END;
+
+        /* Add memory_broker collection for MI */
+        IF @what_to_check IN ('all', 'memory')
+        BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance memory broker events', 0, 0) WITH NOWAIT;
+                RAISERROR('Inserting #memory_broker', 0, 0) WITH NOWAIT;
+            END;
+        
+            INSERT
+                #memory_broker 
+            WITH
+                (TABLOCKX)
+            (
+                memory_broker
+            )
+            SELECT
+                e.x.query('.')
+            FROM #ring_buffer AS rb
+            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+            WHERE e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 1
+            OPTION(RECOMPILE);
+        END;
+                
     END; /*End Managed Instance collection*/
 
     IF @debug = 1
@@ -928,6 +1655,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#xml_deadlock_report, top 100 rows',
             x.*
         FROM #xml_deadlock_report AS x;
+
+        SELECT TOP (100)
+            table_name = '#scheduler_monitor, top 100 rows',
+            x.*
+        FROM #scheduler_monitor AS x;
+            
+        SELECT TOP (100)
+            table_name = '#error_reported, top 100 rows',
+            x.*
+        FROM #error_reported AS x;
+            
+        SELECT TOP (100)
+            table_name = '#memory_broker, top 100 rows',
+            x.*
+        FROM #memory_broker AS x;
+            
+        SELECT TOP (100)
+            table_name = '#memory_node_oom, top 100 rows',
+            x.*
+        FROM #memory_node_oom AS x;
     END;
 
     /*Parse out the wait_info data*/
@@ -935,7 +1682,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing queries with significant waits', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing queries with significant waits', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -963,20 +1710,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS APPLY wi.wait_info.nodes('//event') AS w(x)
         WHERE w.x.exist('(action[@name="session_id"]/value/text())[.= 0]') = 0
         AND   w.x.exist('(action[@name="sql_text"]/value/text())') = 1
-        AND   w.x.exist('(action[@name="sql_text"]/value/text()[contains(., "BACKUP")] )') = 0
+        AND   w.x.exist('(action[@name="sql_text"]/value/text()[contains(upper-case(.), "BACKUP")] )') = 0
         AND   w.x.exist('(data[@name="duration"]/value/text())[.>= sql:variable("@wait_duration_ms")]') = 1
         AND   NOT EXISTS
               (
                   SELECT
                       1/0
-                  FROM #ignore AS i
+                  FROM #ignore_waits AS i
                   WHERE w.x.exist('(data[@name="wait_type"]/text/text())[1][.= sql:column("i.wait_type")]') = 1
               )
         OPTION(RECOMPILE);
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Adding query_text to #waits_queries', 0, 1) WITH NOWAIT;
+            RAISERROR('Adding query_text to #waits_queries', 0, 0) WITH NOWAIT;
         END;
 
         ALTER TABLE #waits_queries
@@ -1000,6 +1747,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 x.event_time DESC;
         END;
 
+        /* First logging section, queries with significant waits*/
         IF NOT EXISTS
         (
             SELECT
@@ -1007,27 +1755,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #waits_queries AS wq
         )
         BEGIN
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'waits')
-                        THEN 'no queries with significant waits found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with a minimum duration of ' +
-                             RTRIM(@wait_duration_ms) +
-                             '.'
-                        ELSE 'no queries with significant waits found!'
-                    END;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'waits')
+                            THEN 'waits skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'waits')
+                            THEN 'no queries with significant waits found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with a minimum duration of ' +
+                                 RTRIM(@wait_duration_ms) +
+                                 '.'
+                            ELSE 'no queries with significant waits found!'
+                        END;
+                
+                RAISERROR('No queries with significant waits found', 0, 0) WITH NOWAIT;
+            END;
         END;
         ELSE
         BEGIN
+            /* Build the query */
+            SET @dsql = N'
             SELECT
-                finding = 'queries with significant waits',
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''queries with significant waits'',' 
+                    END + 
+              N'
                 wq.event_time,
                 wq.wait_type,
                 duration_ms =
@@ -1043,8 +1804,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             ),
                             1
                         ),
-                    N'.00',
-                    N''
+                    N''.00'',
+                    N''''
                     ),
                 signal_duration_ms =
                     REPLACE
@@ -1059,8 +1820,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             ),
                             1
                         ),
-                    N'.00',
-                    N''
+                    N''.00'',
+                    N''''
                     ),
                 wq.wait_resource,
                 query_text =
@@ -1069,20 +1830,94 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             [processing-instruction(query)] =
                                 wq.query_text
                         FOR XML
-                            PATH(N''),
+                            PATH(N''''),
                             TYPE
                     ),
                 wq.session_id
-            FROM #waits_queries AS wq
+            FROM #waits_queries AS wq';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_significant_waits
+                        ), 
+                        '{date_column}', 
+                        'event_time'
+                    );
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;
+        
+                SET @dsql += N'
+            WHERE wq.event_time > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
             ORDER BY
                 wq.duration_ms DESC
             OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_significant_waits + N'
+            (
+                event_time,
+                wait_type,
+                duration_ms,
+                signal_duration_ms,
+                wait_resource,
+                query_text,
+                session_id
+            )' + 
+                @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN                 
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
         END;
 
         /*Waits by count*/
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing #waits_by_count', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing #waits_by_count', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -1113,7 +1948,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               (
                   SELECT
                       1/0
-                  FROM #ignore AS i
+                  FROM #ignore_waits AS i
                   WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
               )
         OPTION(RECOMPILE);
@@ -1165,6 +2000,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
         OPTION(RECOMPILE);
 
+        /* Waits by count logging section */
         IF NOT EXISTS
         (
             SELECT
@@ -1172,25 +2008,38 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #tc AS t
         )
         BEGIN
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'waits')
-                        THEN 'no significant waits found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             '.'
-                        ELSE 'no significant waits found!'
-                    END;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'waits')
+                            THEN 'waits skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'waits')
+                            THEN 'no significant waits found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 '.'
+                            ELSE 'no significant waits found!'
+                        END
+                
+                RAISERROR('No waits by count found', 0, 0) WITH NOWAIT;            
+            END;
         END;
         ELSE
         BEGIN
+            /* Build the query */
+            SET @dsql = N'
             SELECT
-                t.finding,
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''waits by count'',' 
+                    END + 
+              N'
                 t.event_time_rounded,
                 t.wait_type,
                 waits =
@@ -1206,8 +2055,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             ),
                             1
                         ),
-                    N'.00',
-                    N''
+                    N''.00'',
+                    N''''
                     ),
                 average_wait_time_ms =
                     REPLACE
@@ -1222,8 +2071,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             ),
                             1
                         ),
-                    N'.00',
-                    N''
+                    N''.00'',
+                    N''''
                     ),
                 max_wait_time_ms =
                     REPLACE
@@ -1238,20 +2087,92 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             ),
                             1
                         ),
-                    N'.00',
-                    N''
+                    N''.00'',
+                    N''''
                     )
-            FROM #tc AS t
+            FROM #tc AS t';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_waits_by_count
+                        ),
+                        '{date_column}', 
+                        'event_time_rounded'
+                    );
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;
+        
+                SET @dsql += N'
+            WHERE t.event_time_rounded > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
             ORDER BY
                 t.event_time_rounded DESC,
                 t.waits DESC
             OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_waits_by_count + N'
+            (
+                event_time_rounded,
+                wait_type,
+                waits,
+                average_wait_time_ms,
+                max_wait_time_ms
+            )' + 
+                @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
         END;
 
         /*Grab waits by duration*/
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing waits by duration', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing waits by duration', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -1283,7 +2204,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               (
                   SELECT
                       1/0
-                  FROM #ignore AS i
+                  FROM #ignore_waits AS i
                   WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
               )
         OPTION(RECOMPILE);
@@ -1338,6 +2259,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             td.max_wait_time_ms
         OPTION(RECOMPILE);
 
+        /* Waits by duration logging section */
         IF NOT EXISTS
         (
             SELECT
@@ -1345,27 +2267,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #td AS t
         )
         BEGIN
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'waits')
-                        THEN 'waits skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'waits')
-                        THEN 'no significant waits found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with a minimum average duration of ' +
-                             RTRIM(@wait_duration_ms) +
-                             '.'
-                        ELSE 'no significant waits found!'
-                    END;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'waits')
+                            THEN 'waits skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'waits')
+                            THEN 'no significant waits found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with a minimum average duration of ' +
+                                 RTRIM(@wait_duration_ms) +
+                                 '.'
+                            ELSE 'no significant waits found!'
+                        END
+                
+                RAISERROR('No waits by duration', 0, 0) WITH NOWAIT;
+            END;
         END;
         ELSE
         BEGIN
+            /* Build the query */
+            SET @dsql = N'
             SELECT
-                x.finding,
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''waits by duration'',' 
+                    END + 
+              N'
                 x.event_time_rounded,
                 x.wait_type,
                 x.average_wait_time_ms,
@@ -1389,8 +2324,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 ),
                                 1
                             ),
-                        N'.00',
-                        N''
+                        N''.00'',
+                        N''''
                         ),
                     average_wait_time_ms =
                         REPLACE
@@ -1405,8 +2340,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 ),
                                 1
                             ),
-                        N'.00',
-                        N''
+                        N''.00'',
+                        N''''
                         ),
                     max_wait_time_ms =
                         REPLACE
@@ -1421,8 +2356,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 ),
                                 1
                             ),
-                        N'.00',
-                        N''
+                        N''.00'',
+                        N''''
                         ),
                     s =
                         ROW_NUMBER() OVER
@@ -1444,10 +2379,81 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         )
                 FROM #td AS t
             ) AS x
-            WHERE x.n = 1
+            WHERE x.n = 1';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_waits_by_duration
+                        ),
+                        '{date_column}', 
+                        'event_time_rounded'
+                    );
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;
+        
+                SET @dsql += N'
+            AND x.event_time_rounded > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
             ORDER BY
                 x.s
             OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_waits_by_duration + N'
+            (
+                event_time_rounded,
+                wait_type,
+                average_wait_time_ms,
+                max_wait_time_ms
+            )' + 
+                @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
         END;
     END; /*End wait stats*/
 
@@ -1456,7 +2462,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing disk stuff', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing disk stuff', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -1505,11 +2511,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             i.intervalLongIos,
             i.totalLongIos,
             longestPendingRequests_duration_ms =
-                ISNULL(SUM(i.longestPendingRequests_duration_ms), 0),
+                SUM(i.longestPendingRequests_duration_ms),
             longestPendingRequests_filePath =
                 ISNULL(i.longestPendingRequests_filePath, 'N/A')
         INTO #i
         FROM #io AS i
+        WHERE i.longestPendingRequests_duration_ms IS NOT NULL
         GROUP BY
             i.event_time,
             i.state,
@@ -1519,6 +2526,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ISNULL(i.longestPendingRequests_filePath, 'N/A')
         OPTION(RECOMPILE);
 
+        /* Potential IO issues logging section */
         IF NOT EXISTS
         (
             SELECT
@@ -1526,27 +2534,39 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #i AS i
         )
         BEGIN
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'disk')
-                        THEN 'disk skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'disk')
-                        THEN 'no io issues found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no io issues found!'
-                    END;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'disk')
+                            THEN 'disk skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'disk')
+                            THEN 'no io issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no io issues found!'
+                        END
+                RAISERROR('No io data found', 0, 0) WITH NOWAIT;
+            END;
         END;
         ELSE
         BEGIN
+            /* Build the query */
+            SET @dsql = N'
             SELECT
-                i.finding,
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''potential io issues'',' 
+                    END + 
+              N'
                 i.event_time,
                 i.state,
                 i.ioLatchTimeouts,
@@ -1565,14 +2585,89 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             ),
                             1
                         ),
-                    N'.00',
-                    N''
+                    N''.00'',
+                    N''''
                     ),
                 i.longestPendingRequests_filePath
-            FROM #i AS i
+            FROM #i AS i';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for IO issues */
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_io_issues
+                        ), 
+                        '{date_column}', 
+                        'event_time'
+                    );
+        
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                        
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;
+        
+                SET @dsql += N'
+            WHERE i.event_time > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
             ORDER BY
                 i.event_time DESC
             OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_io_issues + N'
+            (
+                event_time,
+                state,
+                ioLatchTimeouts,
+                intervalLongIos,
+                totalLongIos,
+                longestPendingRequests_duration_ms,
+                longestPendingRequests_filePath
+            )' 
+                + @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
         END;
     END; /*End disk*/
 
@@ -1581,7 +2676,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing CPU stuff', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing CPU stuff', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -1628,13 +2723,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 x.event_time DESC;
         END;
 
-        IF NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM #scheduler_details AS sd
-        )
-        BEGIN
+END;
+
+    /* CPU task details logging section */
+    IF NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #scheduler_details AS sd
+    )
+    BEGIN
+        IF @log_to_table = 0
+            BEGIN
+            /* No results logic, only return if not logging */
             SELECT
                 finding =
                     CASE
@@ -1650,12 +2751,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              RTRIM(@warnings_only) +
                              '.'
                         ELSE 'no cpu issues found!'
-                    END;
+                    END
+            
+            RAISERROR('No scheduler data found', 0, 0) WITH NOWAIT;
         END;
-        ELSE
-        BEGIN
+    END;
+    ELSE
+    BEGIN
+        /* Build the query */
+        SET @dsql = N'
             SELECT
-                finding = 'cpu task details',
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''cpu task details'',' 
+                    END + 
+              N'
                 sd.event_time,
                 sd.state,
                 sd.maxWorkers,
@@ -1667,10 +2778,88 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 sd.hasUnresolvableDeadlockOccurred,
                 sd.hasDeadlockedSchedulersOccurred,
                 sd.didBlockingOccur
-            FROM #scheduler_details AS sd
-            ORDER BY
-                sd.event_time DESC
-            OPTION(RECOMPILE);
+            FROM #scheduler_details AS sd';
+        
+        /* Add the WHERE clause only for table logging */
+        IF @log_to_table = 1
+        BEGIN
+            /* Get max event_time for CPU task details */
+            SET @mdsql_execute = 
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        @mdsql_template, 
+                        '{table_check}', 
+                        @log_table_cpu_tasks
+                    ), 
+                    '{date_column}', 
+                    'event_time'
+                );
+    
+            IF @debug = 1 
+            BEGIN 
+                PRINT @mdsql_execute; 
+            END;
+                    
+            EXECUTE sys.sp_executesql 
+                @mdsql_execute, 
+              N'@max_event_time datetime2(7) OUTPUT', 
+                @max_event_time OUTPUT;
+    
+            SET @dsql += N'
+        WHERE sd.event_time > @max_event_time';
+        END;
+        
+        /* Add the ORDER BY clause */
+        SET @dsql += N'
+        ORDER BY
+            sd.event_time DESC
+        OPTION(RECOMPILE);
+        ';
+        
+        /* Handle table logging */
+        IF @log_to_table = 1
+        BEGIN        
+            SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_cpu_tasks + N'
+            (
+                event_time,
+                state,
+                maxWorkers,
+                workersCreated,
+                workersIdle,
+                tasksCompletedWithinInterval,
+                pendingTasks,
+                oldestPendingTaskWaitingTime,
+                hasUnresolvableDeadlockOccurred,
+                hasDeadlockedSchedulersOccurred,
+                didBlockingOccur
+            )' + 
+                @dsql;
+            
+            IF @debug = 1 
+            BEGIN 
+                PRINT @insert_sql; 
+            END;
+            
+            EXECUTE sys.sp_executesql 
+                @insert_sql, 
+              N'@max_event_time datetime2(7)', 
+                @max_event_time;
+        END;
+        
+        /* Execute the query for client results */
+        IF @log_to_table = 0
+        BEGIN
+            IF @debug = 1 
+            BEGIN 
+                PRINT @dsql; 
+            END;
+            
+            EXECUTE sys.sp_executesql 
+                @dsql;
         END;
     END; /*End CPU*/
 
@@ -1679,7 +2868,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing memory stuff', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing memory stuff', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -1743,6 +2932,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 x.event_time DESC;
         END;
 
+        /* Memory conditions logging section */
         IF NOT EXISTS
         (
             SELECT
@@ -1750,28 +2940,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #memory AS m
         )
         BEGIN
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'memory')
-                        THEN 'memory skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'memory')
-                        THEN 'no memory issues found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no memory issues found!'
-                    END;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'memory')
+                            THEN 'memory skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'memory')
+                            THEN 'no memory issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no memory issues found!'
+                        END
+                
+                RAISERROR('No memory condition data found', 0, 0) WITH NOWAIT;
+            END;            
         END;
         ELSE
         BEGIN
+            /* Build the query */
+            SET @dsql = N'
             SELECT
-                finding = 'memory conditions',
-                m.event_time,
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''memory conditions'',' 
+                    END + 
+              N'm.event_time,
                 m.lastNotification,
                 m.outOfMemoryExceptions,
                 m.isAnyPoolOutOfMemory,
@@ -1803,19 +3005,603 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 m.numa_growth_phase,
                 m.last_oom_factor,
                 m.last_os_error
-            FROM #memory AS m
+            FROM #memory AS m';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for memory conditions */
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_memory_conditions
+                        ), 
+                        '{date_column}', 
+                        'event_time'
+                    );
+        
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                        
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;                   
+        
+                SET @dsql += N'
+            WHERE m.event_time > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
             ORDER BY
                 m.event_time DESC
             OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_memory_conditions + N'
+            (
+                event_time,
+                lastNotification,
+                outOfMemoryExceptions,
+                isAnyPoolOutOfMemory,
+                processOutOfMemoryPeriod,
+                name,
+                available_physical_memory_gb,
+                available_virtual_memory_gb,
+                available_paging_file_gb,
+                working_set_gb,
+                percent_of_committed_memory_in_ws,
+                page_faults,
+                system_physical_memory_high,
+                system_physical_memory_low,
+                process_physical_memory_low,
+                process_virtual_memory_low,
+                vm_reserved_gb,
+                vm_committed_gb,
+                locked_pages_allocated,
+                large_pages_allocated,
+                emergency_memory_gb,
+                emergency_memory_in_use_gb,
+                target_committed_gb,
+                current_committed_gb,
+                pages_allocated,
+                pages_reserved,
+                pages_free,
+                pages_in_use,
+                page_alloc_potential,
+                numa_growth_phase,
+                last_oom_factor,
+                last_os_error
+            )' 
+            + 
+                @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
         END;
     END; /*End memory*/
+
+    /*Parse memory broker data*/
+    IF @what_to_check IN ('all', 'memory')
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing memory broker data', 0, 0) WITH NOWAIT;
+        END;
+    
+        SELECT
+            event_time =
+                DATEADD
+                (
+                    MINUTE,
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ),
+                    w.x.value('@timestamp', 'datetime2')
+                ),
+            notification_type = w.x.value('(data[@name="notification_type"]/text)[1]', 'nvarchar(256)'),
+            reclaim_target_kb = w.x.value('(data[@name="reclaim_target_kb"]/value)[1]', 'bigint'),
+            reclaimed_kb = w.x.value('(data[@name="reclaimed_kb"]/value)[1]', 'bigint'),
+            pressure = w.x.value('(data[@name="pressure"]/value)[1]', 'bigint'),
+            currently_available_kb = w.x.value('(data[@name="currently_available_kb"]/value)[1]', 'bigint'),
+            reserved_kb = w.x.value('(data[@name="reserved_kb"]/value)[1]', 'bigint'),
+            committed_kb = w.x.value('(data[@name="committed_kb"]/value)[1]', 'bigint'),
+            worker_count = w.x.value('(data[@name="worker_count"]/value)[1]', 'integer'),
+            xml = w.x.query('.')
+        INTO #memory_broker_info
+        FROM #memory_broker AS mb
+        CROSS APPLY mb.memory_broker.nodes('//event') AS w(x)
+        WHERE (w.x.exist('(data[@name="notification_type"]/text[.= "RESOURCE_MEMPHYSICAL_LOW"])') = @warnings_only OR @warnings_only = 0)
+        OPTION(RECOMPILE);
+    
+        IF @debug = 1
+        BEGIN
+            SELECT TOP (100)
+                table_name = '#memory_broker_info, top 100 rows',
+                x.*
+            FROM #memory_broker_info AS x
+            ORDER BY
+                x.event_time DESC;
+        END;
+    
+        /* Memory broker notifications logging section */
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #memory_broker_info AS mbi
+        )
+        BEGIN
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'memory')
+                            THEN 'memory broker skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'memory')
+                            THEN 'no memory pressure events found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no memory pressure events found!'
+                        END
+                
+                RAISERROR('No memory broker data found', 0, 0) WITH NOWAIT;
+            END;            
+        END;
+        ELSE
+        BEGIN
+            /* Build the query for memory node OOM events */
+            SET @dsql = N'
+            SELECT
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''memory node OOM events'',' 
+                    END + 
+              N'
+                mnoi.event_time,
+                mnoi.node_id,
+                memory_available_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mnoi.memory_available_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                memory_requested_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mnoi.memory_requested_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                mnoi.memory_allocator,
+                mnoi.memory_allocation_type,
+                mnoi.memory_clerk_name,
+                mnoi.os_error
+            FROM #memory_node_oom_info AS mnoi';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for memory broker */
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_memory_broker
+                        ), 
+                        '{date_column}', 
+                        'event_time'
+                    );
+        
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                        
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;
+        
+                SET @dsql += N'
+            WHERE mbi.event_time > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
+            ORDER BY
+                mbi.event_time DESC
+            OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO ' 
+                + @log_table_memory_broker + N'
+            (
+                event_time,
+                node_id,
+                memory_available_gb,
+                memory_requested_gb,
+                memory_allocator,
+                memory_allocation_type,
+                memory_clerk_name,
+                os_error
+            )' + 
+                @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
+        END;
+    END; /*End memory broker analysis*/
+
+    /*Parse memory node OOM data*/
+    IF @what_to_check IN ('all', 'memory')
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing memory node OOM data', 0, 0) WITH NOWAIT;
+        END;
+    
+        SELECT
+            event_time =
+                DATEADD
+                (
+                    MINUTE,
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ),
+                    w.x.value('@timestamp', 'datetime2')
+                ),
+            node_id = w.x.value('(data[@name="id"]/value)[1]', 'int'),
+            memory_available_kb = w.x.value('(data[@name="availableMemory"]/value)[1]', 'bigint'),
+            memory_requested_kb = w.x.value('(data[@name="requestedMemory"]/value)[1]', 'bigint'),
+            memory_allocator = w.x.value('(data[@name="allocator"]/text)[1]', 'nvarchar(256)'),
+            memory_allocation_type = w.x.value('(data[@name="allocationType"]/text)[1]', 'nvarchar(256)'),
+            memory_clerk_name = w.x.value('(data[@name="memoryClerk"]/text)[1]', 'nvarchar(256)'),
+            os_error = w.x.value('(data[@name="oserror"]/value)[1]', 'integer'),
+            xml = w.x.query('.')
+        INTO #memory_node_oom_info
+        FROM #memory_node_oom AS mno
+        CROSS APPLY mno.memory_node_oom.nodes('//event') AS w(x)
+        OPTION(RECOMPILE);
+    
+        IF @debug = 1
+        BEGIN
+            SELECT TOP (100)
+                table_name = '#memory_node_oom_info, top 100 rows',
+                x.*
+            FROM #memory_node_oom_info AS x
+            ORDER BY
+                x.event_time DESC;
+        END;
+    
+        /* Memory node OOM events logging section */
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #memory_node_oom_info AS mnoi
+        )
+        BEGIN
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'memory')
+                            THEN 'memory node OOM skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'memory')
+                            THEN 'no memory node OOM events found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 '.'
+                            ELSE 'no memory node OOM events found!'
+                        END
+                
+                RAISERROR('No memory oom data found', 0, 0) WITH NOWAIT;
+            END;            
+        END;
+        ELSE
+        BEGIN
+            /* Build the query for memory broker notifications */
+            SET @dsql = N'
+            SELECT
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''memory broker notifications'',' 
+                    END + 
+              N'
+                mbi.event_time,
+                mbi.notification_type,
+                reclaim_target_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.reclaim_target_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                reclaimed_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.reclaimed_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                reclaim_success_percent = 
+                    CASE 
+                        WHEN mbi.reclaim_target_kb > 0 
+                        THEN CONVERT(DECIMAL(5,2), 100.0 * mbi.reclaimed_kb / mbi.reclaim_target_kb)
+                        ELSE 0 
+                    END,
+                pressure_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.pressure_mb / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                currently_available_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.currently_available_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                reserved_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.reserved_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                committed_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.committed_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                mbi.worker_count
+            FROM #memory_broker_info AS mbi';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for memory node OOM */
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_memory_node_oom
+                        ), 
+                        '{date_column}', 
+                        'event_time'
+                    );
+        
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                        
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;                    
+        
+                SET @dsql += N'
+            WHERE mnoi.event_time > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
+            ORDER BY
+                mnoi.event_time DESC
+            OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_memory_node_oom + N'
+            (
+                event_time,
+                notification_type,
+                reclaim_target_gb,
+                reclaimed_gb,
+                reclaim_success_percent,
+                pressure_gb,
+                currently_available_gb,
+                reserved_gb,
+                committed_gb,
+                worker_count
+            )' + 
+                @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
+        END;
+    END; /*End memory node OOM analysis*/
 
     /*Grab health stuff*/
     IF @what_to_check IN ('all', 'system')
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing system stuff', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing system stuff', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -1864,6 +3650,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 x.event_time DESC;
         END;
 
+        /* Overall system health logging section */
         IF NOT EXISTS
         (
             SELECT
@@ -1871,27 +3658,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #health AS h
         )
         BEGIN
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'system')
-                        THEN 'system health skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'system')
-                        THEN 'no system health issues found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no system health issues found!'
-                    END;
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'system')
+                            THEN 'system health skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'system')
+                            THEN 'no system health issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no system health issues found!'
+                        END
+                
+                RAISERROR('No system health data found', 0, 0) WITH NOWAIT;
+            END;            
         END;
         ELSE
         BEGIN
+            /* Build the query */
+            SET @dsql = N'
             SELECT
-                finding = 'overall system health',
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''overall system health'',' 
+                    END + 
+              N'
                 h.event_time,
                 h.state,
                 h.spinlockBackoffs,
@@ -1908,12 +3708,510 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 h.sqlCpuUtilization,
                 h.BadPagesDetected,
                 h.BadPagesFixed
-            FROM #health AS h
+            FROM #health AS h';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for system health */
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_system_health
+                        ), 
+                        '{date_column}', 
+                        'event_time'
+                    );
+        
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                        
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;                    
+        
+                SET @dsql = @dsql + N'
+            WHERE h.event_time > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql = @dsql + N'
             ORDER BY
                 h.event_time DESC
             OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_system_health + N'
+            (
+                event_time,
+                state,
+                spinlockBackoffs,
+                sickSpinlockType,
+                sickSpinlockTypeAfterAv,
+                latchWarnings,
+                isAccessViolationOccurred,
+                writeAccessViolationCount,
+                totalDumpRequests,
+                intervalDumpRequests,
+                nonYieldingTasksReported,
+                pageFaults,
+                systemCpuUtilization,
+                sqlCpuUtilization,
+                BadPagesDetected,
+                BadPagesFixed
+            )' + 
+                @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
         END;
     END; /*End system*/
+
+    /*Parse scheduler monitor data*/
+    IF @what_to_check IN ('all', 'system', 'cpu')
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing scheduler monitor data', 0, 0) WITH NOWAIT;
+        END;
+    
+        SELECT
+            event_time =
+                DATEADD
+                (
+                    MINUTE,
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ),
+                    w.x.value('@timestamp', 'datetime2')
+                ),
+            scheduler_id = w.x.value('(data[@name="scheduler_id"]/value)[1]', 'integer'),
+            cpu_id = w.x.value('(data[@name="cpu_id"]/value)[1]', 'integer'),
+            status = w.x.value('(data[@name="status"]/text)[1]', 'nvarchar(256)'),
+            is_online = w.x.value('(data[@name="is_online"]/value)[1]', 'bit'),
+            is_runnable = w.x.value('(data[@name="is_runnable"]/value)[1]', 'bit'),
+            is_running = w.x.value('(data[@name="is_running"]/value)[1]', 'bit'),
+            non_yielding_time_ms = w.x.value('(data[@name="non_yielding_time"]/value)[1]', 'bigint'),
+            thread_quantum_ms = w.x.value('(data[@name="thread_quantum"]/value)[1]', 'bigint'),
+            xml = w.x.query('.')
+        INTO #scheduler_issues
+        FROM #scheduler_monitor AS sm
+        CROSS APPLY sm.scheduler_monitor.nodes('//event') AS w(x)
+        WHERE (w.x.exist('(data[@name="status"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        OPTION(RECOMPILE);
+    
+        IF @debug = 1
+        BEGIN
+            SELECT TOP (100)
+                table_name = '#scheduler_issues, top 100 rows',
+                x.*
+            FROM #scheduler_issues AS x
+            ORDER BY
+                x.event_time DESC;
+        END;
+    
+        /* Scheduler monitor issues logging section */
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #scheduler_issues AS si
+        )
+        BEGIN
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'system', 'cpu')
+                            THEN 'scheduler monitoring skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'system', 'cpu')
+                            THEN 'no scheduler issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no scheduler issues found!'
+                        END
+                
+                RAISERROR('No scheduler issues data found', 0, 0) WITH NOWAIT;
+            END;            
+        END;
+        ELSE
+        BEGIN
+            /* Build the query */
+            SET @dsql = N'
+            SELECT
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''scheduler monitor issues'',' 
+                    END + 
+              N'
+                si.event_time,
+                si.scheduler_id,
+                si.cpu_id,
+                si.status,
+                si.is_online,
+                si.is_runnable,
+                si.is_running,
+                non_yielding_time_ms =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                si.non_yielding_time_ms
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                thread_quantum_ms =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                si.thread_quantum_ms
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    )
+            FROM #scheduler_issues AS si';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for scheduler issues */
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_scheduler_issues
+                        ), 
+                        '{date_column}', 
+                        'event_time'
+                    );
+        
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                        
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;
+        
+                SET @dsql = @dsql + N'
+            WHERE si.event_time > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql = @dsql + N'
+            ORDER BY
+                si.event_time DESC
+            OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_scheduler_issues + N'
+            (
+                event_time,
+                scheduler_id,
+                cpu_id,
+                status,
+                is_online,
+                is_runnable,
+                is_running,
+                non_yielding_time_ms,
+                thread_quantum_ms
+            )' + 
+                @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
+        END;
+
+    END; /*End scheduler monitor analysis*/
+
+    /*Parse error_reported data*/
+    IF @what_to_check IN ('all', 'system')
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing error_reported data', 0, 0) WITH NOWAIT;
+        END;
+
+        INSERT 
+            #ignore_errors 
+        (
+            error_number
+        ) 
+        VALUES 
+            (17830);
+    
+        SELECT
+            event_time =
+                DATEADD
+                (
+                    MINUTE,
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ),
+                    w.x.value('@timestamp', 'datetime2')
+                ),
+            error_number = w.x.value('(data[@name="error_number"]/value)[1]', 'integer'),
+            severity = w.x.value('(data[@name="severity"]/value)[1]', 'integer'),
+            state = w.x.value('(data[@name="state"]/value)[1]', 'integer'),
+            message = w.x.value('(data[@name="message"]/value)[1]', 'nvarchar(max)'),
+            database_name = DB_NAME(w.x.value('(data[@name="database_id"]/value)[1]', 'integer')),
+            database_id = w.x.value('(data[@name="database_id"]/value)[1]', 'integer'),
+            xml = w.x.query('.')
+        INTO #error_info
+        FROM #error_reported AS er
+        CROSS APPLY er.error_reported.nodes('//event') AS w(x)
+        WHERE w.x.exist('(data[@name="severity"]/value)[. >= 16]') = 1
+        AND (@warnings_only = 0 OR w.x.exist('(data[@name="severity"]/value)[. >= 19]') = 1)
+        AND NOT EXISTS
+        (
+            SELECT 
+                1/0
+            FROM #ignore_errors AS ie
+            WHERE w.x.value('(data[@name="error_number"]/value)[1]', 'integer') = ie.error_number
+        )
+        OPTION(RECOMPILE);
+    
+        IF @debug = 1
+        BEGIN
+            SELECT TOP (100)
+                table_name = '#error_info, top 100 rows',
+                x.*
+            FROM #error_info AS x
+            ORDER BY
+                x.event_time DESC;
+        END;
+    
+        /* Severe errors reported logging section */
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #error_info AS ei
+        )
+        BEGIN
+            IF @log_to_table = 0
+            BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'system')
+                            THEN 'error reporting skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'system')
+                            THEN 'no severe errors found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no severe errors found!'
+                        END
+                
+                RAISERROR('No error data found', 0, 0) WITH NOWAIT;
+            END;            
+        END;
+        ELSE
+        BEGIN
+            /* Build the query */
+            SET @dsql = N'
+            SELECT
+                ' + CASE 
+                        WHEN @log_to_table = 1 
+                        THEN N'' 
+                        ELSE N'finding = ''severe errors reported'',' 
+                    END + 
+              N'
+                ei.event_time,
+                ei.error_number,
+                ei.severity,
+                ei.state,
+                ei.message,
+                ei.database_name,
+                ei.database_id
+            FROM #error_info AS ei';
+            
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for severe errors */
+                SET @mdsql_execute = 
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template, 
+                            '{table_check}', 
+                            @log_table_severe_errors
+                        ), 
+                        '{date_column}', 
+                        'event_time'
+                    );
+        
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @mdsql_execute; 
+                END;
+                        
+                EXECUTE sys.sp_executesql 
+                    @mdsql_execute, 
+                  N'@max_event_time datetime2(7) OUTPUT', 
+                    @max_event_time OUTPUT;
+        
+                SET @dsql = @dsql + N'
+            WHERE ei.event_time > @max_event_time';
+            END;
+            
+            /* Add the ORDER BY clause */
+            SET @dsql = @dsql + N'
+            ORDER BY
+                ei.event_time DESC,
+                ei.severity DESC
+            OPTION(RECOMPILE);
+            ';
+            
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN        
+                SET @insert_sql = N'
+            INSERT INTO 
+                ' + @log_table_severe_errors + N'
+            (
+                event_time,
+                error_number,
+                severity,
+                state,
+                message,
+                database_name,
+                database_id
+            )' + 
+                @dsql;
+                
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @insert_sql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @insert_sql, 
+                  N'@max_event_time datetime2(7)', 
+                    @max_event_time;
+            END;
+            
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1 
+                BEGIN 
+                    PRINT @dsql; 
+                END;
+                
+                EXECUTE sys.sp_executesql 
+                    @dsql;
+            END;
+        
+            /* For ignored errors, only display to client */
+            IF @log_to_table = 0
+            BEGIN
+                SELECT
+                    error_numbers_ignored =
+                        N'Error Number Ignored: ' + 
+                        CONVERT(nvarchar(100), ie.error_number)
+                FROM #ignore_errors AS ie;
+            END;
+        END;
+    END; /*End error_reported analysis*/
 
     /*Grab useless stuff*/
 
@@ -1994,13 +4292,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         @what_to_check IN ('all', 'locking')
     AND @skip_locks = 0
+    AND @log_to_table = 0 
     )
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing locking stuff', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing locking stuff', 0, 0) WITH NOWAIT;
         END;
 
+        INSERT
+            #blocking_xml
+        WITH
+            (TABLOCK)
+        (
+            event_time,
+            human_events_xml
+        )
         SELECT
             event_time =
                 DATEADD
@@ -2015,7 +4322,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     w.x.value('(//@timestamp)[1]', 'datetime2')
                 ),
             human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
-        INTO #blocking_xml
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
@@ -2036,22 +4342,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /*Blocked queries*/
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing blocked queries', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing blocked queries', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
             bx.event_time,
             currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-            spid = bd.value('(process/@spid)[1]', 'int'),
-            ecid = bd.value('(process/@ecid)[1]', 'int'),
-            query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+            spid = bd.value('(process/@spid)[1]', 'integer'),
+            ecid = bd.value('(process/@ecid)[1]', 'integer'),
+            query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
             wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
             lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
             lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
             wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
             status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
-            priority = bd.value('(process/@priority)[1]', 'int'),
-            transaction_count = bd.value('(process/@trancount)[1]', 'int'),
+            priority = bd.value('(process/@priority)[1]', 'integer'),
+            transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
             client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
             host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
             login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -2070,7 +4376,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Adding query_text to #blocked', 0, 1) WITH NOWAIT;
+            RAISERROR('Adding query_text to #blocked', 0, 0) WITH NOWAIT;
         END;
 
         ALTER TABLE #blocked
@@ -2097,22 +4403,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /*Blocking queries*/
         IF @debug = 1
         BEGIN
-            RAISERROR('Parsing blocking queries', 0, 1) WITH NOWAIT;
+            RAISERROR('Parsing blocking queries', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
             bx.event_time,
             currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
-            spid = bg.value('(process/@spid)[1]', 'int'),
-            ecid = bg.value('(process/@ecid)[1]', 'int'),
-            query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(MAX)'),
+            spid = bg.value('(process/@spid)[1]', 'integer'),
+            ecid = bg.value('(process/@ecid)[1]', 'integer'),
+            query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
             wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
             last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
             last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
             wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
             status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
-            priority = bg.value('(process/@priority)[1]', 'int'),
-            transaction_count = bg.value('(process/@trancount)[1]', 'int'),
+            priority = bg.value('(process/@priority)[1]', 'integer'),
+            transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
             client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
             host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
             login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
@@ -2131,7 +4437,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Adding query_text to #blocking', 0, 1) WITH NOWAIT;
+            RAISERROR('Adding query_text to #blocking', 0, 0) WITH NOWAIT;
         END;
 
         ALTER TABLE #blocking
@@ -2158,7 +4464,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /*Put it together*/
         IF @debug = 1
         BEGIN
-            RAISERROR('Inserting to #blocks', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting to #blocks', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -2307,44 +4613,70 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ORDER BY
                 x.event_time DESC;
         END;
-
-        SELECT
-            finding = 'blocked process report',
-            b.event_time,
-            b.currentdbname,
-            b.activity,
-            b.spid,
-            b.ecid,
-            b.query_text,
-            b.wait_time_ms,
-            b.status,
-            b.isolation_level,
-            b.transaction_count,
-            b.last_transaction_started,
-            b.last_transaction_completed,
-            b.client_option_1,
-            b.client_option_2,
-            b.wait_resource,
-            b.priority,
-            b.log_used,
-            b.client_app,
-            b.host_name,
-            b.login_name,
-            b.blocked_process_report
-        FROM #blocks AS b
-        ORDER BY
-            b.event_time DESC,
-            CASE
-                WHEN b.activity = 'blocking'
-                THEN -1
-                ELSE +1
-            END
-        OPTION(RECOMPILE);
+        
+        IF EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM #blocks AS b
+        )
+        BEGIN
+            SELECT
+                finding = 'blocked process report',
+                b.event_time,
+                b.currentdbname,
+                b.activity,
+                b.spid,
+                b.ecid,
+                b.query_text,
+                b.wait_time_ms,
+                b.status,
+                b.isolation_level,
+                b.transaction_count,
+                b.last_transaction_started,
+                b.last_transaction_completed,
+                b.client_option_1,
+                b.client_option_2,
+                b.wait_resource,
+                b.priority,
+                b.log_used,
+                b.client_app,
+                b.host_name,
+                b.login_name,
+                b.blocked_process_report
+            FROM #blocks AS b
+            ORDER BY
+                b.event_time DESC,
+                CASE
+                    WHEN b.activity = 'blocking'
+                    THEN -1
+                    ELSE +1
+                END
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                finding = CASE
+                    WHEN @what_to_check NOT IN ('all', 'locking')
+                    THEN 'blocking skipped, @what_to_check set to ' + @what_to_check
+                    WHEN @skip_locks = 1
+                    THEN 'blocking skipped, @skip_locks set to 1'
+                    WHEN @what_to_check IN ('all', 'locking')
+                    THEN 'no blocking found between ' +
+                         RTRIM(CONVERT(date, @start_date)) +
+                         ' and ' +
+                         RTRIM(CONVERT(date, @end_date)) +
+                         ' with @warnings_only set to ' +
+                         RTRIM(@warnings_only)
+                    ELSE 'no blocking found!'
+                END;
+        END;
 
         /*Grab available plans from the cache*/
         IF @debug = 1
         BEGIN
-            RAISERROR('Inserting to #available_plans (blocking)', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting to #available_plans (blocking)', 0, 0) WITH NOWAIT;
         END;
 
         SELECT DISTINCT
@@ -2357,13 +4689,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     'available plans for blocking',
                 b.currentdbname,
                 query_text =
-                    TRY_CAST(b.query_text AS nvarchar(MAX)),
+                    TRY_CAST(b.query_text AS nvarchar(max)),
                 sql_handle =
                     CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
                 stmtstart =
-                    ISNULL(n.c.value('@stmtstart', 'int'), 0),
+                    ISNULL(n.c.value('@stmtstart', 'integer'), 0),
                 stmtend =
-                    ISNULL(n.c.value('@stmtend', 'int'), -1)
+                    ISNULL(n.c.value('@stmtend', 'integer'), -1)
             FROM #blocks AS b
             CROSS APPLY b.blocked_process_report.nodes('/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
             WHERE (b.currentdbname = @database_name
@@ -2376,13 +4708,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     CONVERT(varchar(30), 'available plans for blocking'),
                 b.currentdbname,
                 query_text =
-                    TRY_CAST(b.query_text AS nvarchar(MAX)),
+                    TRY_CAST(b.query_text AS nvarchar(max)),
                 sql_handle =
                     CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
                 stmtstart =
-                    ISNULL(n.c.value('@stmtstart', 'int'), 0),
+                    ISNULL(n.c.value('@stmtstart', 'integer'), 0),
                 stmtend =
-                    ISNULL(n.c.value('@stmtend', 'int'), -1)
+                    ISNULL(n.c.value('@stmtend', 'integer'), -1)
             FROM #blocks AS b
             CROSS APPLY b.blocked_process_report.nodes('/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
             WHERE (b.currentdbname = @database_name
@@ -2392,7 +4724,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Inserting to #deadlocks', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting to #deadlocks', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -2414,7 +4746,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Inserting to #deadlocks_parsed', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting to #deadlocks_parsed', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -2540,7 +4872,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Adding query_text to #deadlocks_parsed', 0, 1) WITH NOWAIT;
+            RAISERROR('Adding query_text to #deadlocks_parsed', 0, 0) WITH NOWAIT;
         END;
 
         ALTER TABLE #deadlocks_parsed
@@ -2564,102 +4896,126 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Returning deadlocks', 0, 1) WITH NOWAIT;
+            RAISERROR('Returning deadlocks', 0, 0) WITH NOWAIT;
         END;
 
-        SELECT
-            finding = 'xml deadlock report',
-            dp.event_date,
-            is_victim =
-                CASE
-                    WHEN dp.id = dp.victim_id
-                    THEN 1
-                    ELSE 0
-                END,
-            dp.database_name,
-            dp.current_database_name,
-            query_text =
-                CASE
-                    WHEN dp.query_text
-                         LIKE CONVERT(nvarchar(1), 0x0a00, 0) + N'Proc |[Database Id = %' ESCAPE N'|'
-                    THEN
-                        (
-                            SELECT
-                                [processing-instruction(query)] =
-                                    OBJECT_SCHEMA_NAME
-                                    (
-                                            SUBSTRING
-                                            (
-                                                dp.query_text,
-                                                CHARINDEX(N'Object Id = ', dp.query_text) + 12,
-                                                LEN(dp.query_text) - (CHARINDEX(N'Object Id = ', dp.query_text) + 12)
-                                            )
-                                            ,
-                                            SUBSTRING
-                                            (
-                                                dp.query_text,
-                                                CHARINDEX(N'Database Id = ', dp.query_text) + 14,
-                                                CHARINDEX(N'Object Id', dp.query_text) - (CHARINDEX(N'Database Id = ', dp.query_text) + 14)
-                                            )
-                                    ) +
-                                    N'.' +
-                                    OBJECT_NAME
-                                    (
-                                         SUBSTRING
-                                         (
-                                             dp.query_text,
-                                             CHARINDEX(N'Object Id = ', dp.query_text) + 12,
-                                             LEN(dp.query_text) - (CHARINDEX(N'Object Id = ', dp.query_text) + 12)
-                                         )
-                                         ,
-                                         SUBSTRING
-                                         (
-                                             dp.query_text,
-                                             CHARINDEX(N'Database Id = ', dp.query_text) + 14,
-                                             CHARINDEX(N'Object Id', dp.query_text) - (CHARINDEX(N'Database Id = ', dp.query_text) + 14)
-                                         )
-                                    )
-                            FOR XML
-                                PATH(N''),
-                                TYPE
-                        )
-                    ELSE
-                        (
-                            SELECT
-                                [processing-instruction(query)] =
-                                    dp.query_text
-                            FOR XML
-                                PATH(N''),
-                                TYPE
-                        )
-                END,
-            dp.deadlock_resources,
-            dp.isolation_level,
-            dp.lock_mode,
-            dp.status,
-            dp.wait_time,
-            dp.log_used,
-            dp.transaction_name,
-            dp.transaction_count,
-            dp.client_option_1,
-            dp.client_option_2,
-            dp.last_tran_started,
-            dp.last_batch_started,
-            dp.last_batch_completed,
-            dp.client_app,
-            dp.host_name,
-            dp.login_name,
-            dp.priority,
-            dp.deadlock_graph
-        FROM #deadlocks_parsed AS dp
-        ORDER BY
-            dp.event_date,
-            is_victim
-        OPTION(RECOMPILE);
+        IF EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM #deadlocks_parsed AS dp
+        )
+        BEGIN
+            SELECT
+                finding = 'xml deadlock report',
+                dp.event_date,
+                is_victim =
+                    CASE
+                        WHEN dp.id = dp.victim_id
+                        THEN 1
+                        ELSE 0
+                    END,
+                dp.database_name,
+                dp.current_database_name,
+                query_text =
+                    CASE
+                        WHEN dp.query_text
+                             LIKE CONVERT(nvarchar(1), 0x0a00, 0) + N'Proc |[Database Id = %' ESCAPE N'|'
+                        THEN
+                            (
+                                SELECT
+                                    [processing-instruction(query)] =
+                                        OBJECT_SCHEMA_NAME
+                                        (
+                                                SUBSTRING
+                                                (
+                                                    dp.query_text,
+                                                    CHARINDEX(N'Object Id = ', dp.query_text) + 12,
+                                                    LEN(dp.query_text) - (CHARINDEX(N'Object Id = ', dp.query_text) + 12)
+                                                )
+                                                ,
+                                                SUBSTRING
+                                                (
+                                                    dp.query_text,
+                                                    CHARINDEX(N'Database Id = ', dp.query_text) + 14,
+                                                    CHARINDEX(N'Object Id', dp.query_text) - (CHARINDEX(N'Database Id = ', dp.query_text) + 14)
+                                                )
+                                        ) +
+                                        N'.' +
+                                        OBJECT_NAME
+                                        (
+                                             SUBSTRING
+                                             (
+                                                 dp.query_text,
+                                                 CHARINDEX(N'Object Id = ', dp.query_text) + 12,
+                                                 LEN(dp.query_text) - (CHARINDEX(N'Object Id = ', dp.query_text) + 12)
+                                             )
+                                             ,
+                                             SUBSTRING
+                                             (
+                                                 dp.query_text,
+                                                 CHARINDEX(N'Database Id = ', dp.query_text) + 14,
+                                                 CHARINDEX(N'Object Id', dp.query_text) - (CHARINDEX(N'Database Id = ', dp.query_text) + 14)
+                                             )
+                                        )
+                                FOR XML
+                                    PATH(N''),
+                                    TYPE
+                            )
+                        ELSE
+                            (
+                                SELECT
+                                    [processing-instruction(query)] =
+                                        dp.query_text
+                                FOR XML
+                                    PATH(N''),
+                                    TYPE
+                            )
+                    END,
+                dp.deadlock_resources,
+                dp.isolation_level,
+                dp.lock_mode,
+                dp.status,
+                dp.wait_time,
+                dp.log_used,
+                dp.transaction_name,
+                dp.transaction_count,
+                dp.client_option_1,
+                dp.client_option_2,
+                dp.last_tran_started,
+                dp.last_batch_started,
+                dp.last_batch_completed,
+                dp.client_app,
+                dp.host_name,
+                dp.login_name,
+                dp.priority,
+                dp.deadlock_graph
+            FROM #deadlocks_parsed AS dp
+            ORDER BY
+                dp.event_date,
+                is_victim
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                finding = CASE
+                    WHEN @what_to_check NOT IN ('all', 'locking')
+                    THEN 'deadlocks skipped, @what_to_check set to ' + @what_to_check
+                    WHEN @skip_locks = 1
+                    THEN 'deadlocks skipped, @skip_locks set to 1'
+                    WHEN @what_to_check IN ('all', 'locking')
+                    THEN 'no deadlocks found between ' +
+                         RTRIM(CONVERT(date, @start_date)) +
+                         ' and ' +
+                         RTRIM(CONVERT(date, @end_date))
+                    ELSE 'no deadlocks found!'
+                END;
+        END;
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Inserting #available_plans (deadlocks)', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting #available_plans (deadlocks)', 0, 0) WITH NOWAIT;
         END;
 
         INSERT
@@ -2697,7 +5053,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Inserting #dm_exec_query_stats_sh', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting #dm_exec_query_stats_sh', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -2764,7 +5120,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Indexing #dm_exec_query_stats_sh', 0, 1) WITH NOWAIT;
+            RAISERROR('Indexing #dm_exec_query_stats_sh', 0, 0) WITH NOWAIT;
         END;
 
         CREATE CLUSTERED INDEX
@@ -2777,7 +5133,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Inserting #all_available_plans (deadlocks)', 0, 1) WITH NOWAIT;
+            RAISERROR('Inserting #all_available_plans (deadlocks)', 0, 0) WITH NOWAIT;
         END;
 
         SELECT
@@ -2859,21 +5215,67 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ap.avg_worker_time_ms DESC
         OPTION(RECOMPILE);
 
-        SELECT
-            aap.*
-        FROM #all_avalable_plans AS aap
-        WHERE aap.finding = 'available plans for blocking'
-        ORDER BY
-            aap.avg_worker_time_ms DESC
-        OPTION(RECOMPILE);
-
-        SELECT
-            aap.*
-        FROM #all_avalable_plans AS aap
-        WHERE aap.finding = 'available plans for deadlocks'
-        ORDER BY
-            aap.avg_worker_time_ms DESC
-        OPTION(RECOMPILE);
+        IF EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM #all_avalable_plans AS ap
+            WHERE ap.finding = 'available plans for blocking'
+        )
+        BEGIN
+            SELECT
+                aap.*
+            FROM #all_avalable_plans AS aap
+            WHERE aap.finding = 'available plans for blocking'
+            ORDER BY
+                aap.avg_worker_time_ms DESC
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            /* Only show this message if we found blocking but no plans */
+            IF EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM #blocks AS b
+            )
+            BEGIN
+                SELECT
+                    finding = 'no cached plans found for blocking queries';
+            END;
+        END;
+        
+        IF EXISTS 
+        (
+            SELECT 
+                1/0 
+            FROM #all_avalable_plans AS ap
+            WHERE ap.finding = 'available plans for deadlocks'
+        )
+        BEGIN
+            SELECT
+                aap.*
+            FROM #all_avalable_plans AS aap
+            WHERE aap.finding = 'available plans for deadlocks'
+            ORDER BY
+                aap.avg_worker_time_ms DESC
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            /* Only show this message if we found deadlocks but no plans */
+            IF EXISTS 
+            (
+                SELECT 
+                    1/0 
+                FROM #deadlocks_parsed AS dp
+            )
+            BEGIN
+                SELECT
+                    finding = 'no cached plans found for deadlock queries';
+            END;
+        END;
     END; /*End locks*/
 END; /*Final End*/
 GO

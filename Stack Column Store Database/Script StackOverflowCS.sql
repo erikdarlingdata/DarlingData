@@ -6,7 +6,7 @@ Copyright (c) 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
-https://github.com/erikdarlingdata/DarlingData
+https://code.erikdarling.com
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
