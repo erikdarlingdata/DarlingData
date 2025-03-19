@@ -4934,40 +4934,42 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN ISNULL(irs.unused_indexes, 0) > 0
                         THEN FORMAT
                              (
-                                 ISNULL
-                                 (
-                                     irs.user_updates / 
-                                     NULLIF
+                                 CONVERT(decimal(38,2),
+                                     ISNULL
                                      (
-                                         CONVERT
+                                         irs.user_updates / 
+                                         NULLIF
                                          (
-                                             decimal(10,2), 
+                                             CONVERT
                                              (
-                                               SELECT TOP (1) 
-                                                   irs2.server_uptime_days 
-                                               FROM #index_reporting_stats AS irs2 
-                                               WHERE irs2.summary_level = 'DATABASE'
-                                             )
+                                                 decimal(38,2), 
+                                                 (
+                                                   SELECT TOP (1) 
+                                                       irs2.server_uptime_days 
+                                                   FROM #index_reporting_stats AS irs2 
+                                                   WHERE irs2.summary_level = 'DATABASE'
+                                                 )
+                                             ), 
+                                             0
+                                         ) * 
+                                         (
+                                           ISNULL
+                                           (
+                                               irs.unused_indexes, 
+                                               0
+                                           ) / 
+                                           NULLIF
+                                           (
+                                               CONVERT
+                                               (
+                                                   decimal(38,2), 
+                                                   irs.index_count
+                                               ), 
+                                               0
+                                           )
                                          ), 
                                          0
-                                     ) * 
-                                     (
-                                       ISNULL
-                                       (
-                                           irs.unused_indexes, 
-                                           0
-                                       ) / 
-                                       NULLIF
-                                       (
-                                           CONVERT
-                                           (
-                                               decimal(10,2), 
-                                               irs.index_count
-                                           ), 
-                                           0
-                                       )
-                                     ), 
-                                     0
+                                     )
                                  ), 
                                  'N0'
                              )
@@ -4998,40 +5000,42 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         THEN 
                             FORMAT
                             (
-                                ISNULL
-                                (
-                                    (irs.row_lock_wait_count + irs.page_lock_wait_count) / 
-                                    NULLIF
+                                CONVERT(decimal(38,2),
+                                    ISNULL
                                     (
-                                        CONVERT
+                                        (irs.row_lock_wait_count + irs.page_lock_wait_count) / 
+                                        NULLIF
                                         (
-                                            decimal(10,2), 
+                                            CONVERT
                                             (
-                                              SELECT TOP (1) 
-                                                  irs2.server_uptime_days 
-                                              FROM #index_reporting_stats AS irs2 
-                                              WHERE irs2.summary_level = 'DATABASE'
-                                            )
+                                                decimal(38,2), 
+                                                (
+                                                  SELECT TOP (1) 
+                                                      irs2.server_uptime_days 
+                                                  FROM #index_reporting_stats AS irs2 
+                                                  WHERE irs2.summary_level = 'DATABASE'
+                                                )
+                                            ), 
+                                            0
+                                        ) * 
+                                        (
+                                          ISNULL
+                                          (
+                                              irs.unused_indexes, 
+                                              0
+                                          ) / 
+                                          NULLIF
+                                          (
+                                              CONVERT
+                                              (
+                                                  decimal(38,2), 
+                                                  irs.index_count
+                                              ), 
+                                              0
+                                          )
                                         ), 
                                         0
-                                    ) * 
-                                    (
-                                      ISNULL
-                                      (
-                                          irs.unused_indexes, 
-                                          0
-                                      ) / 
-                                      NULLIF
-                                      (
-                                          CONVERT
-                                          (
-                                              decimal(10,2), 
-                                              irs.index_count
-                                          ), 
-                                          0
-                                      )
-                                    ), 
-                                    0
+                                    )
                                 ), 
                                 'N0'
                             )
@@ -5074,40 +5078,42 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         THEN 
                             FORMAT
                             (
-                                ISNULL
-                                (
-                                    (irs.page_latch_wait_count + irs.page_io_latch_wait_count) / 
-                                    NULLIF
+                                CONVERT(decimal(38,2),
+                                    ISNULL
                                     (
-                                        CONVERT
-                                        (
-                                            decimal(10,2), 
-                                            (
-                                              SELECT TOP (1) 
-                                                  irs2.server_uptime_days 
-                                              FROM #index_reporting_stats AS irs2 
-                                              WHERE irs2.summary_level = 'DATABASE'
-                                            )
-                                        ), 
-                                        0
-                                    ) * 
-                                    (
-                                        ISNULL
-                                        (
-                                            irs.unused_indexes, 
-                                            0
-                                        ) / 
+                                        (irs.page_latch_wait_count + irs.page_io_latch_wait_count) / 
                                         NULLIF
                                         (
                                             CONVERT
                                             (
-                                                decimal(10,2), 
-                                                irs.index_count
+                                                decimal(38,2), 
+                                                (
+                                                  SELECT TOP (1) 
+                                                      irs2.server_uptime_days 
+                                                  FROM #index_reporting_stats AS irs2 
+                                                  WHERE irs2.summary_level = 'DATABASE'
+                                                )
                                             ), 
                                             0
-                                        )
-                                    ), 
-                                    0
+                                        ) * 
+                                        (
+                                            ISNULL
+                                            (
+                                                irs.unused_indexes, 
+                                                0
+                                            ) / 
+                                            NULLIF
+                                            (
+                                                CONVERT
+                                                (
+                                                    decimal(38,2), 
+                                                    irs.index_count
+                                                ), 
+                                                0
+                                            )
+                                        ), 
+                                        0
+                                    )
                                 ), 
                                 'N0'
                             )
