@@ -2001,7 +2001,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE
                     N'CREATE ' +
                     CASE WHEN id1.is_unique = 1 THEN N'UNIQUE ' ELSE N'' END +
-                    CASE WHEN id1.index_id = 0 THEN N'CLUSTERED ' WHEN id1.index_id > 0 AND @verbose_output >= 1 THEN N'NONCLUSTERED ' ELSE N'' END +
+                    CASE WHEN id1.index_id = 1 THEN N'CLUSTERED ' WHEN id1.index_id > 1 AND @verbose_output >= 1 THEN N'NONCLUSTERED ' ELSE N'' END +
                     N'INDEX ' + 
                     QUOTENAME(id1.index_name) + 
                     N' ON ' + 
@@ -3626,6 +3626,166 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia_unique.action = N'MAKE UNIQUE'
     )
     OPTION(RECOMPILE);
+
+    /* Add clustered indexes to #index_analysis specifically for compression purposes */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Adding clustered indexes to #index_analysis for compression', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO
+        #index_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        table_name,
+        object_id,
+        index_id,
+        index_name,
+        is_unique,
+        key_columns,
+        included_columns,
+        filter_definition,
+        original_index_definition
+    )
+    SELECT
+        fo.database_id,
+        fo.database_name,
+        fo.schema_id,
+        fo.schema_name,
+        fo.table_name,
+        fo.object_id,
+        fo.index_id,
+        fo.index_name,
+        is_unique = 
+            CASE 
+                WHEN ce.can_compress = 1 
+                THEN id.is_unique 
+                ELSE NULL 
+            END,
+        key_columns =
+            STUFF
+            (
+              (
+                SELECT
+                    N', ' +
+                    QUOTENAME(id2.column_name) +
+                    CASE
+                        WHEN id2.is_descending_key = 1
+                        THEN N' DESC'
+                        ELSE N''
+                    END
+                FROM #index_details id2
+                WHERE id2.object_id = fo.object_id
+                AND   id2.index_id = fo.index_id
+                AND   id2.is_included_column = 0
+                GROUP BY
+                    id2.column_name,
+                    id2.is_descending_key,
+                    id2.key_ordinal
+                ORDER BY
+                    id2.key_ordinal
+                FOR 
+                    XML
+                    PATH(''),
+                    TYPE
+              ).value('text()[1]','nvarchar(max)'),
+              1,
+              2,
+              ''
+            ),
+        included_columns = NULL, /* Clustered indexes cannot have included columns */
+        filter_definition = NULL, /* Clustered indexes cannot have filters */
+        original_index_definition = 
+            N'CREATE CLUSTERED INDEX ' +
+            QUOTENAME(fo.index_name) + 
+            N' ON ' + 
+            QUOTENAME(fo.database_name) + 
+            N'.' +
+            QUOTENAME(fo.schema_name) + 
+            N'.' +
+            QUOTENAME(fo.table_name) + 
+            N' (' +
+            STUFF
+            (
+              (
+                SELECT
+                    N', ' +
+                    QUOTENAME(id2.column_name) +
+                    CASE
+                        WHEN id2.is_descending_key = 1
+                        THEN N' DESC'
+                        ELSE N''
+                    END
+                FROM #index_details id2
+                WHERE id2.object_id = fo.object_id
+                AND   id2.index_id = fo.index_id
+                AND   id2.is_included_column = 0
+                GROUP BY
+                    id2.column_name,
+                    id2.is_descending_key,
+                    id2.key_ordinal
+                ORDER BY
+                    id2.key_ordinal
+                FOR 
+                    XML
+                    PATH(''),
+                    TYPE
+              ).value('text()[1]','nvarchar(max)'),
+              1,
+              2,
+              ''
+            ) +
+            N');'
+    FROM #filtered_objects AS fo
+    JOIN #index_details AS id
+      ON  id.database_id = fo.database_id
+      AND id.object_id = fo.object_id
+      AND id.index_id = fo.index_id
+      AND id.key_ordinal = 1 /* Only need one row per index */
+    JOIN #compression_eligibility AS ce
+      ON  ce.database_id = fo.database_id
+      AND ce.object_id = fo.object_id
+      AND ce.index_id = fo.index_id
+    WHERE fo.index_id = 1 /* Clustered indexes only */
+    AND   ce.can_compress = 1 /* Only those eligible for compression */
+    /* Only add if not already in #index_analysis */
+    AND   NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia
+        WHERE ia.database_id = fo.database_id
+        AND   ia.object_id = fo.object_id
+        AND   ia.index_id = fo.index_id
+    )
+    OPTION(RECOMPILE);
+
+    /* If any clustered indexes were added, mark them as KEEP */
+    UPDATE #index_analysis
+    SET action = N'KEEP'
+    WHERE index_id = 1 /* Clustered indexes */
+    AND   action IS NULL;
+
+    /* Update index priority for clustered indexes to ensure they're not chosen for deduplication */
+    UPDATE #index_analysis
+    SET index_priority = 1000 /* Maximum priority */
+    WHERE index_id = 1 /* Clustered indexes */
+    AND   index_priority IS NULL;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after adding clustered indexes',
+            *
+        FROM #index_analysis AS ia
+        WHERE ia.index_id = 1
+        OPTION(RECOMPILE);
+    END;
 
     /* Insert compression scripts for remaining indexes */
     IF @debug = 1
