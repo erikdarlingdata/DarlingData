@@ -685,7 +685,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     )
         ) AS a
         CROSS APPLY x.nodes(N'//i') AS t(c)
-        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N''
+        OPTION(RECOMPILE);
 
         IF @debug = 1
         BEGIN
@@ -777,7 +778,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     )
         ) AS a
         CROSS APPLY x.nodes(N'//i') AS t(c)
-        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N'';
+        WHERE LTRIM(RTRIM(c.value(N'(./text())[1]', N'sysname'))) <> N''
+        OPTION(RECOMPILE);
 
         IF @debug = 1
         BEGIN
@@ -805,7 +807,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     1/0 
                 FROM #include_databases AS id
                 WHERE id.database_name = ed.database_name
-            );
+            )
+        OPTION(RECOMPILE);
         
         /* If we found any conflicts, raise an error */
         IF LEN(@conflict_list) > 0
