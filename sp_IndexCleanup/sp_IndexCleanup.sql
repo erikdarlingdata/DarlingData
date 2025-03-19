@@ -4947,7 +4947,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                    SELECT TOP (1) 
                                                        irs2.server_uptime_days 
                                                    FROM #index_reporting_stats AS irs2 
-                                                   WHERE irs2.summary_level = 'DATABASE'
+                                                   WHERE irs2.summary_level = 'SUMMARY'
                                                  )
                                              ), 
                                              0
@@ -5013,7 +5013,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                   SELECT TOP (1) 
                                                       irs2.server_uptime_days 
                                                   FROM #index_reporting_stats AS irs2 
-                                                  WHERE irs2.summary_level = 'DATABASE'
+                                                  WHERE irs2.summary_level = 'SUMMARY'
                                                 )
                                             ), 
                                             0
@@ -5091,7 +5091,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                                   SELECT TOP (1) 
                                                       irs2.server_uptime_days 
                                                   FROM #index_reporting_stats AS irs2 
-                                                  WHERE irs2.summary_level = 'DATABASE'
+                                                  WHERE irs2.summary_level = 'SUMMARY'
                                                 )
                                             ), 
                                             0
