@@ -84,7 +84,7 @@ EXECUTE @ReturnCode =  msdb.dbo.sp_add_job
         @notify_level_page = 0,
         @delete_level = 0,
         @description = N'Copyright 2022 Darling Data, LLC
-https://www.erikdarlingdata.com/
+https://www.erikdarling.com/
 
 This will log sp_WhoIsActive to a table.
 It will create a new table every day,

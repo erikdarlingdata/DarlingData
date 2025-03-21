@@ -129,4 +129,4 @@ EXECUTE dbo.sp_QuickieStore
 
 ## Resources
 * [YouTube playlist](https://www.youtube.com/playlist?list=PLt4QZ-7lfQie1XZHEm0HN-Zt1S7LFEx1P)
-* [Blog post](https://www.erikdarlingdata.com/sp_quickiestore/)
+* [Blog post](https://www.erikdarling.com/sp_quickiestore/)
