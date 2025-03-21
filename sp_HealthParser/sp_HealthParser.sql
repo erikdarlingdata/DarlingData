@@ -451,10 +451,10 @@ AND   ca.utc_timestamp < @end_date';
         
         IF @timestamp_utc_mode = 1
             SET @time_filter = N'
-    AND CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date';
+    AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date';
         ELSE
             SET @time_filter = '
-    AND fx.timestamp_utc BETWEEN @start_date AND @end_date';
+    AND   fx.timestamp_utc BETWEEN @start_date AND @end_date';
     END;
 
     SET @sql_template = 

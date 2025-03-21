@@ -848,12 +848,12 @@ CREATE TABLE
     database_id integer NOT NULL,
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    all_plan_ids varchar(MAX),
+    all_plan_ids varchar(max),
     plan_group_id bigint NULL,
     engine_version nvarchar(32) NULL,
     compatibility_level smallint NOT NULL,
     query_plan_hash binary(8) NOT NULL,
-    query_plan nvarchar(MAX) NULL,
+    query_plan nvarchar(max) NULL,
     is_online_index_plan bit NOT NULL,
     is_trivial_plan bit NOT NULL,
     is_parallel_plan bit NOT NULL,
@@ -1163,7 +1163,7 @@ CREATE TABLE
     plan_feedback_id bigint NOT NULL,
     plan_id bigint NULL,
     feature_desc nvarchar(120) NULL,
-    feedback_data nvarchar(MAX) NULL,
+    feedback_data nvarchar(max) NULL,
     state_desc nvarchar(120) NULL,
     create_time datetimeoffset(7) NOT NULL,
     last_updated_time datetimeoffset(7) NULL
@@ -1178,7 +1178,7 @@ CREATE TABLE
     database_id integer NOT NULL,
     query_hint_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    query_hint_text nvarchar(MAX) NULL,
+    query_hint_text nvarchar(max) NULL,
     last_query_hint_failure_reason_desc nvarchar(256) NULL,
     query_hint_failure_count bigint NOT NULL,
     source_desc nvarchar(256) NULL
@@ -1298,7 +1298,7 @@ DECLARE
     metric_group nvarchar(50) NOT NULL, /* Grouping (duration, cpu, etc.) */
     metric_type nvarchar(20) NOT NULL, /* Type within group (avg, total, last, min, max) */
     column_name nvarchar(100) NOT NULL, /* Column name as it appears in output */
-    column_source nvarchar(MAX) NOT NULL, /* Source expression or formula */
+    column_source nvarchar(max) NOT NULL, /* Source expression or formula */
     is_conditional bit NOT NULL, /* Is this a conditional column (depends on a parameter) */
     condition_param nvarchar(50) NULL, /* Parameter name this column depends on */
     condition_value sql_variant NULL, /* Value the parameter must have */
@@ -1636,13 +1636,13 @@ DECLARE
     @procedure_name_quoted nvarchar(1024),
     @collation sysname,
     @new bit,
-    @sql nvarchar(MAX),
-    @isolation_level nvarchar(MAX),
+    @sql nvarchar(max),
+    @isolation_level nvarchar(max),
     @parameters nvarchar(4000),
     @plans_top bigint,
     @queries_top bigint,
     @nc10 nvarchar(2),
-    @where_clause nvarchar(MAX),
+    @where_clause nvarchar(max),
     @query_text_search_original_value nvarchar(4000),
     @query_text_search_not_original_value nvarchar(4000),
     @procedure_exists bit,
@@ -1654,9 +1654,9 @@ DECLARE
     @string_split_ints nvarchar(1500),
     @string_split_strings nvarchar(1500),
     @current_table nvarchar(100),
-    @troubleshoot_insert nvarchar(MAX),
-    @troubleshoot_update nvarchar(MAX),
-    @troubleshoot_info nvarchar(MAX),
+    @troubleshoot_insert nvarchar(max),
+    @troubleshoot_update nvarchar(max),
+    @troubleshoot_info nvarchar(max),
     @rc bigint,
     @em tinyint,
     @fo tinyint,
@@ -1671,8 +1671,8 @@ DECLARE
     @regression_baseline_start_date_original datetimeoffset(7),
     @regression_baseline_end_date_original datetimeoffset(7),
     @regression_mode bit,
-    @regression_where_clause nvarchar(MAX),
-    @column_sql nvarchar(MAX),
+    @regression_where_clause nvarchar(max),
+    @column_sql nvarchar(max),
     @param_name nvarchar(100), 
     @param_value nvarchar(4000), 
     @temp_table sysname, 
@@ -1680,7 +1680,7 @@ DECLARE
     @data_type sysname, 
     @is_include bit,
     @requires_secondary_processing bit,
-    @split_sql nvarchar(MAX),
+    @split_sql nvarchar(max),
     @error_msg nvarchar(2000),
     @conflict_list nvarchar(max) = N'';
 
@@ -4109,7 +4109,7 @@ BEGIN
         END;
         
         /* Execute the dynamic SQL to populate the temporary table */
-        DECLARE @dynamic_sql nvarchar(MAX) = N'
+        DECLARE @dynamic_sql nvarchar(max) = N'
         INSERT INTO 
             ' + @temp_table + N' 
         WITH
@@ -4154,7 +4154,7 @@ BEGIN
             
             /* Build appropriate SQL based on parameter type */
             DECLARE 
-                @secondary_sql nvarchar(MAX) = N'';
+                @secondary_sql nvarchar(max) = N'';
             
             IF @param_name = 'include_query_ids' 
             OR @param_name = 'ignore_query_ids'
@@ -8236,7 +8236,7 @@ BEGIN
         @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
         N'
 SELECT
     x.*
@@ -8375,7 +8375,7 @@ FROM
         @sql +=
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'
         FROM #query_store_runtime_stats AS qsrs'
     );
@@ -8422,7 +8422,7 @@ SELECT
     @sql +=
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'
     CROSS APPLY
     (
@@ -8483,7 +8483,7 @@ SELECT
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
     CROSS APPLY
     (
@@ -8559,7 +8559,7 @@ SELECT
         @sql +=
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'
 ) AS x
 ' + CASE WHEN @regression_mode = 1 THEN N'' ELSE N'WHERE x.n = 1 ' END
@@ -9180,7 +9180,7 @@ BEGIN
             @sql =
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
         SELECT
             source =
@@ -9406,7 +9406,7 @@ BEGIN
                     @sql =
                 CONVERT
                 (
-                    nvarchar(MAX),
+                    nvarchar(max),
                     N'
                 SELECT DISTINCT
                     source =
@@ -9546,7 +9546,7 @@ BEGIN
                     @sql =
                 CONVERT
                 (
-                    nvarchar(MAX),
+                    nvarchar(max),
                     N'
                 SELECT
                     source =
@@ -9709,7 +9709,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
         SELECT
             source =
@@ -9757,7 +9757,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
             dqso.size_based_cleanup_mode_desc
         FROM #database_query_store_options AS dqso
@@ -9957,7 +9957,7 @@ BEGIN
                                 XML
                                 PATH(''),
                                 TYPE
-                        ).value('.', 'nvarchar(MAX)'),
+                        ).value('.', 'nvarchar(max)'),
                         1, 
                         2, 
                         N''
