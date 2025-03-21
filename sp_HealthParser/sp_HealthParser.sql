@@ -348,7 +348,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nchar(1), @azure),
         @mi_msg =
             CONVERT(nchar(1), @mi),
-        @timestamp_utc_mode  =
+        @timestamp_utc_mode =
             CASE 
                 WHEN EXISTS
                 (
@@ -369,7 +369,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     SERVERPROPERTY('PRODUCTVERSION')
                                 ), 
                                 4
-                            ) > 17
+                            ) > 16
                         THEN 1
                         ELSE 0
                     END +
