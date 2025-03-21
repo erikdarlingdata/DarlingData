@@ -1208,6 +1208,24 @@ CREATE TABLE
     replica_name nvarchar(1288) NULL
 );
 
+/*Gonna try gathering this based on*/
+CREATE TABLE 
+    #query_hash_totals
+(
+    database_id integer NOT NULL,
+    query_hash binary(8) NOT NULL,
+    total_executions bigint NOT NULL,
+    total_duration_ms decimal(19,2) NOT NULL,
+    total_cpu_time_ms decimal(19,2) NOT NULL,
+    total_logical_reads_mb decimal(19,2) NOT NULL,
+    total_physical_reads_mb decimal(19,2) NOT NULL,
+    total_logical_writes_mb decimal(19,2) NOT NULL,
+    total_clr_time_ms decimal(19,2) NOT NULL,
+    total_memory_mb decimal(19,2) NOT NULL,
+    total_rowcount decimal(19,2) NOT NULL,
+    PRIMARY KEY CLUSTERED(query_hash, database_id)
+);
+
 /*
 Location, location, location
 */
@@ -1242,24 +1260,6 @@ CREATE TABLE
             ),
             'N0'
         )
-);
-
-/*Gonna try gathering this based on*/
-CREATE TABLE 
-    #query_hash_totals
-(
-    database_id integer NOT NULL,
-    query_hash binary(8) NOT NULL,
-    total_executions bigint NOT NULL,
-    total_duration_ms decimal(19,2) NOT NULL,
-    total_cpu_time_ms decimal(19,2) NOT NULL,
-    total_logical_reads_mb decimal(19,2) NOT NULL,
-    total_physical_reads_mb decimal(19,2) NOT NULL,
-    total_logical_writes_mb decimal(19,2) NOT NULL,
-    total_clr_time_ms decimal(19,2) NOT NULL,
-    total_memory_mb decimal(19,2) NOT NULL,
-    total_rowcount decimal(19,2) NOT NULL,
-    PRIMARY KEY CLUSTERED(query_hash, database_id)
 );
 
 /*GET ALL THOSE DATABASES*/
