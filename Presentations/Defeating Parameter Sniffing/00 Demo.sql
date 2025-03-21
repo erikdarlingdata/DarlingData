@@ -635,7 +635,7 @@ GO
 /* 
 
 This can be a parameter, depending on how you use it
-https://www.erikdarlingdata.com/sql-server/yet-another-post-about-local-variables/
+https://www.erikdarling.com/sql-server/yet-another-post-about-local-variables/
 
 */
 DECLARE 
@@ -1634,8 +1634,8 @@ What we learned:
 
 /* 
 
-    * W: www.erikdarlingdata.com
-    * E: erik@erikdarlingdata.com
+    * W: www.erikdarling.com
+    * E: erik@erikdarling.com
     * T: @erikdarlingdata
     
     Demo database:
