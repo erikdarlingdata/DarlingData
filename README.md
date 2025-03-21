@@ -51,7 +51,7 @@ All you need to do is hit F5 to get information about:
  * Any current THREADPOOL waits (best observed with the DAC)
  * Currently executing queries, along with other execution details
 
-For a video walkthrough of the script and the results, [head over here](https://www.erikdarlingdata.com/sp_pressuredetector/).
+For a video walkthrough of the script and the results, [head over here](https://www.erikdarling.com/sp_pressuredetector/).
 
 Current valid parameter details:
 
@@ -100,7 +100,7 @@ Misuse of this procedure can harm performance. Be very careful about introducing
 
 More resources:
  * For a video walkthrough of the procedure, code, etc. there's a [YouTube playlist here](https://www.youtube.com/playlist?list=PLt4QZ-7lfQifgpvqsa21WLt-u2tZlyoC_).
- * For a text-based adventure, head to [my site here](https://www.erikdarlingdata.com/sp_humanevents/).
+ * For a text-based adventure, head to [my site here](https://www.erikdarling.com/sp_humanevents/).
 
 Current valid parameter details:
 |       parameter        |   name   |                                         description                                          |                                                    valid_inputs                                                     |                    defaults                     |
@@ -248,7 +248,7 @@ More examples can be found here: [Examples](https://github.com/erikdarlingdata/D
 
 More resources:
  * For a video walkthrough of the procedure, code, etc. there's a [YouTube playlist here](https://www.youtube.com/playlist?list=PLt4QZ-7lfQie1XZHEm0HN-Zt1S7LFEx1P).
- * For a text-based adventure, head to [my site here](https://www.erikdarlingdata.com/sp_quickiestore/).
+ * For a text-based adventure, head to [my site here](https://www.erikdarling.com/sp_quickiestore/).
 
 Current valid parameter details:
 

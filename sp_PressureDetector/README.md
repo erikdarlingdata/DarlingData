@@ -69,4 +69,4 @@ EXECUTE dbo.sp_PressureDetector
 ```
 
 ## Resources
-* [Video walkthrough](https://www.erikdarlingdata.com/sp_pressuredetector/)
+* [Video walkthrough](https://www.erikdarling.com/sp_pressuredetector/)
