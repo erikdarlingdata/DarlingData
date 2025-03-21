@@ -2391,10 +2391,8 @@ FROM
     FROM #blocks AS b
 ) AS b
 WHERE b.n = 1
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-
-';
+AND  (b.contentious_object = @object_name
+      OR @object_name IS NULL)';
 
 /* Add the WHERE clause only for table logging */
 IF @log_to_table = 1
