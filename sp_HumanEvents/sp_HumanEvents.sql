@@ -98,7 +98,7 @@ BEGIN
     SELECT N'misuse of this procedure can harm performance' UNION ALL
     SELECT N'be very careful about introducing observer overhead, especially when gathering query plans' UNION ALL
     SELECT N'be even more careful when setting up permanent sessions!' UNION ALL
-    SELECT N'for additional support: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
+    SELECT N'for additional support: https://code.erikdarling.com' UNION ALL
     SELECT N'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
 

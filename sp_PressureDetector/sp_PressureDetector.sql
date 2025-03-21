@@ -88,7 +88,7 @@ BEGIN
     SELECT
         introduction =
            'hi, i''m sp_PressureDetector!' UNION ALL
-    SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData/tree/main/sp_PressureDetector' UNION ALL
+    SELECT 'you got me from https://code.erikdarling.com' UNION ALL
     SELECT 'i''m a lightweight tool for monitoring cpu and memory pressure' UNION ALL
     SELECT 'i''ll tell you: ' UNION ALL
     SELECT ' * what''s currently consuming memory on your server' UNION ALL
