@@ -1223,6 +1223,9 @@ CREATE TABLE
     total_clr_time_ms decimal(19,2) NOT NULL,
     total_memory_mb decimal(19,2) NOT NULL,
     total_rowcount decimal(19,2) NOT NULL,
+    total_num_physical_io_reads decimal(19,2) NULL,
+    total_log_bytes_used decimal(19,2) NULL,
+    total_tempdb_space_used decimal(19,2) NULL,
     PRIMARY KEY CLUSTERED(query_hash, database_id)
 );
 
@@ -3443,24 +3446,6 @@ BEGIN
 END;
 
 /*
-These columns are only available in 2017+
-*/
-IF
-(
-  (
-      @sort_order = 'tempdb'
-   OR @sort_order_is_a_wait = 1
-  )
-  AND @new = 0
-)
-BEGIN
-   RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
-
-   SELECT
-       @sort_order = N'cpu';
-END;
-
-/*
 See if our cool new 2022 views exist.
 May have to tweak this if views aren't present in some cloudy situations.
 */
@@ -3652,6 +3637,28 @@ OPTION(RECOMPILE);' + @nc10;
         END;
     END;
 END; /*End wait stats checks*/
+
+/*
+These columns are only available in 2017+
+*/
+IF
+(
+  (
+      @sort_order = 'tempdb'
+   OR @sort_order_is_a_wait = 1
+  )
+  AND 
+  (
+       @new = 0
+    OR @query_store_waits_enabled = 0
+  )
+)
+BEGIN
+   RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
+
+   SELECT
+       @sort_order = N'cpu';
+END;
 
 /*Check that the selected @timezone is valid*/
 IF @timezone IS NOT NULL
@@ -6996,7 +7003,20 @@ BEGIN
         SUM(qsrs.count_executions * (qsrs.avg_logical_io_writes * 8.)) / 1024.,
         SUM(qsrs.count_executions * qsrs.avg_clr_time) / 1000.,
         SUM(qsrs.count_executions * (qsrs.avg_query_max_used_memory * 8.)) / 1024.,
-        SUM(qsrs.count_executions * qsrs.avg_rowcount)
+        SUM(qsrs.count_executions * qsrs.avg_rowcount)' +
+  CASE 
+      @new 
+      WHEN 1 
+      THEN N',
+        SUM(qsrs.count_executions * (qsrs.avg_num_physical_io_reads * 8)) / 1024.,
+        SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 100000000.,
+        SUM(qsrs.count_executions * (qsrs.avg_tempdb_space_used * 8)) / 1024.'
+      ELSE N'
+        NULL,
+        NULL,
+        NULL'
+  END +  
+  N'
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
       ON qsrs.plan_id = qsp.plan_id
@@ -7035,7 +7055,10 @@ BEGIN
         total_logical_writes_mb,
         total_clr_time_ms,
         total_memory_mb,
-        total_rowcount
+        total_rowcount,
+        total_num_physical_io_reads,
+        total_log_bytes_used,
+        total_tempdb_space_used
     )
     EXECUTE sys.sp_executesql
         @sql,
