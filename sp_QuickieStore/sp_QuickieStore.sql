@@ -8788,7 +8788,7 @@ BEGIN
                 
                 EXECUTE sys.sp_executesql
                     @sql,
-                  N'@timezone sysname, @utc_offset_string nvarchar(max)',
+                  N'@timezone sysname, @utc_offset_string nvarchar(6)',
                     @timezone, @utc_offset_string;
             END;
             ELSE IF @only_queries_with_feedback = 1
@@ -9185,7 +9185,7 @@ BEGIN
             
             EXECUTE sys.sp_executesql
                 @sql,
-              N'@timezone sysname, @utc_offset_string nvarchar(max)',
+              N'@timezone sysname, @utc_offset_string nvarchar(6)',
                 @timezone, @utc_offset_string;
 
         END; /*End compilation query section*/
