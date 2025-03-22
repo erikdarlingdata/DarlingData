@@ -234,41 +234,41 @@ END; /*End help section*/
             @what_to_check = 'all';
     END;
 
-    IF  @log_to_table = 1 
+    IF  @log_to_table = 1
     AND @cpu_utilization_threshold > 0
     BEGIN
         IF @debug = 1
-        BEGIN 
+        BEGIN
             RAISERROR('Setting @cpu_utilization_threshold to 0 to capture all CPU utilization data when logging to tables', 0, 1) WITH NOWAIT;
         END;
-        SELECT 
+        SELECT
             @cpu_utilization_threshold = 0;
     END;
 
-    IF  @log_to_table = 1 
+    IF  @log_to_table = 1
     AND @sample_seconds <> 0
     BEGIN
         IF @debug = 1
-        BEGIN 
+        BEGIN
             RAISERROR('Logging to tables is not compatible with @sample_seconds. Using @sample_seconds = 0', 0, 1) WITH NOWAIT;
         END;
-        SELECT 
+        SELECT
             @sample_seconds = 0;
     END;
 
-    IF   @log_to_table = 1 
+    IF   @log_to_table = 1
     AND @what_to_check <> 'all'
     BEGIN
         IF @debug = 1
-        BEGIN 
+        BEGIN
             RAISERROR('@what_to_check was set to %s, setting to all when logging to tables', 0, 1, @what_to_check) WITH NOWAIT;
-        END; 
+        END;
         SELECT
             @what_to_check = 'all';
     END;
 
-    IF   @log_to_table = 1 
-    AND 
+    IF   @log_to_table = 1
+    AND
     (
            @skip_queries = 1
         OR @skip_plan_xml = 1
@@ -277,9 +277,9 @@ END; /*End help section*/
     )
     BEGIN
         IF @debug = 1
-        BEGIN 
+        BEGIN
             RAISERROR('reverting skip options for table logging', 0, 1, @what_to_check) WITH NOWAIT;
-        END; 
+        END;
         SELECT
             @skip_queries = 0,
             @skip_plan_xml = 0,
@@ -461,12 +461,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
             @log_database_name = ISNULL(@log_database_name, DB_NAME()),
             /* Default schema name to dbo if not specified */
             @log_schema_name = ISNULL(@log_schema_name, N'dbo');
-        
+
         /* Validate database exists */
-        IF NOT EXISTS 
+        IF NOT EXISTS
         (
-            SELECT 
-                1/0 
+            SELECT
+                1/0
             FROM sys.databases AS d
             WHERE d.name = @log_database_name
         )
@@ -481,76 +481,76 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 N'.' +
                 QUOTENAME(@log_schema_name) +
                 N'.';
-        
+
         /* Generate fully qualified table names */
         SELECT
-            @log_table_waits = 
+            @log_table_waits =
                 @log_database_schema +
                 QUOTENAME(@log_table_name_prefix + N'_Waits'),
-            @log_table_file_metrics = 
+            @log_table_file_metrics =
                 @log_database_schema +
                 QUOTENAME(@log_table_name_prefix + N'_FileMetrics'),
-            @log_table_perfmon = 
+            @log_table_perfmon =
                 @log_database_schema +
                 QUOTENAME(@log_table_name_prefix + N'_Perfmon'),
-            @log_table_memory = 
-                @log_database_schema + 
+            @log_table_memory =
+                @log_database_schema +
                 QUOTENAME(@log_table_name_prefix + N'_Memory'),
-            @log_table_cpu = 
+            @log_table_cpu =
                 @log_database_schema +
                 QUOTENAME(@log_table_name_prefix + N'_CPU'),
-            @log_table_memory_consumers = 
-                @log_database_schema + 
+            @log_table_memory_consumers =
+                @log_database_schema +
                 QUOTENAME(@log_table_name_prefix + N'_MemoryConsumers'),
-            @log_table_memory_queries = 
-                @log_database_schema + 
+            @log_table_memory_queries =
+                @log_database_schema +
                 QUOTENAME(@log_table_name_prefix + N'_MemoryQueries'),
-            @log_table_cpu_queries = 
-                @log_database_schema + 
+            @log_table_cpu_queries =
+                @log_database_schema +
                 QUOTENAME(@log_table_name_prefix + N'_CPUQueries'),
-            @log_table_cpu_events = 
-                @log_database_schema + 
+            @log_table_cpu_events =
+                @log_database_schema +
                 QUOTENAME(@log_table_name_prefix + N'_CPUEvents');
-        
+
         /* Check if schema exists and create it if needed */
         SET @check_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                 WHERE s.name = @schema_name
             )
             BEGIN
-                DECLARE 
+                DECLARE
                     @create_schema_sql nvarchar(max) = N''CREATE SCHEMA '' + QUOTENAME(@schema_name);
-                
+
                 EXECUTE ' + QUOTENAME(@log_database_name) + N'.sys.sp_executesql @create_schema_sql;
                 IF @debug = 1 BEGIN RAISERROR(''Created schema %s in database %s for logging.'', 0, 1, @schema_name, @db_name) WITH NOWAIT; END;
             END';
-    
-        EXECUTE sys.sp_executesql 
-            @check_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @check_sql,
+          N'@schema_name sysname,
             @db_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_database_name,
             @debug;
 
         SET @create_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                   ON t.schema_id = s.schema_id
                 WHERE t.name = @table_name + N''_Waits''
                 AND   s.name = @schema_name
             )
             BEGIN
-                CREATE TABLE ' + @log_table_waits + N' 
+                CREATE TABLE ' + @log_table_waits + N'
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
@@ -566,29 +566,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for wait stats logging.'', 0, 1, ''' + @log_table_waits + N''') WITH NOWAIT; END;
             END';
-    
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
             @debug;
-        
+
         SET @create_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                   ON t.schema_id = s.schema_id
                 WHERE t.name = @table_name + N''_FileMetrics''
                 AND   s.name = @schema_name
             )
             BEGIN
-                CREATE TABLE ' + @log_table_file_metrics + N' 
+                CREATE TABLE ' + @log_table_file_metrics + N'
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
@@ -611,29 +611,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for file metrics logging.'', 0, 1, ''' + @log_table_file_metrics + N''') WITH NOWAIT; END;
             END';
-        
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
             @debug;
-        
+
         SET @create_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                   ON t.schema_id = s.schema_id
                 WHERE t.name = @table_name + N''_Perfmon''
                 AND   s.name = @schema_name
             )
             BEGIN
-                CREATE TABLE ' + @log_table_perfmon + N' 
+                CREATE TABLE ' + @log_table_perfmon + N'
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
@@ -647,29 +647,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for perfmon logging.'', 0, 1, ''' + @log_table_perfmon + N''') WITH NOWAIT; END;
             END';
-        
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
             @debug;
-        
+
         SET @create_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                   ON t.schema_id = s.schema_id
                 WHERE t.name = @table_name + N''_Memory''
                 AND   s.name = @schema_name
             )
             BEGIN
-                CREATE TABLE ' + @log_table_memory + N' 
+                CREATE TABLE ' + @log_table_memory + N'
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
@@ -695,29 +695,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory logging.'', 0, 1, ''' + @log_table_memory + N''') WITH NOWAIT; END;
             END';
-        
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
             @debug;
-        
+
         SET @create_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                   ON t.schema_id = s.schema_id
                 WHERE t.name = @table_name + N''_CPU''
                 AND   s.name = @schema_name
             )
             BEGIN
-                CREATE TABLE ' + @log_table_cpu + N' 
+                CREATE TABLE ' + @log_table_cpu + N'
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
@@ -740,30 +740,30 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU logging.'', 0, 1, ''' + @log_table_cpu + N''') WITH NOWAIT; END;
             END';
-        
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
             @debug;
 
         /* Memory Consumers table */
         SET @create_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                   ON t.schema_id = s.schema_id
                 WHERE t.name = @table_name + N''_MemoryConsumers''
                 AND   s.name = @schema_name
             )
             BEGIN
-                CREATE TABLE ' + @log_table_memory_consumers + N' 
+                CREATE TABLE ' + @log_table_memory_consumers + N'
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
@@ -774,30 +774,30 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory consumers logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_MemoryConsumers') + N''') WITH NOWAIT; END;
             END';
-        
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
             @debug;
-        
+
         /* Memory Query Grants table */
         SET @create_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                   ON t.schema_id = s.schema_id
                 WHERE t.name = @table_name + N''_MemoryQueries''
                 AND   s.name = @schema_name
             )
             BEGIN
-                CREATE TABLE ' + @log_table_memory_queries + N' 
+                CREATE TABLE ' + @log_table_memory_queries + N'
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
@@ -829,30 +829,30 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory queries logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_MemoryQueries') + N''') WITH NOWAIT; END;
             END';
-        
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
             @debug;
-    
+
         /* CPU Queries table */
         SET @create_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                   ON t.schema_id = s.schema_id
                 WHERE t.name = @table_name + N''_CPUQueries''
                 AND   s.name = @schema_name
             )
             BEGIN
-                CREATE TABLE ' + @log_table_cpu_queries + N' 
+                CREATE TABLE ' + @log_table_cpu_queries + N'
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
@@ -883,39 +883,39 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU queries logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_CPUQueries') + N''') WITH NOWAIT; END;
             END';
-        
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
             @debug;
-        
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
             @debug;
-        
+
         /* CPU Utilization Events table */
         SET @create_sql = N'
-            IF NOT EXISTS 
+            IF NOT EXISTS
             (
-                SELECT 
-                    1/0 
+                SELECT
+                    1/0
                 FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
                   ON t.schema_id = s.schema_id
                 WHERE t.name = @table_name + N''_CPUEvents''
                 AND   s.name = @schema_name
             )
             BEGIN
-                CREATE TABLE ' + @log_table_cpu_events + N' 
+                CREATE TABLE ' + @log_table_cpu_events + N'
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
@@ -927,71 +927,71 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU utilization events logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_CPUEvents') + N''') WITH NOWAIT; END;
             END';
-        
-        EXECUTE sys.sp_executesql 
-            @create_sql, 
-          N'@schema_name sysname, 
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
             @table_name sysname,
-            @debug bit', 
-            @log_schema_name, 
+            @debug bit',
+            @log_schema_name,
             @log_table_name_prefix,
-            @debug;  
-            
+            @debug;
+
         /* Handle log retention if specified */
         IF @log_to_table = 1 AND @log_retention_days > 0
-        BEGIN            
-            IF @debug = 1 
-            BEGIN 
-                RAISERROR('Cleaning up log tables older than %i days', 0, 1, @log_retention_days) WITH NOWAIT; 
+        BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Cleaning up log tables older than %i days', 0, 1, @log_retention_days) WITH NOWAIT;
             END;
 
-            SET @cleanup_date = 
+            SET @cleanup_date =
                 DATEADD
                 (
-                    DAY, 
-                    -@log_retention_days, 
+                    DAY,
+                    -@log_retention_days,
                     SYSDATETIME()
                 );
-            
+
             /* Clean up each log table */
             SET @delete_sql = N'
             DELETE FROM ' + @log_table_waits + '
             WHERE collection_time < @cleanup_date;
-            
+
             DELETE FROM ' + @log_table_file_metrics + '
             WHERE collection_time < @cleanup_date;
-            
+
             DELETE FROM ' + @log_table_perfmon + '
             WHERE collection_time < @cleanup_date;
-            
+
             DELETE FROM ' + @log_table_memory + '
             WHERE collection_time < @cleanup_date;
-            
+
             DELETE FROM ' + @log_table_cpu + '
             WHERE collection_time < @cleanup_date;
-            
+
             DELETE FROM ' + @log_table_memory_consumers + '
             WHERE collection_time < @cleanup_date;
-            
+
             DELETE FROM ' + @log_table_memory_queries + '
             WHERE collection_time < @cleanup_date;
-            
+
             DELETE FROM ' + @log_table_cpu_queries + '
             WHERE collection_time < @cleanup_date;
-            
+
             DELETE FROM ' + @log_table_cpu_events + '
             WHERE collection_time < @cleanup_date;';
-            
+
             IF @debug = 1 BEGIN PRINT @delete_sql; END;
-            
-            EXECUTE sys.sp_executesql 
-                @delete_sql, 
-              N'@cleanup_date datetime2(7)', 
+
+            EXECUTE sys.sp_executesql
+                @delete_sql,
+              N'@cleanup_date datetime2(7)',
                 @cleanup_date;
-            
-            IF @debug = 1 
-            BEGIN 
-                RAISERROR('Log cleanup complete', 0, 1) WITH NOWAIT; 
+
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Log cleanup complete', 0, 1) WITH NOWAIT;
             END;
         END;
 
@@ -1431,7 +1431,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     w.sorting
                 OPTION(MAXDOP 1, RECOMPILE);
             END;
-            
+
             IF
             (
                 @sample_seconds > 0
@@ -1493,19 +1493,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 OPTION(MAXDOP 1, RECOMPILE);
             END;
         END;
-       
+
             IF @log_to_table = 1
             BEGIN
-                
+
                 SELECT
                     w.*
                 INTO #waits
                 FROM @waits AS w
                 OPTION(RECOMPILE);
-                
+
                 SET @insert_sql = N'
                     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                    INSERT INTO ' + @log_table_waits + N' 
+                    INSERT INTO ' + @log_table_waits + N'
                     (
                         hours_uptime, 
                         hours_cpu_time, 
@@ -1531,9 +1531,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 IF @debug = 1
                 BEGIN
                     PRINT @insert_sql;
-                END;    
-                
-                EXECUTE sys.sp_executesql 
+                END;
+
+                EXECUTE sys.sp_executesql
                     @insert_sql;
 
                 DROP TABLE IF EXISTS
@@ -1815,9 +1815,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     fm.total_read_count,
                     fm.total_write_count
                 FROM file_metrics AS fm
-            
+
                 UNION ALL
-            
+
                 SELECT
                     drive = N'Nothing to see here',
                     database_name = N'By default, only >100 ms latency is reported',
@@ -1841,7 +1841,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     total_avg_stall_ms DESC
                 OPTION(MAXDOP 1, RECOMPILE);
             END;
-            
+
             IF
             (
                 @sample_seconds > 0
@@ -2006,16 +2006,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         IF @log_to_table = 1
         BEGIN
-           
+
            SELECT
                fm.*
            INTO #file_metrics
            FROM @file_metrics AS fm
            OPTION(RECOMPILE);
-           
+
            SET @insert_sql = N'
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-               INSERT INTO ' + @log_table_file_metrics + N' 
+               INSERT INTO ' + @log_table_file_metrics + N'
                (
                    hours_uptime, 
                    drive, 
@@ -2056,8 +2056,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
            BEGIN
                PRINT @insert_sql;
            END;
-           
-           EXECUTE sys.sp_executesql 
+
+           EXECUTE sys.sp_executesql
                @insert_sql;
 
            DROP TABLE IF EXISTS
@@ -2144,7 +2144,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             N'Active parallel threads', N'Active requests', N'Blocked tasks', N'Query optimizations/sec', N'Queued requests', N'Reduced memory grants/sec'
         );
 
-        
+
         IF @log_to_table = 0
         BEGIN
             IF @sample_seconds = 0
@@ -2198,7 +2198,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     p.cntr_value DESC
                 OPTION(MAXDOP 1, RECOMPILE);
             END;
-            
+
             IF
             (
                 @sample_seconds > 0
@@ -2254,19 +2254,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 OPTION(MAXDOP 1, RECOMPILE);
             END;
         END;
-       
+
        IF @log_to_table = 1
        BEGIN
-           
+
            SELECT
                dopc.*
            INTO #dm_os_performance_counters
            FROM @dm_os_performance_counters AS dopc
            OPTION(RECOMPILE);
-           
+
            SET @insert_sql = N'
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-               INSERT INTO ' + @log_table_perfmon + N' 
+               INSERT INTO ' + @log_table_perfmon + N'
                (
                    object_name, 
                    counter_name, 
@@ -2275,12 +2275,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    cntr_value, 
                    cntr_type
                )
-               SELECT 
-                   dopc.object_name, 
-                   dopc.counter_name, 
-                   dopc.counter_name_clean, 
-                   dopc.instance_name, 
-                   dopc.cntr_value, 
+               SELECT
+                   dopc.object_name,
+                   dopc.counter_name,
+                   dopc.counter_name_clean,
+                   dopc.instance_name,
+                   dopc.cntr_value,
                    dopc.cntr_type
                FROM #dm_os_performance_counters AS dopc;
                ';
@@ -2289,10 +2289,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
            BEGIN
                PRINT @insert_sql;
            END;
-           
-           EXECUTE sys.sp_executesql 
+
+           EXECUTE sys.sp_executesql
                @insert_sql;
-           
+
            DROP TABLE IF EXISTS
                #dm_os_performance_counters;
        END;
@@ -2537,7 +2537,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         (
                         ' + CONVERT
                             (
-                                nvarchar(max), 
+                                nvarchar(max),
                             CASE @pages_kb
                                  WHEN 1
                                  THEN
@@ -2581,18 +2581,18 @@ OPTION(MAXDOP 1, RECOMPILE);',
             EXECUTE sys.sp_executesql
                 @pool_sql;
         END;
-       
+
         IF @log_to_table = 1
         BEGIN
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                INSERT INTO ' + @log_table_memory_consumers + N' 
+                INSERT INTO ' + @log_table_memory_consumers + N'
                 (
                     memory_source,
                     memory_consumer,
                     memory_consumed_gb
                 )
-                ' + 
+                ' +
                 REPLACE
                 (
                     @pool_sql,
@@ -2604,8 +2604,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             BEGIN
                 PRINT @insert_sql;
             END;
-            
-            EXECUTE sys.sp_executesql 
+
+            EXECUTE sys.sp_executesql
                 @insert_sql;
         END;
 
@@ -2946,7 +2946,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
         END;
 
-        SELECT 
+        SELECT
             @resource_semaphores += N'
         SELECT
             deqrs.resource_semaphore_id,
@@ -3030,7 +3030,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             deqrs.pool_id
         OPTION(MAXDOP 1, RECOMPILE);
         ';
-        
+
         IF @log_to_table = 0
         BEGIN
             EXECUTE sys.sp_executesql
@@ -3042,12 +3042,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 @total_physical_memory_gb,
                 @memory_grant_cap;
         END
-        
+
         IF @log_to_table = 1
         BEGIN
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                INSERT INTO ' + @log_table_memory + N' 
+                INSERT INTO ' + @log_table_memory + N'
                 (
                     resource_semaphore_id,
                     total_database_size_gb,
@@ -3074,7 +3074,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             BEGIN
                 PRINT @insert_sql;
             END;
-            
+
             EXECUTE sys.sp_executesql
                 @insert_sql,
               N'@database_size_out_gb nvarchar(10),
@@ -3303,7 +3303,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             PRINT SUBSTRING(@mem_sql, 4001, 8000);
         END;
 
-        IF @log_to_table = 0    
+        IF @log_to_table = 0
         BEGIN
         EXECUTE sys.sp_executesql
             @mem_sql;
@@ -3313,7 +3313,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                INSERT INTO ' + @log_table_memory_queries + N' 
+                INSERT INTO ' + @log_table_memory_queries + N'
                 (
                     session_id,
                     database_name,
@@ -3340,7 +3340,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     is_next_candidate,
                     wait_type,
                     wait_duration_seconds,
-                    dop' + 
+                    dop' +
                     CASE
                         WHEN @helpful_new_columns = 1
                         THEN N',
@@ -3559,14 +3559,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                INSERT INTO ' + @log_table_cpu_events + N' 
+                INSERT INTO ' + @log_table_cpu_events + N'
                 (
                     sample_time,
                     sqlserver_cpu_utilization,
                     other_process_cpu_utilization,
                     total_cpu_utilization
                 )
-                SELECT 
+                SELECT
                     sample_time = event.value(''(./sample_time)[1]'', ''datetime''),
                     sqlserver_cpu_utilization = event.value(''(./sqlserver_cpu_utilization)[1]'', ''integer''),
                     other_process_cpu_utilization = event.value(''(./other_process_cpu_utilization)[1]'', ''integer''),
@@ -3588,7 +3588,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
 
         /*Thread usage*/
-        SELECT 
+        SELECT
             @cpu_threads += N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
         SELECT
@@ -3694,7 +3694,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                INSERT INTO ' + @log_table_cpu + N' 
+                INSERT INTO ' + @log_table_cpu + N'
                 (
                     total_threads,
                     used_threads,
@@ -3709,7 +3709,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     total_active_parallel_thread_count,
                     avg_runnable_tasks_count,
                     high_runnable_percent
-                )' + 
+                )' +
                 REPLACE
                 (
                     @cpu_threads,
@@ -3749,7 +3749,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             ORDER BY
                 dowt.wait_duration_ms DESC
             OPTION(MAXDOP 1, RECOMPILE);
-            
+
             IF @@ROWCOUNT = 0
             BEGIN
                 SELECT
@@ -4041,12 +4041,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 EXECUTE sys.sp_executesql
                     @cpu_sql;
             END;
-            
+
             IF @log_to_table = 1
             BEGIN
                 SET @insert_sql = N'
                     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                    INSERT INTO ' + @log_table_cpu_queries + N' 
+                    INSERT INTO ' + @log_table_cpu_queries + N'
                     (
                         session_id,
                         database_name,
@@ -4081,7 +4081,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         parallel_worker_count'
                             ELSE N''
                         END + N'
-                    )' + 
+                    )' +
                     REPLACE
                     (
                         REPLACE
@@ -4103,8 +4103,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 BEGIN
                     PRINT @insert_sql;
                 END;
-                
-                EXECUTE sys.sp_executesql 
+
+                EXECUTE sys.sp_executesql
                     @insert_sql;
             END;
         END; /*End not skipping queries*/
@@ -4241,35 +4241,35 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 @memory_grant_cap;
 
         SELECT
-            pattern = 
+            pattern =
                 'logging parameters',
-            log_to_table = 
+            log_to_table =
                 @log_to_table,
-            log_database_name = 
+            log_database_name =
                 @log_database_name,
-            log_schema_name = 
+            log_schema_name =
                 @log_schema_name,
-            log_table_name_prefix = 
+            log_table_name_prefix =
                 @log_table_name_prefix,
-            log_database_schema = 
+            log_database_schema =
                 @log_database_schema,
-            log_table_waits = 
+            log_table_waits =
                 @log_table_waits,
-            log_table_file_metrics = 
+            log_table_file_metrics =
                 @log_table_file_metrics,
-            log_table_perfmon = 
+            log_table_perfmon =
                 @log_table_perfmon,
-            log_table_memory = 
+            log_table_memory =
                 @log_table_memory,
-            log_table_cpu = 
+            log_table_cpu =
                 @log_table_cpu,
-            log_table_memory_consumers = 
+            log_table_memory_consumers =
                 @log_table_memory_consumers,
-            log_table_memory_queries = 
-                @log_table_memory_queries, 
-            log_table_cpu_queries = 
+            log_table_memory_queries =
+                @log_table_memory_queries,
+            log_table_cpu_queries =
                 @log_table_cpu_queries,
-            log_table_cpu_events = 
+            log_table_cpu_events =
                 @log_table_cpu_events;
 
     END; /*End Debug*/

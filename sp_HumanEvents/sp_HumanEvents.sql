@@ -3416,15 +3416,15 @@ END;
 
 IF @keep_alive = 0
 BEGIN
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         RAISERROR(@stop_sql, 0, 1) WITH NOWAIT;
         RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
     END;
     EXECUTE (@stop_sql);
 
-    IF @debug = 1 
-    BEGIN 
+    IF @debug = 1
+    BEGIN
         RAISERROR(@drop_sql, 0, 1) WITH NOWAIT;
         RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
     END;
@@ -3500,8 +3500,8 @@ BEGIN
 
     IF LEN(@the_sleeper_must_awaken) > 0
     BEGIN
-     IF @debug = 1 
-     BEGIN 
+     IF @debug = 1
+     BEGIN
         RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT;
         RAISERROR(N'Starting keeper_HumanEvents... inactive sessions', 0, 1) WITH NOWAIT;
      END;
@@ -3964,9 +3964,9 @@ BEGIN
             IF @debug = 1 BEGIN RAISERROR(N'creating view %s', 0, 1, @event_type_check) WITH NOWAIT; END;
             EXECUTE @spe @view_sql;
 
-            IF @debug = 1 
-            BEGIN 
-                RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; 
+            IF @debug = 1
+            BEGIN
+                RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT;
                 RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
             END;
 
@@ -4581,19 +4581,19 @@ ORDER BY
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id;
 
-            IF @debug = 1 
-            BEGIN 
-                SELECT N'#human_events_worker' AS table_name, hew.* FROM #human_events_worker AS hew; 
-                SELECT N'#human_events_xml_internal' AS table_name, hew.* FROM #human_events_xml_internal AS hew; 
+            IF @debug = 1
+            BEGIN
+                SELECT N'#human_events_worker' AS table_name, hew.* FROM #human_events_worker AS hew;
+                SELECT N'#human_events_xml_internal' AS table_name, hew.* FROM #human_events_xml_internal AS hew;
             END;
 
             /*Clear the table out between runs*/
             TRUNCATE TABLE #human_events_xml_internal;
             TRUNCATE TABLE #x;
 
-            IF @debug = 1 
-            BEGIN 
-                RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT; 
+            IF @debug = 1
+            BEGIN
+                RAISERROR(N'@min_id: %i', 0, 1, @min_id) WITH NOWAIT;
                 RAISERROR(N'Setting next id after %i out of %i total', 0, 1, @min_id, @max_id) WITH NOWAIT;
             END;
 
@@ -4766,15 +4766,15 @@ BEGIN CATCH
             IF (@output_database_name = N''
                   AND @output_schema_name = N'')
             BEGIN
-                IF @debug = 1 
-                BEGIN 
+                IF @debug = 1
+                BEGIN
                     RAISERROR(@stop_sql, 0, 1) WITH NOWAIT;
                     RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
                 END;
                 EXECUTE (@stop_sql);
 
-                IF @debug = 1 
-                BEGIN 
+                IF @debug = 1
+                BEGIN
                     RAISERROR(@drop_sql, 0, 1) WITH NOWAIT;
                     RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
                 END;
