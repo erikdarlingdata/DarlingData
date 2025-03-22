@@ -562,7 +562,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     avg_ms_per_wait decimal(38,2) NULL,
                     percent_signal_waits decimal(38,2) NULL,
                     waiting_tasks_count bigint NULL,
-                    sample_time datetime NULL,
                     sorting bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
@@ -609,7 +608,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     avg_write_stall_ms decimal(38,2) NULL,
                     io_stall_read_ms bigint NULL,
                     io_stall_write_ms bigint NULL,
-                    sample_time datetime NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for file metrics logging.'', 0, 1, ''' + @log_table_file_metrics + N''') WITH NOWAIT; END;
@@ -640,7 +638,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    sample_time datetime NULL,
                     object_name sysname NOT NULL,
                     counter_name sysname NOT NULL,
                     counter_name_clean sysname NULL,
