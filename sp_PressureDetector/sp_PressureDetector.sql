@@ -3542,15 +3542,26 @@ OPTION(MAXDOP 1, RECOMPILE);',
         IF @log_to_table = 1
         BEGIN
             /* Get the maximum sample_time from the CPU events table */
-            SET @sql = N'
+            SET @insert_sql = N'
                 SELECT 
-                    @max_sample_time_out = ISNULL(MAX(sample_time), ''19000101'') 
-                FROM ' + @log_table_cpu_events;
+                    @max_sample_time_out = 
+                        ISNULL
+                        (
+                            MAX(sample_time), 
+                            ''19000101''
+                        ) 
+                FROM ' + @log_table_cpu_events + N'
+                OPTION(RECOMPILE);';
+
+            IF @debug = 1
+            BEGIN
+                PRINT @insert_sql;
+            END;
             
             EXECUTE sys.sp_executesql
-                @sql,
+                @insert_sql,
                 N'@max_sample_time_out datetime OUTPUT',
-                @max_sample_time_out = @max_sample_time OUTPUT;
+                @max_sample_time OUTPUT;
                 
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -3576,8 +3587,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
             
             EXECUTE sys.sp_executesql 
                 @insert_sql, 
-              N'@cpu_utilization xml, @max_sample_time datetime',
-                @cpu_utilization, @max_sample_time;
+              N'@cpu_utilization xml, 
+                @max_sample_time datetime',
+                @cpu_utilization, 
+                @max_sample_time;
         END;
 
         /*Thread usage*/
