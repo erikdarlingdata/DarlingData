@@ -327,14 +327,14 @@ DECLARE
     @end_date_original datetime2 = @end_date,
     @validation_sql nvarchar(max),
     @extract_sql nvarchar(max),
-    /*Log to table stuff*/       
-    @log_table_blocking sysname,  
+    /*Log to table stuff*/
+    @log_table_blocking sysname,
     @cleanup_date datetime2(7),
     @check_sql nvarchar(max) = N'',
     @create_sql nvarchar(max) = N'',
     @insert_sql nvarchar(max) = N'',
     @log_database_schema nvarchar(1024),
-    @max_event_time datetime2(7), 
+    @max_event_time datetime2(7),
     @dsql nvarchar(max) = N'',
     @mdsql nvarchar(max) = N'';
 
@@ -414,8 +414,8 @@ SELECT
     @mdsql = N'
 IF OBJECT_ID(''{table_check}'', ''U'') IS NOT NULL
 BEGIN
-    SELECT 
-        @max_event_time = 
+    SELECT
+        @max_event_time =
             ISNULL
             (
                 MAX({date_column}),
@@ -446,9 +446,9 @@ SELECT
         CONVERT(nchar(1), @is_system_health);
 
 /*Change this here in case someone leave it NULL*/
-IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL 
-AND ISNULL(@target_schema, N'dbo') IS NOT NULL 
-AND @target_table IS NOT NULL 
+IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL
+AND ISNULL(@target_schema, N'dbo') IS NOT NULL
+AND @target_table IS NOT NULL
 AND @target_column IS NOT NULL
 BEGIN
     SET @target_type = N'table';
@@ -473,22 +473,22 @@ BEGIN
     END;
 
     /* Parameter validation  */
-    IF @target_table IS NULL 
+    IF @target_table IS NULL
     OR @target_column IS NULL
     BEGIN
         RAISERROR(N'
         When @target_type is ''table'', you must specify @target_table and @target_column.
         When @target_database or @target_schema is NULL, they default to DB_NAME() and dbo.
-        ', 
+        ',
         11, 1) WITH NOWAIT;
         RETURN;
     END;
 
     /* Check if target database exists */
-    IF NOT EXISTS 
+    IF NOT EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM sys.databases AS d
         WHERE d.name = @target_database
     )
@@ -500,10 +500,10 @@ BEGIN
     /* Use dynamic SQL to validate schema, table, and column existence */
     SET @validation_sql = N'
     /*Validate schema exists*/
-    IF NOT EXISTS 
+    IF NOT EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM ' + QUOTENAME(@target_database) + N'.sys.schemas AS s
         WHERE s.name = @schema
     )
@@ -513,14 +513,14 @@ BEGIN
     END;
 
     /*Validate table exists*/
-    IF NOT EXISTS 
+    IF NOT EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM ' + QUOTENAME(@target_database) + N'.sys.tables AS t
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s
           ON t.schema_id = s.schema_id
-        WHERE t.name = @table 
+        WHERE t.name = @table
         AND   s.name = @schema
     )
     BEGIN
@@ -529,17 +529,17 @@ BEGIN
     END;
 
     /*Validate column name exists*/
-    IF NOT EXISTS 
+    IF NOT EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t
           ON c.object_id = t.object_id
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s
           ON t.schema_id = s.schema_id
-        WHERE c.name = @column 
-        AND   t.name = @table 
+        WHERE c.name = @column
+        AND   t.name = @table
         AND   s.name = @schema
     )
     BEGIN
@@ -548,19 +548,19 @@ BEGIN
     END;
 
     /* Validate column is XML type */
-    IF NOT EXISTS 
+    IF NOT EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.types AS ty 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.types AS ty
           ON c.user_type_id = ty.user_type_id
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t
           ON c.object_id = t.object_id
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s
           ON t.schema_id = s.schema_id
-        WHERE c.name = @column 
-        AND   t.name = @table 
+        WHERE c.name = @column
+        AND   t.name = @table
         AND   s.name = @schema
         AND   ty.name = ''xml''
     )
@@ -574,17 +574,17 @@ BEGIN
     IF @timestamp_column IS NOT NULL
     BEGIN
         SET @validation_sql = @validation_sql + N'
-    IF NOT EXISTS 
+    IF NOT EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t
           ON c.object_id = t.object_id
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s
           ON t.schema_id = s.schema_id
-        WHERE c.name = @timestamp_column 
-        AND   t.name = @table 
+        WHERE c.name = @timestamp_column
+        AND   t.name = @table
         AND   s.name = @schema
     )
     BEGIN
@@ -593,19 +593,19 @@ BEGIN
     END;
 
     /* Validate timestamp column is date-ish type */
-    IF NOT EXISTS 
+    IF NOT EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM ' + QUOTENAME(@target_database) + N'.sys.columns AS c
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.types AS ty 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.types AS ty
           ON c.user_type_id = ty.user_type_id
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.tables AS t
           ON c.object_id = t.object_id
-        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s 
+        JOIN ' + QUOTENAME(@target_database) + N'.sys.schemas AS s
           ON t.schema_id = s.schema_id
-        WHERE c.name = @timestamp_column 
-        AND   t.name = @table 
+        WHERE c.name = @timestamp_column
+        AND   t.name = @table
         AND   s.name = @schema
         AND   ty.name LIKE N''%date%''
     )
@@ -620,42 +620,42 @@ BEGIN
         PRINT @validation_sql;
     END;
 
-    EXECUTE sys.sp_executesql 
-        @validation_sql, 
+    EXECUTE sys.sp_executesql
+        @validation_sql,
         N'
-        @database sysname, 
-        @schema sysname, 
-        @table sysname, 
-        @column sysname, 
+        @database sysname,
+        @schema sysname,
+        @table sysname,
+        @column sysname,
         @timestamp_column sysname
         ',
-        @target_database, 
-        @target_schema, 
-        @target_table, 
-        @target_column, 
+        @target_database,
+        @target_schema,
+        @target_table,
+        @target_column,
         @timestamp_column;
 END;
 
 /* Validate logging parameters */
 IF @log_to_table = 1
-BEGIN    
-    SELECT 
+BEGIN
+    SELECT
         /* Default database name to current database if not specified */
-        @log_database_name = ISNULL(@log_database_name, DB_NAME()),        
+        @log_database_name = ISNULL(@log_database_name, DB_NAME()),
         /* Default schema name to dbo if not specified */
         @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
-        @log_retention_days = 
-            CASE 
-                WHEN @log_retention_days < 0 
-                THEN ABS(@log_retention_days) 
-                ELSE @log_retention_days 
+        @log_retention_days =
+            CASE
+                WHEN @log_retention_days < 0
+                THEN ABS(@log_retention_days)
+                ELSE @log_retention_days
             END;
-    
+
     /* Validate database exists */
-    IF NOT EXISTS 
+    IF NOT EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM sys.databases AS d
         WHERE d.name = @log_database_name
     )
@@ -665,134 +665,134 @@ BEGIN
     END;
 
     SET
-        @log_database_schema = 
+        @log_database_schema =
             QUOTENAME(@log_database_name) +
             N'.' +
             QUOTENAME(@log_schema_name) +
             N'.';
-    
+
     /* Generate fully qualified table names */
     SELECT
-        @log_table_blocking = 
+        @log_table_blocking =
             @log_database_schema +
             QUOTENAME(@log_table_name_prefix + N'_BlockedProcessReport');
-    
+
     /* Check if schema exists and create it if needed */
     SET @check_sql = N'
-        IF NOT EXISTS 
+        IF NOT EXISTS
         (
-            SELECT 
-                1/0 
+            SELECT
+                1/0
             FROM ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
             WHERE s.name = @schema_name
         )
         BEGIN
-            DECLARE 
+            DECLARE
                 @create_schema_sql nvarchar(max) = N''CREATE SCHEMA '' + QUOTENAME(@schema_name);
-            
+
             EXECUTE ' + QUOTENAME(@log_database_name) + N'.sys.sp_executesql @create_schema_sql;
             IF @debug = 1 BEGIN RAISERROR(''Created schema %s in database %s for logging.'', 0, 1, @schema_name, @db_name) WITH NOWAIT; END;
         END';
 
-    EXECUTE sys.sp_executesql 
-        @check_sql, 
-      N'@schema_name sysname, 
+    EXECUTE sys.sp_executesql
+        @check_sql,
+      N'@schema_name sysname,
         @db_name sysname,
-        @debug bit', 
-        @log_schema_name, 
+        @debug bit',
+        @log_schema_name,
         @log_database_name,
         @debug;
 
     SET @create_sql = N'
-        IF NOT EXISTS 
+        IF NOT EXISTS
         (
-            SELECT 
-                1/0 
+            SELECT
+                1/0
             FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
-            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s 
+            JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
               ON t.schema_id = s.schema_id
             WHERE t.name = @table_name + N''_BlockedProcessReport''
             AND   s.name = @schema_name
         )
         BEGIN
-            CREATE TABLE ' + @log_table_blocking + N' 
+            CREATE TABLE ' + @log_table_blocking + N'
             (
                 id bigint IDENTITY,
                 collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-	            blocked_process_report varchar(22) NOT NULL,
-	            event_time datetime2(7) NULL,
-	            database_name nvarchar(128) NULL,
-	            currentdbname nvarchar(256) NULL,
-	            contentious_object nvarchar(4000) NULL,
-	            activity varchar(8) NULL,
-	            blocking_tree varchar(8000) NULL,
-	            spid int NULL,
-	            ecid int NULL,
-	            query_text xml NULL,
-	            wait_time_ms bigint NULL,
-	            status nvarchar(10) NULL,
-	            isolation_level nvarchar(50) NULL,
-	            lock_mode nvarchar(10) NULL,
-	            resource_owner_type nvarchar(256) NULL,
-	            transaction_count int NULL,
-	            transaction_name nvarchar(512) NULL,
-	            last_transaction_started datetime2(7) NULL,
-	            last_transaction_completed datetime2(7) NULL,
-	            client_option_1 varchar(261) NULL,
-	            client_option_2 varchar(307) NULL,
-	            wait_resource nvarchar(100) NULL,
-	            priority int NULL,
-	            log_used bigint NULL,
-	            client_app nvarchar(256) NULL,
-	            host_name nvarchar(256) NULL,
-	            login_name nvarchar(256) NULL,
-	            transaction_id bigint NULL,
-	            blocked_process_report_xml xml NULL
+                blocked_process_report varchar(22) NOT NULL,
+                event_time datetime2(7) NULL,
+                database_name nvarchar(128) NULL,
+                currentdbname nvarchar(256) NULL,
+                contentious_object nvarchar(4000) NULL,
+                activity varchar(8) NULL,
+                blocking_tree varchar(8000) NULL,
+                spid int NULL,
+                ecid int NULL,
+                query_text xml NULL,
+                wait_time_ms bigint NULL,
+                status nvarchar(10) NULL,
+                isolation_level nvarchar(50) NULL,
+                lock_mode nvarchar(10) NULL,
+                resource_owner_type nvarchar(256) NULL,
+                transaction_count int NULL,
+                transaction_name nvarchar(512) NULL,
+                last_transaction_started datetime2(7) NULL,
+                last_transaction_completed datetime2(7) NULL,
+                client_option_1 varchar(261) NULL,
+                client_option_2 varchar(307) NULL,
+                wait_resource nvarchar(100) NULL,
+                priority int NULL,
+                log_used bigint NULL,
+                client_app nvarchar(256) NULL,
+                host_name nvarchar(256) NULL,
+                login_name nvarchar(256) NULL,
+                transaction_id bigint NULL,
+                blocked_process_report_xml xml NULL
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
             IF @debug = 1 BEGIN RAISERROR(''Created table %s for significant waits logging.'', 0, 1, ''' + @log_table_blocking + N''') WITH NOWAIT; END;
         END';
 
-    EXECUTE sys.sp_executesql 
-        @create_sql, 
-      N'@schema_name sysname, 
+    EXECUTE sys.sp_executesql
+        @create_sql,
+      N'@schema_name sysname,
         @table_name sysname,
-        @debug bit', 
-        @log_schema_name, 
+        @debug bit',
+        @log_schema_name,
         @log_table_name_prefix,
         @debug;
 
     /* Handle log retention if specified */
     IF @log_to_table = 1 AND @log_retention_days > 0
-    BEGIN            
-        IF @debug = 1 
-        BEGIN 
-            RAISERROR('Cleaning up log tables older than %i days', 0, 1, @log_retention_days) WITH NOWAIT; 
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Cleaning up log tables older than %i days', 0, 1, @log_retention_days) WITH NOWAIT;
         END;
 
-        SET @cleanup_date = 
+        SET @cleanup_date =
             DATEADD
             (
-                DAY, 
-                -@log_retention_days, 
+                DAY,
+                -@log_retention_days,
                 SYSDATETIME()
             );
-        
+
         /* Clean up each log table */
         SET @dsql = N'
         DELETE FROM ' + @log_table_blocking + '
         WHERE collection_time < @cleanup_date;';
-        
+
         IF @debug = 1 BEGIN PRINT @dsql; END;
-        
-        EXECUTE sys.sp_executesql 
-            @dsql, 
-          N'@cleanup_date datetime2(7)', 
+
+        EXECUTE sys.sp_executesql
+            @dsql,
+          N'@cleanup_date datetime2(7)',
             @cleanup_date;
-        
-        IF @debug = 1 
-        BEGIN 
-            RAISERROR('Log cleanup complete', 0, 1) WITH NOWAIT; 
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Log cleanup complete', 0, 1) WITH NOWAIT;
         END;
     END;
 END;
@@ -878,7 +878,7 @@ IF @debug = 1
 BEGIN
     RAISERROR('What kind of target does %s have?', 0, 1, @session_name) WITH NOWAIT;
 END;
-IF  @target_type IS NULL 
+IF  @target_type IS NULL
 AND @is_system_health = 0
 BEGIN
     IF @azure = 0
@@ -909,7 +909,7 @@ BEGIN
 END;
 
 /* Dump whatever we got into a temp table */
-IF  LOWER(@target_type) = N'ring_buffer' 
+IF  LOWER(@target_type) = N'ring_buffer'
 AND @is_system_health = 0
 BEGIN
     IF @azure = 0
@@ -959,7 +959,7 @@ BEGIN
     END;
 END;
 
-IF  LOWER(@target_type) = N'event_file' 
+IF  LOWER(@target_type) = N'event_file'
 AND @is_system_health = 0
 BEGIN
     IF @azure = 0
@@ -1075,7 +1075,7 @@ BEGIN
 END;
 
 
-IF  LOWER(@target_type) = N'ring_buffer' 
+IF  LOWER(@target_type) = N'ring_buffer'
 AND @is_system_health = 0
 BEGIN
     IF @debug = 1
@@ -1084,7 +1084,7 @@ BEGIN
     END;
 
     INSERT
-        #blocking_xml 
+        #blocking_xml
     WITH
         (TABLOCKX)
     (
@@ -1099,7 +1099,7 @@ BEGIN
     OPTION(RECOMPILE);
 END;
 
-IF  LOWER(@target_type) = N'event_file' 
+IF  LOWER(@target_type) = N'event_file'
 AND @is_system_health = 0
 BEGIN
     IF @debug = 1
@@ -1108,7 +1108,7 @@ BEGIN
     END;
 
     INSERT
-        #blocking_xml 
+        #blocking_xml
     WITH
         (TABLOCKX)
     (
@@ -1129,7 +1129,7 @@ process report stored in the system health extended event session
 
 Note: I do not allow logging to a table from this, because the set of columns
 and available data is too incomplete, and I don't want to juggle multiple
-table definitions. 
+table definitions.
 
 Logging to a table is only allowed from the a blocked_process_report Extended Event,
 but it can either be ring buffer or file target. I don't care about that.
@@ -1723,26 +1723,26 @@ BEGIN
         RAISERROR('Extracting blocked process reports from table %s.%s.%s', 0, 1, @target_database, @target_schema, @target_table) WITH NOWAIT;
     END;
 
-    /* Build dynamic SQL to extract the XML */ 
+    /* Build dynamic SQL to extract the XML */
     SET @extract_sql = N'
-    SELECT 
-        human_events_xml = ' + 
-        QUOTENAME(@target_column) + 
+    SELECT
+        human_events_xml = ' +
+        QUOTENAME(@target_column) +
         N'
-    FROM ' + 
-    QUOTENAME(@target_database) + 
-    N'.' + 
-    QUOTENAME(@target_schema) + 
-    N'.' + 
-    QUOTENAME(@target_table) + 
+    FROM ' +
+    QUOTENAME(@target_database) +
+    N'.' +
+    QUOTENAME(@target_schema) +
+    N'.' +
+    QUOTENAME(@target_table) +
     N' AS x
-    CROSS APPLY x.' + 
-    QUOTENAME(@target_column) + 
+    CROSS APPLY x.' +
+    QUOTENAME(@target_column) +
     N'.nodes(''/event'') AS e(x)
     WHERE e.x.exist(''@name[ .= "blocked_process_report"]'') = 1';
-    
+
     /* Add timestamp filtering if specified*/
-    IF @timestamp_column IS NOT NULL 
+    IF @timestamp_column IS NOT NULL
     BEGIN
             SET @extract_sql = @extract_sql + N'
     AND   x.' + QUOTENAME(@timestamp_column) + N' >= @start_date
@@ -1760,25 +1760,25 @@ BEGIN
     SET @extract_sql = @extract_sql + N'
     OPTION(RECOMPILE);
     ';
-    
+
     IF @debug = 1
     BEGIN
         PRINT @extract_sql;
     END;
 
     /* Execute the dynamic SQL*/
-    INSERT 
-        #blocking_xml 
+    INSERT
+        #blocking_xml
     WITH
         (TABLOCKX)
     (
         human_events_xml
     )
-    EXECUTE sys.sp_executesql 
-        @extract_sql, 
-      N'@start_date datetime2, 
+    EXECUTE sys.sp_executesql
+        @extract_sql,
+      N'@start_date datetime2,
         @end_date datetime2',
-        @start_date, 
+        @start_date,
         @end_date;
 END;
 
@@ -2079,7 +2079,7 @@ WITH
       ON  bg.monitor_loop = h.monitor_loop
       AND bg.blocking_desc = h.blocked_desc
 )
-UPDATE 
+UPDATE
     #blocked
 SET
     blocking_level = h.level,
@@ -2096,7 +2096,7 @@ BEGIN
     RAISERROR('Updating #blocking', 0, 1) WITH NOWAIT;
 END;
 
-UPDATE 
+UPDATE
     #blocking
 SET
     blocking_level = bd.blocking_level,
@@ -2212,10 +2212,10 @@ FROM
     SELECT
         bg.*
     FROM #blocking AS bg
-    WHERE 
+    WHERE
     (
-         @database_name IS NULL 
-      OR bg.database_name = @database_name 
+         @database_name IS NULL
+      OR bg.database_name = @database_name
       OR bg.currentdbname = @database_name
     )
 
@@ -2224,10 +2224,10 @@ FROM
     SELECT
         bd.*
     FROM #blocked AS bd
-    WHERE 
+    WHERE
     (
-         @database_name IS NULL 
-      OR bd.database_name = @database_name 
+         @database_name IS NULL
+      OR bd.database_name = @database_name
       OR bd.currentdbname = @database_name
     )
 ) AS kheb
@@ -2372,7 +2372,7 @@ SELECT
     b.host_name,
     b.login_name,
     b.transaction_id,
-    blocked_process_report_xml = 
+    blocked_process_report_xml =
         b.blocked_process_report
 FROM
 (
@@ -2397,36 +2397,36 @@ AND  (b.contentious_object = @object_name
 /* Add the WHERE clause only for table logging */
 IF @log_to_table = 1
 BEGIN
-    SET @mdsql = 
+    SET @mdsql =
         REPLACE
         (
             REPLACE
             (
-                @mdsql, 
-                '{table_check}', 
+                @mdsql,
+                '{table_check}',
                 @log_table_blocking
-            ), 
-            '{date_column}', 
+            ),
+            '{date_column}',
             'event_time'
         );
-    
+
     IF @debug = 1 BEGIN PRINT @mdsql; END;
-    
-    EXECUTE sys.sp_executesql 
-        @mdsql, 
-      N'@max_event_time datetime2(7) OUTPUT', 
+
+    EXECUTE sys.sp_executesql
+        @mdsql,
+      N'@max_event_time datetime2(7) OUTPUT',
         @max_event_time OUTPUT;
 
-    SET @mdsql = 
+    SET @mdsql =
         REPLACE
         (
             REPLACE
             (
-                @mdsql, 
-                @log_table_blocking, 
+                @mdsql,
+                @log_table_blocking,
                 '{table_check}'
             ),
-            'event_time', 
+            'event_time',
             '{date_column}'
         );
 
@@ -2448,9 +2448,9 @@ OPTION(RECOMPILE);';
 
 /* Handle table logging */
 IF @log_to_table = 1
-BEGIN        
+BEGIN
     SET @insert_sql = N'
-INSERT INTO 
+INSERT INTO
     ' + @log_table_blocking + N'
 (
     blocked_process_report,
@@ -2482,33 +2482,33 @@ INSERT INTO
     login_name,
     transaction_id,
     blocked_process_report_xml
-)' + 
+)' +
     @dsql;
-    
+
     IF @debug = 1 BEGIN PRINT @insert_sql; END;
-    
-    EXECUTE sys.sp_executesql 
-        @insert_sql, 
+
+    EXECUTE sys.sp_executesql
+        @insert_sql,
       N'@max_event_time datetime2(7),
-        @object_name sysname', 
+        @object_name sysname',
         @max_event_time,
         @object_name;
 END;
 
 /* Execute the query for client results */
 IF @log_to_table = 0
-BEGIN        
-    
+BEGIN
+
     IF @debug = 1 BEGIN PRINT @dsql; END;
-    
-    EXECUTE sys.sp_executesql 
+
+    EXECUTE sys.sp_executesql
         @dsql,
       N'@object_name sysname',
         @object_name;
 END;
 
 /*
-Only run query plan and check stuff 
+Only run query plan and check stuff
 when not logging to a table
 */
 IF @log_to_table = 0
@@ -2517,7 +2517,7 @@ BEGIN
     BEGIN
         RAISERROR('Inserting #available_plans', 0, 1) WITH NOWAIT;
     END;
-    
+
     SELECT DISTINCT
         b.*
     INTO #available_plans
@@ -2550,9 +2550,9 @@ BEGIN
         )
         AND  (b.contentious_object = @object_name
                 OR @object_name IS NULL)
-    
+
         UNION ALL
-    
+
         SELECT
             available_plans =
                 'available_plans',
@@ -2571,7 +2571,7 @@ BEGIN
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
         CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
-        WHERE    
+        WHERE
         (
             (b.database_name = @database_name
                 OR @database_name IS NULL)
@@ -2582,7 +2582,7 @@ BEGIN
                 OR @object_name IS NULL)
     ) AS b
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         SELECT
@@ -2590,10 +2590,10 @@ BEGIN
             ap.*
         FROM #available_plans AS ap
         OPTION(RECOMPILE);
-    
+
         RAISERROR('Inserting #dm_exec_query_stats', 0, 1) WITH NOWAIT;
     END;
-    
+
     SELECT
         deqs.sql_handle,
         deqs.plan_handle,
@@ -2660,12 +2660,12 @@ BEGIN
     )
     AND deqs.query_hash IS NOT NULL
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Creating index on #dm_exec_query_stats', 0, 1) WITH NOWAIT;
     END;
-    
+
     CREATE CLUSTERED INDEX
         deqs
     ON #dm_exec_query_stats
@@ -2708,7 +2708,7 @@ BEGIN
         ap.statement_end_offset
     FROM
     (
-    
+
         SELECT
             ap.*,
             c.statement_start_offset,
@@ -2758,12 +2758,12 @@ BEGIN
     ORDER BY
         ap.avg_worker_time_ms DESC
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id -1', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -2781,12 +2781,12 @@ BEGIN
         finding_group = N'https://code.erikdarling.com',
         finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
         1;
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 1', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -2822,12 +2822,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 2', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -2870,12 +2870,12 @@ BEGIN
         b.database_name,
         b.contentious_object
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 3', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -2929,12 +2929,12 @@ BEGIN
     HAVING
         COUNT_BIG(DISTINCT b.transaction_id) > 1
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 4', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -2971,12 +2971,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 5', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3013,12 +3013,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 6.1', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3060,7 +3060,7 @@ BEGIN
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 6.2', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3097,12 +3097,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 6.3', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3139,12 +3139,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 6.4', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3181,12 +3181,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 6.5', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3223,12 +3223,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 7.1', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3265,12 +3265,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 7.2', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3307,7 +3307,7 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 7.3', 0, 1) WITH NOWAIT;
@@ -3349,12 +3349,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 8', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3409,12 +3409,12 @@ BEGIN
         b.client_app,
         b.host_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 1000', 0, 1) WITH NOWAIT;
     END;
-    
+
     WITH
         b AS
     (
@@ -3496,12 +3496,12 @@ BEGIN
     GROUP BY
         b.database_name
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 1001', 0, 1) WITH NOWAIT;
     END;
-    
+
     WITH
         b AS
     (
@@ -3589,12 +3589,12 @@ BEGIN
         b.database_name,
         b.contentious_object
     OPTION(RECOMPILE);
-    
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #block_findings, check_id 2147483647', 0, 1) WITH NOWAIT;
     END;
-    
+
     INSERT
         #block_findings
     (
@@ -3612,7 +3612,7 @@ BEGIN
         finding_group = N'https://code.erikdarling.com',
         finding = N'thanks for using me!',
         2147483647;
-    
+
     SELECT
         findings =
              'findings',
