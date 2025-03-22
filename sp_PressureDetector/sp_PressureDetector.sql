@@ -445,6 +445,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @log_table_cpu_queries sysname,
         @log_table_cpu_events sysname,
         @cleanup_date datetime2(7),
+        @max_sample_time datetime,
         @check_sql nvarchar(max) = N'',
         @create_sql nvarchar(max) = N'',
         @insert_sql nvarchar(max) = N'',
@@ -1518,7 +1519,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         avg_ms_per_wait, 
                         percent_signal_waits, 
                         waiting_tasks_count, 
-                        sample_time, 
                         sorting
                     )
                     SELECT 
@@ -1530,7 +1530,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         w.avg_ms_per_wait, 
                         w.percent_signal_waits, 
                         w.waiting_tasks_count_n, 
-                        w.sample_time, 
                         w.sorting
                     FROM #waits AS w;
                     ';
@@ -2038,8 +2037,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    total_write_count, 
                    avg_write_stall_ms, 
                    io_stall_read_ms, 
-                   io_stall_write_ms, 
-                   sample_time
+                   io_stall_write_ms
                )
                SELECT 
                    fm.hours_uptime, 
@@ -2056,8 +2054,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    fm.total_write_count, 
                    fm.avg_write_stall_ms, 
                    fm.io_stall_read_ms, 
-                   fm.io_stall_write_ms, 
-                   fm.sample_time
+                   fm.io_stall_write_ms
                FROM #file_metrics AS fm;
                ';
 
@@ -2277,7 +2274,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                INSERT INTO ' + @log_table_perfmon + N' 
                (
-                   sample_time, 
                    object_name, 
                    counter_name, 
                    counter_name_clean, 
@@ -2286,7 +2282,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    cntr_type
                )
                SELECT 
-                   dopc.sample_time, 
                    dopc.object_name, 
                    dopc.counter_name, 
                    dopc.counter_name_clean, 
@@ -3546,6 +3541,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
         IF @log_to_table = 1
         BEGIN
+            /* Get the maximum sample_time from the CPU events table */
+            SET @sql = N'
+                SELECT 
+                    @max_sample_time_out = ISNULL(MAX(sample_time), ''19000101'') 
+                FROM ' + @log_table_cpu_events;
+            
+            EXECUTE sys.sp_executesql
+                @sql,
+                N'@max_sample_time_out datetime OUTPUT',
+                @max_sample_time_out = @max_sample_time OUTPUT;
+                
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                 INSERT INTO ' + @log_table_cpu_events + N' 
@@ -3560,7 +3566,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     sqlserver_cpu_utilization = event.value(''(./sqlserver_cpu_utilization)[1]'', ''integer''),
                     other_process_cpu_utilization = event.value(''(./other_process_cpu_utilization)[1]'', ''integer''),
                     total_cpu_utilization = event.value(''(./total_cpu_utilization)[1]'', ''integer'')
-                FROM @cpu_utilization.nodes(''/cpu_utilization'') AS cpu(event);';
+                FROM @cpu_utilization.nodes(''/cpu_utilization'') AS cpu(event)
+                WHERE event.exist(''(./sample_time)[. > sql:variable("@max_sample_time")]'') = 1;';
 
             IF @debug = 1
             BEGIN
@@ -3569,8 +3576,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             
             EXECUTE sys.sp_executesql 
                 @insert_sql, 
-              N'@cpu_utilization xml',
-                @cpu_utilization;
+              N'@cpu_utilization xml, @max_sample_time datetime',
+                @cpu_utilization, @max_sample_time;
         END;
 
         /*Thread usage*/
