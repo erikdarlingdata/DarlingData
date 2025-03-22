@@ -562,7 +562,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     avg_ms_per_wait decimal(38,2) NULL,
                     percent_signal_waits decimal(38,2) NULL,
                     waiting_tasks_count bigint NULL,
-                    sorting bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for wait stats logging.'', 0, 1, ''' + @log_table_waits + N''') WITH NOWAIT; END;
@@ -1515,8 +1514,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         hours_wait_time, 
                         avg_ms_per_wait, 
                         percent_signal_waits, 
-                        waiting_tasks_count, 
-                        sorting
+                        waiting_tasks_count
                     )
                     SELECT 
                         w.hours_uptime, 
@@ -1526,8 +1524,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         w.hours_wait_time, 
                         w.avg_ms_per_wait, 
                         w.percent_signal_waits, 
-                        w.waiting_tasks_count_n, 
-                        w.sorting
+                        w.waiting_tasks_count_n
                     FROM #waits AS w;
                     ';
 
