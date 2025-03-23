@@ -112,7 +112,7 @@ EXECUTE dbo.sp_HumanEvents
 
 ## Resources
 * [YouTube playlist](https://www.youtube.com/playlist?list=PLt4QZ-7lfQifgpvqsa21WLt-u2tZlyoC_)
-* [Blog post](https://www.erikdarlingdata.com/sp_humanevents/)
+* [Blog post](https://www.erikdarling.com/sp_humanevents/)
 
 ---
 

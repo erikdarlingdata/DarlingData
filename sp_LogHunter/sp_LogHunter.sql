@@ -81,7 +81,7 @@ BEGIN
             introduction =
                 'hi, i''m sp_LogHunter!' UNION ALL
         SELECT  'you can use me to look through your error logs for bad stuff' UNION ALL
-        SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_LogHunter' UNION ALL
+        SELECT  'all scripts and documentation are available here: https://code.erikdarling.com' UNION ALL
         SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
         SELECT

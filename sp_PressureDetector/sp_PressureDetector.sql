@@ -88,7 +88,7 @@ BEGIN
     SELECT
         introduction =
            'hi, i''m sp_PressureDetector!' UNION ALL
-    SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData/tree/main/sp_PressureDetector' UNION ALL
+    SELECT 'you got me from https://code.erikdarling.com' UNION ALL
     SELECT 'i''m a lightweight tool for monitoring cpu and memory pressure' UNION ALL
     SELECT 'i''ll tell you: ' UNION ALL
     SELECT ' * what''s currently consuming memory on your server' UNION ALL
@@ -445,6 +445,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @log_table_cpu_queries sysname,
         @log_table_cpu_events sysname,
         @cleanup_date datetime2(7),
+        @max_sample_time datetime,
         @check_sql nvarchar(max) = N'',
         @create_sql nvarchar(max) = N'',
         @insert_sql nvarchar(max) = N'',
@@ -453,12 +454,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
     /* Validate logging parameters */
     IF @log_to_table = 1
-    BEGIN
-        /* Default database name to current database if not specified */
-        SELECT @log_database_name = ISNULL(@log_database_name, DB_NAME());
-
-        /* Default schema name to dbo if not specified */
-        SELECT @log_schema_name = ISNULL(@log_schema_name, N'dbo');
+    BEGIN    
+        
+        SELECT 
+            /* Default database name to current database if not specified */
+            @log_database_name = ISNULL(@log_database_name, DB_NAME()),
+            /* Default schema name to dbo if not specified */
+            @log_schema_name = ISNULL(@log_schema_name, N'dbo');
 
         /* Validate database exists */
         IF NOT EXISTS
@@ -473,8 +475,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             RETURN;
         END;
 
-        SET
-            @log_database_schema =
+        SELECT
+            @log_database_schema = 
                 QUOTENAME(@log_database_name) +
                 N'.' +
                 QUOTENAME(@log_schema_name) +
@@ -560,8 +562,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     avg_ms_per_wait decimal(38,2) NULL,
                     percent_signal_waits decimal(38,2) NULL,
                     waiting_tasks_count bigint NULL,
-                    sample_time datetime NULL,
-                    sorting bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for wait stats logging.'', 0, 1, ''' + @log_table_waits + N''') WITH NOWAIT; END;
@@ -607,7 +607,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     avg_write_stall_ms decimal(38,2) NULL,
                     io_stall_read_ms bigint NULL,
                     io_stall_write_ms bigint NULL,
-                    sample_time datetime NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for file metrics logging.'', 0, 1, ''' + @log_table_file_metrics + N''') WITH NOWAIT; END;
@@ -638,7 +637,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    sample_time datetime NULL,
                     object_name sysname NOT NULL,
                     counter_name sysname NOT NULL,
                     counter_name_clean sysname NULL,
@@ -1509,28 +1507,24 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                     INSERT INTO ' + @log_table_waits + N'
                     (
-                        hours_uptime,
-                        hours_cpu_time,
-                        wait_type,
-                        description,
-                        hours_wait_time,
-                        avg_ms_per_wait,
-                        percent_signal_waits,
-                        waiting_tasks_count,
-                        sample_time,
-                        sorting
+                        hours_uptime, 
+                        hours_cpu_time, 
+                        wait_type, 
+                        description, 
+                        hours_wait_time, 
+                        avg_ms_per_wait, 
+                        percent_signal_waits, 
+                        waiting_tasks_count
                     )
-                    SELECT
-                        w.hours_uptime,
-                        w.hours_cpu_time,
-                        w.wait_type,
-                        w.description,
-                        w.hours_wait_time,
-                        w.avg_ms_per_wait,
-                        w.percent_signal_waits,
-                        w.waiting_tasks_count_n,
-                        w.sample_time,
-                        w.sorting
+                    SELECT 
+                        w.hours_uptime, 
+                        w.hours_cpu_time, 
+                        w.wait_type, 
+                        w.description, 
+                        w.hours_wait_time, 
+                        w.avg_ms_per_wait, 
+                        w.percent_signal_waits, 
+                        w.waiting_tasks_count_n
                     FROM #waits AS w;
                     ';
 
@@ -2023,40 +2017,38 @@ OPTION(MAXDOP 1, RECOMPILE);',
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                INSERT INTO ' + @log_table_file_metrics + N'
                (
-                   hours_uptime,
-                   drive,
-                   database_name,
-                   database_file_details,
-                   file_size_gb,
-                   total_gb_read,
-                   total_mb_read,
-                   total_read_count,
-                   avg_read_stall_ms,
-                   total_gb_written,
-                   total_mb_written,
-                   total_write_count,
-                   avg_write_stall_ms,
-                   io_stall_read_ms,
-                   io_stall_write_ms,
-                   sample_time
+                   hours_uptime, 
+                   drive, 
+                   database_name, 
+                   database_file_details, 
+                   file_size_gb, 
+                   total_gb_read, 
+                   total_mb_read, 
+                   total_read_count, 
+                   avg_read_stall_ms, 
+                   total_gb_written, 
+                   total_mb_written, 
+                   total_write_count, 
+                   avg_write_stall_ms, 
+                   io_stall_read_ms, 
+                   io_stall_write_ms
                )
-               SELECT
-                   fm.hours_uptime,
-                   fm.drive,
-                   fm.database_name,
-                   fm.database_file_details,
-                   fm.file_size_gb,
-                   fm.total_gb_read,
-                   fm.total_mb_read,
-                   fm.total_read_count,
-                   fm.avg_read_stall_ms,
-                   fm.total_gb_written,
-                   fm.total_mb_written,
-                   fm.total_write_count,
-                   fm.avg_write_stall_ms,
-                   fm.io_stall_read_ms,
-                   fm.io_stall_write_ms,
-                   fm.sample_time
+               SELECT 
+                   fm.hours_uptime, 
+                   fm.drive, 
+                   fm.database_name, 
+                   fm.database_file_details, 
+                   fm.file_size_gb, 
+                   fm.total_gb_read, 
+                   fm.total_mb_read, 
+                   fm.total_read_count, 
+                   fm.avg_read_stall_ms, 
+                   fm.total_gb_written, 
+                   fm.total_mb_written, 
+                   fm.total_write_count, 
+                   fm.avg_write_stall_ms, 
+                   fm.io_stall_read_ms, 
+                   fm.io_stall_write_ms
                FROM #file_metrics AS fm;
                ';
 
@@ -2276,16 +2268,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                INSERT INTO ' + @log_table_perfmon + N'
                (
-                   sample_time,
-                   object_name,
-                   counter_name,
-                   counter_name_clean,
-                   instance_name,
-                   cntr_value,
+                   object_name, 
+                   counter_name, 
+                   counter_name_clean, 
+                   instance_name, 
+                   cntr_value, 
                    cntr_type
                )
                SELECT
-                   dopc.sample_time,
                    dopc.object_name,
                    dopc.counter_name,
                    dopc.counter_name_clean,
@@ -3545,6 +3535,28 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
         IF @log_to_table = 1
         BEGIN
+            /* Get the maximum sample_time from the CPU events table */
+            SET @insert_sql = N'
+                SELECT 
+                    @max_sample_time_out = 
+                        ISNULL
+                        (
+                            MAX(sample_time), 
+                            ''19000101''
+                        ) 
+                FROM ' + @log_table_cpu_events + N'
+                OPTION(RECOMPILE);';
+
+            IF @debug = 1
+            BEGIN
+                PRINT @insert_sql;
+            END;
+            
+            EXECUTE sys.sp_executesql
+                @insert_sql,
+                N'@max_sample_time_out datetime OUTPUT',
+                @max_sample_time OUTPUT;
+                
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                 INSERT INTO ' + @log_table_cpu_events + N'
@@ -3559,17 +3571,20 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     sqlserver_cpu_utilization = event.value(''(./sqlserver_cpu_utilization)[1]'', ''integer''),
                     other_process_cpu_utilization = event.value(''(./other_process_cpu_utilization)[1]'', ''integer''),
                     total_cpu_utilization = event.value(''(./total_cpu_utilization)[1]'', ''integer'')
-                FROM @cpu_utilization.nodes(''/cpu_utilization'') AS cpu(event);';
+                FROM @cpu_utilization.nodes(''/cpu_utilization'') AS cpu(event)
+                WHERE event.exist(''(./sample_time)[. > sql:variable("@max_sample_time")]'') = 1;';
 
             IF @debug = 1
             BEGIN
                 PRINT @insert_sql;
             END;
-
-            EXECUTE sys.sp_executesql
-                @insert_sql,
-              N'@cpu_utilization xml',
-                @cpu_utilization;
+            
+            EXECUTE sys.sp_executesql 
+                @insert_sql, 
+              N'@cpu_utilization xml, 
+                @max_sample_time datetime',
+                @cpu_utilization, 
+                @max_sample_time;
         END;
 
         /*Thread usage*/
