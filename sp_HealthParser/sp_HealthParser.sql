@@ -349,7 +349,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @mi_msg =
             CONVERT(nchar(1), @mi),
         @timestamp_utc_mode =
-            CASE 
+            CASE
                 WHEN EXISTS
                 (
                     SELECT
