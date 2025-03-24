@@ -454,9 +454,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
     /* Validate logging parameters */
     IF @log_to_table = 1
-    BEGIN    
-        
-        SELECT 
+    BEGIN
+
+        SELECT
             /* Default database name to current database if not specified */
             @log_database_name = ISNULL(@log_database_name, DB_NAME()),
             /* Default schema name to dbo if not specified */
@@ -476,7 +476,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
 
         SELECT
-            @log_database_schema = 
+            @log_database_schema =
                 QUOTENAME(@log_database_name) +
                 N'.' +
                 QUOTENAME(@log_schema_name) +
@@ -1507,23 +1507,23 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                     INSERT INTO ' + @log_table_waits + N'
                     (
-                        hours_uptime, 
-                        hours_cpu_time, 
-                        wait_type, 
-                        description, 
-                        hours_wait_time, 
-                        avg_ms_per_wait, 
-                        percent_signal_waits, 
+                        hours_uptime,
+                        hours_cpu_time,
+                        wait_type,
+                        description,
+                        hours_wait_time,
+                        avg_ms_per_wait,
+                        percent_signal_waits,
                         waiting_tasks_count
                     )
-                    SELECT 
-                        w.hours_uptime, 
-                        w.hours_cpu_time, 
-                        w.wait_type, 
-                        w.description, 
-                        w.hours_wait_time, 
-                        w.avg_ms_per_wait, 
-                        w.percent_signal_waits, 
+                    SELECT
+                        w.hours_uptime,
+                        w.hours_cpu_time,
+                        w.wait_type,
+                        w.description,
+                        w.hours_wait_time,
+                        w.avg_ms_per_wait,
+                        w.percent_signal_waits,
                         w.waiting_tasks_count_n
                     FROM #waits AS w;
                     ';
@@ -2017,37 +2017,37 @@ OPTION(MAXDOP 1, RECOMPILE);',
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                INSERT INTO ' + @log_table_file_metrics + N'
                (
-                   hours_uptime, 
-                   drive, 
-                   database_name, 
-                   database_file_details, 
-                   file_size_gb, 
-                   total_gb_read, 
-                   total_mb_read, 
-                   total_read_count, 
-                   avg_read_stall_ms, 
-                   total_gb_written, 
-                   total_mb_written, 
-                   total_write_count, 
-                   avg_write_stall_ms, 
-                   io_stall_read_ms, 
+                   hours_uptime,
+                   drive,
+                   database_name,
+                   database_file_details,
+                   file_size_gb,
+                   total_gb_read,
+                   total_mb_read,
+                   total_read_count,
+                   avg_read_stall_ms,
+                   total_gb_written,
+                   total_mb_written,
+                   total_write_count,
+                   avg_write_stall_ms,
+                   io_stall_read_ms,
                    io_stall_write_ms
                )
-               SELECT 
-                   fm.hours_uptime, 
-                   fm.drive, 
-                   fm.database_name, 
-                   fm.database_file_details, 
-                   fm.file_size_gb, 
-                   fm.total_gb_read, 
-                   fm.total_mb_read, 
-                   fm.total_read_count, 
-                   fm.avg_read_stall_ms, 
-                   fm.total_gb_written, 
-                   fm.total_mb_written, 
-                   fm.total_write_count, 
-                   fm.avg_write_stall_ms, 
-                   fm.io_stall_read_ms, 
+               SELECT
+                   fm.hours_uptime,
+                   fm.drive,
+                   fm.database_name,
+                   fm.database_file_details,
+                   fm.file_size_gb,
+                   fm.total_gb_read,
+                   fm.total_mb_read,
+                   fm.total_read_count,
+                   fm.avg_read_stall_ms,
+                   fm.total_gb_written,
+                   fm.total_mb_written,
+                   fm.total_write_count,
+                   fm.avg_write_stall_ms,
+                   fm.io_stall_read_ms,
                    fm.io_stall_write_ms
                FROM #file_metrics AS fm;
                ';
@@ -2268,11 +2268,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                INSERT INTO ' + @log_table_perfmon + N'
                (
-                   object_name, 
-                   counter_name, 
-                   counter_name_clean, 
-                   instance_name, 
-                   cntr_value, 
+                   object_name,
+                   counter_name,
+                   counter_name_clean,
+                   instance_name,
+                   cntr_value,
                    cntr_type
                )
                SELECT
@@ -3537,13 +3537,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             /* Get the maximum sample_time from the CPU events table */
             SET @insert_sql = N'
-                SELECT 
-                    @max_sample_time_out = 
+                SELECT
+                    @max_sample_time_out =
                         ISNULL
                         (
-                            MAX(sample_time), 
+                            MAX(sample_time),
                             ''19000101''
-                        ) 
+                        )
                 FROM ' + @log_table_cpu_events + N'
                 OPTION(RECOMPILE);';
 
@@ -3551,12 +3551,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
             BEGIN
                 PRINT @insert_sql;
             END;
-            
+
             EXECUTE sys.sp_executesql
                 @insert_sql,
                 N'@max_sample_time_out datetime OUTPUT',
                 @max_sample_time OUTPUT;
-                
+
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                 INSERT INTO ' + @log_table_cpu_events + N'
@@ -3578,12 +3578,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
             BEGIN
                 PRINT @insert_sql;
             END;
-            
-            EXECUTE sys.sp_executesql 
-                @insert_sql, 
-              N'@cpu_utilization xml, 
+
+            EXECUTE sys.sp_executesql
+                @insert_sql,
+              N'@cpu_utilization xml,
                 @max_sample_time datetime',
-                @cpu_utilization, 
+                @cpu_utilization,
                 @max_sample_time;
         END;
 
