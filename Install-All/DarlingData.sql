@@ -1,4 +1,4 @@
--- Compile Date: 03/19/2025 21:03:22 UTC
+-- Compile Date: 03/24/2025 13:48:58 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -349,7 +349,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nchar(1), @azure),
         @mi_msg =
             CONVERT(nchar(1), @mi),
-        @timestamp_utc_mode  =
+        @timestamp_utc_mode =
             CASE
                 WHEN EXISTS
                 (
@@ -370,7 +370,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     SERVERPROPERTY('PRODUCTVERSION')
                                 ),
                                 4
-                            ) > 17
+                            ) > 16
                         THEN 1
                         ELSE 0
                     END +
@@ -452,10 +452,10 @@ AND   ca.utc_timestamp < @end_date';
 
         IF @timestamp_utc_mode = 1
             SET @time_filter = N'
-    AND CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date';
+    AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date';
         ELSE
             SET @time_filter = '
-    AND fx.timestamp_utc BETWEEN @start_date AND @end_date';
+    AND   fx.timestamp_utc BETWEEN @start_date AND @end_date';
     END;
 
     SET @sql_template =
@@ -5380,7 +5380,7 @@ BEGIN
     SELECT N'misuse of this procedure can harm performance' UNION ALL
     SELECT N'be very careful about introducing observer overhead, especially when gathering query plans' UNION ALL
     SELECT N'be even more careful when setting up permanent sessions!' UNION ALL
-    SELECT N'for additional support: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
+    SELECT N'for additional support: https://code.erikdarling.com' UNION ALL
     SELECT N'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
 
@@ -10177,7 +10177,7 @@ BEGIN
     SELECT  'it will also work with any other extended event session that captures blocking' UNION ALL
     SELECT  'just use the @session_name parameter to point me there' UNION ALL
     SELECT  'EXECUTE dbo.sp_HumanEventsBlockViewer @session_name = N''blocked_process_report'';' UNION ALL
-    SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_HumanEvents' UNION ALL
+    SELECT  'all scripts and documentation are available here: https://code.erikdarling.com' UNION ALL
     SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
     SELECT
@@ -12463,10 +12463,8 @@ FROM
     FROM #blocks AS b
 ) AS b
 WHERE b.n = 1
-AND   (b.contentious_object = @object_name
-       OR @object_name IS NULL)
-
-';
+AND  (b.contentious_object = @object_name
+      OR @object_name IS NULL)';
 
 /* Add the WHERE clause only for table logging */
 IF @log_to_table = 1
@@ -19556,7 +19554,7 @@ BEGIN
             introduction =
                 'hi, i''m sp_LogHunter!' UNION ALL
         SELECT  'you can use me to look through your error logs for bad stuff' UNION ALL
-        SELECT  'all scripts and documentation are available here: https://github.com/erikdarlingdata/DarlingData/tree/main/sp_LogHunter' UNION ALL
+        SELECT  'all scripts and documentation are available here: https://code.erikdarling.com' UNION ALL
         SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
         SELECT
@@ -20302,7 +20300,7 @@ BEGIN
     SELECT
         introduction =
            'hi, i''m sp_PressureDetector!' UNION ALL
-    SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData/tree/main/sp_PressureDetector' UNION ALL
+    SELECT 'you got me from https://code.erikdarling.com' UNION ALL
     SELECT 'i''m a lightweight tool for monitoring cpu and memory pressure' UNION ALL
     SELECT 'i''ll tell you: ' UNION ALL
     SELECT ' * what''s currently consuming memory on your server' UNION ALL
@@ -20659,6 +20657,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @log_table_cpu_queries sysname,
         @log_table_cpu_events sysname,
         @cleanup_date datetime2(7),
+        @max_sample_time datetime,
         @check_sql nvarchar(max) = N'',
         @create_sql nvarchar(max) = N'',
         @insert_sql nvarchar(max) = N'',
@@ -20668,11 +20667,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
     /* Validate logging parameters */
     IF @log_to_table = 1
     BEGIN
-        /* Default database name to current database if not specified */
-        SELECT @log_database_name = ISNULL(@log_database_name, DB_NAME());
 
-        /* Default schema name to dbo if not specified */
-        SELECT @log_schema_name = ISNULL(@log_schema_name, N'dbo');
+        SELECT
+            /* Default database name to current database if not specified */
+            @log_database_name = ISNULL(@log_database_name, DB_NAME()),
+            /* Default schema name to dbo if not specified */
+            @log_schema_name = ISNULL(@log_schema_name, N'dbo');
 
         /* Validate database exists */
         IF NOT EXISTS
@@ -20687,7 +20687,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             RETURN;
         END;
 
-        SET
+        SELECT
             @log_database_schema =
                 QUOTENAME(@log_database_name) +
                 N'.' +
@@ -20774,8 +20774,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     avg_ms_per_wait decimal(38,2) NULL,
                     percent_signal_waits decimal(38,2) NULL,
                     waiting_tasks_count bigint NULL,
-                    sample_time datetime NULL,
-                    sorting bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for wait stats logging.'', 0, 1, ''' + @log_table_waits + N''') WITH NOWAIT; END;
@@ -20821,7 +20819,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     avg_write_stall_ms decimal(38,2) NULL,
                     io_stall_read_ms bigint NULL,
                     io_stall_write_ms bigint NULL,
-                    sample_time datetime NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for file metrics logging.'', 0, 1, ''' + @log_table_file_metrics + N''') WITH NOWAIT; END;
@@ -20852,7 +20849,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    sample_time datetime NULL,
                     object_name sysname NOT NULL,
                     counter_name sysname NOT NULL,
                     counter_name_clean sysname NULL,
@@ -21730,9 +21726,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         hours_wait_time,
                         avg_ms_per_wait,
                         percent_signal_waits,
-                        waiting_tasks_count,
-                        sample_time,
-                        sorting
+                        waiting_tasks_count
                     )
                     SELECT
                         w.hours_uptime,
@@ -21742,9 +21736,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         w.hours_wait_time,
                         w.avg_ms_per_wait,
                         w.percent_signal_waits,
-                        w.waiting_tasks_count_n,
-                        w.sample_time,
-                        w.sorting
+                        w.waiting_tasks_count_n
                     FROM #waits AS w;
                     ';
 
@@ -22251,8 +22243,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    total_write_count,
                    avg_write_stall_ms,
                    io_stall_read_ms,
-                   io_stall_write_ms,
-                   sample_time
+                   io_stall_write_ms
                )
                SELECT
                    fm.hours_uptime,
@@ -22269,8 +22260,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    fm.total_write_count,
                    fm.avg_write_stall_ms,
                    fm.io_stall_read_ms,
-                   fm.io_stall_write_ms,
-                   fm.sample_time
+                   fm.io_stall_write_ms
                FROM #file_metrics AS fm;
                ';
 
@@ -22490,7 +22480,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                INSERT INTO ' + @log_table_perfmon + N'
                (
-                   sample_time,
                    object_name,
                    counter_name,
                    counter_name_clean,
@@ -22499,7 +22488,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    cntr_type
                )
                SELECT
-                   dopc.sample_time,
                    dopc.object_name,
                    dopc.counter_name,
                    dopc.counter_name_clean,
@@ -23759,6 +23747,28 @@ OPTION(MAXDOP 1, RECOMPILE);',
         END;
         IF @log_to_table = 1
         BEGIN
+            /* Get the maximum sample_time from the CPU events table */
+            SET @insert_sql = N'
+                SELECT
+                    @max_sample_time_out =
+                        ISNULL
+                        (
+                            MAX(sample_time),
+                            ''19000101''
+                        )
+                FROM ' + @log_table_cpu_events + N'
+                OPTION(RECOMPILE);';
+
+            IF @debug = 1
+            BEGIN
+                PRINT @insert_sql;
+            END;
+
+            EXECUTE sys.sp_executesql
+                @insert_sql,
+                N'@max_sample_time_out datetime OUTPUT',
+                @max_sample_time OUTPUT;
+
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                 INSERT INTO ' + @log_table_cpu_events + N'
@@ -23773,7 +23783,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     sqlserver_cpu_utilization = event.value(''(./sqlserver_cpu_utilization)[1]'', ''integer''),
                     other_process_cpu_utilization = event.value(''(./other_process_cpu_utilization)[1]'', ''integer''),
                     total_cpu_utilization = event.value(''(./total_cpu_utilization)[1]'', ''integer'')
-                FROM @cpu_utilization.nodes(''/cpu_utilization'') AS cpu(event);';
+                FROM @cpu_utilization.nodes(''/cpu_utilization'') AS cpu(event)
+                WHERE event.exist(''(./sample_time)[. > sql:variable("@max_sample_time")]'') = 1;';
 
             IF @debug = 1
             BEGIN
@@ -23782,8 +23793,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
             EXECUTE sys.sp_executesql
                 @insert_sql,
-              N'@cpu_utilization xml',
-                @cpu_utilization;
+              N'@cpu_utilization xml,
+                @max_sample_time datetime',
+                @cpu_utilization,
+                @max_sample_time;
         END;
 
         /*Thread usage*/
@@ -24629,7 +24642,7 @@ BEGIN
     SELECT
         introduction =
            'hi, i''m sp_QuickieStore!' UNION ALL
-    SELECT 'you got me from https://github.com/erikdarlingdata/DarlingData/tree/main/sp_QuickieStore' UNION ALL
+    SELECT 'you got me from https://code.erikdarling.com' UNION ALL
     SELECT 'i can be used to quickly grab misbehaving queries from query store' UNION ALL
     SELECT 'the plan analysis is up to you; there will not be any XML shredding here' UNION ALL
     SELECT 'so what can you do, and how do you do it? read below!' UNION ALL
@@ -25324,12 +25337,12 @@ CREATE TABLE
     database_id integer NOT NULL,
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    all_plan_ids varchar(MAX),
+    all_plan_ids varchar(max),
     plan_group_id bigint NULL,
     engine_version nvarchar(32) NULL,
     compatibility_level smallint NOT NULL,
     query_plan_hash binary(8) NOT NULL,
-    query_plan nvarchar(MAX) NULL,
+    query_plan nvarchar(max) NULL,
     is_online_index_plan bit NOT NULL,
     is_trivial_plan bit NOT NULL,
     is_parallel_plan bit NOT NULL,
@@ -25639,7 +25652,7 @@ CREATE TABLE
     plan_feedback_id bigint NOT NULL,
     plan_id bigint NULL,
     feature_desc nvarchar(120) NULL,
-    feedback_data nvarchar(MAX) NULL,
+    feedback_data nvarchar(max) NULL,
     state_desc nvarchar(120) NULL,
     create_time datetimeoffset(7) NOT NULL,
     last_updated_time datetimeoffset(7) NULL
@@ -25654,7 +25667,7 @@ CREATE TABLE
     database_id integer NOT NULL,
     query_hint_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    query_hint_text nvarchar(MAX) NULL,
+    query_hint_text nvarchar(max) NULL,
     last_query_hint_failure_reason_desc nvarchar(256) NULL,
     query_hint_failure_count bigint NOT NULL,
     source_desc nvarchar(256) NULL
@@ -25682,6 +25695,27 @@ CREATE TABLE
     replica_group_id bigint NOT NULL,
     role_type smallint NOT NULL,
     replica_name nvarchar(1288) NULL
+);
+
+/*Gonna try gathering this based on*/
+CREATE TABLE
+    #query_hash_totals
+(
+    database_id integer NOT NULL,
+    query_hash binary(8) NOT NULL,
+    total_executions bigint NOT NULL,
+    total_duration_ms decimal(19,2) NOT NULL,
+    total_cpu_time_ms decimal(19,2) NOT NULL,
+    total_logical_reads_mb decimal(19,2) NOT NULL,
+    total_physical_reads_mb decimal(19,2) NOT NULL,
+    total_logical_writes_mb decimal(19,2) NOT NULL,
+    total_clr_time_ms decimal(19,2) NOT NULL,
+    total_memory_mb decimal(19,2) NOT NULL,
+    total_rowcount decimal(19,2) NOT NULL,
+    total_num_physical_io_reads decimal(19,2) NULL,
+    total_log_bytes_used_mb decimal(19,2) NULL,
+    total_tempdb_space_used_mb decimal(19,2) NULL,
+    PRIMARY KEY CLUSTERED(query_hash, database_id)
 );
 
 /*
@@ -25720,24 +25754,6 @@ CREATE TABLE
         )
 );
 
-/*Gonna try gathering this based on*/
-CREATE TABLE
-    #query_hash_totals
-(
-    database_id integer NOT NULL,
-    query_hash binary(8) NOT NULL,
-    total_executions bigint NOT NULL,
-    total_duration_ms decimal(19,2) NOT NULL,
-    total_cpu_time_ms decimal(19,2) NOT NULL,
-    total_logical_reads_mb decimal(19,2) NOT NULL,
-    total_physical_reads_mb decimal(19,2) NOT NULL,
-    total_logical_writes_mb decimal(19,2) NOT NULL,
-    total_clr_time_ms decimal(19,2) NOT NULL,
-    total_memory_mb decimal(19,2) NOT NULL,
-    total_rowcount decimal(19,2) NOT NULL,
-    PRIMARY KEY CLUSTERED(query_hash, database_id)
-);
-
 /*GET ALL THOSE DATABASES*/
 CREATE TABLE
     #databases
@@ -25774,7 +25790,7 @@ DECLARE
     metric_group nvarchar(50) NOT NULL, /* Grouping (duration, cpu, etc.) */
     metric_type nvarchar(20) NOT NULL, /* Type within group (avg, total, last, min, max) */
     column_name nvarchar(100) NOT NULL, /* Column name as it appears in output */
-    column_source nvarchar(MAX) NOT NULL, /* Source expression or formula */
+    column_source nvarchar(max) NOT NULL, /* Source expression or formula */
     is_conditional bit NOT NULL, /* Is this a conditional column (depends on a parameter) */
     condition_param nvarchar(50) NULL, /* Parameter name this column depends on */
     condition_value sql_variant NULL, /* Value the parameter must have */
@@ -25892,7 +25908,7 @@ VALUES
     (1230, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads_mb', 'qsrs.min_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
     (1240, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads_mb', 'qsrs.max_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for new physical IO reads */
-    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'SUM(qsrs.total_num_physical_io_reads_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new_with_hash_totals', 1, 0, 'N0'),
+    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* Finish adding the remaining columns (log bytes and tempdb usage) */
     /* Log bytes used */
     (1300, 'log_bytes', 'avg', 'avg_log_bytes_used_mb', 'qsrs.avg_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
@@ -25901,7 +25917,7 @@ VALUES
     (1330, 'log_bytes', 'min', 'min_log_bytes_used_mb', 'qsrs.min_log_bytes_used_mb', 1, 'new', 1, 1, 'N0'),
     (1340, 'log_bytes', 'max', 'max_log_bytes_used_mb', 'qsrs.max_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for log bytes */
-    (1315, 'log_bytes', 'total_hash', 'total_log_bytes_used_mb_by_query_hash', 'SUM(qsrs.total_log_bytes_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new_with_hash_totals', 1, 0, 'N0'),
+    (1315, 'log_bytes', 'total_hash', 'total_log_bytes_used_mb_by_query_hash', 'qht.total_log_bytes_used_mb', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* TempDB usage  */
     (1400, 'tempdb', 'avg', 'avg_tempdb_space_used_mb', 'qsrs.avg_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
     (1410, 'tempdb', 'total', 'total_tempdb_space_used_mb', 'qsrs.total_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
@@ -25909,7 +25925,7 @@ VALUES
     (1430, 'tempdb', 'min', 'min_tempdb_space_used_mb', 'qsrs.min_tempdb_space_used_mb', 1, 'new', 1, 1, 'N0'),
     (1440, 'tempdb', 'max', 'max_tempdb_space_used_mb', 'qsrs.max_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for tempdb */
-    (1415, 'tempdb', 'total_hash', 'total_tempdb_space_used_mb_by_query_hash', 'SUM(qsrs.total_tempdb_space_used_mb) OVER (PARTITION BY qsq.query_hash ORDER BY qsq.query_hash)', 1, 'new_with_hash_totals', 1, 0, 'N0'),
+    (1415, 'tempdb', 'total_hash', 'total_tempdb_space_used_mb_by_query_hash', 'qht.total_tempdb_space_used_mb', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* Context settings and sorting columns  */
     (1500, 'metadata', 'context', 'context_settings', 'qsrs.context_settings', 0, NULL, NULL, 0, NULL);
 
@@ -26112,13 +26128,13 @@ DECLARE
     @procedure_name_quoted nvarchar(1024),
     @collation sysname,
     @new bit,
-    @sql nvarchar(MAX),
-    @isolation_level nvarchar(MAX),
+    @sql nvarchar(max),
+    @isolation_level nvarchar(max),
     @parameters nvarchar(4000),
     @plans_top bigint,
     @queries_top bigint,
     @nc10 nvarchar(2),
-    @where_clause nvarchar(MAX),
+    @where_clause nvarchar(max),
     @query_text_search_original_value nvarchar(4000),
     @query_text_search_not_original_value nvarchar(4000),
     @procedure_exists bit,
@@ -26130,9 +26146,9 @@ DECLARE
     @string_split_ints nvarchar(1500),
     @string_split_strings nvarchar(1500),
     @current_table nvarchar(100),
-    @troubleshoot_insert nvarchar(MAX),
-    @troubleshoot_update nvarchar(MAX),
-    @troubleshoot_info nvarchar(MAX),
+    @troubleshoot_insert nvarchar(max),
+    @troubleshoot_update nvarchar(max),
+    @troubleshoot_info nvarchar(max),
     @rc bigint,
     @em tinyint,
     @fo tinyint,
@@ -26147,8 +26163,8 @@ DECLARE
     @regression_baseline_start_date_original datetimeoffset(7),
     @regression_baseline_end_date_original datetimeoffset(7),
     @regression_mode bit,
-    @regression_where_clause nvarchar(MAX),
-    @column_sql nvarchar(MAX),
+    @regression_where_clause nvarchar(max),
+    @column_sql nvarchar(max),
     @param_name nvarchar(100),
     @param_value nvarchar(4000),
     @temp_table sysname,
@@ -26156,7 +26172,7 @@ DECLARE
     @data_type sysname,
     @is_include bit,
     @requires_secondary_processing bit,
-    @split_sql nvarchar(MAX),
+    @split_sql nvarchar(max),
     @error_msg nvarchar(2000),
     @conflict_list nvarchar(max) = N'';
 
@@ -27919,24 +27935,6 @@ BEGIN
 END;
 
 /*
-These columns are only available in 2017+
-*/
-IF
-(
-  (
-      @sort_order = 'tempdb'
-   OR @sort_order_is_a_wait = 1
-  )
-  AND @new = 0
-)
-BEGIN
-   RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
-
-   SELECT
-       @sort_order = N'cpu';
-END;
-
-/*
 See if our cool new 2022 views exist.
 May have to tweak this if views aren't present in some cloudy situations.
 */
@@ -28128,6 +28126,28 @@ OPTION(RECOMPILE);' + @nc10;
         END;
     END;
 END; /*End wait stats checks*/
+
+/*
+These columns are only available in 2017+
+*/
+IF
+(
+  (
+      @sort_order = 'tempdb'
+   OR @sort_order_is_a_wait = 1
+  )
+  AND
+  (
+       @new = 0
+    OR @query_store_waits_enabled = 0
+  )
+)
+BEGIN
+   RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
+
+   SELECT
+       @sort_order = N'cpu';
+END;
 
 /*Check that the selected @timezone is valid*/
 IF @timezone IS NOT NULL
@@ -28585,7 +28605,7 @@ BEGIN
         END;
 
         /* Execute the dynamic SQL to populate the temporary table */
-        DECLARE @dynamic_sql nvarchar(MAX) = N'
+        DECLARE @dynamic_sql nvarchar(max) = N'
         INSERT INTO
             ' + @temp_table + N'
         WITH
@@ -28630,7 +28650,7 @@ BEGIN
 
             /* Build appropriate SQL based on parameter type */
             DECLARE
-                @secondary_sql nvarchar(MAX) = N'';
+                @secondary_sql nvarchar(max) = N'';
 
             IF @param_name = 'include_query_ids'
             OR @param_name = 'ignore_query_ids'
@@ -31472,7 +31492,20 @@ BEGIN
         SUM(qsrs.count_executions * (qsrs.avg_logical_io_writes * 8.)) / 1024.,
         SUM(qsrs.count_executions * qsrs.avg_clr_time) / 1000.,
         SUM(qsrs.count_executions * (qsrs.avg_query_max_used_memory * 8.)) / 1024.,
-        SUM(qsrs.count_executions * qsrs.avg_rowcount)
+        SUM(qsrs.count_executions * qsrs.avg_rowcount)' +
+  CASE
+      @new
+      WHEN 1
+      THEN N',
+        SUM(qsrs.count_executions * (qsrs.avg_num_physical_io_reads * 8)) / 1024.,
+        SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 100000000.,
+        SUM(qsrs.count_executions * (qsrs.avg_tempdb_space_used * 8)) / 1024.'
+      ELSE N'
+        NULL,
+        NULL,
+        NULL'
+  END +
+  N'
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
       ON qsrs.plan_id = qsp.plan_id
@@ -31511,7 +31544,10 @@ BEGIN
         total_logical_writes_mb,
         total_clr_time_ms,
         total_memory_mb,
-        total_rowcount
+        total_rowcount,
+        total_num_physical_io_reads,
+        total_log_bytes_used_mb,
+        total_tempdb_space_used_mb
     )
     EXECUTE sys.sp_executesql
         @sql,
@@ -32712,7 +32748,7 @@ BEGIN
         @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
         N'
 SELECT
     x.*
@@ -32816,7 +32852,12 @@ FROM
                            WHEN cd.condition_param = N'include_query_hash_totals'
                            THEN @include_query_hash_totals
                            WHEN cd.condition_param = N'new_with_hash_totals'
-                           THEN CASE WHEN @new = 1 AND @include_query_hash_totals = 1 THEN 1 ELSE 0 END
+                           THEN CASE
+                                    WHEN @new = 1
+                                    AND  @include_query_hash_totals = 1
+                                    THEN 1
+                                    ELSE 0
+                                END
                            ELSE 0
                        END = cd.condition_value
                 )
@@ -32851,7 +32892,7 @@ FROM
         @sql +=
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'
         FROM #query_store_runtime_stats AS qsrs'
     );
@@ -32898,7 +32939,7 @@ SELECT
     @sql +=
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'
     CROSS APPLY
     (
@@ -32959,7 +33000,7 @@ SELECT
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
     CROSS APPLY
     (
@@ -33035,7 +33076,7 @@ SELECT
         @sql +=
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'
 ) AS x
 ' + CASE WHEN @regression_mode = 1 THEN N'' ELSE N'WHERE x.n = 1 ' END
@@ -33236,7 +33277,7 @@ BEGIN
 
                 EXECUTE sys.sp_executesql
                     @sql,
-                  N'@timezone sysname, @utc_offset_string nvarchar(max)',
+                  N'@timezone sysname, @utc_offset_string nvarchar(6)',
                     @timezone, @utc_offset_string;
             END;
             ELSE IF @only_queries_with_feedback = 1
@@ -33633,7 +33674,7 @@ BEGIN
 
             EXECUTE sys.sp_executesql
                 @sql,
-              N'@timezone sysname, @utc_offset_string nvarchar(max)',
+              N'@timezone sysname, @utc_offset_string nvarchar(6)',
                 @timezone, @utc_offset_string;
 
         END; /*End compilation query section*/
@@ -33656,7 +33697,7 @@ BEGIN
             @sql =
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
         SELECT
             source =
@@ -33882,7 +33923,7 @@ BEGIN
                     @sql =
                 CONVERT
                 (
-                    nvarchar(MAX),
+                    nvarchar(max),
                     N'
                 SELECT DISTINCT
                     source =
@@ -34022,7 +34063,7 @@ BEGIN
                     @sql =
                 CONVERT
                 (
-                    nvarchar(MAX),
+                    nvarchar(max),
                     N'
                 SELECT
                     source =
@@ -34185,7 +34226,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
         SELECT
             source =
@@ -34233,7 +34274,7 @@ BEGIN
             @sql +=
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'
             dqso.size_based_cleanup_mode_desc
         FROM #database_query_store_options AS dqso
@@ -34433,7 +34474,7 @@ BEGIN
                                 XML
                                 PATH(''),
                                 TYPE
-                        ).value('.', 'nvarchar(MAX)'),
+                        ).value('.', 'nvarchar(max)'),
                         1,
                         2,
                         N''
