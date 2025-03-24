@@ -4122,8 +4122,8 @@ BEGIN
 
         /* Execute the dynamic SQL to populate the temporary table */
         SET @dynamic_sql = N'
-        INSERT INTO 
-            ' + @temp_table + N' 
+        INSERT INTO
+            ' + @temp_table + N'
         WITH
             (TABLOCK)
         (
@@ -4164,8 +4164,8 @@ BEGIN
             SELECT
                 @current_table = 'inserting #include_plan_ids for ' + @param_name;
 
-            /* Build appropriate SQL based on parameter type */            
-            IF @param_name = 'include_query_ids' 
+            /* Build appropriate SQL based on parameter type */
+            IF @param_name = 'include_query_ids'
             OR @param_name = 'ignore_query_ids'
             BEGIN
                 SELECT @secondary_sql = N'
