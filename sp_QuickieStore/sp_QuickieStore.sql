@@ -1685,7 +1685,13 @@ DECLARE
     @requires_secondary_processing bit,
     @split_sql nvarchar(max),
     @error_msg nvarchar(2000),
-    @conflict_list nvarchar(max) = N'';
+    @conflict_list nvarchar(max) = N'',
+    @database_cursor CURSOR,
+    @filter_cursor CURSOR,
+    @dynamic_sql nvarchar(max) = N'',
+    @secondary_sql nvarchar(max) = N'',
+    @temp_target_table nvarchar(100),
+    @exist_or_not_exist nvarchar(20);
 
 /*
 In cases where we are escaping @query_text_search and
@@ -2251,9 +2257,6 @@ BEGIN
     END;
 END;
 
-DECLARE
-    @database_cursor CURSOR;
-
 SET
     @database_cursor =
         CURSOR
@@ -2530,7 +2533,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             ) AS ids
                 CROSS APPLY ids.nodes(''x'') AS x (x)
         ) AS ids
-        OPTION(RECOMPILE);',
+        OPTION(RECOMPILE);
+        ',
     @string_split_strings = N'
         SELECT DISTINCT
             ids =
@@ -2574,7 +2578,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             ) AS ids
                 CROSS APPLY ids.nodes(''x'') AS x (x)
         ) AS ids
-        OPTION(RECOMPILE);',
+        OPTION(RECOMPILE);
+        ',
     @troubleshoot_insert = N'
         INSERT
             #troubleshoot_performance
@@ -2589,7 +2594,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             @current_table,
             GETDATE()
         )
-        OPTION(RECOMPILE);',
+        OPTION(RECOMPILE);
+        ',
     @troubleshoot_update = N'
         UPDATE
             tp
@@ -2597,7 +2603,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             tp.end_time = GETDATE()
         FROM #troubleshoot_performance AS tp
         WHERE tp.current_table = @current_table
-        OPTION(RECOMPILE);',
+        OPTION(RECOMPILE);
+        ',
     @troubleshoot_info = N'
         SELECT
             (
@@ -2616,7 +2623,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
                     PATH(N''''),
                     TYPE
             ).query(''.[1]'') AS current_query
-        OPTION(RECOMPILE);',
+        OPTION(RECOMPILE);
+        ',
     @rc = 0,
     @em = @expert_mode,
     @fo = @format_output,
@@ -4041,9 +4049,6 @@ OR @ignore_plan_hashes   IS NOT NULL
 OR @ignore_sql_handles   IS NOT NULL
 )
 BEGIN
-    DECLARE
-        @filter_cursor CURSOR;
-
     SET @filter_cursor =
         CURSOR
         LOCAL
@@ -4116,7 +4121,7 @@ BEGIN
         END;
 
         /* Execute the dynamic SQL to populate the temporary table */
-        DECLARE @dynamic_sql nvarchar(max) = N'
+        SET @dynamic_sql = N'
         INSERT INTO 
             ' + @temp_table + N' 
         WITH
@@ -4159,10 +4164,7 @@ BEGIN
             SELECT
                 @current_table = 'inserting #include_plan_ids for ' + @param_name;
 
-            /* Build appropriate SQL based on parameter type */
-            DECLARE 
-                @secondary_sql nvarchar(max) = N'';
-            
+            /* Build appropriate SQL based on parameter type */            
             IF @param_name = 'include_query_ids' 
             OR @param_name = 'ignore_query_ids'
             BEGIN
@@ -4183,7 +4185,7 @@ BEGIN
                               N'_query_ids AS iqi
                           WHERE iqi.query_id = qsp.query_id
                       )
-                OPTION(RECOMPILE);';
+                OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
             IF @param_name = 'include_query_hashes'
@@ -4213,7 +4215,7 @@ BEGIN
                                     WHERE iqh.query_hash = qsq.query_hash
                                 )
                       )
-                OPTION(RECOMPILE);';
+                OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
             IF @param_name = 'include_plan_hashes'
@@ -4235,7 +4237,7 @@ BEGIN
                               END + N'_plan_hashes AS iph
                           WHERE iph.plan_hash = qsp.query_plan_hash
                       )
-                OPTION(RECOMPILE);';
+                OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
             IF
@@ -4272,7 +4274,7 @@ BEGIN
                                         )
                               )
                       )
-                OPTION(RECOMPILE);';
+                OPTION(RECOMPILE);' + @nc10;
             END;
 
             /* Process secondary sql if defined */
@@ -4316,14 +4318,14 @@ BEGIN
             END;
 
             /* Update where clause if needed */
-            DECLARE
-                @temp_target_table nvarchar(100) =
+            SELECT
+                @temp_target_table =
                     CASE
                         WHEN @is_include = 1
                         THEN N'#include_plan_ids'
                         ELSE N'#ignore_plan_ids'
                     END,
-                @exist_or_not_exist nvarchar(20) =
+                @exist_or_not_exist =
                     CASE
                         WHEN @is_include = 1
                         THEN N'EXISTS'
@@ -7722,7 +7724,7 @@ WHERE EXISTS
             AND qsp.database_id = qsq.database_id
           WHERE qsq.context_settings_id = qcs.context_settings_id
       )
-OPTION(RECOMPILE);';
+OPTION(RECOMPILE);' + @nc10;
 
 INSERT
     #query_context_settings
@@ -8667,8 +8669,7 @@ ORDER BY
              END END
     END
              + N' DESC
-OPTION(RECOMPILE);'
-    + @nc10
+OPTION(RECOMPILE);' + @nc10
     );
 
     IF @debug = 1
@@ -8778,7 +8779,7 @@ BEGIN
                 FROM #query_store_plan_feedback AS qspf
                 ORDER BY
                     qspf.plan_id
-                OPTION(RECOMPILE);';
+                OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
                 BEGIN
@@ -8836,7 +8837,7 @@ BEGIN
                 FROM #query_store_query_hints AS qsqh
                 ORDER BY
                     qsqh.query_id
-                OPTION(RECOMPILE);';
+                OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
                 BEGIN
@@ -8884,7 +8885,7 @@ BEGIN
                 FROM #query_store_query_variant AS qsqv
                 ORDER BY
                     qsqv.parent_query_id
-                OPTION(RECOMPILE);';
+                OPTION(RECOMPILE);' + @nc10;
 
                 IF @debug = 1
                 BEGIN
@@ -9175,7 +9176,7 @@ BEGIN
             WHERE x.n = 1
             ORDER BY
                 x.query_id
-            OPTION(RECOMPILE);';
+            OPTION(RECOMPILE);' + @nc10;
 
             IF @debug = 1
             BEGIN
@@ -9391,7 +9392,7 @@ BEGIN
         )
         ORDER BY
             qsq.query_id
-        OPTION(RECOMPILE);'
+        OPTION(RECOMPILE);' + @nc10
         );
 
         IF @debug = 1
@@ -9436,7 +9437,7 @@ BEGIN
                 (
                     nvarchar(max),
                     N'
-                SELECT DISTINCT
+                SELECT
                     source =
                         ''query_store_wait_stats_by_query'',
                     database_name =
@@ -9550,7 +9551,7 @@ BEGIN
                 ORDER BY
                     qsws.plan_id,
                     qsws.total_query_wait_time_ms DESC
-                OPTION(RECOMPILE);'
+                OPTION(RECOMPILE);' + @nc10
                 );
 
                 IF @debug = 1
@@ -9689,7 +9690,7 @@ BEGIN
                     qsws.database_id
                 ORDER BY
                     SUM(qsws.total_query_wait_time_ms) DESC
-                OPTION(RECOMPILE);'
+                OPTION(RECOMPILE);' + @nc10
                 );
 
                 IF @debug = 1
@@ -9789,7 +9790,7 @@ BEGIN
             N'
             dqso.size_based_cleanup_mode_desc
         FROM #database_query_store_options AS dqso
-        OPTION(RECOMPILE);'
+        OPTION(RECOMPILE);' + @nc10
         );
 
         IF @debug = 1
