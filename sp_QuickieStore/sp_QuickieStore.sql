@@ -1209,7 +1209,7 @@ CREATE TABLE
 );
 
 /*Gonna try gathering this based on*/
-CREATE TABLE 
+CREATE TABLE
     #query_hash_totals
 (
     database_id integer NOT NULL,
@@ -1419,7 +1419,7 @@ VALUES
     (1230, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads_mb', 'qsrs.min_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
     (1240, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads_mb', 'qsrs.max_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for new physical IO reads */
-    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),    
+    (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* Finish adding the remaining columns (log bytes and tempdb usage) */
     /* Log bytes used */
     (1300, 'log_bytes', 'avg', 'avg_log_bytes_used_mb', 'qsrs.avg_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
@@ -1428,7 +1428,7 @@ VALUES
     (1330, 'log_bytes', 'min', 'min_log_bytes_used_mb', 'qsrs.min_log_bytes_used_mb', 1, 'new', 1, 1, 'N0'),
     (1340, 'log_bytes', 'max', 'max_log_bytes_used_mb', 'qsrs.max_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for log bytes */
-    (1315, 'log_bytes', 'total_hash', 'total_log_bytes_used_mb_by_query_hash', 'qht.total_log_bytes_used_mb', 1, 'new_with_hash_totals', 1, 0, 'N0'),    
+    (1315, 'log_bytes', 'total_hash', 'total_log_bytes_used_mb_by_query_hash', 'qht.total_log_bytes_used_mb', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* TempDB usage  */
     (1400, 'tempdb', 'avg', 'avg_tempdb_space_used_mb', 'qsrs.avg_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
     (1410, 'tempdb', 'total', 'total_tempdb_space_used_mb', 'qsrs.total_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
@@ -1436,7 +1436,7 @@ VALUES
     (1430, 'tempdb', 'min', 'min_tempdb_space_used_mb', 'qsrs.min_tempdb_space_used_mb', 1, 'new', 1, 1, 'N0'),
     (1440, 'tempdb', 'max', 'max_tempdb_space_used_mb', 'qsrs.max_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for tempdb */
-    (1415, 'tempdb', 'total_hash', 'total_tempdb_space_used_mb_by_query_hash', 'qht.total_tempdb_space_used_mb', 1, 'new_with_hash_totals', 1, 0, 'N0'),        
+    (1415, 'tempdb', 'total_hash', 'total_tempdb_space_used_mb_by_query_hash', 'qht.total_tempdb_space_used_mb', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* Context settings and sorting columns  */
     (1500, 'metadata', 'context', 'context_settings', 'qsrs.context_settings', 0, NULL, NULL, 0, NULL);
 
@@ -1676,11 +1676,11 @@ DECLARE
     @regression_mode bit,
     @regression_where_clause nvarchar(max),
     @column_sql nvarchar(max),
-    @param_name nvarchar(100), 
-    @param_value nvarchar(4000), 
-    @temp_table sysname, 
-    @column_name sysname, 
-    @data_type sysname, 
+    @param_name nvarchar(100),
+    @param_value nvarchar(4000),
+    @temp_table sysname,
+    @column_name sysname,
+    @data_type sysname,
     @is_include bit,
     @requires_secondary_processing bit,
     @split_sql nvarchar(max),
@@ -3655,7 +3655,7 @@ IF
       @sort_order = 'tempdb'
    OR @sort_order_is_a_wait = 1
   )
-  AND 
+  AND
   (
        @new = 0
     OR @query_store_waits_enabled = 0
@@ -7006,9 +7006,9 @@ BEGIN
         SUM(qsrs.count_executions * qsrs.avg_clr_time) / 1000.,
         SUM(qsrs.count_executions * (qsrs.avg_query_max_used_memory * 8.)) / 1024.,
         SUM(qsrs.count_executions * qsrs.avg_rowcount)' +
-  CASE 
-      @new 
-      WHEN 1 
+  CASE
+      @new
+      WHEN 1
       THEN N',
         SUM(qsrs.count_executions * (qsrs.avg_num_physical_io_reads * 8)) / 1024.,
         SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 100000000.,
@@ -7017,7 +7017,7 @@ BEGIN
         NULL,
         NULL,
         NULL'
-  END +  
+  END +
   N'
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
     JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -8364,12 +8364,12 @@ FROM
                            THEN @regression_mode
                            WHEN cd.condition_param = N'include_query_hash_totals'
                            THEN @include_query_hash_totals
-                           WHEN cd.condition_param = N'new_with_hash_totals' 
-                           THEN CASE 
-                                    WHEN @new = 1 
-                                    AND  @include_query_hash_totals = 1 
-                                    THEN 1 
-                                    ELSE 0 
+                           WHEN cd.condition_param = N'new_with_hash_totals'
+                           THEN CASE
+                                    WHEN @new = 1
+                                    AND  @include_query_hash_totals = 1
+                                    THEN 1
+                                    ELSE 0
                                 END
                            ELSE 0
                        END = cd.condition_value
@@ -9987,8 +9987,8 @@ BEGIN
                                 PATH(''),
                                 TYPE
                         ).value('.', 'nvarchar(max)'),
-                        1, 
-                        2, 
+                        1,
+                        2,
                         N''
                     ),
                     N'None'
