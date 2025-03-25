@@ -4354,8 +4354,14 @@ BEGIN
                         @current_table;
                 END;
             END;
+        END;
 
-            /* Update where clause if needed */
+        /* Update where clause based on parameter type */
+        IF @param_name = 'include_plan_ids' 
+        OR @param_name = 'ignore_plan_ids'
+        OR @requires_secondary_processing = 1
+        BEGIN
+            /* Choose the correct table and exists/not exists operator */
             SELECT
                 @temp_target_table =
                     CASE
@@ -4370,6 +4376,7 @@ BEGIN
                         ELSE N'NOT EXISTS'
                     END;
 
+            /* Add the filter condition to the where clause */
             SELECT
                 @where_clause +=
                 N'AND   ' +
