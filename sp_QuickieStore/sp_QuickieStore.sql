@@ -4102,11 +4102,13 @@ BEGIN
         /* Choose appropriate string split function based on data type */
         IF @data_type = N'bigint'
         BEGIN
-            SELECT @split_sql = @string_split_ints;
+            SELECT 
+                @split_sql = @string_split_ints;
         END
         ELSE
         BEGIN
-            SELECT @split_sql = @string_split_strings;
+            SELECT 
+                @split_sql = @string_split_strings;
         END;
 
         /* Execute the initial insert with troubleshooting if enabled */
@@ -4114,7 +4116,7 @@ BEGIN
         BEGIN
             EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
-                N'@current_table nvarchar(100)',
+              N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
@@ -4131,8 +4133,13 @@ BEGIN
       N')
         EXECUTE sys.sp_executesql
             @split_sql,
-            N''@ids nvarchar(4000)'',
+         N''@ids nvarchar(4000)'',
             @param_value;';
+
+        IF @debug = 1
+        BEGIN
+            PRINT @dynamic_sql;
+        END;
 
         EXEC sys.sp_executesql
             @dynamic_sql,
@@ -4147,7 +4154,7 @@ BEGIN
 
             EXECUTE sys.sp_executesql
                 @troubleshoot_update,
-                N'@current_table nvarchar(100)',
+              N'@current_table nvarchar(100)',
                 @current_table;
 
             EXECUTE sys.sp_executesql
@@ -4168,7 +4175,9 @@ BEGIN
             IF @param_name = 'include_query_ids'
             OR @param_name = 'ignore_query_ids'
             BEGIN
-                SELECT @secondary_sql = N'
+                SET @secondary_sql = @isolation_level;
+
+                SELECT @secondary_sql += N'
                 SELECT DISTINCT
                     qsp.plan_id
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -4188,10 +4197,13 @@ BEGIN
                 OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
+            
             IF @param_name = 'include_query_hashes'
             OR @param_name = 'ignore_query_hashes'
             BEGIN
-                SELECT @secondary_sql = N'
+                SET @secondary_sql = @isolation_level;
+
+                SELECT @secondary_sql += N'
                 SELECT DISTINCT
                     qsp.plan_id
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -4218,10 +4230,13 @@ BEGIN
                 OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
+            
             IF @param_name = 'include_plan_hashes'
             OR @param_name = 'ignore_plan_hashes'
             BEGIN
-                SELECT @secondary_sql = N'
+                SET @secondary_sql = @isolation_level;
+
+                SELECT @secondary_sql += N'
                 SELECT DISTINCT
                     qsp.plan_id
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -4240,11 +4255,13 @@ BEGIN
                 OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
-            IF
-               @param_name = 'include_sql_handles'
+            
+            IF @param_name = 'include_sql_handles'
             OR @param_name = 'ignore_sql_handles'
             BEGIN
-                SELECT @secondary_sql = N'
+                SET @secondary_sql = @isolation_level;
+
+                SELECT @secondary_sql += N'
                 SELECT DISTINCT
                     qsp.plan_id
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -4284,21 +4301,42 @@ BEGIN
                 BEGIN
                     EXECUTE sys.sp_executesql
                         @troubleshoot_insert,
-                        N'@current_table nvarchar(100)',
+                      N'@current_table nvarchar(100)',
                         @current_table;
 
                     SET STATISTICS XML ON;
                 END;
 
-                INSERT INTO
-                    #include_plan_ids
-                WITH
-                    (TABLOCK)
-                (
-                    plan_id
-                )
-                EXECUTE sys.sp_executesql
-                    @secondary_sql;
+                IF @debug = 1
+                BEGIN
+                    PRINT @secondary_sql;
+                END;
+
+                /* Insert into the correct target table based on include/ignore */
+                IF @is_include = 1
+                BEGIN
+                    INSERT INTO
+                        #include_plan_ids
+                    WITH
+                        (TABLOCK)
+                    (
+                        plan_id
+                    )
+                    EXECUTE sys.sp_executesql
+                        @secondary_sql;
+                END
+                ELSE
+                BEGIN
+                    INSERT INTO
+                        #ignore_plan_ids
+                    WITH
+                        (TABLOCK)
+                    (
+                        plan_id
+                    )
+                    EXECUTE sys.sp_executesql
+                        @secondary_sql;
+                END;
 
                 IF @troubleshoot_performance = 1
                 BEGIN
@@ -4306,18 +4344,24 @@ BEGIN
 
                     EXECUTE sys.sp_executesql
                         @troubleshoot_update,
-                        N'@current_table nvarchar(100)',
+                      N'@current_table nvarchar(100)',
                         @current_table;
 
                     EXECUTE sys.sp_executesql
                         @troubleshoot_info,
-                        N'@sql nvarchar(max), @current_table nvarchar(100)',
+                      N'@sql nvarchar(max), @current_table nvarchar(100)',
                         @secondary_sql,
                         @current_table;
                 END;
             END;
+        END;
 
-            /* Update where clause if needed */
+        /* Update where clause based on parameter type */
+        IF @param_name = 'include_plan_ids' 
+        OR @param_name = 'ignore_plan_ids'
+        OR @requires_secondary_processing = 1
+        BEGIN
+            /* Choose the correct table and exists/not exists operator */
             SELECT
                 @temp_target_table =
                     CASE
@@ -4332,6 +4376,7 @@ BEGIN
                         ELSE N'NOT EXISTS'
                     END;
 
+            /* Add the filter condition to the where clause */
             SELECT
                 @where_clause +=
                 N'AND   ' +
@@ -4343,6 +4388,11 @@ BEGIN
                  FROM ' + @temp_target_table + N' AS idi
                  WHERE idi.plan_id = qsrs.plan_id
               )' + @nc10;
+
+              IF @debug = 1
+              BEGIN
+                  PRINT @where_clause;
+              END;
         END;
 
         FETCH NEXT
