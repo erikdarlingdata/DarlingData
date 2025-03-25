@@ -4102,12 +4102,12 @@ BEGIN
         /* Choose appropriate string split function based on data type */
         IF @data_type = N'bigint'
         BEGIN
-            SELECT 
+            SELECT
                 @split_sql = @string_split_ints;
         END
         ELSE
         BEGIN
-            SELECT 
+            SELECT
                 @split_sql = @string_split_strings;
         END;
 
@@ -4197,7 +4197,7 @@ BEGIN
                 OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
-            
+
             IF @param_name = 'include_query_hashes'
             OR @param_name = 'ignore_query_hashes'
             BEGIN
@@ -4230,7 +4230,7 @@ BEGIN
                 OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
-            
+
             IF @param_name = 'include_plan_hashes'
             OR @param_name = 'ignore_plan_hashes'
             BEGIN
@@ -4255,7 +4255,7 @@ BEGIN
                 OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
-            
+
             IF @param_name = 'include_sql_handles'
             OR @param_name = 'ignore_sql_handles'
             BEGIN
@@ -4357,7 +4357,7 @@ BEGIN
         END;
 
         /* Update where clause based on parameter type */
-        IF @param_name = 'include_plan_ids' 
+        IF @param_name = 'include_plan_ids'
         OR @param_name = 'ignore_plan_ids'
         OR @requires_secondary_processing = 1
         BEGIN

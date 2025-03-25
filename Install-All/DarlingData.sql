@@ -1,4 +1,4 @@
--- Compile Date: 03/24/2025 14:11:31 UTC
+-- Compile Date: 03/25/2025 20:35:56 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -10807,12 +10807,12 @@ BEGIN
                 lock_mode nvarchar(10) NULL,
                 resource_owner_type nvarchar(256) NULL,
                 transaction_count int NULL,
-                transaction_name nvarchar(512) NULL,
+                transaction_name nvarchar(1024) NULL,
                 last_transaction_started datetime2(7) NULL,
                 last_transaction_completed datetime2(7) NULL,
                 client_option_1 varchar(261) NULL,
                 client_option_2 varchar(307) NULL,
-                wait_resource nvarchar(100) NULL,
+                wait_resource nvarchar(1024) NULL,
                 priority int NULL,
                 log_used bigint NULL,
                 client_app nvarchar(256) NULL,
@@ -11281,7 +11281,7 @@ BEGIN
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
         lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
         lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-        wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+        wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
         status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
         priority = bd.value('(process/@priority)[1]', 'integer'),
         transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
@@ -11338,7 +11338,7 @@ BEGIN
         wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
         last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
         last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-        wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+        wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
         status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
         priority = bg.value('(process/@priority)[1]', 'integer'),
         transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
@@ -11890,10 +11890,10 @@ SELECT
     blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
     query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
     wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-    transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(512)'),
+    transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
     last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
     last_transaction_completed = CONVERT(datetime2, NULL),
-    wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+    wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
     lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
     status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
     priority = bd.value('(process/@priority)[1]', 'integer'),
@@ -12010,10 +12010,10 @@ SELECT
     blocked_ecid = bd.value('(process/@ecid)[1]', 'integer'),
     query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
     wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
-    transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(512)'),
+    transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
     last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
     last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-    wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+    wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
     lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
     status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
     priority = bg.value('(process/@priority)[1]', 'integer'),
@@ -28591,11 +28591,13 @@ BEGIN
         /* Choose appropriate string split function based on data type */
         IF @data_type = N'bigint'
         BEGIN
-            SELECT @split_sql = @string_split_ints;
+            SELECT
+                @split_sql = @string_split_ints;
         END
         ELSE
         BEGIN
-            SELECT @split_sql = @string_split_strings;
+            SELECT
+                @split_sql = @string_split_strings;
         END;
 
         /* Execute the initial insert with troubleshooting if enabled */
@@ -28603,7 +28605,7 @@ BEGIN
         BEGIN
             EXECUTE sys.sp_executesql
                 @troubleshoot_insert,
-                N'@current_table nvarchar(100)',
+              N'@current_table nvarchar(100)',
                 @current_table;
 
             SET STATISTICS XML ON;
@@ -28620,8 +28622,13 @@ BEGIN
       N')
         EXECUTE sys.sp_executesql
             @split_sql,
-            N''@ids nvarchar(4000)'',
+         N''@ids nvarchar(4000)'',
             @param_value;';
+
+        IF @debug = 1
+        BEGIN
+            PRINT @dynamic_sql;
+        END;
 
         EXEC sys.sp_executesql
             @dynamic_sql,
@@ -28636,7 +28643,7 @@ BEGIN
 
             EXECUTE sys.sp_executesql
                 @troubleshoot_update,
-                N'@current_table nvarchar(100)',
+              N'@current_table nvarchar(100)',
                 @current_table;
 
             EXECUTE sys.sp_executesql
@@ -28657,7 +28664,9 @@ BEGIN
             IF @param_name = 'include_query_ids'
             OR @param_name = 'ignore_query_ids'
             BEGIN
-                SELECT @secondary_sql = N'
+                SET @secondary_sql = @isolation_level;
+
+                SELECT @secondary_sql += N'
                 SELECT DISTINCT
                     qsp.plan_id
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -28677,10 +28686,13 @@ BEGIN
                 OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
+
             IF @param_name = 'include_query_hashes'
             OR @param_name = 'ignore_query_hashes'
             BEGIN
-                SELECT @secondary_sql = N'
+                SET @secondary_sql = @isolation_level;
+
+                SELECT @secondary_sql += N'
                 SELECT DISTINCT
                     qsp.plan_id
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -28707,10 +28719,13 @@ BEGIN
                 OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
+
             IF @param_name = 'include_plan_hashes'
             OR @param_name = 'ignore_plan_hashes'
             BEGIN
-                SELECT @secondary_sql = N'
+                SET @secondary_sql = @isolation_level;
+
+                SELECT @secondary_sql += N'
                 SELECT DISTINCT
                     qsp.plan_id
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -28729,11 +28744,13 @@ BEGIN
                 OPTION(RECOMPILE);' + @nc10;
             END;
             ELSE
-            IF
-               @param_name = 'include_sql_handles'
+
+            IF @param_name = 'include_sql_handles'
             OR @param_name = 'ignore_sql_handles'
             BEGIN
-                SELECT @secondary_sql = N'
+                SET @secondary_sql = @isolation_level;
+
+                SELECT @secondary_sql += N'
                 SELECT DISTINCT
                     qsp.plan_id
                 FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -28773,21 +28790,42 @@ BEGIN
                 BEGIN
                     EXECUTE sys.sp_executesql
                         @troubleshoot_insert,
-                        N'@current_table nvarchar(100)',
+                      N'@current_table nvarchar(100)',
                         @current_table;
 
                     SET STATISTICS XML ON;
                 END;
 
-                INSERT INTO
-                    #include_plan_ids
-                WITH
-                    (TABLOCK)
-                (
-                    plan_id
-                )
-                EXECUTE sys.sp_executesql
-                    @secondary_sql;
+                IF @debug = 1
+                BEGIN
+                    PRINT @secondary_sql;
+                END;
+
+                /* Insert into the correct target table based on include/ignore */
+                IF @is_include = 1
+                BEGIN
+                    INSERT INTO
+                        #include_plan_ids
+                    WITH
+                        (TABLOCK)
+                    (
+                        plan_id
+                    )
+                    EXECUTE sys.sp_executesql
+                        @secondary_sql;
+                END
+                ELSE
+                BEGIN
+                    INSERT INTO
+                        #ignore_plan_ids
+                    WITH
+                        (TABLOCK)
+                    (
+                        plan_id
+                    )
+                    EXECUTE sys.sp_executesql
+                        @secondary_sql;
+                END;
 
                 IF @troubleshoot_performance = 1
                 BEGIN
@@ -28795,18 +28833,24 @@ BEGIN
 
                     EXECUTE sys.sp_executesql
                         @troubleshoot_update,
-                        N'@current_table nvarchar(100)',
+                      N'@current_table nvarchar(100)',
                         @current_table;
 
                     EXECUTE sys.sp_executesql
                         @troubleshoot_info,
-                        N'@sql nvarchar(max), @current_table nvarchar(100)',
+                      N'@sql nvarchar(max), @current_table nvarchar(100)',
                         @secondary_sql,
                         @current_table;
                 END;
             END;
+        END;
 
-            /* Update where clause if needed */
+        /* Update where clause based on parameter type */
+        IF @param_name = 'include_plan_ids'
+        OR @param_name = 'ignore_plan_ids'
+        OR @requires_secondary_processing = 1
+        BEGIN
+            /* Choose the correct table and exists/not exists operator */
             SELECT
                 @temp_target_table =
                     CASE
@@ -28821,6 +28865,7 @@ BEGIN
                         ELSE N'NOT EXISTS'
                     END;
 
+            /* Add the filter condition to the where clause */
             SELECT
                 @where_clause +=
                 N'AND   ' +
@@ -28832,6 +28877,11 @@ BEGIN
                  FROM ' + @temp_target_table + N' AS idi
                  WHERE idi.plan_id = qsrs.plan_id
               )' + @nc10;
+
+              IF @debug = 1
+              BEGIN
+                  PRINT @where_clause;
+              END;
         END;
 
         FETCH NEXT
