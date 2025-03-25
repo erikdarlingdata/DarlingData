@@ -4312,15 +4312,31 @@ BEGIN
                     PRINT @secondary_sql;
                 END;
 
-                INSERT INTO
-                    #include_plan_ids
-                WITH
-                    (TABLOCK)
-                (
-                    plan_id
-                )
-                EXECUTE sys.sp_executesql
-                    @secondary_sql;
+                /* Insert into the correct target table based on include/ignore */
+                IF @is_include = 1
+                BEGIN
+                    INSERT INTO
+                        #include_plan_ids
+                    WITH
+                        (TABLOCK)
+                    (
+                        plan_id
+                    )
+                    EXECUTE sys.sp_executesql
+                        @secondary_sql;
+                END
+                ELSE
+                BEGIN
+                    INSERT INTO
+                        #ignore_plan_ids
+                    WITH
+                        (TABLOCK)
+                    (
+                        plan_id
+                    )
+                    EXECUTE sys.sp_executesql
+                        @secondary_sql;
+                END;
 
                 IF @troubleshoot_performance = 1
                 BEGIN
