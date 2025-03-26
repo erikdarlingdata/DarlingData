@@ -23,6 +23,7 @@ ALTER PROCEDURE
     @min_writes bigint = 0,
     @min_size_gb decimal(10,2) = 0,
     @min_rows bigint = 0,
+    @dedupe_only bit = 0, /*only perform deduplication, don't mark unused indexes for removal*/
     @get_all_databases bit = 0, /*looks for all accessible user databases and returns combined results*/
     @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
@@ -109,6 +110,7 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
                     WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
+                    WHEN N'@dedupe_only' THEN 'only perform index deduplication, do not mark unused indexes for removal'
                     WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases'
                     WHEN N'@include_databases' THEN 'comma-separated list of databases to include when @get_all_databases = 1'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude when @get_all_databases = 1'
@@ -128,6 +130,7 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN 'any positive integer or 0'
                     WHEN N'@min_size_gb' THEN 'any positive decimal or 0'
                     WHEN N'@min_rows' THEN 'any positive integer or 0'
+                    WHEN N'@dedupe_only' THEN '0 or 1 - only perform index deduplication, do not mark unused indexes for removal'
                     WHEN N'@get_all_databases' THEN '0 or 1'
                     WHEN N'@include_databases' THEN 'comma-separated list of database names'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of database names'
@@ -147,6 +150,7 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN '0'
                     WHEN N'@min_size_gb' THEN '0'
                     WHEN N'@min_rows' THEN '0'
+                    WHEN N'@dedupe_only' THEN '0'
                     WHEN N'@get_all_databases' THEN '0'
                     WHEN N'@include_databases' THEN 'NULL'
                     WHEN N'@exclude_databases' THEN 'NULL'
@@ -279,6 +283,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END;
+            
+    /* Auto-enable dedupe_only mode if server uptime is low */
+    IF CONVERT(integer, @uptime_days) < 7 AND @dedupe_only = 0
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Server uptime is less than 7 days. Automatically enabling @dedupe_only mode.', 0, 1) WITH NOWAIT;
+        END;
+        
+        SELECT @dedupe_only = 1;
+    END;
 
     /*
     Initial checks for object validity
@@ -2249,33 +2264,36 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Rule 1: Identify unused indexes */
-    UPDATE
-        #index_analysis
-    SET
-        #index_analysis.consolidation_rule =
-            CASE
-                WHEN @uptime_warning = 1
-                THEN 'Unused Index (WARNING: Server uptime < 14 days - usage data may be incomplete)'
-                ELSE 'Unused Index'
-            END,
-        #index_analysis.action = N'DISABLE'
-    WHERE EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details id
-        WHERE id.database_id = #index_analysis.database_id
-        AND   id.object_id = #index_analysis.object_id
-        AND   id.index_id = #index_analysis.index_id
-        AND   id.user_seeks = 0
-        AND   id.user_scans = 0
-        AND   id.user_lookups = 0
-        AND   id.is_primary_key = 0  /* Don't disable primary keys */
-        AND   id.is_unique_constraint = 0  /* Don't disable unique constraints */
-        AND   id.is_eligible_for_dedupe = 1 /* Only eligible indexes */
-    )
-    AND #index_analysis.index_id <> 1
-    OPTION(RECOMPILE);  /* Don't disable clustered indexes */
+    IF @dedupe_only = 0
+    BEGIN
+        UPDATE
+            #index_analysis
+        SET
+            #index_analysis.consolidation_rule =
+                CASE
+                    WHEN @uptime_warning = 1
+                    THEN 'Unused Index (WARNING: Server uptime < 14 days - usage data may be incomplete)'
+                    ELSE 'Unused Index'
+                END,
+            #index_analysis.action = N'DISABLE'
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #index_details id
+            WHERE id.database_id = #index_analysis.database_id
+            AND   id.object_id = #index_analysis.object_id
+            AND   id.index_id = #index_analysis.index_id
+            AND   id.user_seeks = 0
+            AND   id.user_scans = 0
+            AND   id.user_lookups = 0
+            AND   id.is_primary_key = 0  /* Don't disable primary keys */
+            AND   id.is_unique_constraint = 0  /* Don't disable unique constraints */
+            AND   id.is_eligible_for_dedupe = 1 /* Only eligible indexes */
+        )
+        AND #index_analysis.index_id <> 1
+        OPTION(RECOMPILE);  /* Don't disable clustered indexes */
+    END;
 
     IF @debug = 1
     BEGIN
@@ -5760,6 +5778,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.schema_name,
         irs.table_name
     OPTION(RECOMPILE);
+    
+    /* Output message for dedupe_only mode */
+    IF @dedupe_only = 1
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Note: Operating in dedupe_only mode. Unused indexes were considered for deduplication only, not for removal.', 0, 1) WITH NOWAIT;
+        END;
+    END;
 
 END TRY
 BEGIN CATCH
