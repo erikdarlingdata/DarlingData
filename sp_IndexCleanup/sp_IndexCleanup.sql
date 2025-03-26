@@ -17,7 +17,7 @@ ALTER PROCEDURE
     dbo.sp_IndexCleanup
 (
     @database_name sysname = NULL, /*focus on a single database*/
-    @schema_name sysname = NULL, /*use when focusing on a single table, does not filter to a single schema*/
+    @schema_name sysname = NULL, /*use when focusing on a single table, or to a single schema with no table name*/
     @table_name sysname = NULL, /*use when focusing on a single table*/
     @min_reads bigint = 0, /*only look at indexes with a minimum number of reads*/
     @min_writes bigint = 0, /*only look at indexes with a minimum number of writes*/
@@ -104,8 +104,8 @@ BEGIN TRY
                 CASE
                     ap.name
                     WHEN N'@database_name' THEN 'the name of the database you wish to analyze'
-                    WHEN N'@schema_name' THEN 'the schema name to filter indexes by - limits analysis to tables in the specified schema'
-                    WHEN N'@table_name' THEN 'the table name to filter indexes by'
+                    WHEN N'@schema_name' THEN 'limits analysis to tables in the specified schema when used without @table_name'
+                    WHEN N'@table_name' THEN 'the table name to filter indexes by, requires @schema_name if not dbo'
                     WHEN N'@min_reads' THEN 'minimum number of reads for an index to be considered used'
                     WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
@@ -1016,9 +1016,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      N'.' +
                      QUOTENAME(@table_name);
 
-             SELECT
-                 @object_id =
-                     OBJECT_ID(@full_object_name);
+             SET @object_id = OBJECT_ID(@full_object_name);
 
              IF @object_id IS NULL
              BEGIN
@@ -1134,18 +1132,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             RAISERROR('adding object_id filter', 0, 0) WITH NOWAIT;
         END;
 
-        SELECT @sql += N'
+        SET @sql += N'
         AND   t.object_id = @object_id';
     END;
     
-    IF @schema_name IS NOT NULL AND @object_id IS NULL
+    IF  @schema_name IS NOT NULL 
+    AND @object_id IS NULL
     BEGIN
         IF @debug = 1
         BEGIN
             RAISERROR('adding schema_name filter', 0, 0) WITH NOWAIT;
         END;
 
-        SELECT @sql += N'
+        SET @sql += N'
         AND   s.name = @schema_name';
     END;
 
