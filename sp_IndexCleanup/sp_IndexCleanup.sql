@@ -283,7 +283,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END;
-            
+
     /* Auto-enable dedupe_only mode if server uptime is low */
     IF CONVERT(integer, @uptime_days) <= 7 AND @dedupe_only = 0
     BEGIN
@@ -291,7 +291,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Server uptime is less than 7 days. Automatically enabling @dedupe_only mode.', 0, 1) WITH NOWAIT;
         END;
-        
+
         SET @dedupe_only = 1;
     END;
 
@@ -1135,8 +1135,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SET @sql += N'
         AND   t.object_id = @object_id';
     END;
-    
-    IF  @schema_name IS NOT NULL 
+
+    IF  @schema_name IS NOT NULL
     AND @object_id IS NULL
     BEGIN
         IF @debug = 1
@@ -2262,7 +2262,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND   id.user_scans > 0
                 ) THEN 100 ELSE 0
             END /* Indexes with scans get some priority */
-    OPTION(RECOMPILE);  
+    OPTION(RECOMPILE);
 
     IF @debug = 1
     BEGIN
@@ -2302,7 +2302,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id.is_eligible_for_dedupe = 1 /* Only eligible indexes */
         )
         AND #index_analysis.index_id <> 1 /* Don't disable clustered indexes */
-        OPTION(RECOMPILE);  
+        OPTION(RECOMPILE);
     END;
 
     IF @debug = 1
@@ -2756,8 +2756,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     UPDATE
         ia2
     SET
-        ia2.superseded_by = 
-            N'Supersedes ' + 
+        ia2.superseded_by =
+            N'Supersedes ' +
             ia1.index_name
     FROM #index_analysis AS ia1
     JOIN #index_analysis AS ia2
@@ -3688,7 +3688,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Sort duplicate/subset indexes first (20), then unused indexes last (25) */
         sort_order =
             CASE
-                WHEN ia.consolidation_rule LIKE 'Unused Index%' 
+                WHEN ia.consolidation_rule LIKE 'Unused Index%'
                 THEN 25
                 ELSE 20
             END,
@@ -3972,17 +3972,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* If any clustered indexes were added, mark them as KEEP */
-    UPDATE 
+    UPDATE
         #index_analysis
-    SET 
+    SET
         #index_analysis.action = N'KEEP'
     WHERE #index_analysis.index_id = 1 /* Clustered indexes */
     AND   #index_analysis.action IS NULL;
 
     /* Update index priority for clustered indexes to ensure they're not chosen for deduplication */
-    UPDATE 
+    UPDATE
         #index_analysis
-    SET 
+    SET
         #index_analysis.index_priority = 1000 /* Maximum priority */
     WHERE #index_analysis.index_id = 1 /* Clustered indexes */
     AND   #index_analysis.index_priority IS NULL;
@@ -4478,7 +4478,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         script_type =
             CASE
                 /* Add compression status to script_type */
-                WHEN ce.can_compress = 1 
+                WHEN ce.can_compress = 1
                 THEN 'KEPT - NEEDS COMPRESSION'
                 ELSE 'KEPT'
             END,
@@ -5806,7 +5806,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.schema_name,
         irs.table_name
     OPTION(RECOMPILE);
-    
+
     /* Output message for dedupe_only mode */
     IF @dedupe_only = 1
     BEGIN

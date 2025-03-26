@@ -1,4 +1,4 @@
--- Compile Date: 03/25/2025 20:35:56 UTC
+-- Compile Date: 03/26/2025 03:15:19 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -13720,28 +13720,30 @@ GO
 ALTER PROCEDURE
     dbo.sp_IndexCleanup
 (
-    @database_name sysname = NULL,
-    @schema_name sysname = NULL,
-    @table_name sysname = NULL,
-    @min_reads bigint = 0,
-    @min_writes bigint = 0,
-    @min_size_gb decimal(10,2) = 0,
-    @min_rows bigint = 0,
-    @get_all_databases bit = 0, /*looks for all accessible user databases and returns combined results*/
+    @database_name sysname = NULL, /*focus on a single database*/
+    @schema_name sysname = NULL, /*use when focusing on a single table, or to a single schema with no table name*/
+    @table_name sysname = NULL, /*use when focusing on a single table*/
+    @min_reads bigint = 0, /*only look at indexes with a minimum number of reads*/
+    @min_writes bigint = 0, /*only look at indexes with a minimum number of writes*/
+    @min_size_gb decimal(10,2) = 0, /*only look at indexes with a minimum size*/
+    @min_rows bigint = 0, /*only look at indexes with a minimum number of rows*/
+    @dedupe_only bit = 'false', /*only perform deduplication, don't mark unused indexes for removal*/
+    @get_all_databases bit = 'false', /*looks for all accessible user databases and returns combined results*/
     @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
-    @help bit = 'false',
-    @debug bit = 'false',
-    @version varchar(20) = NULL OUTPUT,
-    @version_date datetime = NULL OUTPUT
+    @help bit = 'false', /*learn about the procedure and parameters*/
+    @debug bit = 'false', /*print dynamic sql, show temp table contents*/
+    @version varchar(20) = NULL OUTPUT, /*script version number*/
+    @version_date datetime = NULL OUTPUT /*script version date*/
 )
 WITH RECOMPILE
 AS
 BEGIN
 SET NOCOUNT ON;
-
 BEGIN TRY
-    /* Check for SQL Server 2012 (11.0) or later for FORMAT and CONCAT functions*/
+    SELECT
+        @version = '1.4',
+        @version_date = '20250401';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -13770,10 +13772,6 @@ BEGIN TRY
         RETURN;
     END;
 
-    SELECT
-        @version = '1.4',
-        @version_date = '20250401';
-
     /*
     Help section, for help.
     Will become more helpful when out of beta.
@@ -13793,7 +13791,10 @@ BEGIN TRY
             help = N'always validate all changes against a non-production environment!'
           UNION ALL
         SELECT
-            help = N'please test carefully.';
+            help = N'please test carefully.'
+          UNION ALL
+        SELECT
+            help = N'brought to you by erikdarling.com / code.erikdarling.com';
 
         /*
         Parameters
@@ -13807,12 +13808,13 @@ BEGIN TRY
                 CASE
                     ap.name
                     WHEN N'@database_name' THEN 'the name of the database you wish to analyze'
-                    WHEN N'@schema_name' THEN 'the schema name to filter indexes by'
-                    WHEN N'@table_name' THEN 'the table name to filter indexes by'
+                    WHEN N'@schema_name' THEN 'limits analysis to tables in the specified schema when used without @table_name'
+                    WHEN N'@table_name' THEN 'the table name to filter indexes by, requires @schema_name if not dbo'
                     WHEN N'@min_reads' THEN 'minimum number of reads for an index to be considered used'
                     WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
                     WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
+                    WHEN N'@dedupe_only' THEN 'only perform index deduplication, do not mark unused indexes for removal'
                     WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases'
                     WHEN N'@include_databases' THEN 'comma-separated list of databases to include when @get_all_databases = 1'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude when @get_all_databases = 1'
@@ -13832,6 +13834,7 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN 'any positive integer or 0'
                     WHEN N'@min_size_gb' THEN 'any positive decimal or 0'
                     WHEN N'@min_rows' THEN 'any positive integer or 0'
+                    WHEN N'@dedupe_only' THEN '0 or 1 - only perform index deduplication, do not mark unused indexes for removal'
                     WHEN N'@get_all_databases' THEN '0 or 1'
                     WHEN N'@include_databases' THEN 'comma-separated list of database names'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of database names'
@@ -13851,6 +13854,7 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN '0'
                     WHEN N'@min_size_gb' THEN '0'
                     WHEN N'@min_rows' THEN '0'
+                    WHEN N'@dedupe_only' THEN '0'
                     WHEN N'@get_all_databases' THEN '0'
                     WHEN N'@include_databases' THEN 'NULL'
                     WHEN N'@exclude_databases' THEN 'NULL'
@@ -13984,12 +13988,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE 0
             END;
 
+    /* Auto-enable dedupe_only mode if server uptime is low */
+    IF CONVERT(integer, @uptime_days) <= 7 AND @dedupe_only = 0
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Server uptime is less than 7 days. Automatically enabling @dedupe_only mode.', 0, 1) WITH NOWAIT;
+        END;
+
+        SET @dedupe_only = 1;
+    END;
+
     /*
     Initial checks for object validity
     */
     IF @debug = 1
     BEGIN
-        RAISERROR('Checking paramaters...', 0, 0) WITH NOWAIT;
+        RAISERROR('Checking parameters...', 0, 0) WITH NOWAIT;
     END;
 
     IF  @schema_name IS NULL
@@ -14000,8 +14015,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             RAISERROR('Parameter @schema_name cannot be NULL when specifying a table, defaulting to dbo', 10, 1) WITH NOWAIT;
         END;
 
-        SELECT
-            @schema_name = N'dbo';
+        SET @schema_name = N'dbo';
     END;
 
     IF @min_reads < 0
@@ -14280,7 +14294,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE
         #index_reporting_stats
     (
-        summary_level varchar(20) NOT NULL,  /* 'DATABASE', 'TABLE', 'INDEX', 'SUMMARY' */
+        summary_level varchar(20) NOT NULL, /* 'DATABASE', 'TABLE', 'INDEX', 'SUMMARY' */
         database_name sysname NULL,
         schema_name sysname NULL,
         table_name sysname NULL,
@@ -14553,8 +14567,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'rdsadmin'
             )
         BEGIN
-            SELECT
-                @database_name = DB_NAME();
+            SET @database_name = DB_NAME();
         END;
 
         /* Single database mode */
@@ -14581,7 +14594,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             /* Get the database_id for backwards compatibility */
             SELECT
                 @current_database_id = d.database_id
-            FROM #databases AS d;
+            FROM #databases AS d
+            OPTION(RECOMPILE);
         END;
     END
     ELSE
@@ -14706,9 +14720,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      N'.' +
                      QUOTENAME(@table_name);
 
-             SELECT
-                 @object_id =
-                     OBJECT_ID(@full_object_name);
+             SET @object_id = OBJECT_ID(@full_object_name);
 
              IF @object_id IS NULL
              BEGIN
@@ -14817,7 +14829,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )';
     END;
 
-
     IF @object_id IS NOT NULL
     BEGIN
         IF @debug = 1
@@ -14825,8 +14836,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             RAISERROR('adding object_id filter', 0, 0) WITH NOWAIT;
         END;
 
-        SELECT @sql += N'
+        SET @sql += N'
         AND   t.object_id = @object_id';
+    END;
+
+    IF  @schema_name IS NOT NULL
+    AND @object_id IS NULL
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('adding schema_name filter', 0, 0) WITH NOWAIT;
+        END;
+
+        SET @sql += N'
+        AND   s.name = @schema_name';
     END;
 
     SET @sql += N'
@@ -14899,13 +14922,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @min_writes bigint,
         @min_size_gb decimal(10,2),
         @min_rows bigint,
-        @object_id integer',
+        @object_id integer,
+        @schema_name sysname',
         @current_database_id,
         @min_reads,
         @min_writes,
         @min_size_gb,
         @min_rows,
-        @object_id;
+        @object_id,
+        @schema_name;
 
     SET @rc = ROWCOUNT_BIG();
 
@@ -15935,13 +15960,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 (
                     SELECT
                         1/0
-                    FROM #index_details AS  id
+                    FROM #index_details AS id
                     WHERE id.index_id = #index_analysis.index_id
                     AND   id.object_id = #index_analysis.object_id
                     AND   id.user_scans > 0
                 ) THEN 100 ELSE 0
-            END
-    OPTION(RECOMPILE);  /* Indexes with scans get some priority */
+            END /* Indexes with scans get some priority */
+    OPTION(RECOMPILE);
 
     IF @debug = 1
     BEGIN
@@ -15953,33 +15978,36 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Rule 1: Identify unused indexes */
-    UPDATE
-        #index_analysis
-    SET
-        #index_analysis.consolidation_rule =
-            CASE
-                WHEN @uptime_warning = 1
-                THEN 'Unused Index (WARNING: Server uptime < 14 days - usage data may be incomplete)'
-                ELSE 'Unused Index'
-            END,
-        #index_analysis.action = N'DISABLE'
-    WHERE EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details id
-        WHERE id.database_id = #index_analysis.database_id
-        AND   id.object_id = #index_analysis.object_id
-        AND   id.index_id = #index_analysis.index_id
-        AND   id.user_seeks = 0
-        AND   id.user_scans = 0
-        AND   id.user_lookups = 0
-        AND   id.is_primary_key = 0  /* Don't disable primary keys */
-        AND   id.is_unique_constraint = 0  /* Don't disable unique constraints */
-        AND   id.is_eligible_for_dedupe = 1 /* Only eligible indexes */
-    )
-    AND #index_analysis.index_id <> 1
-    OPTION(RECOMPILE);  /* Don't disable clustered indexes */
+    IF @dedupe_only = 0
+    BEGIN
+        UPDATE
+            #index_analysis
+        SET
+            #index_analysis.consolidation_rule =
+                CASE
+                    WHEN @uptime_warning = 1
+                    THEN 'Unused Index (WARNING: Server uptime < 14 days - usage data may be incomplete)'
+                    ELSE 'Unused Index'
+                END,
+            #index_analysis.action = N'DISABLE'
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #index_details id
+            WHERE id.database_id = #index_analysis.database_id
+            AND   id.object_id = #index_analysis.object_id
+            AND   id.index_id = #index_analysis.index_id
+            AND   id.user_seeks = 0
+            AND   id.user_scans = 0
+            AND   id.user_lookups = 0
+            AND   id.is_primary_key = 0  /* Don't disable primary keys */
+            AND   id.is_unique_constraint = 0  /* Don't disable unique constraints */
+            AND   id.is_eligible_for_dedupe = 1 /* Only eligible indexes */
+        )
+        AND #index_analysis.index_id <> 1 /* Don't disable clustered indexes */
+        OPTION(RECOMPILE);
+    END;
 
     IF @debug = 1
     BEGIN
@@ -16044,7 +16072,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2_uc.index_id = ia2.index_id
         AND   id2_uc.is_unique_constraint = 1
     )
-    AND   EXISTS
+    AND EXISTS
     (
         SELECT
             1/0
@@ -16356,7 +16384,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CASE
             /* If both have includes, combine them without duplicates */
             WHEN kss.superset_includes IS NOT NULL
-            AND kss.subset_includes IS NOT NULL
+            AND  kss.subset_includes IS NOT NULL
             THEN
                 /* Create combined includes using XML method that works with all SQL Server versions */
                 (
@@ -16432,7 +16460,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     UPDATE
         ia2
     SET
-        ia2.superseded_by = N'Supersedes ' + ia1.index_name
+        ia2.superseded_by =
+            N'Supersedes ' +
+            ia1.index_name
     FROM #index_analysis AS ia1
     JOIN #index_analysis AS ia2
       ON  ia1.database_id = ia2.database_id
@@ -16468,7 +16498,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #index_analysis AS ia1
     WHERE ia1.consolidation_rule IS NULL /* Not already processed */
-    AND ia1.action IS NULL /* Not already processed by earlier rules */
+    AND   ia1.action IS NULL /* Not already processed by earlier rules */
     AND EXISTS
     (
         /* Find nonclustered indexes */
@@ -17362,7 +17392,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Sort duplicate/subset indexes first (20), then unused indexes last (25) */
         sort_order =
             CASE
-                WHEN ia.consolidation_rule LIKE 'Unused Index%' THEN 25
+                WHEN ia.consolidation_rule LIKE 'Unused Index%'
+                THEN 25
                 ELSE 20
             END,
         ia.database_name,
@@ -17645,16 +17676,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 
     /* If any clustered indexes were added, mark them as KEEP */
-    UPDATE #index_analysis
-    SET action = N'KEEP'
-    WHERE index_id = 1 /* Clustered indexes */
-    AND   action IS NULL;
+    UPDATE
+        #index_analysis
+    SET
+        #index_analysis.action = N'KEEP'
+    WHERE #index_analysis.index_id = 1 /* Clustered indexes */
+    AND   #index_analysis.action IS NULL;
 
     /* Update index priority for clustered indexes to ensure they're not chosen for deduplication */
-    UPDATE #index_analysis
-    SET index_priority = 1000 /* Maximum priority */
-    WHERE index_id = 1 /* Clustered indexes */
-    AND   index_priority IS NULL;
+    UPDATE
+        #index_analysis
+    SET
+        #index_analysis.index_priority = 1000 /* Maximum priority */
+    WHERE #index_analysis.index_id = 1 /* Clustered indexes */
+    AND   #index_analysis.index_priority IS NULL;
 
     IF @debug = 1
     BEGIN
@@ -18147,7 +18182,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         script_type =
             CASE
                 /* Add compression status to script_type */
-                WHEN ce.can_compress = 1 THEN 'KEPT - NEEDS COMPRESSION'
+                WHEN ce.can_compress = 1
+                THEN 'KEPT - NEEDS COMPRESSION'
                 ELSE 'KEPT'
             END,
         ia.consolidation_rule,
@@ -18535,7 +18571,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         total_min_savings_gb =
             (
                 SELECT
-                    SUM(
+                    SUM
+                    (
                         CASE
                             WHEN subia.action = N'DISABLE'
                             THEN subps.total_space_gb
@@ -18560,7 +18597,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         total_max_savings_gb =
             (
                 SELECT
-                    SUM(
+                    SUM
+                    (
                         CASE
                             WHEN subia.action = N'DISABLE'
                             THEN subps.total_space_gb
@@ -18783,7 +18821,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         total_min_savings_gb =
             (
                 SELECT
-                    SUM(
+                    SUM
+                    (
                         CASE
                             WHEN subia.action = N'DISABLE'
                             THEN subps.total_space_gb
@@ -18810,7 +18849,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         total_max_savings_gb =
             (
                 SELECT
-                    SUM(
+                    SUM
+                    (
                         CASE
                             WHEN subia.action = N'DISABLE'
                             THEN subps.total_space_gb
@@ -18988,13 +19028,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ROW_NUMBER() OVER
             (
                 PARTITION BY
-                    database_name,
-                    schema_name,
-                    table_name,
-                    index_name,
+                    irs.database_name,
+                    irs.schema_name,
+                    irs.table_name,
+                    irs.index_name,
                     irs.script_type
                 ORDER BY
-                    result_type DESC /* Prefer non-NULL result types */
+                    irs.result_type DESC /* Prefer non-NULL result types */
             ) AS rn
         FROM #index_cleanup_results AS irs
     ) AS ir
@@ -19223,7 +19263,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN ISNULL(irs.unused_indexes, 0) > 0
                         THEN FORMAT
                              (
-                                 CONVERT(decimal(38,2),
+                                 CONVERT
+                                 (
+                                     decimal(38,2),
                                      ISNULL
                                      (
                                          irs.user_updates /
@@ -19295,7 +19337,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         THEN
                             FORMAT
                             (
-                                CONVERT(decimal(38,2),
+                                CONVERT
+                                (
+                                    decimal(38,2),
                                     ISNULL
                                     (
                                         (irs.row_lock_wait_count + irs.page_lock_wait_count) /
@@ -19381,7 +19425,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         THEN
                             FORMAT
                             (
-                                CONVERT(decimal(38,2),
+                                CONVERT
+                                (
+                                    decimal(38,2),
                                     ISNULL
                                     (
                                         (irs.page_latch_wait_count + irs.page_io_latch_wait_count) /
@@ -19464,6 +19510,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.schema_name,
         irs.table_name
     OPTION(RECOMPILE);
+
+    /* Output message for dedupe_only mode */
+    IF @dedupe_only = 1
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Note: Operating in dedupe_only mode. Unused indexes were considered for deduplication only, not for removal.', 0, 1) WITH NOWAIT;
+        END;
+    END;
 
 END TRY
 BEGIN CATCH
