@@ -23,7 +23,7 @@ The procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT 
 | Parameter Name | Data Type | Default Value | Description |
 |----------------|-----------|---------------|-------------|
 | @database_name | sysname | NULL | The name of the database you wish to analyze |
-| @schema_name | sysname | NULL | The schema name to filter indexes by |
+| @schema_name | sysname | NULL | The schema name to filter indexes by - limits analysis to tables in the specified schema |
 | @table_name | sysname | NULL | The table name to filter indexes by |
 | @min_reads | bigint | 0 | Minimum number of reads for an index to be considered used |
 | @min_writes | bigint | 0 | Minimum number of writes for an index to be considered used |
@@ -55,6 +55,11 @@ EXECUTE dbo.sp_IndexCleanup
 EXECUTE dbo.sp_IndexCleanup
     @database_name = 'YourDatabase',
     @dedupe_only = 1;
+
+-- Analyze tables in a specific schema only
+EXECUTE dbo.sp_IndexCleanup
+    @database_name = 'YourDatabase',
+    @schema_name = 'YourSchema';
 
 -- Filter indexes by minimum usage thresholds
 EXECUTE dbo.sp_IndexCleanup

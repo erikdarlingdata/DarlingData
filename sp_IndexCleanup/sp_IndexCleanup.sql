@@ -104,7 +104,7 @@ BEGIN TRY
                 CASE
                     ap.name
                     WHEN N'@database_name' THEN 'the name of the database you wish to analyze'
-                    WHEN N'@schema_name' THEN 'the schema name to filter indexes by'
+                    WHEN N'@schema_name' THEN 'the schema name to filter indexes by - limits analysis to tables in the specified schema'
                     WHEN N'@table_name' THEN 'the table name to filter indexes by'
                     WHEN N'@min_reads' THEN 'minimum number of reads for an index to be considered used'
                     WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
@@ -1137,6 +1137,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT @sql += N'
         AND   t.object_id = @object_id';
     END;
+    
+    IF @schema_name IS NOT NULL AND @object_id IS NULL
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('adding schema_name filter', 0, 0) WITH NOWAIT;
+        END;
+
+        SELECT @sql += N'
+        AND   s.name = @schema_name';
+    END;
 
     SET @sql += N'
         AND EXISTS
@@ -1208,13 +1219,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @min_writes bigint,
         @min_size_gb decimal(10,2),
         @min_rows bigint,
-        @object_id integer',
+        @object_id integer,
+        @schema_name sysname',
         @current_database_id,
         @min_reads,
         @min_writes,
         @min_size_gb,
         @min_rows,
-        @object_id;
+        @object_id,
+        @schema_name;
 
     SET @rc = ROWCOUNT_BIG();
 
