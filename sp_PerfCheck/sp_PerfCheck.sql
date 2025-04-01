@@ -278,9 +278,9 @@ BEGIN
     INSERT INTO #server_info (info_type, value)
     SELECT 'Uptime', 
            CONVERT(nvarchar(30), DATEDIFF(DAY, sqlserver_start_time, GETDATE())) + ' days, ' +
-           CONVERT(nvarchar(30), CONVERT(time, DATEADD(SECOND, 
-                                      DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) % 86400, 
-                                      '00:00:00'))) + ' (hh:mm:ss)'
+           CONVERT(nvarchar(8), CONVERT(time, DATEADD(SECOND, 
+                                     DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) % 86400, 
+                                     '00:00:00')), 108) + ' (hh:mm:ss)'
     FROM sys.dm_os_sys_info;
     
     /* CPU information - works on all platforms */
@@ -288,8 +288,7 @@ BEGIN
     SELECT 'CPU', 
            CONVERT(nvarchar(10), cpu_count) + ' logical processors, ' +
            CONVERT(nvarchar(10), hyperthread_ratio) + ' physical cores, ' +
-           CONVERT(nvarchar(10), ISNULL(numa_node_count, 1)) + ' NUMA node(s), ' +
-           CONVERT(nvarchar(10), sql_memory_model) + ' memory model'
+           CONVERT(nvarchar(10), ISNULL(numa_node_count, 1)) + ' NUMA node(s)'
     FROM sys.dm_os_sys_info;
     
     /* Memory information - works on all platforms */
@@ -298,7 +297,13 @@ BEGIN
            'Total: ' + 
            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), physical_memory_kb / 1024.0 / 1024.0)) + ' GB, ' +
            'Target: ' + 
-           CONVERT(nvarchar(20), CONVERT(decimal(10, 2), committed_target_kb / 1024.0 / 1024.0)) + ' GB'
+           CONVERT(nvarchar(20), CONVERT(decimal(10, 2), committed_target_kb / 1024.0 / 1024.0)) + ' GB' +
+           CASE sql_memory_model
+               WHEN 1 THEN ', Conventional memory'
+               WHEN 2 THEN ', Large pages enabled'
+               WHEN 3 THEN ', Locked pages enabled'
+               ELSE ''
+           END
     FROM sys.dm_os_sys_info;
     
     /* Get database sizes - safely handles permissions */
@@ -308,8 +313,7 @@ BEGIN
             /* For Azure SQL DB, we only have access to the current database */
             INSERT INTO #server_info (info_type, value)
             SELECT 'Database Size',
-                   'Used: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(CONVERT(bigint, FILEPROPERTY(name, 'SpaceUsed')) * 8.0 / 1024.0 / 1024.0))) + 
-                   ' GB, Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(size * 8.0 / 1024.0 / 1024.0))) + ' GB'
+                   'Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(size * 8.0 / 1024.0 / 1024.0))) + ' GB'
             FROM sys.database_files
             WHERE type_desc = 'ROWS';
         END
@@ -318,19 +322,10 @@ BEGIN
             /* For non-Azure SQL DB, get size across all accessible databases */
             INSERT INTO #server_info (info_type, value)
             SELECT 'Total Database Size',
-                   'Used: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(used_size_gb))) + 
-                   ' GB, Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(total_size_gb))) + ' GB'
-            FROM
-            (
-                SELECT 
-                    database_id,
-                    used_size_gb = SUM(CONVERT(bigint, FILEPROPERTY(name, 'SpaceUsed')) * 8.0 / 1024.0 / 1024.0),
-                    total_size_gb = SUM(size * 8.0 / 1024.0 / 1024.0)
-                FROM sys.master_files
-                WHERE type_desc = 'ROWS'
-                AND database_id IN (SELECT database_id FROM #database_list WHERE can_access = 1)
-                GROUP BY database_id
-            ) AS db_sizes;
+                   'Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(size * 8.0 / 1024.0 / 1024.0))) + ' GB'
+            FROM sys.master_files
+            WHERE type_desc = 'ROWS'
+            AND database_id IN (SELECT database_id FROM #database_list WHERE can_access = 1);
         END
     END TRY
     BEGIN CATCH
