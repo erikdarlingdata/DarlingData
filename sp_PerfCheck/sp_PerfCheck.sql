@@ -38,7 +38,7 @@ BEGIN
         @product_version_minor decimal(10, 2),
         @error_message nvarchar(4000),
         @start_time datetime2(0),
-        @sql nvarchar(MAX) = N'',
+        @sql nvarchar(max) = N'',
         @engine_edition integer,
         @azure_sql_db bit = 0,
         @azure_managed_instance bit = 0,
@@ -51,27 +51,27 @@ BEGIN
         @numa_nodes integer,
         @message nvarchar(4000),
         /* Memory configuration variables */
-        @min_server_memory BIGINT,
-        @max_server_memory BIGINT,
-        @physical_memory_gb DECIMAL(10, 2),
+        @min_server_memory bigint,
+        @max_server_memory bigint,
+        @physical_memory_gb decimal(10, 2),
         /* MAXDOP and CTFP variables */
-        @max_dop INTEGER,
-        @cost_threshold INTEGER,
+        @max_dop integer,
+        @cost_threshold integer,
         /* Other configuration variables */
-        @priority_boost BIT,
-        @lightweight_pooling BIT,
-        @mirroring_count INTEGER,
+        @priority_boost bit,
+        @lightweight_pooling bit,
+        @mirroring_count integer,
         /* TempDB configuration variables */
-        @tempdb_data_file_count INTEGER,
-        @tempdb_log_file_count INTEGER,
-        @min_data_file_size DECIMAL(18, 2),
-        @max_data_file_size DECIMAL(18, 2),
-        @size_difference_pct DECIMAL(18, 2),
-        @has_percent_growth BIT,
-        @has_fixed_growth BIT,
+        @tempdb_data_file_count integer,
+        @tempdb_log_file_count integer,
+        @min_data_file_size decimal(18, 2),
+        @max_data_file_size decimal(18, 2),
+        @size_difference_pct decimal(18, 2),
+        @has_percent_growth bit,
+        @has_fixed_growth bit,
         /* Storage performance variables */
-        @slow_read_ms DECIMAL(10, 2) = 20.0, /* Threshold for slow reads (ms) */
-        @slow_write_ms DECIMAL(10, 2) = 20.0; /* Threshold for slow writes (ms) */
+        @slow_read_ms decimal(10, 2) = 20.0, /* Threshold for slow reads (ms) */
+        @slow_write_ms decimal(10, 2) = 20.0; /* Threshold for slow writes (ms) */
     
     /* Set start time for runtime tracking */
     SET @start_time = SYSDATETIME();
@@ -89,7 +89,7 @@ BEGIN
     
     /* Check for VIEW SERVER STATE permission */
     BEGIN TRY
-        EXECUTE ('DECLARE @c bigint; SELECT @c = 1 FROM sys.dm_os_sys_info;');
+        EXECUTE ('DECLARE @c bigint; SELECT @c = 1 FROM sys.dm_os_sys_info AS osi;');
         SET @has_view_server_state = 1;
     END TRY
     BEGIN CATCH
@@ -142,19 +142,6 @@ BEGIN
             is_aws_rds = @aws_rds;
     END;
     
-    /* Get processor information if possible */
-    BEGIN TRY
-        SELECT 
-            @processors = cpu_count,
-            @numa_nodes = ISNULL(numa_node_count, 1)
-        FROM sys.dm_os_sys_info;
-    END TRY
-    BEGIN CATCH
-        /* Set to defaults if we can't access this info */
-        SET @processors = 0;
-        SET @numa_nodes = 0;
-    END CATCH;
-
     /*
     Create a table for stuff I care about from sys.databases
     */
@@ -223,6 +210,19 @@ BEGIN
         info_type nvarchar(100) NOT NULL,
         value nvarchar(4000) NULL
     );
+
+    /* Create temp table to store TempDB file info */
+    CREATE TABLE 
+        #tempdb_files
+    (
+        file_id integer NOT NULL,
+        file_name sysname NOT NULL,
+        type_desc nvarchar(60) NOT NULL,
+        size_mb decimal(18, 2) NOT NULL,
+        max_size_mb decimal(18, 2) NOT NULL,
+        growth_mb decimal(18, 2) NOT NULL,
+        is_percent_growth bit NOT NULL
+    );
     
     /*
     Create Database List for Iteration
@@ -231,17 +231,17 @@ BEGIN
         #database_list
     (
         id integer IDENTITY PRIMARY KEY CLUSTERED,
-        database_name sysname,
-        database_id integer,
-        state integer,
-        state_desc nvarchar(60),
-        compatibility_level integer,
-        recovery_model_desc nvarchar(60),
-        is_read_only bit,
-        is_in_standby bit,
-        is_encrypted bit,
-        create_date datetime,
-        can_access bit
+        database_name sysname NOT NULL,
+        database_id integer NOT NULL,
+        state integer NOT NULL,
+        state_desc nvarchar(60) NOT NULL,
+        compatibility_level integer NOT NULL,
+        recovery_model_desc nvarchar(60) NOT NULL,
+        is_read_only bit NOT NULL,
+        is_in_standby bit NOT NULL,
+        is_encrypted bit NOT NULL,
+        create_date datetime NOT NULL,
+        can_access bit NOT NULL
     );
         
     /*
@@ -253,85 +253,103 @@ BEGIN
     END;
     
     /* Basic server information that works across all platforms */
-    INSERT INTO #server_info (info_type, value)
-    VALUES ('Server Name', CONVERT(nvarchar(128), SERVERPROPERTY('ServerName')));
+    INSERT INTO 
+        #server_info (info_type, value)
+    VALUES 
+        ('Server Name', CONVERT(sysname, SERVERPROPERTY('ServerName')));
     
-    INSERT INTO #server_info (info_type, value)
-    VALUES ('SQL Server Version', 
-            CONVERT(nvarchar(128), SERVERPROPERTY('ProductVersion')) + 
-            ' (' + CONVERT(nvarchar(128), SERVERPROPERTY('ProductLevel')) + ')');
+    INSERT INTO 
+        #server_info (info_type, value)
+    VALUES 
+        (
+            'SQL Server Version', 
+            CONVERT(sysname, SERVERPROPERTY('ProductVersion')) + 
+            ' (' + 
+            CONVERT(sysname, SERVERPROPERTY('ProductLevel')) + 
+            ')'
+        );
     
-    INSERT INTO #server_info (info_type, value)
-    VALUES ('SQL Server Edition', CONVERT(nvarchar(128), SERVERPROPERTY('Edition')));
+    INSERT INTO 
+        #server_info (info_type, value)
+    VALUES 
+        ('SQL Server Edition', CONVERT(sysname, SERVERPROPERTY('Edition')));
     
     /* Environment information - Already detected earlier */
-    INSERT INTO #server_info (info_type, value)
-    SELECT 'Environment', 
-           CASE 
-               WHEN @azure_sql_db = 1 THEN 'Azure SQL Database'
-               WHEN @azure_managed_instance = 1 THEN 'Azure SQL Managed Instance'
-               WHEN @aws_rds = 1 THEN 'AWS RDS SQL Server'
-               ELSE 'On-premises or IaaS SQL Server'
-           END;
+    INSERT INTO 
+        #server_info (info_type, value)
+    SELECT 
+        'Environment', 
+        CASE 
+            WHEN @azure_sql_db = 1 THEN 'Azure SQL Database'
+            WHEN @azure_managed_instance = 1 THEN 'Azure SQL Managed Instance'
+            WHEN @aws_rds = 1 THEN 'AWS RDS SQL Server'
+            ELSE 'On-premises or IaaS SQL Server'
+        END;
            
     /* Uptime information - works on all platforms */
-    INSERT INTO #server_info (info_type, value)
-    SELECT 'Uptime', 
-           CONVERT(nvarchar(30), DATEDIFF(DAY, sqlserver_start_time, GETDATE())) + ' days, ' +
-           CONVERT(nvarchar(8), CONVERT(time, DATEADD(SECOND, 
-                                     DATEDIFF(SECOND, sqlserver_start_time, GETDATE()) % 86400, 
-                                     '00:00:00')), 108) + ' (hh:mm:ss)'
-    FROM sys.dm_os_sys_info;
+    INSERT INTO 
+        #server_info (info_type, value)
+    SELECT 
+        'Uptime', 
+        CONVERT(nvarchar(30), DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())) + ' days, ' +
+        CONVERT(nvarchar(8), CONVERT(time, DATEADD(SECOND, DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) % 86400, '00:00:00')), 108) + ' (hh:mm:ss)'
+    FROM sys.dm_os_sys_info AS osi;
     
     /* CPU information - works on all platforms */
-    INSERT INTO #server_info (info_type, value)
-    SELECT 'CPU', 
-           CONVERT(nvarchar(10), cpu_count) + ' logical processors, ' +
-           CONVERT(nvarchar(10), hyperthread_ratio) + ' physical cores, ' +
-           CONVERT(nvarchar(10), ISNULL(numa_node_count, 1)) + ' NUMA node(s)'
-    FROM sys.dm_os_sys_info;
+    INSERT INTO 
+        #server_info (info_type, value)
+    SELECT 
+        'CPU', 
+        CONVERT(nvarchar(10), osi.cpu_count) + ' logical processors, ' +
+        CONVERT(nvarchar(10), osi.hyperthread_ratio) + ' physical cores, ' +
+        CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) + ' NUMA node(s)'
+    FROM sys.dm_os_sys_info AS osi;
     
     /* Memory information - works on all platforms */
-    INSERT INTO #server_info (info_type, value)
-    SELECT 'Memory', 
-           'Total: ' + 
-           CONVERT(nvarchar(20), CONVERT(decimal(10, 2), physical_memory_kb / 1024.0 / 1024.0)) + ' GB, ' +
-           'Target: ' + 
-           CONVERT(nvarchar(20), CONVERT(decimal(10, 2), committed_target_kb / 1024.0 / 1024.0)) + ' GB' +
-           CASE sql_memory_model
-               WHEN 1 THEN ', Conventional memory'
-               WHEN 2 THEN ', Large pages enabled'
-               WHEN 3 THEN ', Locked pages enabled'
-               ELSE ''
-           END
-    FROM sys.dm_os_sys_info;
+    INSERT INTO 
+        #server_info (info_type, value)
+    SELECT 
+        'Memory', 
+        'Total: ' + 
+        CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)) + ' GB, ' +
+        'Target: ' + 
+        CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.committed_target_kb / 1024.0 / 1024.0)) + ' GB' +
+        N', ' +
+        osi.sql_memory_model_desc +
+        N' enabled'
+    FROM sys.dm_os_sys_info AS osi;
     
     /* Get database sizes - safely handles permissions */
     BEGIN TRY
         IF @azure_sql_db = 1
         BEGIN
             /* For Azure SQL DB, we only have access to the current database */
-            INSERT INTO #server_info (info_type, value)
-            SELECT 'Database Size',
-                   'Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(size * 8.0 / 1024.0 / 1024.0))) + ' GB'
-            FROM sys.database_files
-            WHERE type_desc = 'ROWS';
-        END
+            INSERT INTO 
+                #server_info (info_type, value)
+            SELECT 
+                'Database Size',
+                'Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(df.size * 8.0 / 1024.0 / 1024.0))) + ' GB'
+            FROM sys.database_files AS df
+            WHERE df.type_desc = N'ROWS';
+        END;
         ELSE
         BEGIN
             /* For non-Azure SQL DB, get size across all accessible databases */
-            INSERT INTO #server_info (info_type, value)
-            SELECT 'Total Database Size',
-                   'Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(size * 8.0 / 1024.0 / 1024.0))) + ' GB'
-            FROM sys.master_files
-            WHERE type_desc = 'ROWS'
-            AND database_id IN (SELECT database_id FROM #database_list WHERE can_access = 1);
-        END
+            INSERT INTO 
+                #server_info (info_type, value)
+            SELECT 
+                'Total Database Size',
+                'Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(mf.size * 8.0 / 1024.0 / 1024.0))) + ' GB'
+            FROM sys.master_files AS mf
+            WHERE mf.type_desc = N'ROWS';
+        END;
     END TRY
     BEGIN CATCH
         /* If we can't access the files due to permissions */
-        INSERT INTO #server_info (info_type, value)
-        VALUES ('Database Size', 'Unable to determine (permission error)');
+        INSERT INTO 
+            #server_info (info_type, value)
+        VALUES 
+            ('Database Size', 'Unable to determine (permission error)');
     END CATCH;
     
     /*
@@ -341,48 +359,56 @@ BEGIN
     BEGIN
         /* Collect memory settings */
         SELECT 
-            @min_server_memory = CONVERT(BIGINT, c1.value_in_use),
-            @max_server_memory = CONVERT(BIGINT, c2.value_in_use)
-        FROM sys.configurations c1
-        CROSS JOIN sys.configurations c2
-        WHERE c1.name = 'min server memory (MB)'
-        AND c2.name = 'max server memory (MB)';
+            @min_server_memory = CONVERT(bigint, c1.value_in_use),
+            @max_server_memory = CONVERT(bigint, c2.value_in_use)
+        FROM sys.configurations AS c1
+        CROSS JOIN sys.configurations AS c2
+        WHERE c1.name = N'min server memory (MB)'
+        AND   c2.name = N'max server memory (MB)';
         
         /* Get physical memory for comparison */
         SELECT 
-            @physical_memory_gb = CONVERT(DECIMAL(10, 2), physical_memory_kb / 1024.0 / 1024.0)
-        FROM sys.dm_os_sys_info;
+            @physical_memory_gb = CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)
+        FROM sys.dm_os_sys_info AS osi;
         
         /* Add min/max server memory info */
-        INSERT INTO #server_info (info_type, value)
-        VALUES ('Min Server Memory', CONVERT(nvarchar(20), @min_server_memory) + ' MB');
+        INSERT INTO 
+            #server_info (info_type, value)
+        VALUES 
+            ('Min Server Memory', CONVERT(nvarchar(20), @min_server_memory) + ' MB');
         
-        INSERT INTO #server_info (info_type, value)
-        VALUES ('Max Server Memory', CONVERT(nvarchar(20), @max_server_memory) + ' MB');
+        INSERT INTO 
+            #server_info (info_type, value)
+        VALUES 
+            ('Max Server Memory', CONVERT(nvarchar(20), @max_server_memory) + ' MB');
         
         /* Collect MAXDOP and CTFP settings */            
         SELECT 
-            @max_dop = CONVERT(INTEGER, c1.value_in_use),
-            @cost_threshold = CONVERT(INTEGER, c2.value_in_use)
-        FROM sys.configurations c1
-        CROSS JOIN sys.configurations c2
-        WHERE c1.name = 'max degree of parallelism'
-        AND c2.name = 'cost threshold for parallelism';
+            @max_dop = CONVERT(integer, c1.value_in_use),
+            @cost_threshold = CONVERT(integer, c2.value_in_use)
+        FROM sys.configurations AS c1
+        CROSS JOIN sys.configurations AS c2
+        WHERE c1.name = N'max degree of parallelism'
+        AND   c2.name = N'cost threshold for parallelism';
         
-        INSERT INTO #server_info (info_type, value)
-        VALUES ('MAXDOP', CONVERT(nvarchar(10), @max_dop));
+        INSERT INTO 
+            #server_info (info_type, value)
+        VALUES 
+            ('MAXDOP', CONVERT(nvarchar(10), @max_dop));
         
-        INSERT INTO #server_info (info_type, value)
-        VALUES ('Cost Threshold for Parallelism', CONVERT(nvarchar(10), @cost_threshold));
+        INSERT INTO 
+            #server_info (info_type, value)
+        VALUES 
+            ('Cost Threshold for Parallelism', CONVERT(nvarchar(10), @cost_threshold));
         
         /* Collect other significant configuration values */
         SELECT 
-            @priority_boost = CONVERT(BIT, c1.value_in_use),
-            @lightweight_pooling = CONVERT(BIT, c2.value_in_use)
-        FROM sys.configurations c1
-        CROSS JOIN sys.configurations c2
-        WHERE c1.name = 'priority boost'
-        AND c2.name = 'lightweight pooling';
+            @priority_boost = CONVERT(bit, c1.value_in_use),
+            @lightweight_pooling = CONVERT(bit, c2.value_in_use)
+        FROM sys.configurations AS c1
+        CROSS JOIN sys.configurations AS c2
+        WHERE c1.name = N'priority boost'
+        AND   c2.name = N'lightweight pooling';
     END;
     
     /*
@@ -404,68 +430,69 @@ BEGIN
             check_id = 1000,
             priority = 70, /* Informational priority */
             category = 'Server Configuration',
-            finding = 'Non-Default Configuration: ' + name,
-            details = 'Configuration option "' + name + 
-                      '" has been changed from the default. Current: ' + 
-                      CONVERT(nvarchar(50), value_in_use) + 
-                      CASE 
-                          /* Configuration options from your lists */
-                          WHEN name = 'access check cache bucket count' THEN ', Default: 0'
-                          WHEN name = 'access check cache quota' THEN ', Default: 0'
-                          WHEN name = 'Ad Hoc Distributed Queries' THEN ', Default: 0'
-                          WHEN name = 'ADR cleaner retry timeout (min)' THEN ', Default: 120'
-                          WHEN name = 'ADR Cleaner Thread Count' THEN ', Default: 1'
-                          WHEN name = 'ADR Preallocation Factor' THEN ', Default: 4'
-                          WHEN name = 'affinity mask' THEN ', Default: 0'
-                          WHEN name = 'affinity I/O mask' THEN ', Default: 0'
-                          WHEN name = 'affinity64 mask' THEN ', Default: 0'
-                          WHEN name = 'affinity64 I/O mask' THEN ', Default: 0'
-                          WHEN name = 'cost threshold for parallelism' THEN ', Default: 5'
-                          WHEN name = 'max degree of parallelism' THEN ', Default: 0'
-                          WHEN name = 'max server memory (MB)' THEN ', Default: 2147483647'
-                          WHEN name = 'max worker threads' THEN ', Default: 0'
-                          WHEN name = 'min memory per query (KB)' THEN ', Default: 1024'
-                          WHEN name = 'min server memory (MB)' THEN ', Default: 0'
-                          WHEN name = 'optimize for ad hoc workloads' THEN ', Default: 0'
-                          WHEN name = 'priority boost' THEN ', Default: 0'
-                          WHEN name = 'query governor cost limit' THEN ', Default: 0'
-                          WHEN name = 'recovery interval (min)' THEN ', Default: 0'
-                          WHEN name = 'tempdb metadata memory-optimized' THEN ', Default: 0'
-                          WHEN name = 'lightweight pooling' THEN ', Default: 0'
-                          ELSE ', Default: Unknown'
-                      END,
+            finding = 'Non-Default Configuration: ' + c.name,
+            details = 
+                'Configuration option "' + c.name + 
+                '" has been changed from the default. Current: ' + 
+                CONVERT(nvarchar(50), c.value_in_use) + 
+                CASE 
+                    /* Configuration options from your lists */
+                    WHEN c.name = N'access check cache bucket count' THEN ', Default: 0'
+                    WHEN c.name = N'access check cache quota' THEN ', Default: 0'
+                    WHEN c.name = N'Ad Hoc Distributed Queries' THEN ', Default: 0'
+                    WHEN c.name = N'ADR cleaner retry timeout (min)' THEN ', Default: 120'
+                    WHEN c.name = N'ADR Cleaner Thread Count' THEN ', Default: 1'
+                    WHEN c.name = N'ADR Preallocation Factor' THEN ', Default: 4'
+                    WHEN c.name = N'affinity mask' THEN ', Default: 0'
+                    WHEN c.name = N'affinity I/O mask' THEN ', Default: 0'
+                    WHEN c.name = N'affinity64 mask' THEN ', Default: 0'
+                    WHEN c.name = N'affinity64 I/O mask' THEN ', Default: 0'
+                    WHEN c.name = N'cost threshold for parallelism' THEN ', Default: 5'
+                    WHEN c.name = N'max degree of parallelism' THEN ', Default: 0'
+                    WHEN c.name = N'max server memory (MB)' THEN ', Default: 2147483647'
+                    WHEN c.name = N'max worker threads' THEN ', Default: 0'
+                    WHEN c.name = N'min memory per query (KB)' THEN ', Default: 1024'
+                    WHEN c.name = N'min server memory (MB)' THEN ', Default: 0'
+                    WHEN c.name = N'optimize for ad hoc workloads' THEN ', Default: 0'
+                    WHEN c.name = N'priority boost' THEN ', Default: 0'
+                    WHEN c.name = N'query governor cost limit' THEN ', Default: 0'
+                    WHEN c.name = N'recovery interval (min)' THEN ', Default: 0'
+                    WHEN c.name = N'tempdb metadata memory-optimized' THEN ', Default: 0'
+                    WHEN c.name = N'lightweight pooling' THEN ', Default: 0'
+                    ELSE ', Default: Unknown'
+                END,
             url = 'https://erikdarling.com/'
-        FROM sys.configurations
+        FROM sys.configurations AS c
         WHERE 
             /* Access check cache settings */
-            (name = 'access check cache bucket count' AND value_in_use <> 0)
-            OR (name = 'access check cache quota' AND value_in_use <> 0)
-            OR (name = 'Ad Hoc Distributed Queries' AND value_in_use <> 0)
+            (c.name = N'access check cache bucket count' AND c.value_in_use <> 0)
+            OR (c.name = N'access check cache quota' AND c.value_in_use <> 0)
+            OR (c.name = N'Ad Hoc Distributed Queries' AND c.value_in_use <> 0)
             
             /* ADR settings */
-            OR (name = 'ADR cleaner retry timeout (min)' AND value_in_use <> 120)
-            OR (name = 'ADR Cleaner Thread Count' AND value_in_use <> 1)
-            OR (name = 'ADR Preallocation Factor' AND value_in_use <> 4)
+            OR (c.name = N'ADR cleaner retry timeout (min)' AND c.value_in_use <> 120)
+            OR (c.name = N'ADR Cleaner Thread Count' AND c.value_in_use <> 1)
+            OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use <> 4)
             
             /* Affinity settings */
-            OR (name = 'affinity mask' AND value_in_use <> 0)
-            OR (name = 'affinity I/O mask' AND value_in_use <> 0)
-            OR (name = 'affinity64 mask' AND value_in_use <> 0)
-            OR (name = 'affinity64 I/O mask' AND value_in_use <> 0)
+            OR (c.name = N'affinity mask' AND c.value_in_use <> 0)
+            OR (c.name = N'affinity I/O mask' AND c.value_in_use <> 0)
+            OR (c.name = N'affinity64 mask' AND c.value_in_use <> 0)
+            OR (c.name = N'affinity64 I/O mask' AND c.value_in_use <> 0)
             
             /* Common performance settings */
-            OR (name = 'cost threshold for parallelism' AND value_in_use <> 5)
-            OR (name = 'max degree of parallelism' AND value_in_use <> 0)
-            OR (name = 'max server memory (MB)' AND value_in_use <> 2147483647)
-            OR (name = 'max worker threads' AND value_in_use <> 0)
-            OR (name = 'min memory per query (KB)' AND value_in_use <> 1024)
-            OR (name = 'min server memory (MB)' AND value_in_use <> 0)
-            OR (name = 'optimize for ad hoc workloads' AND value_in_use <> 0)
-            OR (name = 'priority boost' AND value_in_use <> 0)
-            OR (name = 'query governor cost limit' AND value_in_use <> 0)
-            OR (name = 'recovery interval (min)' AND value_in_use <> 0)
-            OR (name = 'tempdb metadata memory-optimized' AND value_in_use <> 0)
-            OR (name = 'lightweight pooling' AND value_in_use <> 0);
+            OR (c.name = N'cost threshold for parallelism' AND c.value_in_use <> 5)
+            OR (c.name = N'max degree of parallelism' AND c.value_in_use <> 0)
+            OR (c.name = N'max server memory (MB)' AND c.value_in_use <> 2147483647)
+            OR (c.name = N'max worker threads' AND c.value_in_use <> 0)
+            OR (c.name = N'min memory per query (KB)' AND c.value_in_use <> 1024)
+            OR (c.name = N'min server memory (MB)' AND c.value_in_use NOT IN (0, 16))
+            OR (c.name = N'optimize for ad hoc workloads' AND c.value_in_use <> 0)
+            OR (c.name = N'priority boost' AND c.value_in_use <> 0)
+            OR (c.name = N'query governor cost limit' AND c.value_in_use <> 0)
+            OR (c.name = N'recovery interval (min)' AND c.value_in_use <> 0)
+            OR (c.name = N'tempdb metadata memory-optimized' AND c.value_in_use <> 0)
+            OR (c.name = N'lightweight pooling' AND c.value_in_use <> 0);
             
         /*
         TempDB Configuration Checks (not applicable to Azure SQL DB)
@@ -475,20 +502,9 @@ BEGIN
             RAISERROR('Checking TempDB configuration', 0, 1) WITH NOWAIT;
         END;
         
-        /* Create temp table to store TempDB file info */
-        CREATE TABLE #tempdb_files
-        (
-            file_id INTEGER,
-            file_name sysname,
-            type_desc nvarchar(60),
-            size_mb DECIMAL(18, 2),
-            max_size_mb DECIMAL(18, 2),
-            growth_mb DECIMAL(18, 2),
-            is_percent_growth BIT
-        );
-        
         /* Get TempDB file information */
-        INSERT INTO #tempdb_files
+        INSERT INTO 
+            #tempdb_files
         (
             file_id,
             file_name,
@@ -499,38 +515,43 @@ BEGIN
             is_percent_growth
         )
         SELECT
-            file_id,
-            name,
-            type_desc,
-            size_mb = CONVERT(DECIMAL(18, 2), size * 8.0 / 1024),
-            max_size_mb = CASE
-                             WHEN max_size = -1 THEN -1 -- Unlimited
-                             ELSE CONVERT(DECIMAL(18, 2), max_size * 8.0 / 1024)
-                          END,
-            growth_mb = CASE
-                          WHEN is_percent_growth = 1 
-                          THEN CONVERT(DECIMAL(18, 2), growth) -- Percent
-                          ELSE CONVERT(DECIMAL(18, 2), growth * 8.0 / 1024) -- MB
-                       END,
-            is_percent_growth
-        FROM sys.master_files
-        WHERE database_id = 2; /* TempDB */
+            mf.file_id,
+            mf.name,
+            mf.type_desc,
+            size_mb = CONVERT(decimal(18, 2), mf.size * 8.0 / 1024),
+            max_size_mb = 
+                CASE
+                   WHEN mf.max_size = -1 
+                   THEN -1 -- Unlimited
+                   ELSE CONVERT(decimal(18, 2), mf.max_size * 8.0 / 1024)
+                END,
+            growth_mb = 
+                CASE
+                   WHEN mf.is_percent_growth = 1 
+                   THEN CONVERT(decimal(18, 2), mf.growth) -- Percent
+                   ELSE CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024) -- MB
+                END,
+            mf.is_percent_growth
+        FROM sys.master_files AS mf
+        WHERE mf.database_id = 2; /* TempDB */
         
         /* Get file counts and size range */
         SELECT
-            @tempdb_data_file_count = SUM(CASE WHEN type_desc = 'ROWS' THEN 1 ELSE 0 END),
-            @tempdb_log_file_count = SUM(CASE WHEN type_desc = 'LOG' THEN 1 ELSE 0 END),
-            @min_data_file_size = MIN(CASE WHEN type_desc = 'ROWS' THEN size_mb ELSE NULL END),
-            @max_data_file_size = MAX(CASE WHEN type_desc = 'ROWS' THEN size_mb ELSE NULL END),
-            @has_percent_growth = MAX(CASE WHEN type_desc = 'ROWS' AND is_percent_growth = 1 THEN 1 ELSE 0 END),
-            @has_fixed_growth = MAX(CASE WHEN type_desc = 'ROWS' AND is_percent_growth = 0 THEN 1 ELSE 0 END)
-        FROM #tempdb_files;
+            @tempdb_data_file_count = SUM(CASE WHEN tf.type_desc = 'ROWS' THEN 1 ELSE 0 END),
+            @tempdb_log_file_count = SUM(CASE WHEN tf.type_desc = 'LOG' THEN 1 ELSE 0 END),
+            @min_data_file_size = MIN(CASE WHEN tf.type_desc = 'ROWS' THEN tf.size_mb ELSE NULL END),
+            @max_data_file_size = MAX(CASE WHEN tf.type_desc = 'ROWS' THEN tf.size_mb ELSE NULL END),
+            @has_percent_growth = MAX(CASE WHEN tf.type_desc = 'ROWS' AND tf.is_percent_growth = 1 THEN 1 ELSE 0 END),
+            @has_fixed_growth = MAX(CASE WHEN tf.type_desc = 'ROWS' AND tf.is_percent_growth = 0 THEN 1 ELSE 0 END)
+        FROM #tempdb_files AS tf;
         
         /* Calculate size difference percentage */
-        IF @max_data_file_size > 0 AND @min_data_file_size > 0
+        IF  @max_data_file_size > 0 
+        AND @min_data_file_size > 0
         BEGIN
-            SET @size_difference_pct = ((@max_data_file_size - @min_data_file_size) / @min_data_file_size) * 100;
-        END
+            SET @size_difference_pct = 
+                    ((@max_data_file_size - @min_data_file_size) / @min_data_file_size) * 100;
+        END;
         ELSE
         BEGIN
             SET @size_difference_pct = 0;
@@ -539,7 +560,8 @@ BEGIN
         /* Check for single data file */
         IF @tempdb_data_file_count = 1
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -561,9 +583,9 @@ BEGIN
         END;
         
         /* Check for odd number of files compared to CPUs */
-        IF @tempdb_data_file_count % 2 <> 0 
-           AND @tempdb_data_file_count <> @processors 
-           AND @processors > 1
+        IF  @tempdb_data_file_count % 2 <> 0 
+        AND @tempdb_data_file_count <> @processors 
+        AND @processors > 1
         BEGIN
             INSERT INTO #results
             (
@@ -589,9 +611,11 @@ BEGIN
         END;
         
         /* Check for more files than CPUs */
-        IF @tempdb_data_file_count > @processors AND @processors > 8
+        IF  @tempdb_data_file_count > @processors 
+        AND @processors > 8
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -617,7 +641,8 @@ BEGIN
         /* Check for uneven file sizes (if difference > 10%) */
         IF @size_difference_pct > 10.0
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -632,18 +657,20 @@ BEGIN
                 55, /* High-medium priority */
                 'TempDB Configuration',
                 'Uneven TempDB Data File Sizes',
-                'TempDB data files vary in size by ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @size_difference_pct)) + 
-                '%. Smallest: ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @min_data_file_size)) + 
-                ' MB, Largest: ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @max_data_file_size)) + 
+                'TempDB data files vary in size by ' + CONVERT(nvarchar(10), CONVERT(integer, @size_difference_pct)) + 
+                '%. Smallest: ' + CONVERT(nvarchar(10), CONVERT(integer, @min_data_file_size)) + 
+                ' MB, Largest: ' + CONVERT(nvarchar(10), CONVERT(integer, @max_data_file_size)) + 
                 ' MB. For best performance, TempDB data files should be the same size.',
                 'https://erikdarling.com/'
             );
         END;
         
         /* Check for mixed autogrowth settings */
-        IF @has_percent_growth = 1 AND @has_fixed_growth = 1
+        IF  @has_percent_growth = 1 
+        AND @has_fixed_growth = 1
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -664,9 +691,6 @@ BEGIN
             );
         END;
         
-        /* Clean up */
-        DROP TABLE #tempdb_files;
-        
         /*
         Storage Performance Checks - I/O Latency for database files
         */
@@ -679,20 +703,20 @@ BEGIN
         CREATE TABLE #io_stats
         (
             database_name sysname,
-            database_id INTEGER,
+            database_id integer,
             file_name sysname,
             type_desc nvarchar(60),
-            io_stall_read_ms BIGINT,
-            num_of_reads BIGINT,
-            avg_read_latency_ms DECIMAL(18, 2),
-            io_stall_write_ms BIGINT,
-            num_of_writes BIGINT,
-            avg_write_latency_ms DECIMAL(18, 2),
-            io_stall_ms BIGINT,
-            total_io BIGINT,
-            avg_io_latency_ms DECIMAL(18, 2),
-            size_mb DECIMAL(18, 2),
-            drive_letter NCHAR(1),
+            io_stall_read_ms bigint,
+            num_of_reads bigint,
+            avg_read_latency_ms decimal(18, 2),
+            io_stall_write_ms bigint,
+            num_of_writes bigint,
+            avg_write_latency_ms decimal(18, 2),
+            io_stall_ms bigint,
+            total_io bigint,
+            avg_io_latency_ms decimal(18, 2),
+            size_mb decimal(18, 2),
+            drive_letter nchar(1),
             physical_name nvarchar(260)
         );
         
@@ -770,9 +794,9 @@ BEGIN
             finding = 'Slow Read Latency',
             database_name = database_name,
             object_name = file_name + ' (' + type_desc + ')',
-            details = 'Average read latency of ' + CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), avg_read_latency_ms)) + 
+            details = 'Average read latency of ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), avg_read_latency_ms)) + 
                       ' ms for ' + CONVERT(nvarchar(20), num_of_reads) + ' reads. ' +
-                      'This is above the ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @slow_read_ms)) + 
+                      'This is above the ' + CONVERT(nvarchar(10), CONVERT(integer, @slow_read_ms)) + 
                       ' ms threshold and may indicate storage performance issues.',
             url = 'https://erikdarling.com/'
         FROM #io_stats
@@ -801,9 +825,9 @@ BEGIN
             finding = 'Slow Write Latency',
             database_name = database_name,
             object_name = file_name + ' (' + type_desc + ')',
-            details = 'Average write latency of ' + CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), avg_write_latency_ms)) + 
+            details = 'Average write latency of ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), avg_write_latency_ms)) + 
                       ' ms for ' + CONVERT(nvarchar(20), num_of_writes) + ' writes. ' +
-                      'This is above the ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @slow_write_ms)) + 
+                      'This is above the ' + CONVERT(nvarchar(10), CONVERT(integer, @slow_write_ms)) + 
                       ' ms threshold and may indicate storage performance issues.',
             url = 'https://erikdarling.com/'
         FROM #io_stats
@@ -824,24 +848,35 @@ BEGIN
             check_id = 3003,
             priority = 40, /* High priority */
             category = 'Storage Performance',
-            finding = 'Multiple Slow Files on Drive ' + drive_letter,
-            details = 'Drive ' + drive_letter + ' has ' + 
-                      CONVERT(nvarchar(10), COUNT(*)) + ' database files with slow I/O. ' +
-                      'Average overall latency: ' + CONVERT(nvarchar(10), CONVERT(DECIMAL(10, 2), AVG(avg_io_latency_ms))) + ' ms. ' +
-                      'This may indicate an overloaded drive or underlying storage issue.',
+            finding = 'Multiple Slow Files on Drive ' + i.drive_letter,
+            details = 
+                'Drive ' + 
+                i.drive_letter + 
+                ' has ' + 
+                CONVERT(nvarchar(10), COUNT_BIG(*)) + 
+                ' database files with slow I/O. ' +
+                'Average overall latency: ' + 
+                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), AVG(i.avg_io_latency_ms))) + 
+                ' ms. ' +
+                'This may indicate an overloaded drive or underlying storage issue.',
             url = 'https://erikdarling.com/'
-        FROM #io_stats
-        WHERE (avg_read_latency_ms > @slow_read_ms OR avg_write_latency_ms > @slow_write_ms)
-        AND drive_letter IS NOT NULL
-        GROUP BY drive_letter
-        HAVING COUNT(*) > 1;
+        FROM #io_stats AS i
+        WHERE 
+        (
+             i.avg_read_latency_ms > @slow_read_ms 
+          OR i.avg_write_latency_ms > @slow_write_ms
+        )
+        AND i.drive_letter IS NOT NULL
+        GROUP BY 
+            i.drive_letter
+        HAVING 
+            COUNT_BIG(*) > 1;
         
-        /* Clean up */
-        DROP TABLE #io_stats;
         /* Memory configuration checks */
         IF @min_server_memory >= @max_server_memory * 0.9 /* Within 10% */
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -859,14 +894,15 @@ BEGIN
                 'Min server memory (' + CONVERT(nvarchar(20), @min_server_memory) + 
                 ' MB) is >= 90% of max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
                 ' MB). This prevents SQL Server from dynamically adjusting memory.',
-                'https://www.erikdarlingdata.com/'
+                'https://www.erikdarling.com/'
             );
         END;
         
         /* Check if max server memory is too close to physical memory */
         IF @max_server_memory >= (@physical_memory_gb * 1024 * 0.95) /* Within 5% */
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -882,16 +918,18 @@ BEGIN
                 'Server Configuration',
                 'Max Server Memory Too Close To Physical Memory',
                 'Max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
-                ' MB) is >= 95% of physical memory (' + CONVERT(nvarchar(20), CONVERT(BIGINT, @physical_memory_gb * 1024)) + 
+                ' MB) is >= 95% of physical memory (' + CONVERT(nvarchar(20), CONVERT(bigint, @physical_memory_gb * 1024)) + 
                 ' MB). This may not leave enough memory for the OS and other processes.',
-                'https://www.erikdarlingdata.com/'
+                'https://www.erikdarling.com/'
             );
         END;
         
         /* MAXDOP check */
-        IF @max_dop = 0 AND @processors > 1
+        IF  @max_dop = 0 
+        AND @processors > 1
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -907,15 +945,17 @@ BEGIN
                 'Server Configuration',
                 'MAXDOP Not Configured',
                 'Max degree of parallelism is set to 0 (default) on a server with ' + 
-                CONVERT(nvarchar(10), @processors) + ' logical processors. This can lead to excessive parallelism.',
-                'https://www.erikdarlingdata.com/'
+                CONVERT(nvarchar(10), @processors) + 
+                ' logical processors. This can lead to excessive parallelism.',
+                'https://www.erikdarling.com/'
             );
         END;
         
         /* Cost Threshold for Parallelism check */
         IF @cost_threshold <= 5
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -932,14 +972,15 @@ BEGIN
                 'Low Cost Threshold for Parallelism',
                 'Cost threshold for parallelism is set to ' + CONVERT(nvarchar(10), @cost_threshold) + 
                 '. Low values can cause excessive parallelism for small queries.',
-                'https://www.erikdarlingdata.com/'
+                'https://www.erikdarling.com/'
             );
         END;
         
         /* Priority Boost check */
         IF @priority_boost = 1
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -955,14 +996,15 @@ BEGIN
                 'Server Configuration',
                 'Priority Boost Enabled',
                 'Priority boost is enabled. This can cause issues with Windows scheduling priorities and is not recommended.',
-                'https://www.erikdarlingdata.com/'
+                'https://www.erikdarling.com/'
             );
         END;
         
         /* Lightweight Pooling check */
         IF @lightweight_pooling = 1
         BEGIN
-            INSERT INTO #results
+            INSERT INTO 
+                #results
             (
                 check_id,
                 priority,
@@ -978,12 +1020,13 @@ BEGIN
                 'Server Configuration',
                 'Lightweight Pooling Enabled',
                 'Lightweight pooling (fiber mode) is enabled. This is rarely beneficial and can cause issues with OLEDB providers and other components.',
-                'https://www.erikdarlingdata.com/'
+                'https://www.erikdarling.com/'
             );
         END;
         
         /* Check for value_in_use <> running_value */
-        INSERT INTO #results
+        INSERT INTO 
+            #results
         (
             check_id,
             priority,
@@ -997,12 +1040,15 @@ BEGIN
             priority = 20, /* Very high priority */
             category = 'Server Configuration',
             finding = 'Configuration Pending Restart',
-            details = 'The configuration option "' + name + '" has been changed but requires a restart to take effect. ' +
-                      'Current value: ' + CONVERT(nvarchar(50), value) + ', ' +
-                      'Pending value: ' + CONVERT(nvarchar(50), value_in_use),
-            url = 'https://www.erikdarlingdata.com/'
-        FROM sys.configurations
-        WHERE value <> value_in_use;
+            details = 
+                'The configuration option "' + 
+                c.name + 
+                '" has been changed but requires a restart to take effect. ' +
+                'Current value: ' + CONVERT(nvarchar(50), c.value) + ', ' +
+                'Pending value: ' + CONVERT(nvarchar(50), c.value_in_use),
+            url = 'https://www.erikdarling.com/'
+        FROM sys.configurations AS c
+        WHERE c.value <> c.value_in_use;
     END;
 
     /* Build database list based on context */
@@ -1193,11 +1239,11 @@ BEGIN
             priority = 50,
             category = ''Database Configuration'',
             finding = ''Auto-Shrink Enabled'',
-            database_name = ''' + @current_database_name + ''',
-            url = ''https://www.erikdarlingdata.com/'',
+            database_name = N''' + @current_database_name + ''',
+            url = ''https://www.erikdarling.com/'',
             details = ''Database has auto-shrink enabled, which can cause significant performance problems and fragmentation.''
         FROM ' + QUOTENAME(@current_database_name) + '.sys.databases d
-        WHERE d.name = ''' + @current_database_name + '''
+        WHERE d.name = N''' + @current_database_name + '''
         AND d.is_auto_shrink_on = 1;';
         
         /* 
