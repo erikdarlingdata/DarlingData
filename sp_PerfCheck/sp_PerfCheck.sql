@@ -60,7 +60,18 @@ BEGIN
         /* Other configuration variables */
         @priority_boost BIT,
         @lightweight_pooling BIT,
-        @mirroring_count INTEGER;
+        @mirroring_count INTEGER,
+        /* TempDB configuration variables */
+        @tempdb_data_file_count INTEGER,
+        @tempdb_log_file_count INTEGER,
+        @min_data_file_size DECIMAL(18, 2),
+        @max_data_file_size DECIMAL(18, 2),
+        @size_difference_pct DECIMAL(18, 2),
+        @has_percent_growth BIT,
+        @has_fixed_growth BIT,
+        /* Storage performance variables */
+        @slow_read_ms DECIMAL(10, 2) = 20.0, /* Threshold for slow reads (ms) */
+        @slow_write_ms DECIMAL(10, 2) = 20.0; /* Threshold for slow writes (ms) */
     
     /* Set start time for runtime tracking */
     SET @start_time = SYSDATETIME();
@@ -608,6 +619,378 @@ BEGIN
             OR (name = 'recovery interval (min)' AND value_in_use <> 0)
             OR (name = 'tempdb metadata memory-optimized' AND value_in_use <> 0)
             OR (name = 'lightweight pooling' AND value_in_use <> 0);
+            
+        /*
+        TempDB Configuration Checks (not applicable to Azure SQL DB)
+        */
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking TempDB configuration', 0, 1) WITH NOWAIT;
+        END;
+        
+        /* Create temp table to store TempDB file info */
+        CREATE TABLE #tempdb_files
+        (
+            file_id INTEGER,
+            file_name sysname,
+            type_desc nvarchar(60),
+            size_mb DECIMAL(18, 2),
+            max_size_mb DECIMAL(18, 2),
+            growth_mb DECIMAL(18, 2),
+            is_percent_growth BIT
+        );
+        
+        /* Get TempDB file information */
+        INSERT INTO #tempdb_files
+        (
+            file_id,
+            file_name,
+            type_desc,
+            size_mb,
+            max_size_mb,
+            growth_mb,
+            is_percent_growth
+        )
+        SELECT
+            file_id,
+            name,
+            type_desc,
+            size_mb = CONVERT(DECIMAL(18, 2), size * 8.0 / 1024),
+            max_size_mb = CASE
+                             WHEN max_size = -1 THEN -1 -- Unlimited
+                             ELSE CONVERT(DECIMAL(18, 2), max_size * 8.0 / 1024)
+                          END,
+            growth_mb = CASE
+                          WHEN is_percent_growth = 1 
+                          THEN CONVERT(DECIMAL(18, 2), growth) -- Percent
+                          ELSE CONVERT(DECIMAL(18, 2), growth * 8.0 / 1024) -- MB
+                       END,
+            is_percent_growth
+        FROM sys.master_files
+        WHERE database_id = 2; /* TempDB */
+        
+        /* Get file counts and size range */
+        SELECT
+            @tempdb_data_file_count = SUM(CASE WHEN type_desc = 'ROWS' THEN 1 ELSE 0 END),
+            @tempdb_log_file_count = SUM(CASE WHEN type_desc = 'LOG' THEN 1 ELSE 0 END),
+            @min_data_file_size = MIN(CASE WHEN type_desc = 'ROWS' THEN size_mb ELSE NULL END),
+            @max_data_file_size = MAX(CASE WHEN type_desc = 'ROWS' THEN size_mb ELSE NULL END),
+            @has_percent_growth = MAX(CASE WHEN type_desc = 'ROWS' AND is_percent_growth = 1 THEN 1 ELSE 0 END),
+            @has_fixed_growth = MAX(CASE WHEN type_desc = 'ROWS' AND is_percent_growth = 0 THEN 1 ELSE 0 END)
+        FROM #tempdb_files;
+        
+        /* Calculate size difference percentage */
+        IF @max_data_file_size > 0 AND @min_data_file_size > 0
+        BEGIN
+            SET @size_difference_pct = ((@max_data_file_size - @min_data_file_size) / @min_data_file_size) * 100;
+        END
+        ELSE
+        BEGIN
+            SET @size_difference_pct = 0;
+        END;
+        
+        /* Check for single data file */
+        IF @tempdb_data_file_count = 1
+        BEGIN
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                2001,
+                50, /* High priority */
+                'TempDB Configuration',
+                'Single TempDB Data File',
+                'TempDB has only one data file. Multiple files can reduce allocation page contention. ' + 
+                'Recommendation: Use multiple files (equal to number of logical processors up to 8).',
+                'https://erikdarling.com/'
+            );
+        END;
+        
+        /* Check for odd number of files compared to CPUs */
+        IF @tempdb_data_file_count % 2 <> 0 
+           AND @tempdb_data_file_count <> @processors 
+           AND @processors > 1
+        BEGIN
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                2002,
+                65, /* Medium priority */
+                'TempDB Configuration',
+                'Odd Number of TempDB Files',
+                'TempDB has ' + CONVERT(nvarchar(10), @tempdb_data_file_count) + 
+                ' data files. This is an odd number and not equal to the ' +
+                CONVERT(nvarchar(10), @processors) + ' logical processors. ' +
+                'Consider using an even number of files for better performance.',
+                'https://erikdarling.com/'
+            );
+        END;
+        
+        /* Check for more files than CPUs */
+        IF @tempdb_data_file_count > @processors AND @processors > 8
+        BEGIN
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                2003,
+                70, /* Informational */
+                'TempDB Configuration',
+                'More TempDB Files Than CPUs',
+                'TempDB has ' + CONVERT(nvarchar(10), @tempdb_data_file_count) + 
+                ' data files, which is more than the ' +
+                CONVERT(nvarchar(10), @processors) + ' logical processors. ' +
+                'This is not necessarily a problem, but typically not needed for systems with more than 8 cores.',
+                'https://erikdarling.com/'
+            );
+        END;
+        
+        /* Check for uneven file sizes (if difference > 10%) */
+        IF @size_difference_pct > 10.0
+        BEGIN
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                2004,
+                55, /* High-medium priority */
+                'TempDB Configuration',
+                'Uneven TempDB Data File Sizes',
+                'TempDB data files vary in size by ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @size_difference_pct)) + 
+                '%. Smallest: ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @min_data_file_size)) + 
+                ' MB, Largest: ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @max_data_file_size)) + 
+                ' MB. For best performance, TempDB data files should be the same size.',
+                'https://erikdarling.com/'
+            );
+        END;
+        
+        /* Check for mixed autogrowth settings */
+        IF @has_percent_growth = 1 AND @has_fixed_growth = 1
+        BEGIN
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                2005,
+                55, /* High-medium priority */
+                'TempDB Configuration',
+                'Mixed TempDB Autogrowth Settings',
+                'TempDB data files have inconsistent autogrowth settings - some use percentage growth and others use fixed size growth. ' +
+                'This can lead to uneven file sizes over time. Use consistent settings for all files.',
+                'https://erikdarling.com/'
+            );
+        END;
+        
+        /* Clean up */
+        DROP TABLE #tempdb_files;
+        
+        /*
+        Storage Performance Checks - I/O Latency for database files
+        */
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking storage performance', 0, 1) WITH NOWAIT;
+        END;
+        
+        /* Create temp table for IO stats */
+        CREATE TABLE #io_stats
+        (
+            database_name sysname,
+            database_id INTEGER,
+            file_name sysname,
+            type_desc nvarchar(60),
+            io_stall_read_ms BIGINT,
+            num_of_reads BIGINT,
+            avg_read_latency_ms DECIMAL(18, 2),
+            io_stall_write_ms BIGINT,
+            num_of_writes BIGINT,
+            avg_write_latency_ms DECIMAL(18, 2),
+            io_stall_ms BIGINT,
+            total_io BIGINT,
+            avg_io_latency_ms DECIMAL(18, 2),
+            size_mb DECIMAL(18, 2),
+            drive_letter NCHAR(1),
+            physical_name nvarchar(260)
+        );
+        
+        /* Gather IO Stats */
+        INSERT INTO #io_stats
+        (
+            database_name,
+            database_id,
+            file_name,
+            type_desc,
+            io_stall_read_ms,
+            num_of_reads,
+            avg_read_latency_ms,
+            io_stall_write_ms,
+            num_of_writes,
+            avg_write_latency_ms,
+            io_stall_ms,
+            total_io,
+            avg_io_latency_ms,
+            size_mb,
+            drive_letter,
+            physical_name
+        )
+        SELECT
+            database_name = DB_NAME(fs.database_id),
+            fs.database_id,
+            file_name = mf.name,
+            mf.type_desc,
+            io_stall_read_ms = fs.io_stall_read_ms,
+            num_of_reads = fs.num_of_reads,
+            avg_read_latency_ms = CASE 
+                                    WHEN fs.num_of_reads = 0 THEN 0
+                                    ELSE fs.io_stall_read_ms * 1.0 / fs.num_of_reads
+                                  END,
+            io_stall_write_ms = fs.io_stall_write_ms,
+            num_of_writes = fs.num_of_writes,
+            avg_write_latency_ms = CASE
+                                     WHEN fs.num_of_writes = 0 THEN 0
+                                     ELSE fs.io_stall_write_ms * 1.0 / fs.num_of_writes
+                                   END,
+            io_stall_ms = fs.io_stall,
+            total_io = fs.num_of_reads + fs.num_of_writes,
+            avg_io_latency_ms = CASE
+                                  WHEN (fs.num_of_reads + fs.num_of_writes) = 0 THEN 0
+                                  ELSE fs.io_stall * 1.0 / (fs.num_of_reads + fs.num_of_writes)
+                                END,
+            size_mb = mf.size * 8.0 / 1024,
+            drive_letter = UPPER(LEFT(mf.physical_name, 1)),
+            physical_name = mf.physical_name
+        FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS fs
+        JOIN sys.master_files AS mf
+          ON fs.database_id = mf.database_id
+          AND fs.file_id = mf.file_id
+        WHERE (fs.num_of_reads > 0 OR fs.num_of_writes > 0); /* Only include files with some activity */
+        
+        /* Add results for slow reads */
+        INSERT INTO #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            object_name,
+            details,
+            url
+        )
+        SELECT
+            check_id = 3001,
+            priority = CASE 
+                          WHEN avg_read_latency_ms > @slow_read_ms * 2 THEN 40 /* Very slow */
+                          ELSE 50 /* Moderately slow */
+                       END,
+            category = 'Storage Performance',
+            finding = 'Slow Read Latency',
+            database_name = database_name,
+            object_name = file_name + ' (' + type_desc + ')',
+            details = 'Average read latency of ' + CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), avg_read_latency_ms)) + 
+                      ' ms for ' + CONVERT(nvarchar(20), num_of_reads) + ' reads. ' +
+                      'This is above the ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @slow_read_ms)) + 
+                      ' ms threshold and may indicate storage performance issues.',
+            url = 'https://erikdarling.com/'
+        FROM #io_stats
+        WHERE avg_read_latency_ms > @slow_read_ms
+        AND num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
+        
+        /* Add results for slow writes */
+        INSERT INTO #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            object_name,
+            details,
+            url
+        )
+        SELECT
+            check_id = 3002,
+            priority = CASE 
+                          WHEN avg_write_latency_ms > @slow_write_ms * 2 THEN 40 /* Very slow */
+                          ELSE 50 /* Moderately slow */
+                       END,
+            category = 'Storage Performance',
+            finding = 'Slow Write Latency',
+            database_name = database_name,
+            object_name = file_name + ' (' + type_desc + ')',
+            details = 'Average write latency of ' + CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), avg_write_latency_ms)) + 
+                      ' ms for ' + CONVERT(nvarchar(20), num_of_writes) + ' writes. ' +
+                      'This is above the ' + CONVERT(nvarchar(10), CONVERT(INTEGER, @slow_write_ms)) + 
+                      ' ms threshold and may indicate storage performance issues.',
+            url = 'https://erikdarling.com/'
+        FROM #io_stats
+        WHERE avg_write_latency_ms > @slow_write_ms
+        AND num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
+        
+        /* Add drive level warnings if we have multiple slow files on same drive */
+        INSERT INTO #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT
+            check_id = 3003,
+            priority = 40, /* High priority */
+            category = 'Storage Performance',
+            finding = 'Multiple Slow Files on Drive ' + drive_letter,
+            details = 'Drive ' + drive_letter + ' has ' + 
+                      CONVERT(nvarchar(10), COUNT(*)) + ' database files with slow I/O. ' +
+                      'Average overall latency: ' + CONVERT(nvarchar(10), CONVERT(DECIMAL(10, 2), AVG(avg_io_latency_ms))) + ' ms. ' +
+                      'This may indicate an overloaded drive or underlying storage issue.',
+            url = 'https://erikdarling.com/'
+        FROM #io_stats
+        WHERE (avg_read_latency_ms > @slow_read_ms OR avg_write_latency_ms > @slow_write_ms)
+        AND drive_letter IS NOT NULL
+        GROUP BY drive_letter
+        HAVING COUNT(*) > 1;
+        
+        /* Clean up */
+        DROP TABLE #io_stats;
         /* Memory configuration checks */
         IF @min_server_memory >= @max_server_memory * 0.9 /* Within 10% */
         BEGIN
