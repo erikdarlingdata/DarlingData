@@ -305,6 +305,37 @@ BEGIN
         CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) + ' NUMA node(s)'
     FROM sys.dm_os_sys_info AS osi;
     
+    /* Check for offline schedulers */
+    IF @azure_sql_db = 0 /* Not applicable to Azure SQL DB */
+    BEGIN
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT
+            check_id = 4001,
+            priority = 20, /* Very high priority */
+            category = 'CPU Configuration',
+            finding = 'Offline CPU Schedulers',
+            details = 
+                CONVERT(nvarchar(10), COUNT(*)) + 
+                ' CPU scheduler(s) are offline out of ' +
+                CONVERT(nvarchar(10), (SELECT cpu_count FROM sys.dm_os_sys_info)) +
+                ' logical processors. This reduces available processing power. ' +
+                'Check MAXDOP settings, affinity mask configuration, and licensing.',
+            url = 'https://erikdarling.com/'
+        FROM sys.dm_os_schedulers
+        WHERE scheduler_id < 255 /* Only CPU schedulers, not internal or hidden schedulers */
+        AND status = 'VISIBLE OFFLINE'
+        HAVING COUNT(*) > 0; /* Only if there are offline schedulers */
+    END;
+    
     /* Memory information - works on all platforms */
     INSERT INTO 
         #server_info (info_type, value)
