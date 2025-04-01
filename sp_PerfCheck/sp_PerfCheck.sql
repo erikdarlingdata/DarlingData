@@ -894,7 +894,7 @@ BEGIN
                 'Min server memory (' + CONVERT(nvarchar(20), @min_server_memory) + 
                 ' MB) is >= 90% of max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
                 ' MB). This prevents SQL Server from dynamically adjusting memory.',
-                'https://www.erikdarling.com/'
+                'https://erikdarling.com/'
             );
         END;
         
@@ -920,7 +920,7 @@ BEGIN
                 'Max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
                 ' MB) is >= 95% of physical memory (' + CONVERT(nvarchar(20), CONVERT(bigint, @physical_memory_gb * 1024)) + 
                 ' MB). This may not leave enough memory for the OS and other processes.',
-                'https://www.erikdarling.com/'
+                'https://erikdarling.com/'
             );
         END;
         
@@ -947,7 +947,7 @@ BEGIN
                 'Max degree of parallelism is set to 0 (default) on a server with ' + 
                 CONVERT(nvarchar(10), @processors) + 
                 ' logical processors. This can lead to excessive parallelism.',
-                'https://www.erikdarling.com/'
+                'https://erikdarling.com/'
             );
         END;
         
@@ -972,7 +972,7 @@ BEGIN
                 'Low Cost Threshold for Parallelism',
                 'Cost threshold for parallelism is set to ' + CONVERT(nvarchar(10), @cost_threshold) + 
                 '. Low values can cause excessive parallelism for small queries.',
-                'https://www.erikdarling.com/'
+                'https://erikdarling.com/'
             );
         END;
         
@@ -996,7 +996,7 @@ BEGIN
                 'Server Configuration',
                 'Priority Boost Enabled',
                 'Priority boost is enabled. This can cause issues with Windows scheduling priorities and is not recommended.',
-                'https://www.erikdarling.com/'
+                'https://erikdarling.com/'
             );
         END;
         
@@ -1020,7 +1020,7 @@ BEGIN
                 'Server Configuration',
                 'Lightweight Pooling Enabled',
                 'Lightweight pooling (fiber mode) is enabled. This is rarely beneficial and can cause issues with OLEDB providers and other components.',
-                'https://www.erikdarling.com/'
+                'https://erikdarling.com/'
             );
         END;
         
@@ -1046,7 +1046,7 @@ BEGIN
                 '" has been changed but requires a restart to take effect. ' +
                 'Current value: ' + CONVERT(nvarchar(50), c.value) + ', ' +
                 'Pending value: ' + CONVERT(nvarchar(50), c.value_in_use),
-            url = 'https://www.erikdarling.com/'
+            url = 'https://erikdarling.com/'
         FROM sys.configurations AS c
         WHERE c.value <> c.value_in_use;
     END;
@@ -1241,7 +1241,7 @@ BEGIN
             category = ''Database Configuration'',
             finding = ''Auto-Shrink Enabled'',
             database_name = N''' + @current_database_name + ''',
-            url = ''https://www.erikdarling.com/'',
+            url = ''https://erikdarling.com/'',
             details = ''Database has auto-shrink enabled, which can cause significant performance problems and fragmentation.''
         FROM ' + QUOTENAME(@current_database_name) + '.sys.databases d
         WHERE d.name = N''' + @current_database_name + '''
