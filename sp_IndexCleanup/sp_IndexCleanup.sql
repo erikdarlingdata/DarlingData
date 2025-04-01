@@ -1459,7 +1459,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
-        udf_names = NULL
+        udf_names =
+            CASE
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                THEN
+                    SUBSTRING
+                    (
+                        cc.definition,
+                        CHARINDEX(N''['', cc.definition),
+                        CHARINDEX
+                        (
+                            N'']'', 
+                            cc.definition, 
+                            CHARINDEX
+                            (
+                                N''].['', 
+                                cc.definition
+                            ) + 3
+                        ) - 
+                        CHARINDEX(N''['', cc.definition) + 1
+                    )
+                ELSE NULL
+            END
     FROM #filtered_objects AS fo
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
       ON fo.object_id = c.object_id
@@ -1525,7 +1546,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
-        udf_names = NULL
+        udf_names =
+            CASE
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                THEN
+                    SUBSTRING
+                    (
+                        cc.definition,
+                        CHARINDEX(N''['', cc.definition),
+                        CHARINDEX
+                        (
+                            N'']'', 
+                            cc.definition, 
+                            CHARINDEX
+                            (
+                                N''].['', 
+                                cc.definition
+                            ) + 3
+                        ) - 
+                        CHARINDEX(N''['', cc.definition) + 1
+                    )
+                ELSE NULL
+            END
     FROM #filtered_objects AS fo
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.check_constraints AS cc
       ON fo.object_id = cc.parent_object_id
