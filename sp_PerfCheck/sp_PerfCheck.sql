@@ -2,14 +2,14 @@ SET ANSI_NULLS ON;
 SET QUOTED_IDENTIFIER ON;
 GO
 
-IF OBJECT_ID(N'dbo.sp_PerformanceCheck', N'P') IS NULL
+IF OBJECT_ID(N'dbo.sp_PerfCheck', N'P') IS NULL
 BEGIN
-    EXECUTE(N'CREATE PROCEDURE dbo.sp_PerformanceCheck AS RETURN 138;');
+    EXECUTE(N'CREATE PROCEDURE dbo.sp_PerfCheck AS RETURN 138;');
 END;
 GO
 
 ALTER PROCEDURE
-    dbo.sp_PerformanceCheck
+    dbo.sp_PerfCheck
 (
     @database_name sysname = NULL, /* Database to check, NULL for all user databases */
     @debug bit = 0, /* Print diagnostic messages */
@@ -243,153 +243,7 @@ BEGIN
         create_date datetime,
         can_access bit
     );
-    
-    /* Build database list based on context */
-    IF @azure_sql_db = 1
-    BEGIN
-        /* In Azure SQL DB, just use current database */
-        INSERT 
-            #database_list
-        (
-            database_name,
-            database_id,
-            state,
-            state_desc,
-            compatibility_level,
-            recovery_model_desc,
-            is_read_only,
-            is_in_standby,
-            is_encrypted,
-            create_date,
-            can_access
-        )
-        SELECT
-            database_name = DB_NAME(),
-            database_id = DB_ID(),
-            state = d.state,
-            state_desc = d.state_desc,
-            compatibility_level = d.compatibility_level,
-            recovery_model_desc = d.recovery_model_desc,
-            is_read_only = d.is_read_only,
-            is_in_standby = d.is_in_standby,
-            is_encrypted = d.is_encrypted,
-            create_date = d.create_date,
-            can_access = 1
-        FROM sys.databases AS d
-        WHERE d.database_id = DB_ID();
-    END;
-    ELSE
-    BEGIN
-        /* For non-Azure SQL DB, build list from all accessible databases */
-        IF @database_name IS NULL
-        BEGIN
-            /* All user databases */
-            INSERT 
-                #database_list
-            (
-                database_name,
-                database_id,
-                state,
-                state_desc,
-                compatibility_level,
-                recovery_model_desc,
-                is_read_only,
-                is_in_standby,
-                is_encrypted,
-                create_date,
-                can_access
-            )
-            SELECT
-                database_name = d.name,
-                database_id = d.database_id,
-                state = d.state,
-                state_desc = d.state_desc,
-                compatibility_level = d.compatibility_level,
-                recovery_model_desc = d.recovery_model_desc,
-                is_read_only = d.is_read_only,
-                is_in_standby = d.is_in_standby,
-                is_encrypted = d.is_encrypted,
-                create_date = d.create_date,
-                can_access = 1 /* Default to accessible, will check individually later */
-            FROM sys.databases AS d
-            WHERE d.database_id > 4 /* Skip system databases */
-            AND d.state = 0; /* Only online databases */
-        END;
-        ELSE
-        BEGIN
-            /* Specific database */
-            INSERT 
-                #database_list
-            (
-                database_name,
-                database_id,
-                state,
-                state_desc,
-                compatibility_level,
-                recovery_model_desc,
-                is_read_only,
-                is_in_standby,
-                is_encrypted,
-                create_date,
-                can_access
-            )
-            SELECT
-                database_name = d.name,
-                database_id = d.database_id,
-                state = d.state,
-                state_desc = d.state_desc,
-                compatibility_level = d.compatibility_level,
-                recovery_model_desc = d.recovery_model_desc,
-                is_read_only = d.is_read_only,
-                is_in_standby = d.is_in_standby,
-                is_encrypted = d.is_encrypted,
-                create_date = d.create_date,
-                can_access = 1 /* Default to accessible, will check individually later */
-            FROM sys.databases AS d
-            WHERE d.name = @database_name
-            AND d.state = 0; /* Only online databases */
-        END;
         
-        /* Check each database for accessibility using three-part naming */
-        DECLARE db_cursor CURSOR LOCAL FAST_FORWARD FOR
-            SELECT database_name, database_id
-            FROM #database_list;
-            
-        OPEN db_cursor;
-        FETCH NEXT FROM db_cursor INTO @current_database_name, @current_database_id;
-        
-        WHILE @@FETCH_STATUS = 0
-        BEGIN
-            /* Try to access database using three-part naming to ensure we have proper permissions */
-            BEGIN TRY
-                SET @sql = N'SELECT TOP 1 1 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables;';
-                EXEC(@sql);
-            END TRY
-            BEGIN CATCH
-                /* If we can't access it, mark it */
-                UPDATE #database_list
-                SET can_access = 0
-                WHERE database_id = @current_database_id;
-                
-                IF @debug = 1
-                BEGIN
-                    SET @message = N'Cannot access database: ' + @current_database_name;
-                    RAISERROR(@message, 0, 1) WITH NOWAIT;
-                END;
-            END CATCH;
-            
-            FETCH NEXT FROM db_cursor INTO @current_database_name, @current_database_id;
-        END;
-        
-        CLOSE db_cursor;
-        DEALLOCATE db_cursor;
-    END;
-    
-    IF @debug = 1
-    BEGIN
-        SELECT * FROM #database_list;
-    END;
-    
     /*
     Collect basic server information (works on all platforms)
     */
@@ -443,8 +297,6 @@ BEGIN
     SELECT 'Memory', 
            'Total: ' + 
            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), physical_memory_kb / 1024.0 / 1024.0)) + ' GB, ' +
-           'Available: ' + 
-           CONVERT(nvarchar(20), CONVERT(decimal(10, 2), available_physical_memory_kb / 1024.0 / 1024.0)) + ' GB, ' +
            'Target: ' + 
            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), committed_target_kb / 1024.0 / 1024.0)) + ' GB'
     FROM sys.dm_os_sys_info;
@@ -1156,6 +1008,152 @@ BEGIN
             url = 'https://www.erikdarlingdata.com/'
         FROM sys.configurations
         WHERE value <> value_in_use;
+    END;
+
+    /* Build database list based on context */
+    IF @azure_sql_db = 1
+    BEGIN
+        /* In Azure SQL DB, just use current database */
+        INSERT 
+            #database_list
+        (
+            database_name,
+            database_id,
+            state,
+            state_desc,
+            compatibility_level,
+            recovery_model_desc,
+            is_read_only,
+            is_in_standby,
+            is_encrypted,
+            create_date,
+            can_access
+        )
+        SELECT
+            database_name = DB_NAME(),
+            database_id = DB_ID(),
+            state = d.state,
+            state_desc = d.state_desc,
+            compatibility_level = d.compatibility_level,
+            recovery_model_desc = d.recovery_model_desc,
+            is_read_only = d.is_read_only,
+            is_in_standby = d.is_in_standby,
+            is_encrypted = d.is_encrypted,
+            create_date = d.create_date,
+            can_access = 1
+        FROM sys.databases AS d
+        WHERE d.database_id = DB_ID();
+    END;
+    ELSE
+    BEGIN
+        /* For non-Azure SQL DB, build list from all accessible databases */
+        IF @database_name IS NULL
+        BEGIN
+            /* All user databases */
+            INSERT 
+                #database_list
+            (
+                database_name,
+                database_id,
+                state,
+                state_desc,
+                compatibility_level,
+                recovery_model_desc,
+                is_read_only,
+                is_in_standby,
+                is_encrypted,
+                create_date,
+                can_access
+            )
+            SELECT
+                database_name = d.name,
+                database_id = d.database_id,
+                state = d.state,
+                state_desc = d.state_desc,
+                compatibility_level = d.compatibility_level,
+                recovery_model_desc = d.recovery_model_desc,
+                is_read_only = d.is_read_only,
+                is_in_standby = d.is_in_standby,
+                is_encrypted = d.is_encrypted,
+                create_date = d.create_date,
+                can_access = 1 /* Default to accessible, will check individually later */
+            FROM sys.databases AS d
+            WHERE d.database_id > 4 /* Skip system databases */
+            AND d.state = 0; /* Only online databases */
+        END;
+        ELSE
+        BEGIN
+            /* Specific database */
+            INSERT 
+                #database_list
+            (
+                database_name,
+                database_id,
+                state,
+                state_desc,
+                compatibility_level,
+                recovery_model_desc,
+                is_read_only,
+                is_in_standby,
+                is_encrypted,
+                create_date,
+                can_access
+            )
+            SELECT
+                database_name = d.name,
+                database_id = d.database_id,
+                state = d.state,
+                state_desc = d.state_desc,
+                compatibility_level = d.compatibility_level,
+                recovery_model_desc = d.recovery_model_desc,
+                is_read_only = d.is_read_only,
+                is_in_standby = d.is_in_standby,
+                is_encrypted = d.is_encrypted,
+                create_date = d.create_date,
+                can_access = 1 /* Default to accessible, will check individually later */
+            FROM sys.databases AS d
+            WHERE d.name = @database_name
+            AND d.state = 0; /* Only online databases */
+        END;
+        
+        /* Check each database for accessibility using three-part naming */
+        DECLARE db_cursor CURSOR LOCAL FAST_FORWARD FOR
+            SELECT database_name, database_id
+            FROM #database_list;
+            
+        OPEN db_cursor;
+        FETCH NEXT FROM db_cursor INTO @current_database_name, @current_database_id;
+        
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            /* Try to access database using three-part naming to ensure we have proper permissions */
+            BEGIN TRY
+                SET @sql = N'SELECT TOP 1 1 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables;';
+                EXEC(@sql);
+            END TRY
+            BEGIN CATCH
+                /* If we can't access it, mark it */
+                UPDATE #database_list
+                SET can_access = 0
+                WHERE database_id = @current_database_id;
+                
+                IF @debug = 1
+                BEGIN
+                    SET @message = N'Cannot access database: ' + @current_database_name;
+                    RAISERROR(@message, 0, 1) WITH NOWAIT;
+                END;
+            END CATCH;
+            
+            FETCH NEXT FROM db_cursor INTO @current_database_name, @current_database_id;
+        END;
+        
+        CLOSE db_cursor;
+        DEALLOCATE db_cursor;
+    END;
+    
+    IF @debug = 1
+    BEGIN
+        SELECT * FROM #database_list;
     END;
     
     /*
