@@ -1455,8 +1455,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         definition = cc.definition,
         contains_udf = 
             CASE 
-                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' THEN 1
-                WHEN cc.definition LIKE ''%dbo.%'' THEN 1
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                THEN 1
                 ELSE 0
             END,
         udf_names = NULL
@@ -1464,7 +1464,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
       ON fo.object_id = c.object_id
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.computed_columns AS cc
-      ON c.object_id = cc.object_id
+      ON  c.object_id = cc.object_id
       AND c.column_id = cc.column_id
     OPTION(RECOMPILE);';
 
@@ -1521,8 +1521,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         definition = cc.definition,
         contains_udf = 
             CASE 
-                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' THEN 1
-                WHEN cc.definition LIKE ''%dbo.%'' THEN 1
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                THEN 1
                 ELSE 0
             END,
         udf_names = NULL
@@ -2419,22 +2419,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         (
                             /* Find column names mentioned in filter_definition that aren't already key or included columns */
                             SELECT
-                                N', ' + c.name
+                                N', ' + 
+                                c.name
                             FROM sys.columns AS c
                             WHERE c.object_id = ia.object_id
-                            AND ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
-                            AND NOT EXISTS
+                            AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
+                            AND   NOT EXISTS
                             (
                                 SELECT
                                     1/0
                                 FROM #index_details AS id
                                 WHERE id.object_id = ia.object_id
-                                AND id.index_id = ia.index_id
-                                AND id.column_id = c.column_id
+                                AND   id.index_id = ia.index_id
+                                AND   id.column_id = c.column_id
                             )
-                            FOR XML PATH(''), TYPE
+                            GROUP BY
+                                c.name
+                            FOR 
+                                XML 
+                                PATH(''), 
+                                TYPE
                         ).value('text()[1]','nvarchar(max)'),
-                        1, 2, N''
+                        1, 
+                        2, 
+                        N''
                     )
             ),
         should_include_filter_columns =
@@ -2446,15 +2454,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         1/0
                     FROM sys.columns AS c
                     WHERE c.object_id = ia.object_id
-                    AND ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
-                    AND NOT EXISTS
+                    AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
+                    AND   NOT EXISTS
                     (
                         SELECT
                             1/0
                         FROM #index_details AS id
                         WHERE id.object_id = ia.object_id
-                        AND id.index_id = ia.index_id
-                        AND id.column_id = c.column_id
+                        AND   id.index_id = ia.index_id
+                        AND   id.column_id = c.column_id
                     )
                 )
                 THEN 1
@@ -5792,24 +5800,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         computed_columns_with_udfs =
             CASE
                 WHEN irs.summary_level = 'TABLE'
-                THEN CONVERT(nvarchar(20), 
-                    (SELECT COUNT(*) 
-                     FROM #computed_columns_analysis AS cca 
-                     WHERE cca.database_name = irs.database_name
-                     AND cca.schema_name = irs.schema_name
-                     AND cca.table_name = irs.table_name
-                     AND cca.contains_udf = 1))
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #computed_columns_analysis AS cca 
+                          WHERE cca.database_name = irs.database_name
+                          AND   cca.schema_name = irs.schema_name
+                          AND   cca.table_name = irs.table_name
+                          AND   cca.contains_udf = 1
+                        )
+                    )
                 WHEN irs.summary_level = 'DATABASE'
-                THEN CONVERT(nvarchar(20), 
-                    (SELECT COUNT(*) 
-                     FROM #computed_columns_analysis AS cca 
-                     WHERE cca.database_name = irs.database_name
-                     AND cca.contains_udf = 1))
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #computed_columns_analysis AS cca 
+                          WHERE cca.database_name = irs.database_name
+                          AND   cca.contains_udf = 1
+                        )
+                    )
                 WHEN irs.summary_level = 'SUMMARY'
-                THEN CONVERT(nvarchar(20), 
-                    (SELECT COUNT(*) 
-                     FROM #computed_columns_analysis AS cca 
-                     WHERE cca.contains_udf = 1))
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #computed_columns_analysis AS cca 
+                          WHERE cca.contains_udf = 1
+                        )
+                    )
                 ELSE '0'
             END,
             
@@ -5817,24 +5846,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         check_constraints_with_udfs =
             CASE
                 WHEN irs.summary_level = 'TABLE'
-                THEN CONVERT(nvarchar(20), 
-                    (SELECT COUNT(*) 
-                     FROM #check_constraints_analysis AS cca 
-                     WHERE cca.database_name = irs.database_name
-                     AND cca.schema_name = irs.schema_name
-                     AND cca.table_name = irs.table_name
-                     AND cca.contains_udf = 1))
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #check_constraints_analysis AS cca 
+                          WHERE cca.database_name = irs.database_name
+                          AND   cca.schema_name = irs.schema_name
+                          AND   cca.table_name = irs.table_name
+                          AND   cca.contains_udf = 1
+                        )
+                    )
                 WHEN irs.summary_level = 'DATABASE'
-                THEN CONVERT(nvarchar(20), 
-                    (SELECT COUNT(*) 
-                     FROM #check_constraints_analysis AS cca 
-                     WHERE cca.database_name = irs.database_name
-                     AND cca.contains_udf = 1))
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #check_constraints_analysis AS cca 
+                          WHERE cca.database_name = irs.database_name
+                          AND   cca.contains_udf = 1
+                        )
+                    )
                 WHEN irs.summary_level = 'SUMMARY'
-                THEN CONVERT(nvarchar(20), 
-                    (SELECT COUNT(*) 
-                     FROM #check_constraints_analysis AS cca 
-                     WHERE cca.contains_udf = 1))
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #check_constraints_analysis AS cca 
+                          WHERE cca.contains_udf = 1
+                        )
+                    )
                 ELSE '0'
             END,
             
@@ -5842,24 +5892,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filtered_indexes_needing_includes =
             CASE
                 WHEN irs.summary_level = 'TABLE'
-                THEN CONVERT(nvarchar(20), 
-                    (SELECT COUNT(*) 
-                     FROM #filtered_index_columns_analysis AS fica 
-                     WHERE fica.database_name = irs.database_name
-                     AND fica.schema_name = irs.schema_name
-                     AND fica.table_name = irs.table_name
-                     AND fica.should_include_filter_columns = 1))
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #filtered_index_columns_analysis AS fica 
+                          WHERE fica.database_name = irs.database_name
+                          AND   fica.schema_name = irs.schema_name
+                          AND   fica.table_name = irs.table_name
+                          AND   fica.should_include_filter_columns = 1
+                        )
+                    )
                 WHEN irs.summary_level = 'DATABASE'
-                THEN CONVERT(nvarchar(20), 
-                    (SELECT COUNT(*) 
-                     FROM #filtered_index_columns_analysis AS fica 
-                     WHERE fica.database_name = irs.database_name
-                     AND fica.should_include_filter_columns = 1))
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #filtered_index_columns_analysis AS fica 
+                          WHERE fica.database_name = irs.database_name
+                          AND   fica.should_include_filter_columns = 1
+                        )
+                    )
                 WHEN irs.summary_level = 'SUMMARY'
-                THEN CONVERT(nvarchar(20), 
-                    (SELECT COUNT(*) 
-                     FROM #filtered_index_columns_analysis AS fica 
-                     WHERE fica.should_include_filter_columns = 1))
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #filtered_index_columns_analysis AS fica 
+                          WHERE fica.should_include_filter_columns = 1
+                        )
+                    )
                 ELSE '0'
             END,
 
@@ -6164,10 +6235,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
     
     /* Display detailed reports for computed columns with UDFs */
-    IF EXISTS (SELECT 1 FROM #computed_columns_analysis WHERE contains_udf = 1)
+    IF EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM #computed_columns_analysis  AS cca
+        WHERE cca.contains_udf = 1
+    )
     BEGIN
         SELECT
-            'COMPUTED COLUMNS WITH UDF REFERENCES' AS finding_type,
+            finding_type = 'COMPUTED COLUMNS WITH UDF REFERENCES',
             cca.database_name,
             cca.schema_name,
             cca.table_name,
@@ -6184,10 +6261,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
     
     /* Display detailed reports for check constraints with UDFs */
-    IF EXISTS (SELECT 1 FROM #check_constraints_analysis WHERE contains_udf = 1)
+    IF EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM #check_constraints_analysis AS cca
+        WHERE cca.contains_udf = 1
+    )
     BEGIN
         SELECT
-            'CHECK CONSTRAINTS WITH UDF REFERENCES' AS finding_type,
+            finding_type = 'CHECK CONSTRAINTS WITH UDF REFERENCES',
             cca.database_name,
             cca.schema_name,
             cca.table_name,
@@ -6204,10 +6287,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
     
     /* Display detailed reports for filtered indexes that need column optimization */
-    IF EXISTS (SELECT 1 FROM #filtered_index_columns_analysis WHERE should_include_filter_columns = 1)
+    IF EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM #filtered_index_columns_analysis AS fica
+        WHERE fica.should_include_filter_columns = 1
+    )
     BEGIN
         SELECT
-            'FILTERED INDEXES NEEDING INCLUDED COLUMNS' AS finding_type,
+            finding_type = 'FILTERED INDEXES NEEDING INCLUDED COLUMNS',
             fica.database_name,
             fica.schema_name,
             fica.table_name,
