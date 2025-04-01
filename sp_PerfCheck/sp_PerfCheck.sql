@@ -1169,8 +1169,9 @@ BEGIN
         BEGIN
             /* Try to access database using three-part naming to ensure we have proper permissions */
             BEGIN TRY
-                SET @sql = N'SELECT TOP 1 1 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables;';
-                EXEC(@sql);
+                DECLARE @has_tables BIT;
+                SET @sql = N'SELECT @has_tables = CASE WHEN EXISTS(SELECT TOP 1 1 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables) THEN 1 ELSE 0 END';
+                EXEC sp_executesql @sql, N'@has_tables BIT OUTPUT', @has_tables = @has_tables OUTPUT;
             END TRY
             BEGIN CATCH
                 /* If we can't access it, mark it */
