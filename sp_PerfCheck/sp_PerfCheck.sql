@@ -420,27 +420,26 @@ BEGIN
         check_id = 4103,
         priority = 
             CASE
-                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, d.create_date, GETDATE()), 0)) > 100 THEN 20 /* Very high priority */
-                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, d.create_date, GETDATE()), 0)) > 50 THEN 30 /* High priority */
+                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 100 THEN 20 /* Very high priority */
+                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 50 THEN 30 /* High priority */
                 ELSE 40 /* Medium-high priority */
             END,
         category = 'Concurrency',
         finding = 'High Number of Deadlocks',
         details = 
             'Server is averaging ' + 
-            CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), 1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, d.create_date, GETDATE()), 0))) + 
+            CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), 1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0))) + 
             ' deadlocks per day since startup (' + 
             CONVERT(nvarchar(20), p.cntr_value) + ' total deadlocks over ' + 
-            CONVERT(nvarchar(10), DATEDIFF(DAY, d.create_date, GETDATE())) + ' days). ' +
+            CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())) + ' days). ' +
             'High deadlock rates indicate concurrency issues that should be investigated.',
         url = 'https://erikdarling.com/'
     FROM sys.dm_os_performance_counters AS p
-    JOIN sys.databases AS d 
-      ON d.name = 'tempdb'
+    CROSS JOIN sys.dm_os_sys_info AS osi
     WHERE RTRIM(p.counter_name) = 'Number of Deadlocks/sec'
     AND   RTRIM(p.instance_name) = '_Total'
     AND   p.cntr_value > 0
-    AND   (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, d.create_date, GETDATE()), 0)) > 9; /* More than 9 deadlocks per day */
+    AND   (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 9; /* More than 9 deadlocks per day */
     
     /* Check for large USERSTORE_TOKENPERM (security cache) */
     INSERT INTO
@@ -500,8 +499,9 @@ BEGIN
                 'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
                 'For production SQL Servers with more than 8GB of memory, LPIM should be enabled.',
             url = 'https://erikdarling.com/'
-        FROM sys.dm_os_process_memory AS dosp
-        WHERE dosp.locked_page_allocations_kb = 0;
+        FROM sys.dm_os_sys_info AS osi
+        WHERE osi.sql_memory_model_desc = N'CONVENTIONAL' /* Conventional means not using LPIM */
+        AND   @physical_memory_gb > 8 /* Only recommend for servers with >8GB RAM */;
     END;
     
     /* Check if Instant File Initialization is enabled (on-prem and managed instances only) */
