@@ -3390,7 +3390,9 @@ BEGIN
                 finding = ''Query Store State Mismatch'',
                 database_name = DB_NAME(),
                 details = 
-                    ''Query Store desired state ('' + qso.desired_state_desc + '') does not match actual state ('' + 
+                    ''Query Store desired state ('' + 
+                    qso.desired_state_desc + 
+                    '') does not match actual state ('' + 
                     qso.actual_state_desc + ''). '' +
                     CASE qso.readonly_reason
                         WHEN 0 THEN ''No specific reason identified.''
@@ -3398,8 +3400,10 @@ BEGIN
                         WHEN 4 THEN ''Database is in emergency mode.''
                         WHEN 8 THEN ''Database is an Availability Group secondary.''
                         WHEN 65536 THEN ''Query Store has reached maximum size: '' + 
-                                       CONVERT(nvarchar(20), qso.current_storage_size_mb) + '' of '' + 
-                                       CONVERT(nvarchar(20), qso.max_storage_size_mb) + '' MB.''
+                                        CONVERT(nvarchar(20), qso.current_storage_size_mb) + 
+                                        '' of '' + 
+                                        CONVERT(nvarchar(20), qso.max_storage_size_mb) + 
+                                        '' MB.''
                         WHEN 131072 THEN ''The number of different statements in Query Store has reached the internal memory limit.''
                         WHEN 262144 THEN ''Size of in-memory items waiting to be persisted on disk has reached the internal memory limit.''
                         WHEN 524288 THEN ''Database has reached disk size limit.''
@@ -3417,7 +3421,8 @@ BEGIN
                 PRINT @sql;
             END;
             
-            EXECUTE sys.sp_executesql @sql;
+            EXECUTE sys.sp_executesql 
+                @sql;
             
             /* Check for Query Store with potentially problematic settings */
             SET @sql = N'
@@ -3441,36 +3446,41 @@ BEGIN
                 details = 
                     CASE
                         WHEN qso.max_storage_size_mb < 1024 
-                        THEN ''Query Store max size ('' + CONVERT(nvarchar(20), qso.max_storage_size_mb) + 
+                        THEN ''Query Store max size ('' + 
+                             CONVERT(nvarchar(20), qso.max_storage_size_mb) + 
                              '' MB) is less than 1 GB. This may be too small for production databases.''
                         WHEN qso.query_capture_mode_desc = ''NONE'' 
                         THEN ''Query Store capture mode is set to NONE. No new queries will be captured.''
                         WHEN qso.size_based_cleanup_mode_desc = ''OFF'' 
                         THEN ''Size-based cleanup is disabled. Query Store may fill up and become read-only.''
                         WHEN qso.stale_query_threshold_days < 3 
-                        THEN ''Stale query threshold is only '' + CONVERT(nvarchar(20), qso.stale_query_threshold_days) + 
+                        THEN ''Stale query threshold is only '' + 
+                             CONVERT(nvarchar(20), qso.stale_query_threshold_days) + 
                              '' days. Short retention periods may lose historical performance data.''
                         WHEN qso.max_plans_per_query < 10 
-                        THEN ''Max plans per query is only '' + CONVERT(nvarchar(20), qso.max_plans_per_query) + 
+                        THEN ''Max plans per query is only '' + 
+                             CONVERT(nvarchar(20), qso.max_plans_per_query) + 
                              ''. This may cause relevant plans to be purged prematurely.''
                     END,
                 url = ''https://erikdarling.com/''
             FROM ' + QUOTENAME(@current_database_name) + '.sys.database_query_store_options AS qso
             WHERE qso.actual_state = 2 /* Query Store is ON */
-            AND (
-                    qso.max_storage_size_mb < 1024 OR
-                    qso.query_capture_mode_desc = ''NONE'' OR
-                    qso.size_based_cleanup_mode_desc = ''OFF'' OR
-                    qso.stale_query_threshold_days < 3 OR
-                    qso.max_plans_per_query < 10
-                );';
+            AND 
+            (
+                   qso.max_storage_size_mb < 1024
+                OR qso.query_capture_mode_desc = N''NONE''
+                OR qso.size_based_cleanup_mode_desc = N''OFF''
+                OR qso.stale_query_threshold_days < 3
+                OR qso.max_plans_per_query < 10
+            );';
             
             IF @debug = 1
             BEGIN
                 PRINT @sql;
             END;
             
-            EXECUTE sys.sp_executesql @sql;
+            EXECUTE sys.sp_executesql 
+                @sql;
             
             /* Check for non-default database scoped configurations */
             IF EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + '.sys.all_objects AS ao WHERE ao.name = N''database_scoped_configurations'' )
@@ -3481,8 +3491,17 @@ BEGIN
                 
                 /* Insert default values as reference for comparison */
                 SET @sql = N'
-                INSERT INTO #database_scoped_configs 
-                    (database_id, database_name, configuration_id, name, value, value_for_secondary, is_value_default)
+                INSERT INTO 
+                    #database_scoped_configs 
+                (
+                    database_id, 
+                    database_name, 
+                    configuration_id, 
+                    name, 
+                    value, 
+                    value_for_secondary, 
+                    is_value_default
+                )
                 VALUES
                     (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 1, N''MAXDOP'', NULL, NULL, 1),
                     (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 2, N''LEGACY_CARDINALITY_ESTIMATION'', NULL, NULL, 1),
@@ -3509,10 +3528,19 @@ BEGIN
                     (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1);
                 
                 /* Get actual non-default settings */
-                INSERT INTO #database_scoped_configs 
-                    (database_id, database_name, configuration_id, name, value, value_for_secondary, is_value_default)
+                INSERT INTO 
+                    #database_scoped_configs 
+                (
+                    database_id, 
+                    database_name, 
+                    configuration_id, 
+                    name, 
+                    value, 
+                    value_for_secondary, 
+                    is_value_default
+                )
                 SELECT 
-                    ' + CONVERT(nvarchar(10), @current_database_id) + ', 
+                    ' + CONVERT(nvarchar(10), @current_database_id) + N', 
                     N''' + @current_database_name + ''', 
                     sc.configuration_id, 
                     sc.name, 
@@ -3528,7 +3556,8 @@ BEGIN
                     PRINT @sql;
                 END;
                 
-                EXECUTE sys.sp_executesql @sql;
+                EXECUTE sys.sp_executesql 
+                    @sql;
                 
                 /* Add results for non-default configurations */
                 INSERT INTO 
@@ -3551,27 +3580,32 @@ BEGIN
                     database_name = dsc.database_name,
                     object_name = dsc.name,
                     details = 
-                        'Database uses non-default setting for ' + dsc.name + ': ' + 
+                        'Database uses non-default setting for ' + 
+                        dsc.name + 
+                        ': ' + 
                         ISNULL(CONVERT(nvarchar(100), dsc.value), 'NULL') + 
                         CASE 
                             WHEN dsc.value_for_secondary IS NOT NULL 
-                            THEN ' (Secondary: ' + CONVERT(nvarchar(100), dsc.value_for_secondary) + ')'
+                            THEN ' (Secondary: ' + 
+                            CONVERT(nvarchar(100), dsc.value_for_secondary) + 
+                            ')'
                             ELSE ''
-                        END + '. ' +
+                        END + 
+                        '. ' +
                         CASE dsc.name
-                            WHEN 'MAXDOP' THEN 'Controls degree of parallelism for queries in this database.'
-                            WHEN 'LEGACY_CARDINALITY_ESTIMATION' THEN 'Controls whether the query optimizer uses the SQL Server 2014 or earlier cardinality estimation model.'
-                            WHEN 'PARAMETER_SNIFFING' THEN 'Controls parameter sniffing behavior for the database.'
-                            WHEN 'QUERY_OPTIMIZER_HOTFIXES' THEN 'Controls whether query optimizer hotfixes are enabled.'
-                            WHEN 'OPTIMIZE_FOR_AD_HOC_WORKLOADS' THEN 'Controls caching behavior for single-use query plans.'
-                            WHEN 'ACCELERATED_PLAN_FORCING' THEN 'Controls whether query plans can be forced in an accelerated way.'
-                            WHEN 'BATCH_MODE_ON_ROWSTORE' THEN 'Controls whether batch mode processing can be used on rowstore indexes.'
-                            ELSE 'Controls ' + REPLACE(LOWER(dsc.name), '_', ' ') + ' behavior.'
+                             WHEN 'MAXDOP' THEN 'Controls degree of parallelism for queries in this database.'
+                             WHEN 'LEGACY_CARDINALITY_ESTIMATION' THEN 'Controls whether the query optimizer uses the SQL Server 2014 or earlier cardinality estimation model.'
+                             WHEN 'PARAMETER_SNIFFING' THEN 'Controls parameter sniffing behavior for the database.'
+                             WHEN 'QUERY_OPTIMIZER_HOTFIXES' THEN 'Controls whether query optimizer hotfixes are enabled.'
+                             WHEN 'OPTIMIZE_FOR_AD_HOC_WORKLOADS' THEN 'Controls caching behavior for single-use query plans.'
+                             WHEN 'ACCELERATED_PLAN_FORCING' THEN 'Controls whether query plans can be forced in an accelerated way.'
+                             WHEN 'BATCH_MODE_ON_ROWSTORE' THEN 'Controls whether batch mode processing can be used on rowstore indexes.'
+                             ELSE 'Controls ' + REPLACE(LOWER(dsc.name), '_', ' ') + ' behavior.'
                         END,
                     url = 'https://erikdarling.com/'
                 FROM #database_scoped_configs AS dsc
                 WHERE dsc.database_id = @current_database_id
-                AND dsc.is_value_default = 0;
+                AND   dsc.is_value_default = 0;
             END;
         END TRY
         BEGIN CATCH
