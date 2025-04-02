@@ -336,6 +336,37 @@ BEGIN
         HAVING COUNT(*) > 0; /* Only if there are offline schedulers */
     END;
     
+    /* Check for memory-starved queries */
+    INSERT INTO
+        #results
+    (
+        check_id,
+        priority,
+        category,
+        finding,
+        details,
+        url
+    )
+    SELECT
+        check_id = 4101,
+        priority = 30, /* High priority */
+        category = 'Memory Pressure',
+        finding = 'Memory-Starved Queries Detected',
+        details = 
+            'Resource semaphore has ' + 
+            CONVERT(nvarchar(10), MAX(forced_grants_count)) + 
+            ' forced grants and ' +
+            CONVERT(nvarchar(10), MAX(waiting_tasks_count)) + 
+            ' waiting tasks. ' +
+            'Target memory: ' + CONVERT(nvarchar(20), MAX(target_memory_kb) / 1024) + ' MB, ' +
+            'Available memory: ' + CONVERT(nvarchar(20), MAX(available_memory_kb) / 1024) + ' MB, ' +
+            'Granted memory: ' + CONVERT(nvarchar(20), MAX(granted_memory_kb) / 1024) + ' MB. ' +
+            'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
+        url = 'https://erikdarling.com/'
+    FROM sys.dm_exec_query_resource_semaphores
+    WHERE forced_grants_count > 0
+    HAVING MAX(forced_grants_count) > 0; /* Only if there are actually forced grants */
+    
     /* Memory information - works on all platforms */
     INSERT INTO 
         #server_info (info_type, value)
