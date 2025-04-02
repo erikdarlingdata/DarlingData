@@ -311,7 +311,7 @@ BEGIN
         total_io bigint NOT NULL,
         avg_io_latency_ms decimal(18, 2) NOT NULL,
         size_mb decimal(18, 2) NOT NULL,
-        drive_letter nchar(1) NULL,
+        drive_location nvarchar(255) NULL, /* Changed from drive_letter to handle cloud storage */
         physical_name nvarchar(260) NOT NULL
     );
     
@@ -2174,7 +2174,7 @@ BEGIN
             total_io,
             avg_io_latency_ms,
             size_mb,
-            drive_letter,
+            drive_location,
             physical_name
         )
         SELECT
@@ -2207,7 +2207,14 @@ BEGIN
                     ELSE fs.io_stall * 1.0 / (fs.num_of_reads + fs.num_of_writes)
                 END,
             size_mb = mf.size * 8.0 / 1024,
-            drive_letter = UPPER(LEFT(mf.physical_name, 1)),
+            drive_location = 
+                CASE
+                    WHEN mf.physical_name LIKE N'http%'
+                    THEN mf.physical_name
+                    WHEN mf.physical_name LIKE N'\\%'
+                    THEN N'UNC: ' + SUBSTRING(mf.physical_name, 3, CHARINDEX(N'\', mf.physical_name, 3) - 3)
+                    ELSE UPPER(LEFT(mf.physical_name, 2))
+                END,
             physical_name = mf.physical_name
         FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS fs
         JOIN sys.master_files AS mf
@@ -2316,11 +2323,11 @@ BEGIN
             priority = 40, /* High priority */
             category = 'Storage Performance',
             finding = 
-                'Multiple Slow Files on Drive ' + 
-                i.drive_letter,
+                'Multiple Slow Files on Storage Location ' + 
+                i.drive_location,
             details = 
-                'Drive ' + 
-                i.drive_letter + 
+                'Storage location ' + 
+                i.drive_location + 
                 ' has ' + 
                 CONVERT(nvarchar(10), COUNT_BIG(*)) + 
                 ' database files with slow I/O. ' +
@@ -2335,9 +2342,9 @@ BEGIN
              i.avg_read_latency_ms > @slow_read_ms 
           OR i.avg_write_latency_ms > @slow_write_ms
         )
-        AND i.drive_letter IS NOT NULL
+        AND i.drive_location IS NOT NULL
         GROUP BY 
-            i.drive_letter
+            i.drive_location
         HAVING 
             COUNT_BIG(*) > 1;
     
