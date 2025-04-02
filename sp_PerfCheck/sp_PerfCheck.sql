@@ -359,14 +359,15 @@ BEGIN
             ' forced grants and ' +
             CONVERT(nvarchar(10), MAX(waiting_tasks_count)) + 
             ' waiting tasks. ' +
-            'Target memory: ' + CONVERT(nvarchar(20), MAX(target_memory_kb) / 1024) + ' MB, ' +
-            'Available memory: ' + CONVERT(nvarchar(20), MAX(available_memory_kb) / 1024) + ' MB, ' +
-            'Granted memory: ' + CONVERT(nvarchar(20), MAX(granted_memory_kb) / 1024) + ' MB. ' +
+            'Target memory: ' + CONVERT(nvarchar(20), MAX(ders.target_memory_kb) / 1024) + ' MB, ' +
+            'Available memory: ' + CONVERT(nvarchar(20), MAX(ders.available_memory_kb) / 1024) + ' MB, ' +
+            'Granted memory: ' + CONVERT(nvarchar(20), MAX(ders.granted_memory_kb) / 1024) + ' MB. ' +
             'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
         url = 'https://erikdarling.com/'
-    FROM sys.dm_exec_query_resource_semaphores
-    WHERE forced_grants_count > 0
-    HAVING MAX(forced_grants_count) > 0; /* Only if there are actually forced grants */
+    FROM sys.dm_exec_query_resource_semaphores AS ders
+    WHERE ders.forced_grant_count > 0
+    HAVING 
+        MAX(ders.forced_grant_count) > 0; /* Only if there are actually forced grants */
     
     /* Check for SQL Server memory dumps (on-prem only) */
     IF  @azure_sql_db = 0
