@@ -26,8 +26,8 @@ BEGIN
     Set version information
     */
     SELECT 
-        @version = '1.0', 
-        @version_date = '20250401';
+        @version = N'1.0', 
+        @version_date = N'20250401';
     
     /*
     Variable Declarations
@@ -156,7 +156,7 @@ BEGIN
     IF @debug = 1
     BEGIN
         SELECT
-            permission_check = 'Permission Check',
+            permission_check = N'Permission Check',
             is_sysadmin = @is_sysadmin,
             has_view_server_state = @has_view_server_state;
     END;
@@ -190,7 +190,7 @@ BEGIN
     IF @debug = 1
     BEGIN
         SELECT
-            environment_check = 'Environment Check',
+            environment_check = N'Environment Check',
             product_version = @product_version,
             product_version_major = @product_version_major,
             engine_edition = @engine_edition,
@@ -473,25 +473,25 @@ BEGIN
     INSERT INTO 
         #server_info (info_type, value)
     SELECT 
-        'Environment', 
+        N'Environment', 
         CASE 
-            WHEN @azure_sql_db = 1 THEN 'Azure SQL Database'
-            WHEN @azure_managed_instance = 1 THEN 'Azure SQL Managed Instance'
-            WHEN @aws_rds = 1 THEN 'AWS RDS SQL Server'
-            ELSE 'On-premises or IaaS SQL Server'
+            WHEN @azure_sql_db = 1 THEN N'Azure SQL Database'
+            WHEN @azure_managed_instance = 1 THEN N'Azure SQL Managed Instance'
+            WHEN @aws_rds = 1 THEN N'AWS RDS SQL Server'
+            ELSE N'On-premises or IaaS SQL Server'
         END;
            
     /* Uptime information - works on all platforms */
     INSERT INTO 
         #server_info (info_type, value)
     SELECT 
-        'Uptime', 
+        N'Uptime', 
         CONVERT
         (
             nvarchar(30), 
             DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())
         ) + 
-        ' days, ' +
+        N' days, ' +
         CONVERT
         (
             nvarchar(8), 
@@ -512,17 +512,17 @@ BEGIN
             ), 
             108
         ) + 
-        ' (hh:mm:ss)'
+        N' (hh:mm:ss)'
     FROM sys.dm_os_sys_info AS osi;
     
     /* CPU information - works on all platforms */
     INSERT INTO 
         #server_info (info_type, value)
     SELECT 
-        'CPU', 
-        CONVERT(nvarchar(10), osi.cpu_count) + ' logical processors, ' +
-        CONVERT(nvarchar(10), osi.hyperthread_ratio) + ' physical cores, ' +
-        CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) + ' NUMA node(s)'
+        N'CPU', 
+        CONVERT(nvarchar(10), osi.cpu_count) + N' logical processors, ' +
+        CONVERT(nvarchar(10), osi.hyperthread_ratio) + N' physical cores, ' +
+        CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) + N' NUMA node(s)'
     FROM sys.dm_os_sys_info AS osi;
     
     /* Check for offline schedulers */
@@ -541,15 +541,15 @@ BEGIN
         SELECT
             check_id = 4001,
             priority = 20, /* Very high priority */
-            category = 'CPU Configuration',
-            finding = 'Offline CPU Schedulers',
+            category = N'CPU Configuration',
+            finding = N'Offline CPU Schedulers',
             details = 
                 CONVERT(nvarchar(10), COUNT_BIG(*)) + 
-                ' CPU scheduler(s) are offline out of ' +
+                N' CPU scheduler(s) are offline out of ' +
                 CONVERT(nvarchar(10), (SELECT cpu_count FROM sys.dm_os_sys_info)) +
-                ' logical processors. This reduces available processing power. ' +
-                'Check affinity mask configuration, licensing, or VM CPU cores/sockets',
-            url = 'https://erikdarling.com/'
+                N' logical processors. This reduces available processing power. ' +
+                N'Check affinity mask configuration, licensing, or VM CPU cores/sockets',
+            url = N'https://erikdarling.com/'
         FROM sys.dm_os_schedulers AS dos
         WHERE dos.is_online = 0
         HAVING 
@@ -570,17 +570,20 @@ BEGIN
     SELECT
         check_id = 4101,
         priority = 30, /* High priority */
-        category = 'Memory Pressure',
-        finding = 'Memory-Starved Queries Detected',
+        category = N'Memory Pressure',
+        finding = N'Memory-Starved Queries Detected',
         details = 
-            'Resource semaphore has ' + 
+            N'Resource semaphore has ' + 
             CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) + 
-            ' forced grants. ' +
-            'Target memory: ' + CONVERT(nvarchar(20), MAX(ders.target_memory_kb) / 1024 / 1024) + ' GB, ' +
-            'Available memory: ' + CONVERT(nvarchar(20), MAX(ders.available_memory_kb) / 1024 / 1024) + ' GB, ' +
-            'Granted memory: ' + CONVERT(nvarchar(20), MAX(ders.granted_memory_kb) / 1024 / 1024) + ' GB. ' +
-            'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
-        url = 'https://erikdarling.com/'
+            N' forced grants. ' +
+            N'Target memory: ' + CONVERT(nvarchar(20), MAX(ders.target_memory_kb) / 1024 / 1024) + 
+            N' GB, ' +
+            N'Available memory: ' + CONVERT(nvarchar(20), MAX(ders.available_memory_kb) / 1024 / 1024) + 
+            N' GB, ' +
+            N'Granted memory: ' + CONVERT(nvarchar(20), MAX(ders.granted_memory_kb) / 1024 / 1024) + 
+            N' GB. ' +
+            N'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
+        url = N'https://erikdarling.com/'
     FROM sys.dm_exec_query_resource_semaphores AS ders
     WHERE ders.forced_grant_count > 0
     HAVING 
@@ -606,18 +609,17 @@ BEGIN
             SELECT
                 check_id = 4102,
                 priority = 20, /* Very high priority */
-                category = 'Server Stability',
-                finding = 'Memory Dumps Detected',
+                category = N'Server Stability',
+                finding = N'Memory Dumps Detected',
                 details = 
                     CONVERT(nvarchar(10), COUNT_BIG(*)) + 
-                    ' memory dump(s) found. Most recent: ' + 
+                    N' memory dump(s) found. Most recent: ' + 
                     CONVERT(nvarchar(30), MAX(dsmd.creation_time), 120) + 
-                    ', ' 
-                    +
-                    ' at ' +
+                    N', ' +
+                    N' at ' +
                     MAX(dsmd.filename) +
-                    '. Check the SQL Server error log and Windows event logs.',
-                url = 'https://erikdarling.com/'
+                    N'. Check the SQL Server error log and Windows event logs.',
+                url = N'https://erikdarling.com/'
             FROM sys.dm_server_memory_dumps AS dsmd
             HAVING 
                 COUNT_BIG(*) > 0; /* Only if there are memory dumps */
@@ -645,22 +647,22 @@ BEGIN
                 THEN 30 /* High priority */
                 ELSE 40 /* Medium-high priority */
             END,
-        category = 'Concurrency',
-        finding = 'High Number of Deadlocks',
+        category = N'Concurrency',
+        finding = N'High Number of Deadlocks',
         details = 
-            'Server is averaging ' + 
+            N'Server is averaging ' + 
             CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value / 
               NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0))) + 
-            ' deadlocks per day since startup (' + 
+            N' deadlocks per day since startup (' + 
             CONVERT(nvarchar(20), p.cntr_value) + ' total deadlocks over ' + 
             CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())) + 
-            ' days). ' +
-            'High deadlock rates indicate concurrency issues that should be investigated.',
-        url = 'https://erikdarling.com/'
+            N' days). ' +
+            N'High deadlock rates indicate concurrency issues that should be investigated.',
+        url = N'https://erikdarling.com/'
     FROM sys.dm_os_performance_counters AS p
     CROSS JOIN sys.dm_os_sys_info AS osi
-    WHERE RTRIM(p.counter_name) = 'Number of Deadlocks/sec'
-    AND   RTRIM(p.instance_name) = '_Total'
+    WHERE RTRIM(p.counter_name) = N'Number of Deadlocks/sec'
+    AND   RTRIM(p.instance_name) = N'_Total'
     AND   p.cntr_value > 0
     AND   
     (
@@ -700,15 +702,15 @@ BEGIN
                 THEN 40 /* Medium-high priority >1GB */
                 ELSE 50 /* Medium priority */
             END,
-        category = 'Memory Usage',
-        finding = 'Large Security Token Cache',
+        category = N'Memory Usage',
+        finding = N'Large Security Token Cache',
         details = 
-            'TokenAndPermUserStore cache size is ' + 
+            N'TokenAndPermUserStore cache size is ' + 
             CONVERT(nvarchar(20), CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0))) + 
-            ' GB. Large security caches can consume significant memory and may indicate security-related issues ' +
-            'such as excessive application role usage or frequent permission changes. ' +
-            'Consider using dbo.ClearTokenPerm stored procedure to manage this issue.',
-        url = 'https://www.erikdarling.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/'
+            N' GB. Large security caches can consume significant memory and may indicate security-related issues ' +
+            N'such as excessive application role usage or frequent permission changes. ' +
+            N'Consider using dbo.ClearTokenPerm stored procedure to manage this issue.',
+        url = N'https://www.erikdarling.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/'
     FROM sys.dm_os_memory_clerks AS domc
     WHERE domc.type = N'USERSTORE_TOKENPERM'
     AND   domc.name = N'TokenAndPermUserStore'
@@ -731,13 +733,13 @@ BEGIN
         SELECT
             check_id = 4105,
             priority = 50, /* Medium priority */
-            category = 'Memory Configuration',
-            finding = 'Lock Pages in Memory Not Enabled',
+            category = N'Memory Configuration',
+            finding = N'Lock Pages in Memory Not Enabled',
             details = 
-                'SQL Server is not using locked pages in memory (LPIM). This can lead to Windows ' +
-                'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
-                'For production SQL Servers with more than 64GB of memory, LPIM should be enabled.',
-            url = 'https://erikdarling.com/'
+                N'SQL Server is not using locked pages in memory (LPIM). This can lead to Windows ' +
+                N'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
+                N'For production SQL Servers with more than 64GB of memory, LPIM should be enabled.',
+            url = N'https://erikdarling.com/'
         FROM sys.dm_os_sys_info AS osi
         WHERE osi.sql_memory_model_desc = N'CONVENTIONAL' /* Conventional means not using LPIM */
         AND   @physical_memory_gb >= 32 /* Only recommend for servers with >=32GB RAM */;
@@ -750,11 +752,11 @@ BEGIN
         INSERT INTO
             #server_info (info_type, value)
         SELECT
-            'Instant File Initialization',
+            N'Instant File Initialization',
             CASE 
                 WHEN dss.instant_file_initialization_enabled = N'Y' 
-                THEN 'Enabled'
-                ELSE 'Disabled'
+                THEN N'Enabled'
+                ELSE N'Disabled'
             END
         FROM sys.dm_server_services AS dss
         WHERE dss.filename LIKE N'%sqlservr.exe%'
@@ -773,13 +775,13 @@ BEGIN
         SELECT TOP (1)
             check_id = 4106,
             priority = 50, /* Medium priority */
-            category = 'Storage Configuration',
-            finding = 'Instant File Initialization Disabled',
+            category = N'Storage Configuration',
+            finding = N'Instant File Initialization Disabled',
             details = 
-                'Instant File Initialization is not enabled. This can significantly slow down database file ' +
-                'creation and growth operations, as SQL Server must zero out data files before using them. ' +
-                'Enable this feature by granting the "Perform Volume Maintenance Tasks" permission to the SQL Server service account.',
-            url = 'https://erikdarling.com/'
+                N'Instant File Initialization is not enabled. This can significantly slow down database file ' +
+                N'creation and growth operations, as SQL Server must zero out data files before using them. ' +
+                N'Enable this feature by granting the "Perform Volume Maintenance Tasks" permission to the SQL Server service account.',
+            url = N'https://erikdarling.com/'
         FROM sys.dm_server_services AS dss
         WHERE dss.filename LIKE N'%sqlservr.exe%'
         AND   dss.servicename LIKE N'SQL Server%'
@@ -795,8 +797,8 @@ BEGIN
             INSERT INTO
                 #server_info (info_type, value)
             SELECT
-                'Resource Governor',
-                'Enabled';
+                N'Resource Governor',
+                N'Enabled';
             
             /* Add informational message about Resource Governor with query suggestion */
             INSERT INTO
@@ -812,22 +814,22 @@ BEGIN
             SELECT
                 check_id = 4107,
                 priority = 50, /* Medium priority */
-                category = 'Resource Governor',
-                finding = 'Resource Governor Enabled',
+                category = N'Resource Governor',
+                finding = N'Resource Governor Enabled',
                 details = 
-                    'Resource Governor is enabled on this instance. This affects workload resource allocation and may ' +
-                    'impact performance by limiting resources available to various workloads. ' +
-                    'For more details, run these queries to explore your configuration:' + CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) +
-                    '/* Resource Governor configuration */' + CHAR(13) + CHAR(10) +
-                    'SELECT * FROM sys.resource_governor_configuration;' + CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) +
-                    '/* Resource pools and their settings */' + CHAR(13) + CHAR(10) +
-                    'SELECT * FROM sys.dm_resource_governor_resource_pools;' + CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) +
-                    '/* Workload groups and their settings */' + CHAR(13) + CHAR(10) +
-                    'SELECT * FROM sys.dm_resource_governor_workload_groups;' + CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) +
-                    '/* Classifier function (if configured) */' + CHAR(13) + CHAR(10) +
-                    'SELECT * FROM sys.resource_governor_configuration ' + CHAR(13) + CHAR(10) +
-                    'CROSS APPLY (SELECT OBJECT_NAME(classifier_function_id) AS classifier_function_name) AS cf;',
-                url = 'https://erikdarling.com/'
+                    N'Resource Governor is enabled on this instance. This affects workload resource allocation and may ' +
+                    N'impact performance by limiting resources available to various workloads. ' +
+                    N'For more details, run these queries to explore your configuration:' + NCHAR(13) + NCHAR(10) + NCHAR(13) + NCHAR(10) +
+                    N'/* Resource Governor configuration */' + NCHAR(13) + NCHAR(10) +
+                    N'SELECT * FROM sys.resource_governor_configuration;' + NCHAR(13) + NCHAR(10) + NCHAR(13) + NCHAR(10) +
+                    N'/* Resource pools and their settings */' + NCHAR(13) + NCHAR(10) +
+                    N'SELECT * FROM sys.dm_resource_governor_resource_pools;' + NCHAR(13) + NCHAR(10) + NCHAR(13) + NCHAR(10) +
+                    N'/* Workload groups and their settings */' + NCHAR(13) + NCHAR(10) +
+                    N'SELECT * FROM sys.dm_resource_governor_workload_groups;' + NCHAR(13) + NCHAR(10) + NCHAR(13) + NCHAR(10) +
+                    N'/* Classifier function (if configured) */' + NCHAR(13) + NCHAR(10) +
+                    N'SELECT * FROM sys.resource_governor_configuration ' + NCHAR(13) + NCHAR(10) +
+                    N'CROSS APPLY (SELECT OBJECT_NAME(classifier_function_id) AS classifier_function_name) AS cf;',
+                url = N'https://erikdarling.com/'
             FROM sys.resource_governor_configuration
             WHERE is_enabled = 1;
         END
@@ -836,8 +838,8 @@ BEGIN
             INSERT INTO
                 #server_info (info_type, value)
             SELECT
-                'Resource Governor',
-                'Disabled';
+                N'Resource Governor',
+                N'Disabled';
         END;
     END;
     
@@ -857,12 +859,12 @@ BEGIN
             INSERT INTO
                 #server_info (info_type, value)
             SELECT
-                'Global Trace Flags',
+                N'Global Trace Flags',
                 STUFF
                 (
                     (
                         SELECT 
-                            ', ' + 
+                            N', ' + 
                             CONVERT(varchar(10), tf.trace_flag)
                         FROM #trace_flags AS tf
                         WHERE tf.global = 1
@@ -874,7 +876,7 @@ BEGIN
                     ), 
                     1, 
                     2, 
-                    ''
+                    N''
                 );
         END;
     END;
@@ -883,13 +885,13 @@ BEGIN
     INSERT INTO 
         #server_info (info_type, value)
     SELECT 
-        'Memory', 
-        'Total: ' + 
+        N'Memory', 
+        N'Total: ' + 
         CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)) + 
-        ' GB, ' +
-        'Target: ' + 
+        N' GB, ' +
+        N'Target: ' + 
         CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.committed_target_kb / 1024.0 / 1024.0)) + 
-        ' GB' +
+        N' GB' +
         N', ' +
         osi.sql_memory_model_desc +
         N' enabled'
@@ -923,12 +925,12 @@ BEGIN
             INSERT INTO 
                 #event_class_map (event_class, event_name, category_name)
             VALUES
-                (92,  'Data File Auto Grow', 'Database'),
-                (93,  'Log File Auto Grow', 'Database'),
-                (94,  'Data File Auto Shrink', 'Database'),
-                (95,  'Log File Auto Shrink', 'Database'),
-                (116, 'DBCC Event', 'Database'),
-                (137, 'Server Memory Change', 'Server');
+                (92,  N'Data File Auto Grow', N'Database'),
+                (93,  N'Log File Auto Grow', N'Database'),
+                (94,  N'Data File Auto Shrink', N'Database'),
+                (95,  N'Log File Auto Shrink', N'Database'),
+                (116, N'DBCC Event', N'Database'),
+                (137, N'Server Memory Change', N'Server');
                 
             /* Get relevant events from default trace */
             INSERT INTO 
@@ -1023,29 +1025,29 @@ BEGIN
                         THEN 40 /* Log file autogrow (higher priority) */
                         ELSE 50 /* Data file autogrow */
                     END,
-                category = 'Database File Configuration',
+                category = N'Database File Configuration',
                 finding = 
                     CASE
                         WHEN te.event_class = 92 
-                        THEN 'Slow Data File Auto Grow'
+                        THEN N'Slow Data File Auto Grow'
                         WHEN te.event_class = 93 
-                        THEN 'Slow Log File Auto Grow'
-                        ELSE 'Slow File Auto Grow'
+                        THEN N'Slow Log File Auto Grow'
+                        ELSE N'Slow File Auto Grow'
                     END,
                 database_name = te.database_name,
                 object_name = te.file_name,
                 details = 
-                    'Auto grow operation took ' + 
+                    N'Auto grow operation took ' + 
                     CONVERT(nvarchar(20), te.duration_ms) + 
-                    ' ms (' + 
+                    N' ms (' + 
                     CONVERT(nvarchar(20), te.duration_ms / 1000.0) + 
-                    ' seconds) on ' +
+                    N' seconds) on ' +
                     CONVERT(nvarchar(30), te.event_time, 120) + 
-                    '. ' +
-                    'Growth amount: ' + 
+                    N'. ' +
+                    N'Growth amount: ' + 
                     CONVERT(nvarchar(20), te.file_growth / 1048576) + 
-                    ' GB. ',
-                url = 'https://erikdarling.com/'
+                    N' GB. ',
+                url = N'https://erikdarling.com/'
             FROM #trace_events AS te
             WHERE (te.event_class IN (92, 93)) /* Auto-grow events */
             AND   te.duration_ms > @slow_autogrow_ms
@@ -1068,24 +1070,24 @@ BEGIN
             SELECT
                 check_id = 5002,
                 priority = 60, /* Medium priority */
-                category = 'Database File Configuration',
+                category = N'Database File Configuration',
                 finding = 
                     CASE
                         WHEN te.event_class = 94 
-                        THEN 'Data File Auto Shrink'
+                        THEN N'Data File Auto Shrink'
                         WHEN te.event_class = 95 
-                        THEN 'Log File Auto Shrink'
-                        ELSE 'File Auto Shrink'
+                        THEN N'Log File Auto Shrink'
+                        ELSE N'File Auto Shrink'
                     END,
                 database_name = te.database_name,
                 object_name = te.file_name,
                 details = 
-                    'Auto shrink operation occurred on ' +
+                    N'Auto shrink operation occurred on ' +
                     CONVERT(nvarchar(30), te.event_time, 120) + 
-                    '. ' +
-                    'Auto-shrink is generally not recommended as it can lead to file fragmentation and ' +
-                    'repeated grow/shrink cycles. Consider disabling auto-shrink on this database.',
-                url = 'https://erikdarling.com/'
+                    N'. ' +
+                    N'Auto-shrink is generally not recommended as it can lead to file fragmentation and ' +
+                    N'repeated grow/shrink cycles. Consider disabling auto-shrink on this database.',
+                url = N'https://erikdarling.com/'
             FROM #trace_events AS te
             WHERE te.event_class IN (94, 95) /* Auto-shrink events */
             ORDER BY 
@@ -1168,19 +1170,19 @@ BEGIN
                 (
                     (
                         SELECT 
-                            ', ' + 
+                            N', ' + 
                             CONVERT(nvarchar(50), COUNT_BIG(*)) + 
-                            ' slow ' + 
+                            N' slow ' + 
                             CASE 
                                 WHEN te.event_class = 92 
-                                THEN 'data file'
+                                THEN N'data file'
                                 WHEN te.event_class = 93 
-                                THEN 'log file'
+                                THEN N'log file'
                             END + 
-                            ' autogrows' +
-                            ' (avg ' + 
+                            N' autogrows' +
+                            N' (avg ' + 
                             CONVERT(nvarchar(20), AVG(te.duration_ms) / 1000.0) + 
-                            ' sec)'
+                            N' sec)'
                         FROM #trace_events AS te
                         WHERE te.event_class IN (92, 93) /* Auto-grow events */
                         AND   te.duration_ms > @slow_autogrow_ms /* Only slow auto-grows */
@@ -1194,7 +1196,7 @@ BEGIN
                     ), 
                     1, 
                     2, 
-                    ''
+                    N''
                 );
                 
             IF @autogrow_summary IS NOT NULL
@@ -1202,7 +1204,7 @@ BEGIN
                 INSERT INTO
                     #server_info (info_type, value)
                 VALUES
-                    ('Slow Autogrow Events (7 days)', @autogrow_summary);
+                    (N'Slow Autogrow Events (7 days)', @autogrow_summary);
             END;
         END;
     END;
@@ -1482,27 +1484,27 @@ BEGIN
                     THEN 30 /* High priority if >75% of uptime */
                     ELSE 40 /* Medium-high priority otherwise */
                 END,
-            category = 'Wait Statistics',
+            category = N'Wait Statistics',
             finding = 
-                'High Impact Wait Type: ' + 
+                N'High Impact Wait Type: ' + 
                 ws.wait_type + 
-                ' (' + 
+                N' (' + 
                 ws.category + 
-                ')',
+                N')',
             details = 
-                'Wait type: ' + 
+                N'Wait type: ' + 
                 ws.wait_type + 
-                ' represents ' + 
+                N' represents ' + 
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.wait_time_percent_of_uptime)) + 
-                '% of server uptime (' + 
+                N'% of server uptime (' + 
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), ws.wait_time_minutes)) + 
-                ' minutes). ' +
-                'Average wait: ' + 
+                N' minutes). ' +
+                N'Average wait: ' + 
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.avg_wait_ms)) + 
-                ' ms per wait. ' +
-                'Description: ' + 
+                N' ms per wait. ' +
+                N'Description: ' + 
                 ws.description,
-            url = 'https://erikdarling.com/'
+            url = N'https://erikdarling.com/'
         FROM #wait_stats AS ws
         WHERE 
             (
@@ -1548,7 +1550,7 @@ BEGIN
             INSERT INTO
                 #server_info (info_type, value)
             VALUES
-                ('Wait Stats Summary', 'See Wait Statistics section in results for details.');
+                (N'Wait Stats Summary', N'See Wait Statistics section in results for details.');
                 
             /* Add the detailed wait categories as separate entries in the results table */
             INSERT INTO
@@ -1571,36 +1573,36 @@ BEGIN
                         THEN 50 /* Medium priority */
                         ELSE 60 /* Lower priority */
                     END,
-                category = 'Wait Statistics Summary',
-                finding = 'Wait Category: ' + ws.category,
+                category = N'Wait Statistics Summary',
+                finding = N'Wait Category: ' + ws.category,
                 details = 
-                    'This category represents ' + 
+                    N'This category represents ' + 
                     CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.pct_of_uptime)) + 
-                    '% of server uptime. ' +
+                    N'% of server uptime. ' +
                     CASE 
-                        WHEN ws.category = 'Query Execution' 
-                        THEN 'This includes various query processing waits and can indicate poorly optimized queries or procedure cache issues.'
-                        WHEN ws.category = 'Parallelism' 
-                        THEN 'This indicates time spent coordinating parallel query execution. Consider reviewing MAXDOP settings.'
-                        WHEN ws.category = 'CPU' 
-                        THEN 'This indicates CPU pressure. Server may benefit from more CPU resources or query optimization.'
-                        WHEN ws.category = 'Memory' 
-                        THEN 'This indicates memory pressure. Consider increasing server memory or optimizing memory-intensive queries.'
-                        WHEN ws.category = 'I/O' 
-                        THEN 'This indicates storage performance issues. Check for slow disks or I/O-intensive queries.'
-                        WHEN ws.category = 'TempDB Contention' 
-                        THEN 'This indicates contention in TempDB. Consider adding more TempDB files or optimizing queries that use TempDB.'
-                        WHEN ws.category = 'Transaction Log' 
-                        THEN 'This indicates log write pressure. Check for long-running transactions or log file performance issues.'
-                        WHEN ws.category = 'Locking' 
-                        THEN 'This indicates contention from locks. Look for blocking chains or query isolation level issues.'
-                        WHEN ws.category = 'Network' 
-                        THEN 'This indicates network bottlenecks or slow client applications not consuming results quickly.'
-                        WHEN ws.category = 'Azure SQL Throttling' 
-                        THEN 'This indicates resource limits imposed by Azure SQL DB. Consider upgrading to a higher service tier.'
-                        ELSE 'This category may require further investigation.'
+                        WHEN ws.category = N'Query Execution' 
+                        THEN N'This includes various query processing waits and can indicate poorly optimized queries or procedure cache issues.'
+                        WHEN ws.category = N'Parallelism' 
+                        THEN N'This indicates time spent coordinating parallel query execution. Consider reviewing MAXDOP settings.'
+                        WHEN ws.category = N'CPU' 
+                        THEN N'This indicates CPU pressure. Server may benefit from more CPU resources or query optimization.'
+                        WHEN ws.category = N'Memory' 
+                        THEN N'This indicates memory pressure. Consider increasing server memory or optimizing memory-intensive queries.'
+                        WHEN ws.category = N'I/O' 
+                        THEN N'This indicates storage performance issues. Check for slow disks or I/O-intensive queries.'
+                        WHEN ws.category = N'TempDB Contention' 
+                        THEN N'This indicates contention in TempDB. Consider adding more TempDB files or optimizing queries that use TempDB.'
+                        WHEN ws.category = N'Transaction Log' 
+                        THEN N'This indicates log write pressure. Check for long-running transactions or log file performance issues.'
+                        WHEN ws.category = N'Locking' 
+                        THEN N'This indicates contention from locks. Look for blocking chains or query isolation level issues.'
+                        WHEN ws.category = N'Network' 
+                        THEN N'This indicates network bottlenecks or slow client applications not consuming results quickly.'
+                        WHEN ws.category = N'Azure SQL Throttling' 
+                        THEN N'This indicates resource limits imposed by Azure SQL DB. Consider upgrading to a higher service tier.'
+                        ELSE N'This category may require further investigation.'
                     END,
-                url = 'https://erikdarling.com/'
+                url = N'https://erikdarling.com/'
             FROM #wait_summary AS ws
             ORDER BY 
                 ws.pct_of_uptime DESC;
@@ -1693,15 +1695,15 @@ BEGIN
                 #server_info (info_type, value)
             VALUES
             (
-                 'Signal Wait Ratio', 
+                 N'Signal Wait Ratio', 
                  CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) + 
-                 '%' +
+                 N'%' +
                  CASE 
                      WHEN @signal_wait_ratio >= 25.0 
-                     THEN ' (High - CPU pressure detected)'
+                     THEN N' (High - CPU pressure detected)'
                      WHEN @signal_wait_ratio >= 15.0 
-                     THEN ' (Moderate - CPU pressure likely)'
-                     ELSE ' (Normal)'
+                     THEN N' (Moderate - CPU pressure likely)'
+                     ELSE N' (Normal)'
                  END
             );
             
@@ -1711,9 +1713,9 @@ BEGIN
                     #server_info (info_type, value)
                 VALUES
                 (
-                    'SOS_SCHEDULER_YIELD', 
+                    N'SOS_SCHEDULER_YIELD', 
                     CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @sos_scheduler_yield_pct_of_uptime)) + 
-                    '% of server uptime'
+                    N'% of server uptime'
                 );
             END;
             
@@ -1740,14 +1742,14 @@ BEGIN
                         THEN 30 /* High priority if >=30% signal waits */
                         ELSE 40 /* Medium-high priority */
                     END,
-                    'CPU Scheduling',
-                    'High Signal Wait Ratio',
-                    'Signal wait ratio is ' + 
+                    N'CPU Scheduling',
+                    N'High Signal Wait Ratio',
+                    N'Signal wait ratio is ' + 
                     CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) + 
-                    '%. This indicates significant CPU scheduling pressure. ' +
-                    'Processes are waiting to get scheduled on the CPU, which can impact query performance. ' +
-                    'Consider investigating high-CPU queries, reducing server load, or adding CPU resources.',
-                    'https://erikdarling.com/'
+                    N'%. This indicates significant CPU scheduling pressure. ' +
+                    N'Processes are waiting to get scheduled on the CPU, which can impact query performance. ' +
+                    N'Consider investigating high-CPU queries, reducing server load, or adding CPU resources.',
+                    N'https://erikdarling.com/'
                 );
             END;
             
@@ -1774,14 +1776,14 @@ BEGIN
                         THEN 40 /* Medium-high priority if >=20% of uptime */
                         ELSE 50 /* Medium priority */
                     END,
-                    'CPU Scheduling',
-                    'High SOS_SCHEDULER_YIELD Waits',
-                    'SOS_SCHEDULER_YIELD waits account for ' + 
+                    N'CPU Scheduling',
+                    N'High SOS_SCHEDULER_YIELD Waits',
+                    N'SOS_SCHEDULER_YIELD waits account for ' + 
                     CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @sos_scheduler_yield_pct_of_uptime)) + 
-                    '% of server uptime. This indicates tasks frequently giving up their quantum of CPU time. ' +
-                    'This can be caused by CPU-intensive queries, causing threads to context switch frequently. ' +
-                    'Consider tuning queries with high CPU usage or adding CPU resources.',
-                    'https://erikdarling.com/'
+                    N'% of server uptime. This indicates tasks frequently giving up their quantum of CPU time. ' +
+                    N'This can be caused by CPU-intensive queries, causing threads to context switch frequently. ' +
+                    N'Consider tuning queries with high CPU usage or adding CPU resources.',
+                    N'https://erikdarling.com/'
                 );
             END;
         END;
@@ -1819,19 +1821,20 @@ BEGIN
                 #server_info (info_type, value)
             VALUES
             (
-                'Buffer Pool Size', 
-                CONVERT(nvarchar(20), @buffer_pool_size_gb) + ' GB'
+                N'Buffer Pool Size', 
+                CONVERT(nvarchar(20), @buffer_pool_size_gb) + 
+                N' GB'
             );
                 
             INSERT INTO
                 #server_info (info_type, value)
             VALUES
             (
-                'Stolen Memory', 
+                N'Stolen Memory', 
                 CONVERT(nvarchar(20), @stolen_memory_gb) + 
-                ' GB (' + 
+                N' GB (' + 
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) + 
-                '%)'
+                N'%)'
             );
             
             /* Add finding if stolen memory exceeds threshold */
@@ -1857,15 +1860,15 @@ BEGIN
                         THEN 40 /* Medium-high priority if >30% stolen */
                         ELSE 50 /* Medium priority */
                     END,
-                    'Memory Usage',
-                    'High Stolen Memory Percentage',
-                    'Memory stolen from buffer pool: ' + 
+                    N'Memory Usage',
+                    N'High Stolen Memory Percentage',
+                    N'Memory stolen from buffer pool: ' + 
                     CONVERT(nvarchar(20), @stolen_memory_gb) + 
-                    ' GB (' + 
+                    N' GB (' + 
                     CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) + 
-                    '% of total memory). This reduces memory available for data caching and can impact performance. ' +
-                    'Consider investigating memory usage by CLR, extended stored procedures, linked servers, or other memory clerks.',
-                    'https://erikdarling.com/'
+                    N'% of total memory). This reduces memory available for data caching and can impact performance. ' +
+                    N'Consider investigating memory usage by CLR, extended stored procedures, linked servers, or other memory clerks.',
+                    N'https://erikdarling.com/'
                 );
                 
                 /* Also add the top 5 non-buffer pool memory consumers for visibility */
@@ -1882,12 +1885,12 @@ BEGIN
                 SELECT 
                     check_id = 6003,
                     priority = 60, /* Informational priority */
-                    category = 'Memory Usage',
-                    finding = 'Top Memory Consumer: ' + domc.type,
+                    category = N'Memory Usage',
+                    finding = N'Top Memory Consumer: ' + domc.type,
                     details = 
-                        'Memory clerk "' + 
+                        N'Memory clerk "' + 
                         domc.type + 
-                        '" is using ' + 
+                        N'" is using ' + 
                         CONVERT
                         (
                             nvarchar(20), 
@@ -1897,8 +1900,8 @@ BEGIN
                                 SUM(domc.pages_kb) / 1024.0 / 1024.0
                             )
                         ) + 
-                        ' GB of memory. This is one of the top consumers of memory outside the buffer pool.',
-                    url = 'https://erikdarling.com/'
+                        N' GB of memory. This is one of the top consumers of memory outside the buffer pool.',
+                    url = N'https://erikdarling.com/'
                 FROM sys.dm_os_memory_clerks AS domc
                 WHERE domc.type <> N'MEMORYCLERK_SQLBUFFERPOOL'
                 GROUP BY 
@@ -2092,7 +2095,7 @@ BEGIN
             INSERT INTO
                 #server_info (info_type, value)
             VALUES
-                ('Database I/O Stalls', 'Top databases with high I/O latency: ' + @io_stall_summary);
+                (N'Database I/O Stalls', N'Top databases with high I/O latency: ' + @io_stall_summary);
         END;
         
         /* Add findings for significant I/O stalls */
@@ -2117,27 +2120,27 @@ BEGIN
                     THEN 40 /* Medium-high priority if >50ms */
                     ELSE 50 /* Medium priority */
                 END,
-            category = 'Storage Performance',
-            finding = 'High Database I/O Stalls',
+            category = N'Storage Performance',
+            finding = N'High Database I/O Stalls',
             database_name = io.database_name,
             details = 
-                'Database ' + 
+                N'Database ' + 
                 io.database_name + 
-                ' has average I/O stall of ' + 
+                N' has average I/O stall of ' + 
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_io_stall_ms)) + 
-                ' ms. ' +
-                'Read latency: ' + 
+                N' ms. ' +
+                N'Read latency: ' + 
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_read_stall_ms)) + 
-                ' ms, Write latency: ' + 
+                N' ms, Write latency: ' + 
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_write_stall_ms)) + 
-                ' ms. ' +
-                'Total read: ' + 
+                N' ms. ' +
+                N'Total read: ' + 
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), io.read_io_mb)) + 
-                ' MB, Total write: ' + 
+                N' MB, Total write: ' + 
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), io.write_io_mb)) + 
-                ' MB. ' +
-                'This indicates slow I/O subsystem performance for this database.',
-            url = 'https://erikdarling.com/'
+                N' MB. ' +
+                N'This indicates slow I/O subsystem performance for this database.',
+            url = N'https://erikdarling.com/'
         FROM #io_stalls_by_db AS io
         WHERE 
             /* Only include databases with significant I/O and significant stalls */
@@ -2214,7 +2217,8 @@ BEGIN
                     WHEN mf.physical_name LIKE N'http%'
                     THEN mf.physical_name
                     WHEN mf.physical_name LIKE N'\\%'
-                    THEN N'UNC: ' + SUBSTRING(mf.physical_name, 3, CHARINDEX(N'\', mf.physical_name, 3) - 3)
+                    THEN N'UNC: ' + 
+                         SUBSTRING(mf.physical_name, 3, CHARINDEX(N'\', mf.physical_name, 3) - 3)
                     ELSE UPPER(LEFT(mf.physical_name, 2))
                 END,
             physical_name = mf.physical_name
@@ -2245,23 +2249,24 @@ BEGIN
                     THEN 40 /* Very slow */
                     ELSE 50 /* Moderately slow */
                 END,
-            category = 'Storage Performance',
-            finding = 'Slow Read Latency',
+            category = N'Storage Performance',
+            finding = N'Slow Read Latency',
             database_name = i.database_name,
             object_name = 
                 i.file_name + 
-                ' (' + 
+                N' (' + 
                 i.type_desc + 
-                ')',
+                N')',
             details = 
-                'Average read latency of ' + 
+                N'Average read latency of ' + 
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), i.avg_read_latency_ms)) + 
-                ' ms for ' + 
-                CONVERT(nvarchar(20), i.num_of_reads) + ' reads. ' +
-                'This is above the ' + 
+                N' ms for ' + 
+                CONVERT(nvarchar(20), i.num_of_reads) + 
+                N' reads. ' +
+                N'This is above the ' + 
                 CONVERT(nvarchar(10), CONVERT(integer, @slow_read_ms)) + 
-                ' ms threshold and may indicate storage performance issues.',
-            url = 'https://erikdarling.com/'
+                N' ms threshold and may indicate storage performance issues.',
+            url = N'https://erikdarling.com/'
         FROM #io_stats AS i
         WHERE i.avg_read_latency_ms > @slow_read_ms
         AND i.num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
@@ -2287,24 +2292,24 @@ BEGIN
                     THEN 40 /* Very slow */
                     ELSE 50 /* Moderately slow */
                 END,
-            category = 'Storage Performance',
-            finding = 'Slow Write Latency',
+            category = N'Storage Performance',
+            finding = N'Slow Write Latency',
             database_name = i.database_name,
             object_name = 
                 i.file_name + 
-                ' (' + 
+                N' (' + 
                 i.type_desc + 
-                ')',
+                N')',
             details = 
-                'Average write latency of ' + 
+                N'Average write latency of ' + 
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), i.avg_write_latency_ms)) + 
-                ' ms for ' + 
+                N' ms for ' + 
                 CONVERT(nvarchar(20), i.num_of_writes) + 
-                ' writes. ' +
-                'This is above the ' + 
+                N' writes. ' +
+                N'This is above the ' + 
                 CONVERT(nvarchar(10), CONVERT(integer, @slow_write_ms)) + 
-                ' ms threshold and may indicate storage performance issues.',
-            url = 'https://erikdarling.com/'
+                N' ms threshold and may indicate storage performance issues.',
+            url = N'https://erikdarling.com/'
         FROM #io_stats AS i
         WHERE i.avg_write_latency_ms > @slow_write_ms
         AND   i.num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
@@ -2323,21 +2328,21 @@ BEGIN
         SELECT
             check_id = 3003,
             priority = 40, /* High priority */
-            category = 'Storage Performance',
+            category = N'Storage Performance',
             finding = 
-                'Multiple Slow Files on Storage Location ' + 
+                N'Multiple Slow Files on Storage Location ' + 
                 i.drive_location,
             details = 
-                'Storage location ' + 
+                N'Storage location ' + 
                 i.drive_location + 
-                ' has ' + 
+                N' has ' + 
                 CONVERT(nvarchar(10), COUNT_BIG(*)) + 
-                ' database files with slow I/O. ' +
-                'Average overall latency: ' + 
+                N' database files with slow I/O. ' +
+                N'Average overall latency: ' + 
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), AVG(i.avg_io_latency_ms))) + 
-                ' ms. ' +
-                'This may indicate an overloaded drive or underlying storage issue.',
-            url = 'https://erikdarling.com/'
+                N' ms. ' +
+                N'This may indicate an overloaded drive or underlying storage issue.',
+            url = N'https://erikdarling.com/'
         FROM #io_stats AS i
         WHERE 
         (
@@ -2358,10 +2363,10 @@ BEGIN
             INSERT INTO 
                 #server_info (info_type, value)
             SELECT 
-                'Database Size',
-                'Allocated: ' + 
+                N'Database Size',
+                N'Allocated: ' + 
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(df.size * 8.0 / 1024.0 / 1024.0))) +
-                ' GB'
+                N' GB'
             FROM sys.database_files AS df
             WHERE df.type_desc = N'ROWS';
         END;
@@ -2371,10 +2376,10 @@ BEGIN
             INSERT INTO 
                 #server_info (info_type, value)
             SELECT 
-                'Total Database Size',
-                'Allocated: ' + 
+                N'Total Database Size',
+                N'Allocated: ' + 
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(mf.size * 8.0 / 1024.0 / 1024.0))) + 
-                ' GB'
+                N' GB'
             FROM sys.master_files AS mf
             WHERE mf.type_desc = N'ROWS';
         END;
@@ -2384,7 +2389,7 @@ BEGIN
         INSERT INTO 
             #server_info (info_type, value)
         VALUES 
-            ('Database Size', 'Unable to determine (permission error)');
+            (N'Database Size', N'Unable to determine (permission error)');
     END CATCH;
     
     /*
@@ -2410,12 +2415,12 @@ BEGIN
         INSERT INTO 
             #server_info (info_type, value)
         VALUES 
-            ('Min Server Memory', CONVERT(nvarchar(20), @min_server_memory) + ' MB');
+            (N'Min Server Memory', CONVERT(nvarchar(20), @min_server_memory) + N' MB');
         
         INSERT INTO 
             #server_info (info_type, value)
         VALUES 
-            ('Max Server Memory', CONVERT(nvarchar(20), @max_server_memory) + ' MB');
+            (N'Max Server Memory', CONVERT(nvarchar(20), @max_server_memory) + N' MB');
         
         /* Collect MAXDOP and CTFP settings */            
         SELECT 
@@ -2429,12 +2434,12 @@ BEGIN
         INSERT INTO 
             #server_info (info_type, value)
         VALUES 
-            ('MAXDOP', CONVERT(nvarchar(10), @max_dop));
+            (N'MAXDOP', CONVERT(nvarchar(10), @max_dop));
         
         INSERT INTO 
             #server_info (info_type, value)
         VALUES 
-            ('Cost Threshold for Parallelism', CONVERT(nvarchar(10), @cost_threshold));
+            (N'Cost Threshold for Parallelism', CONVERT(nvarchar(10), @cost_threshold));
         
         /* Collect other significant configuration values */
         SELECT 
@@ -2464,39 +2469,39 @@ BEGIN
         SELECT
             check_id = 1000,
             priority = 70, /* Informational priority */
-            category = 'Server Configuration',
-            finding = 'Non-Default Configuration: ' + c.name,
+            category = N'Server Configuration',
+            finding = N'Non-Default Configuration: ' + c.name,
             details = 
-                'Configuration option "' + c.name + 
-                '" has been changed from the default. Current: ' + 
+                N'Configuration option "' + c.name + 
+                N'" has been changed from the default. Current: ' + 
                 CONVERT(nvarchar(50), c.value_in_use) + 
                 CASE 
                     /* Configuration options from your lists */
-                    WHEN c.name = N'access check cache bucket count' THEN ', Default: 0'
-                    WHEN c.name = N'access check cache quota' THEN ', Default: 0'
-                    WHEN c.name = N'Ad Hoc Distributed Queries' THEN ', Default: 0'
-                    WHEN c.name = N'ADR cleaner retry timeout (min)' THEN ', Default: 120'
-                    WHEN c.name = N'ADR Cleaner Thread Count' THEN ', Default: 1'
-                    WHEN c.name = N'ADR Preallocation Factor' THEN ', Default: 4'
-                    WHEN c.name = N'affinity mask' THEN ', Default: 0'
-                    WHEN c.name = N'affinity I/O mask' THEN ', Default: 0'
-                    WHEN c.name = N'affinity64 mask' THEN ', Default: 0'
-                    WHEN c.name = N'affinity64 I/O mask' THEN ', Default: 0'
-                    WHEN c.name = N'cost threshold for parallelism' THEN ', Default: 5'
-                    WHEN c.name = N'max degree of parallelism' THEN ', Default: 0'
-                    WHEN c.name = N'max server memory (MB)' THEN ', Default: 2147483647'
-                    WHEN c.name = N'max worker threads' THEN ', Default: 0'
-                    WHEN c.name = N'min memory per query (KB)' THEN ', Default: 1024'
-                    WHEN c.name = N'min server memory (MB)' THEN ', Default: 0'
-                    WHEN c.name = N'optimize for ad hoc workloads' THEN ', Default: 0'
-                    WHEN c.name = N'priority boost' THEN ', Default: 0'
-                    WHEN c.name = N'query governor cost limit' THEN ', Default: 0'
-                    WHEN c.name = N'recovery interval (min)' THEN ', Default: 0'
-                    WHEN c.name = N'tempdb metadata memory-optimized' THEN ', Default: 0'
-                    WHEN c.name = N'lightweight pooling' THEN ', Default: 0'
-                    ELSE ', Default: Unknown'
+                    WHEN c.name = N'access check cache bucket count' THEN N', Default: 0'
+                    WHEN c.name = N'access check cache quota' THEN N', Default: 0'
+                    WHEN c.name = N'Ad Hoc Distributed Queries' THEN N', Default: 0'
+                    WHEN c.name = N'ADR cleaner retry timeout (min)' THEN N', Default: 120'
+                    WHEN c.name = N'ADR Cleaner Thread Count' THEN N', Default: 1'
+                    WHEN c.name = N'ADR Preallocation Factor' THEN N', Default: 4'
+                    WHEN c.name = N'affinity mask' THEN N', Default: 0'
+                    WHEN c.name = N'affinity I/O mask' THEN N', Default: 0'
+                    WHEN c.name = N'affinity64 mask' THEN N', Default: 0'
+                    WHEN c.name = N'affinity64 I/O mask' THEN N', Default: 0'
+                    WHEN c.name = N'cost threshold for parallelism' THEN N', Default: 5'
+                    WHEN c.name = N'max degree of parallelism' THEN N', Default: 0'
+                    WHEN c.name = N'max server memory (MB)' THEN N', Default: 2147483647'
+                    WHEN c.name = N'max worker threads' THEN N', Default: 0'
+                    WHEN c.name = N'min memory per query (KB)' THEN N', Default: 1024'
+                    WHEN c.name = N'min server memory (MB)' THEN N', Default: 0'
+                    WHEN c.name = N'optimize for ad hoc workloads' THEN N', Default: 0'
+                    WHEN c.name = N'priority boost' THEN N', Default: 0'
+                    WHEN c.name = N'query governor cost limit' THEN N', Default: 0'
+                    WHEN c.name = N'recovery interval (min)' THEN N', Default: 0'
+                    WHEN c.name = N'tempdb metadata memory-optimized' THEN N', Default: 0'
+                    WHEN c.name = N'lightweight pooling' THEN N', Default: 0'
+                    ELSE N', Default: Unknown'
                 END,
-            url = 'https://erikdarling.com/'
+            url = N'https://erikdarling.com/'
         FROM sys.configurations AS c
         WHERE 
             /* Access check cache settings */
@@ -2569,12 +2574,12 @@ BEGIN
         
         /* Get file counts and size range */
         SELECT
-            @tempdb_data_file_count = SUM(CASE WHEN tf.type_desc = 'ROWS' THEN 1 ELSE 0 END),
-            @tempdb_log_file_count = SUM(CASE WHEN tf.type_desc = 'LOG' THEN 1 ELSE 0 END),
-            @min_data_file_size = MIN(CASE WHEN tf.type_desc = 'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
-            @max_data_file_size = MAX(CASE WHEN tf.type_desc = 'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
-            @has_percent_growth = MAX(CASE WHEN tf.type_desc = 'ROWS' AND tf.is_percent_growth = 1 THEN 1 ELSE 0 END),
-            @has_fixed_growth = MAX(CASE WHEN tf.type_desc = 'ROWS' AND tf.is_percent_growth = 0 THEN 1 ELSE 0 END)
+            @tempdb_data_file_count = SUM(CASE WHEN tf.type_desc = N'ROWS' THEN 1 ELSE 0 END),
+            @tempdb_log_file_count = SUM(CASE WHEN tf.type_desc = N'LOG' THEN 1 ELSE 0 END),
+            @min_data_file_size = MIN(CASE WHEN tf.type_desc = N'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
+            @max_data_file_size = MAX(CASE WHEN tf.type_desc = N'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
+            @has_percent_growth = MAX(CASE WHEN tf.type_desc = N'ROWS' AND tf.is_percent_growth = 1 THEN 1 ELSE 0 END),
+            @has_fixed_growth = MAX(CASE WHEN tf.type_desc = N'ROWS' AND tf.is_percent_growth = 0 THEN 1 ELSE 0 END)
         FROM #tempdb_files AS tf;
         
         /* Calculate size difference percentage */
@@ -2606,11 +2611,11 @@ BEGIN
             (
                 2001,
                 50, /* High priority */
-                'TempDB Configuration',
-                'Single TempDB Data File',
-                'TempDB has only one data file. Multiple files can reduce allocation page contention. ' + 
-                'Recommendation: Use multiple files (equal to number of logical processors up to 8).',
-                'https://erikdarling.com/'
+                N'TempDB Configuration',
+                N'Single TempDB Data File',
+                N'TempDB has only one data file. Multiple files can reduce allocation page contention. ' + 
+                N'Recommendation: Use multiple files (equal to number of logical processors up to 8).',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2632,13 +2637,13 @@ BEGIN
             (
                 2002,
                 65, /* Medium priority */
-                'TempDB Configuration',
-                'Odd Number of TempDB Files',
-                'TempDB has ' + CONVERT(nvarchar(10), @tempdb_data_file_count) + 
-                ' data files. This is an odd number and not equal to the ' +
+                N'TempDB Configuration',
+                N'Odd Number of TempDB Files',
+                N'TempDB has ' + CONVERT(nvarchar(10), @tempdb_data_file_count) + 
+                N' data files. This is an odd number and not equal to the ' +
                 CONVERT(nvarchar(10), @processors) + ' logical processors. ' +
-                'Consider using an even number of files for better performance.',
-                'https://erikdarling.com/'
+                N'Consider using an even number of files for better performance.',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2659,13 +2664,13 @@ BEGIN
             (
                 2003,
                 70, /* Informational */
-                'TempDB Configuration',
-                'More TempDB Files Than CPUs',
-                'TempDB has ' + CONVERT(nvarchar(10), @tempdb_data_file_count) + 
-                ' data files, which is more than the ' +
+                N'TempDB Configuration',
+                N'More TempDB Files Than CPUs',
+                N'TempDB has ' + CONVERT(nvarchar(10), @tempdb_data_file_count) + 
+                N' data files, which is more than the ' +
                 CONVERT(nvarchar(10), @processors) + 
-                ' logical processors. ',
-                'https://erikdarling.com/'
+                N' logical processors. ',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2686,16 +2691,16 @@ BEGIN
             (
                 2004,
                 55, /* High-medium priority */
-                'TempDB Configuration',
-                'Uneven TempDB Data File Sizes',
-                'TempDB data files vary in size by ' + 
+                N'TempDB Configuration',
+                N'Uneven TempDB Data File Sizes',
+                N'TempDB data files vary in size by ' + 
                 CONVERT(nvarchar(10), CONVERT(integer, @size_difference_pct)) + 
-                '%. Smallest: ' + 
+                N'%. Smallest: ' + 
                 CONVERT(nvarchar(10), CONVERT(integer, @min_data_file_size)) + 
-                ' gB, Largest: ' + 
+                N' GB, Largest: ' + 
                 CONVERT(nvarchar(10), CONVERT(integer, @max_data_file_size)) + 
-                ' gB. For best performance, TempDB data files should be the same size.',
-                'https://erikdarling.com/'
+                N' GB. For best performance, TempDB data files should be the same size.',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2717,11 +2722,11 @@ BEGIN
             (
                 2005,
                 55, /* High-medium priority */
-                'TempDB Configuration',
-                'Mixed TempDB Autogrowth Settings',
-                'TempDB data files have inconsistent autogrowth settings - some use percentage growth and others use fixed size growth. ' +
-                'This can lead to uneven file sizes over time. Use consistent settings for all files.',
-                'https://erikdarling.com/'
+                N'TempDB Configuration',
+                N'Mixed TempDB Autogrowth Settings',
+                N'TempDB data files have inconsistent autogrowth settings - some use percentage growth and others use fixed size growth. ' +
+                N'This can lead to uneven file sizes over time. Use consistent settings for all files.',
+                N'https://erikdarling.com/'
             );
         END;
                 
@@ -2742,12 +2747,12 @@ BEGIN
             (
                 1001,
                 50, /* High priority */
-                'Server Configuration',
-                'Min Server Memory Too Close To Max',
-                'Min server memory (' + CONVERT(nvarchar(20), @min_server_memory) + 
-                ' MB) is >= 90% of max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
-                ' MB). This prevents SQL Server from dynamically adjusting memory.',
-                'https://erikdarling.com/'
+                N'Server Configuration',
+                N'Min Server Memory Too Close To Max',
+                N'Min server memory (' + CONVERT(nvarchar(20), @min_server_memory) + 
+                N' MB) is >= 90% of max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
+                N' MB). This prevents SQL Server from dynamically adjusting memory.',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2768,12 +2773,12 @@ BEGIN
             (
                 1002,
                 40, /* High priority */
-                'Server Configuration',
-                'Max Server Memory Too Close To Physical Memory',
-                'Max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
-                ' MB) is >= 95% of physical memory (' + CONVERT(nvarchar(20), CONVERT(bigint, @physical_memory_gb * 1024)) + 
-                ' MB). This may not leave enough memory for the OS and other processes.',
-                'https://erikdarling.com/'
+                N'Server Configuration',
+                N'Max Server Memory Too Close To Physical Memory',
+                N'Max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
+                N' MB) is >= 95% of physical memory (' + CONVERT(nvarchar(20), CONVERT(bigint, @physical_memory_gb * 1024)) + 
+                N' MB). This may not leave enough memory for the OS and other processes.',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2795,12 +2800,12 @@ BEGIN
             (
                 1003,
                 60, /* Medium priority */
-                'Server Configuration',
-                'MAXDOP Not Configured',
-                'Max degree of parallelism is set to 0 (default) on a server with ' + 
+                N'Server Configuration',
+                N'MAXDOP Not Configured',
+                N'Max degree of parallelism is set to 0 (default) on a server with ' + 
                 CONVERT(nvarchar(10), @processors) + 
-                ' logical processors. This can lead to excessive parallelism.',
-                'https://erikdarling.com/'
+                N' logical processors. This can lead to excessive parallelism.',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2821,12 +2826,12 @@ BEGIN
             (
                 1004,
                 60, /* Medium priority */
-                'Server Configuration',
-                'Low Cost Threshold for Parallelism',
-                'Cost threshold for parallelism is set to ' + 
+                N'Server Configuration',
+                N'Low Cost Threshold for Parallelism',
+                N'Cost threshold for parallelism is set to ' + 
                 CONVERT(nvarchar(10), @cost_threshold) + 
-                '. Low values can cause excessive parallelism for small queries.',
-                'https://erikdarling.com/'
+                N'. Low values can cause excessive parallelism for small queries.',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2847,10 +2852,10 @@ BEGIN
             (
                 1005,
                 30, /* High priority */
-                'Server Configuration',
-                'Priority Boost Enabled',
-                'Priority boost is enabled. This can cause issues with Windows scheduling priorities and is not recommended.',
-                'https://erikdarling.com/'
+                N'Server Configuration',
+                N'Priority Boost Enabled',
+                N'Priority boost is enabled. This can cause issues with Windows scheduling priorities and is not recommended.',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2871,10 +2876,10 @@ BEGIN
             (
                 1006,
                 50, /* Medium priority */
-                'Server Configuration',
-                'Lightweight Pooling Enabled',
-                'Lightweight pooling (fiber mode) is enabled. This is rarely beneficial and can cause issues with OLEDB providers and other components.',
-                'https://erikdarling.com/'
+                N'Server Configuration',
+                N'Lightweight Pooling Enabled',
+                N'Lightweight pooling (fiber mode) is enabled. This is rarely beneficial and can cause issues with OLEDB providers and other components.',
+                N'https://erikdarling.com/'
             );
         END;
         
@@ -2892,15 +2897,18 @@ BEGIN
         SELECT
             check_id = 1007,
             priority = 20, /* Very high priority */
-            category = 'Server Configuration',
-            finding = 'Configuration Pending Restart',
+            category = N'Server Configuration',
+            finding = N'Configuration Pending Restart',
             details = 
-                'The configuration option "' + 
+                N'The configuration option "' + 
                 c.name + 
-                '" has been changed but requires a restart to take effect. ' +
-                'Current value: ' + CONVERT(nvarchar(50), c.value) + ', ' +
-                'Pending value: ' + CONVERT(nvarchar(50), c.value_in_use),
-            url = 'https://erikdarling.com/'
+                N'" has been changed but requires a restart to take effect. ' +
+                N'Current value: ' + 
+                CONVERT(nvarchar(50), c.value) + 
+                N', ' +
+                N'Pending value: ' + 
+                CONVERT(nvarchar(50), c.value_in_use),
+            url = N'https://erikdarling.com/'
         FROM sys.configurations AS c
         WHERE c.value <> c.value_in_use
         AND
@@ -2924,7 +2932,7 @@ BEGIN
     IF @debug = 1
     BEGIN
         SELECT 
-            feature_check = 'Database columns',
+            feature_check = N'Database columns',
             has_is_ledger = @has_is_ledger,
             has_is_accelerated_database_recovery = @has_is_accelerated_database_recovery;
     END;
@@ -3052,7 +3060,7 @@ BEGIN
     )
     EXECUTE sys.sp_executesql 
         @sql, 
-        N'@database_name sysname', 
+      N'@database_name sysname', 
         @database_name;
 
     IF @debug = 1
@@ -3298,13 +3306,12 @@ BEGIN
         SELECT 
             check_id = 7001,
             priority = 50,
-            category = 'Database Configuration',
-            finding = 'Auto-Shrink Enabled',
+            category = N'Database Configuration',
+            finding = N'Auto-Shrink Enabled',
             database_name = d.name,
             details = 
-                'Database has auto-shrink enabled, which can cause significant performance problems and fragmentation. 
-                 This setting can lead to performance issues.',
-            url = 'https://erikdarling.com/'
+                N'Database has auto-shrink enabled, which can cause significant performance problems.',
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_auto_shrink_on = 1;
@@ -3324,13 +3331,13 @@ BEGIN
         SELECT 
             check_id = 7002,
             priority = 50,
-            category = 'Database Configuration',
-            finding = 'Auto-Close Enabled',
+            category = N'Database Configuration',
+            finding = N'Auto-Close Enabled',
             database_name = d.name,
             details = 
-                'Database has auto-close enabled, which can cause connection delays while the database is reopened. 
+                N'Database has auto-close enabled, which can cause connection delays while the database is reopened. 
                  This setting can impact performance for applications that frequently connect to and disconnect from the database.',
-            url = 'https://erikdarling.com/'
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_auto_close_on = 1;
@@ -3350,16 +3357,16 @@ BEGIN
         SELECT 
             check_id = 7003,
             priority = 30, /* High priority */
-            category = 'Database Configuration',
+            category = N'Database Configuration',
             finding = 
-                'Restricted Access Mode: ' + 
+                N'Restricted Access Mode: ' + 
                 d.user_access_desc,
             database_name = d.name,
             details = 
-                'Database is not in MULTI_USER mode. Current mode: ' + 
-                d.user_access_desc + '. 
-                This restricts normal database access and may prevent applications from connecting.',
-            url = 'https://erikdarling.com/'
+                N'Database is not in MULTI_USER mode. Current mode: ' + 
+                d.user_access_desc + 
+                N'. This restricts normal database access and may prevent applications from connecting.',
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.user_access_desc <> N'MULTI_USER';
@@ -3379,29 +3386,29 @@ BEGIN
         SELECT 
             check_id = 7004,
             priority = 40, /* Medium-high priority */
-            category = 'Database Configuration',
+            category = N'Database Configuration',
             finding = 
                 CASE 
                     WHEN d.is_auto_create_stats_on = 0 
                     AND  d.is_auto_update_stats_on = 0
-                    THEN 'Auto Create and Update Statistics Disabled'
+                    THEN N'Auto Create and Update Statistics Disabled'
                     WHEN d.is_auto_create_stats_on = 0
-                    THEN 'Auto Create Statistics Disabled'
+                    THEN N'Auto Create Statistics Disabled'
                     WHEN d.is_auto_update_stats_on = 0
-                    THEN 'Auto Update Statistics Disabled'
+                    THEN N'Auto Update Statistics Disabled'
                 END,
             database_name = d.name,
             details = 
                 CASE 
                     WHEN d.is_auto_create_stats_on = 0 
                     AND  d.is_auto_update_stats_on = 0
-                    THEN 'Both auto create and auto update statistics are disabled. This can lead to poor query performance due to outdated or missing statistics.'
+                    THEN N'Both auto create and auto update statistics are disabled. This can lead to poor query performance due to outdated or missing statistics.'
                     WHEN d.is_auto_create_stats_on = 0
-                    THEN 'Auto create statistics is disabled. This can lead to suboptimal query plans for columns without statistics.'
+                    THEN N'Auto create statistics is disabled. This can lead to suboptimal query plans for columns without statistics.'
                     WHEN d.is_auto_update_stats_on = 0
-                    THEN 'Auto update statistics is disabled. This can lead to poor query performance due to outdated statistics.'
+                    THEN N'Auto update statistics is disabled. This can lead to poor query performance due to outdated statistics.'
                 END,
-            url = 'https://erikdarling.com/'
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND  
@@ -3425,21 +3432,21 @@ BEGIN
         SELECT 
             check_id = 7005,
             priority = 50, /* Medium priority */
-            category = 'Database Configuration',
-            finding = 'Non-Standard ANSI Settings',
+            category = N'Database Configuration',
+            finding = N'Non-Standard ANSI Settings',
             database_name = d.name,
             details = 
-                'Database has non-standard ANSI settings: ' +
-                      CASE WHEN d.is_ansi_null_default_on = 1 THEN 'ANSI_NULL_DEFAULT ON, ' ELSE '' END +
-                      CASE WHEN d.is_ansi_nulls_on = 1 THEN 'ANSI_NULLS OFF, ' ELSE '' END +
-                      CASE WHEN d.is_ansi_padding_on = 1 THEN 'ANSI_PADDING OFF, ' ELSE '' END +
-                      CASE WHEN d.is_ansi_warnings_on = 1 THEN 'ANSI_WARNINGS OFF, ' ELSE '' END +
-                      CASE WHEN d.is_arithabort_on = 1 THEN 'ARITHABORT OFF, ' ELSE '' END +
-                      CASE WHEN d.is_concat_null_yields_null_on = 1 THEN 'CONCAT_NULL_YIELDS_NULL OFF, ' ELSE '' END +
-                      CASE WHEN d.is_numeric_roundabort_on = 1 THEN 'NUMERIC_ROUNDABORT ON, ' ELSE '' END +
-                      CASE WHEN d.is_quoted_identifier_on = 1 THEN 'QUOTED_IDENTIFIER OFF, ' ELSE '' END +
-                'which can cause unexpected application behavior and compatibility issues.',
-            url = 'https://erikdarling.com/'
+                N'Database has non-standard ANSI settings: ' +
+                      CASE WHEN d.is_ansi_null_default_on = 1 THEN N'ANSI_NULL_DEFAULT ON, ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_nulls_on = 1 THEN N'ANSI_NULLS OFF, ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_padding_on = 1 THEN N'ANSI_PADDING OFF, ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_warnings_on = 1 THEN N'ANSI_WARNINGS OFF, ' ELSE N'' END +
+                      CASE WHEN d.is_arithabort_on = 1 THEN N'ARITHABORT OFF, ' ELSE N'' END +
+                      CASE WHEN d.is_concat_null_yields_null_on = 1 THEN N'CONCAT_NULL_YIELDS_NULL OFF, ' ELSE N'' END +
+                      CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON, ' ELSE N'' END +
+                      CASE WHEN d.is_quoted_identifier_on = 1 THEN N'QUOTED_IDENTIFIER OFF, ' ELSE N'' END +
+                N'which can cause unexpected application behavior and compatibility issues.',
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND 
@@ -3469,11 +3476,11 @@ BEGIN
         SELECT 
             check_id = 7006,
             priority = 60, /* Informational priority */
-            category = 'Database Configuration',
-            finding = 'Query Store Not Enabled',
+            category = N'Database Configuration',
+            finding = N'Query Store Not Enabled',
             database_name = d.name,
-            details = 'Query Store is not enabled. Consider enabling Query Store to track query performance over time and identify regression issues.',
-            url = 'https://erikdarling.com/'
+            details = N'Query Store is not enabled. Consider enabling Query Store to track query performance over time and identify regression issues.',
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_query_store_on = 0;
@@ -3495,8 +3502,8 @@ BEGIN
             SELECT 
                 check_id = 7011,
                 priority = 40, /* Medium-high priority */
-                category = ''Database Configuration'',
-                finding = ''Query Store State Mismatch'',
+                category = N''Database Configuration'',
+                finding = N''Query Store State Mismatch'',
                 database_name = DB_NAME(),
                 details = 
                     ''Query Store desired state ('' + 
@@ -3504,22 +3511,22 @@ BEGIN
                     '') does not match actual state ('' + 
                     qso.actual_state_desc + ''). '' +
                     CASE qso.readonly_reason
-                        WHEN 0 THEN ''No specific reason identified.''
-                        WHEN 2 THEN ''Database is in single user mode.''
-                        WHEN 4 THEN ''Database is in emergency mode.''
-                        WHEN 8 THEN ''Database is an Availability Group secondary.''
-                        WHEN 65536 THEN ''Query Store has reached maximum size: '' + 
+                        WHEN 0 THEN N''No specific reason identified.''
+                        WHEN 2 THEN N''Database is in single user mode.''
+                        WHEN 4 THEN N''Database is in emergency mode.''
+                        WHEN 8 THEN N''Database is an Availability Group secondary.''
+                        WHEN 65536 THEN N''Query Store has reached maximum size: '' + 
                                         CONVERT(nvarchar(20), qso.current_storage_size_mb) + 
                                         '' of '' + 
                                         CONVERT(nvarchar(20), qso.max_storage_size_mb) + 
                                         '' MB.''
-                        WHEN 131072 THEN ''The number of different statements in Query Store has reached the internal memory limit.''
-                        WHEN 262144 THEN ''Size of in-memory items waiting to be persisted on disk has reached the internal memory limit.''
-                        WHEN 524288 THEN ''Database has reached disk size limit.''
-                        ELSE ''Unknown reason code: '' + CONVERT(nvarchar(20), qso.readonly_reason)
+                        WHEN 131072 THEN N''The number of different statements in Query Store has reached the internal memory limit.''
+                        WHEN 262144 THEN N''Size of in-memory items waiting to be persisted on disk has reached the internal memory limit.''
+                        WHEN 524288 THEN N''Database has reached disk size limit.''
+                        ELSE N''Unknown reason code: '' + CONVERT(nvarchar(20), qso.readonly_reason)
                     END,
-                url = ''https://erikdarling.com/''
-            FROM ' + QUOTENAME(@current_database_name) + '.sys.database_query_store_options AS qso
+                url = N''https://erikdarling.com/''
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_query_store_options AS qso
             WHERE qso.desired_state <> 0 /* Not intentionally OFF */
             AND   qso.readonly_reason <> 8 /* Ignore AG secondaries */
             AND   qso.desired_state <> qso.actual_state /* States don''t match */
@@ -3549,30 +3556,30 @@ BEGIN
             SELECT 
                 check_id = 7012,
                 priority = 50, /* Medium priority */
-                category = ''Database Configuration'',
-                finding = ''Query Store Suboptimal Configuration'',
+                category = N''Database Configuration'',
+                finding = N''Query Store Suboptimal Configuration'',
                 database_name = DB_NAME(),
                 details = 
                     CASE
                         WHEN qso.max_storage_size_mb < 1024 
-                        THEN ''Query Store max size ('' + 
+                        THEN N''Query Store max size ('' + 
                              CONVERT(nvarchar(20), qso.max_storage_size_mb) + 
                              '' MB) is less than 1 GB. This may be too small for production databases.''
-                        WHEN qso.query_capture_mode_desc = ''NONE'' 
-                        THEN ''Query Store capture mode is set to NONE. No new queries will be captured.''
-                        WHEN qso.size_based_cleanup_mode_desc = ''OFF'' 
-                        THEN ''Size-based cleanup is disabled. Query Store may fill up and become read-only.''
+                        WHEN qso.query_capture_mode_desc = N''NONE'' 
+                        THEN N''Query Store capture mode is set to NONE. No new queries will be captured.''
+                        WHEN qso.size_based_cleanup_mode_desc = N''OFF'' 
+                        THEN N''Size-based cleanup is disabled. Query Store may fill up and become read-only.''
                         WHEN qso.stale_query_threshold_days < 3 
-                        THEN ''Stale query threshold is only '' + 
+                        THEN N''Stale query threshold is only '' + 
                              CONVERT(nvarchar(20), qso.stale_query_threshold_days) + 
                              '' days. Short retention periods may lose historical performance data.''
                         WHEN qso.max_plans_per_query < 10 
-                        THEN ''Max plans per query is only '' + 
+                        THEN N''Max plans per query is only '' + 
                              CONVERT(nvarchar(20), qso.max_plans_per_query) + 
                              ''. This may cause relevant plans to be purged prematurely.''
                     END,
-                url = ''https://erikdarling.com/''
-            FROM ' + QUOTENAME(@current_database_name) + '.sys.database_query_store_options AS qso
+                url = N''https://erikdarling.com/''
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_query_store_options AS qso
             WHERE qso.actual_state = 2 /* Query Store is ON */
             AND 
             (
@@ -3594,11 +3601,11 @@ BEGIN
             /* Check for non-default database scoped configurations */
             /* First check if the sys.database_scoped_configurations view exists */
             SET @sql = N'
-            IF EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + '.sys.all_objects AS ao WHERE ao.name = N''database_scoped_configurations'')
+            IF EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + N'.sys.all_objects AS ao WHERE ao.name = N''database_scoped_configurations'')
             BEGIN
                 /* Delete any existing values for this database */
                 DELETE FROM #database_scoped_configs 
-                WHERE database_id = ' + CONVERT(nvarchar(10), @current_database_id) + ';
+                WHERE database_id = N' + CONVERT(nvarchar(10), @current_database_id) + N';
                 
                 /* Insert default values as reference for comparison */
                 INSERT INTO 
@@ -3613,29 +3620,29 @@ BEGIN
                     is_value_default
                 )
                 VALUES
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 1, N''MAXDOP'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 2, N''LEGACY_CARDINALITY_ESTIMATION'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 3, N''PARAMETER_SNIFFING'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 4, N''QUERY_OPTIMIZER_HOTFIXES'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 7, N''INTERLEAVED_EXECUTION_TVF'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 8, N''BATCH_MODE_MEMORY_GRANT_FEEDBACK'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 9, N''BATCH_MODE_ADAPTIVE_JOINS'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 10, N''TSQL_SCALAR_UDF_INLINING'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 13, N''OPTIMIZE_FOR_AD_HOC_WORKLOADS'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 16, N''ROW_MODE_MEMORY_GRANT_FEEDBACK'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 17, N''ISOLATE_SECURITY_POLICY_CARDINALITY'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 18, N''BATCH_MODE_ON_ROWSTORE'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 19, N''DEFERRED_COMPILATION_TV'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 20, N''ACCELERATED_PLAN_FORCING'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 24, N''LAST_QUERY_PLAN_STATS'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 27, N''EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 28, N''PARAMETER_SENSITIVE_PLAN_OPTIMIZATION'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 31, N''CE_FEEDBACK'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 33, N''MEMORY_GRANT_FEEDBACK_PERSISTENCE'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 34, N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 35, N''OPTIMIZED_PLAN_FORCING'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 37, N''DOP_FEEDBACK'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1);
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 1, N''MAXDOP'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 2, N''LEGACY_CARDINALITY_ESTIMATION'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 3, N''PARAMETER_SNIFFING'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 4, N''QUERY_OPTIMIZER_HOTFIXES'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 7, N''INTERLEAVED_EXECUTION_TVF'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 8, N''BATCH_MODE_MEMORY_GRANT_FEEDBACK'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 9, N''BATCH_MODE_ADAPTIVE_JOINS'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 10, N''TSQL_SCALAR_UDF_INLINING'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 13, N''OPTIMIZE_FOR_AD_HOC_WORKLOADS'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 16, N''ROW_MODE_MEMORY_GRANT_FEEDBACK'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 17, N''ISOLATE_SECURITY_POLICY_CARDINALITY'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 18, N''BATCH_MODE_ON_ROWSTORE'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 19, N''DEFERRED_COMPILATION_TV'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 20, N''ACCELERATED_PLAN_FORCING'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 24, N''LAST_QUERY_PLAN_STATS'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 27, N''EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 28, N''PARAMETER_SENSITIVE_PLAN_OPTIMIZATION'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 31, N''CE_FEEDBACK'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 33, N''MEMORY_GRANT_FEEDBACK_PERSISTENCE'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 34, N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 35, N''OPTIMIZED_PLAN_FORCING'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 37, N''DOP_FEEDBACK'', NULL, NULL, 1),
+                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1);
                 
                 /* Get actual non-default settings */
                 INSERT INTO 
@@ -3650,39 +3657,39 @@ BEGIN
                     is_value_default
                 )
                 SELECT 
-                    ' + CONVERT(nvarchar(10), @current_database_id) + ', 
-                    N''' + @current_database_name + ''', 
+                    ' + CONVERT(nvarchar(10), @current_database_id) + N', 
+                    N''' + @current_database_name + N''', 
                     sc.configuration_id, 
                     sc.name, 
                     sc.value, 
                     sc.value_for_secondary, 
                     CASE
-                        WHEN sc.name = ''MAXDOP'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = ''LEGACY_CARDINALITY_ESTIMATION'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = ''PARAMETER_SNIFFING'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''QUERY_OPTIMIZER_HOTFIXES'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = ''INTERLEAVED_EXECUTION_TVF'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''BATCH_MODE_MEMORY_GRANT_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''BATCH_MODE_ADAPTIVE_JOINS'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''TSQL_SCALAR_UDF_INLINING'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''OPTIMIZE_FOR_AD_HOC_WORKLOADS'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = ''ROW_MODE_MEMORY_GRANT_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''ISOLATE_SECURITY_POLICY_CARDINALITY'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = ''BATCH_MODE_ON_ROWSTORE'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''DEFERRED_COMPILATION_TV'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''ACCELERATED_PLAN_FORCING'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''LAST_QUERY_PLAN_STATS'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = ''EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''PARAMETER_SENSITIVE_PLAN_OPTIMIZATION'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''CE_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''MEMORY_GRANT_FEEDBACK_PERSISTENCE'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''OPTIMIZED_PLAN_FORCING'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = ''DOP_FEEDBACK'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = ''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = N''MAXDOP'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = N''LEGACY_CARDINALITY_ESTIMATION'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = N''PARAMETER_SNIFFING'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''QUERY_OPTIMIZER_HOTFIXES'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = N''INTERLEAVED_EXECUTION_TVF'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''BATCH_MODE_MEMORY_GRANT_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''BATCH_MODE_ADAPTIVE_JOINS'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''TSQL_SCALAR_UDF_INLINING'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''OPTIMIZE_FOR_AD_HOC_WORKLOADS'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = N''ROW_MODE_MEMORY_GRANT_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''ISOLATE_SECURITY_POLICY_CARDINALITY'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = N''BATCH_MODE_ON_ROWSTORE'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''DEFERRED_COMPILATION_TV'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''ACCELERATED_PLAN_FORCING'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''LAST_QUERY_PLAN_STATS'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = N''EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''PARAMETER_SENSITIVE_PLAN_OPTIMIZATION'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''CE_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERSISTENCE'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''OPTIMIZED_PLAN_FORCING'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = N''DOP_FEEDBACK'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'' AND CAST(sc.value AS integer) = 0 THEN 1
                         ELSE 0 /* Non-default */
                     END
-                FROM ' + QUOTENAME(@current_database_name) + '.sys.database_scoped_configurations AS sc;
+                FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_scoped_configurations AS sc;
             END;';
                 
             IF @debug = 1
@@ -3709,34 +3716,34 @@ BEGIN
                 SELECT 
                     check_id = 7020,
                     priority = 60, /* Informational priority */
-                    category = 'Database Configuration',
-                    finding = 'Non-Default Database Scoped Configuration',
+                    category = N'Database Configuration',
+                    finding = N'Non-Default Database Scoped Configuration',
                     database_name = dsc.database_name,
                     object_name = dsc.name,
                     details = 
-                        'Database uses non-default setting for ' + 
+                        N'Database uses non-default setting for ' + 
                         dsc.name + 
-                        ': ' + 
-                        ISNULL(CONVERT(nvarchar(100), dsc.value), 'NULL') + 
+                        N': ' + 
+                        ISNULL(CONVERT(nvarchar(100), dsc.value), N'NULL') + 
                         CASE 
                             WHEN dsc.value_for_secondary IS NOT NULL 
-                            THEN ' (Secondary: ' + 
+                            THEN N' (Secondary: ' + 
                             CONVERT(nvarchar(100), dsc.value_for_secondary) + 
-                            ')'
-                            ELSE ''
+                            N')'
+                            ELSE N''
                         END + 
-                        '. ' +
+                        N'. ' +
                         CASE dsc.name
-                             WHEN 'MAXDOP' THEN 'Controls degree of parallelism for queries in this database.'
-                             WHEN 'LEGACY_CARDINALITY_ESTIMATION' THEN 'Controls whether the query optimizer uses the SQL Server 2014 or earlier cardinality estimation model.'
-                             WHEN 'PARAMETER_SNIFFING' THEN 'Controls parameter sniffing behavior for the database.'
-                             WHEN 'QUERY_OPTIMIZER_HOTFIXES' THEN 'Controls whether query optimizer hotfixes are enabled.'
-                             WHEN 'OPTIMIZE_FOR_AD_HOC_WORKLOADS' THEN 'Controls caching behavior for single-use query plans.'
-                             WHEN 'ACCELERATED_PLAN_FORCING' THEN 'Controls whether query plans can be forced in an accelerated way.'
-                             WHEN 'BATCH_MODE_ON_ROWSTORE' THEN 'Controls whether batch mode processing can be used on rowstore indexes.'
-                             ELSE 'Controls ' + REPLACE(LOWER(dsc.name), '_', ' ') + ' behavior.'
+                             WHEN N'MAXDOP' THEN N'Controls degree of parallelism for queries in this database.'
+                             WHEN N'LEGACY_CARDINALITY_ESTIMATION' THEN N'Controls whether the query optimizer uses the SQL Server 2014 or earlier cardinality estimation model.'
+                             WHEN N'PARAMETER_SNIFFING' THEN N'Controls parameter sniffing behavior for the database.'
+                             WHEN N'QUERY_OPTIMIZER_HOTFIXES' THEN N'Controls whether query optimizer hotfixes are enabled.'
+                             WHEN N'OPTIMIZE_FOR_AD_HOC_WORKLOADS' THEN N'Controls caching behavior for single-use query plans.'
+                             WHEN N'ACCELERATED_PLAN_FORCING' THEN N'Controls whether query plans can be forced in an accelerated way.'
+                             WHEN N'BATCH_MODE_ON_ROWSTORE' THEN N'Controls whether batch mode processing can be used on rowstore indexes.'
+                             ELSE N'Controls ' + REPLACE(LOWER(dsc.name), N'_', N' ') + N' behavior.'
                         END,
-                    url = 'https://erikdarling.com/'
+                    url = N'https://erikdarling.com/'
                 FROM #database_scoped_configs AS dsc
                 WHERE dsc.database_id = @current_database_id
                 AND   dsc.is_value_default = 0;
@@ -3744,7 +3751,7 @@ BEGIN
         BEGIN CATCH
             IF @debug = 1
             BEGIN
-                SET @message = N'Error checking database configuration for ' + @current_database_name + ': ' + ERROR_MESSAGE();
+                SET @message = N'Error checking database configuration for ' + @current_database_name + N': ' + ERROR_MESSAGE();
                 RAISERROR(@message, 0, 1) WITH NOWAIT;
             END;
         END CATCH;
@@ -3764,14 +3771,14 @@ BEGIN
         SELECT 
             check_id = 7007,
             priority = 60, /* Informational priority */
-            category = 'Database Configuration',
-            finding = 'Non-Default Target Recovery Time',
+            category = N'Database Configuration',
+            finding = N'Non-Default Target Recovery Time',
             database_name = d.name,
             details = 
-                'Database target recovery time is ' + 
+                N'Database target recovery time is ' + 
                 CONVERT(nvarchar(20), d.target_recovery_time_in_seconds) + 
-                ' seconds, which differs from the default of 60 seconds. This affects checkpoint frequency and recovery time.',
-            url = 'https://erikdarling.com/'
+                N' seconds, which differs from the default of 60 seconds. This affects checkpoint frequency and recovery time.',
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.target_recovery_time_in_seconds <> 60;
@@ -3791,14 +3798,14 @@ BEGIN
         SELECT 
             check_id = 7008,
             priority = 50, /* Medium priority */
-            category = 'Database Configuration',
-            finding = 'Delayed Durability: ' + d.delayed_durability_desc,
+            category = N'Database Configuration',
+            finding = N'Delayed Durability: ' + d.delayed_durability_desc,
             database_name = d.name,
             details = 
-                'Database uses ' + 
+                N'Database uses ' + 
                 d.delayed_durability_desc + 
-                ' durability mode. This can improve performance but increases the risk of data loss during a server failure.',
-            url = 'https://erikdarling.com/'
+                N' durability mode. This can improve performance but increases the risk of data loss during a server failure.',
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.delayed_durability_desc <> N'DISABLED';
@@ -3818,13 +3825,13 @@ BEGIN
         SELECT 
             check_id = 7009,
             priority = 50, /* Medium priority */
-            category = 'Database Configuration',
-            finding = 'Accelerated Database Recovery Not Enabled With Snapshot Isolation',
+            category = N'Database Configuration',
+            finding = N'Accelerated Database Recovery Not Enabled With Snapshot Isolation',
             database_name = d.name,
             details = 
-                'Database has Snapshot Isolation or RCSI enabled but Accelerated Database Recovery (ADR) is disabled. ' +
-                'ADR can significantly improve performance with these isolation levels by reducing version store cleanup overhead.',
-            url = 'https://erikdarling.com/'
+                N'Database has Snapshot Isolation or RCSI enabled but Accelerated Database Recovery (ADR) is disabled. ' +
+                N'ADR can significantly improve performance with these isolation levels by reducing version store cleanup overhead.',
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_accelerated_database_recovery_on = 0
@@ -3845,13 +3852,13 @@ BEGIN
         SELECT 
             check_id = 7010,
             priority = 60, /* Informational priority */
-            category = 'Database Configuration',
-            finding = 'Ledger Feature Enabled',
+            category = N'Database Configuration',
+            finding = N'Ledger Feature Enabled',
             database_name = d.name,
             details = 
-                'Database has the ledger feature enabled, which adds blockchain-like capabilities 
+                N'Database has the ledger feature enabled, which adds blockchain-like capabilities 
                  but may impact performance due to additional overhead for maintaining cryptographic verification.',
-            url = 'https://erikdarling.com/'
+            url = N'https://erikdarling.com/'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_ledger_on = 1;
@@ -3875,8 +3882,8 @@ BEGIN
             SELECT 
                 check_id = 7101,
                 priority = 40, /* Medium-high priority */
-                category = ''Database Files'',
-                finding = ''Percentage Auto-Growth Setting on Data File'',
+                category = N''Database Files'',
+                finding = N''Percentage Auto-Growth Setting on Data File'',
                 database_name = DB_NAME(),
                 object_name = mf.name,
                 details = 
@@ -3885,8 +3892,8 @@ BEGIN
                     ''%). This can lead to increasingly larger growth events as the file grows, 
                     potentially causing larger file sizes than intended. Even with instant file initialization enabled, 
                     consider using a fixed size instead for more predictable growth.'',
-                url = ''https://erikdarling.com/''
-            FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
+                url = N''https://erikdarling.com/''
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 1
             AND   mf.type_desc = N''ROWS'';';
             
@@ -3915,8 +3922,8 @@ BEGIN
             SELECT 
                 check_id = 7102,
                 priority = 30, /* High priority */
-                category = ''Database Files'',
-                finding = ''Percentage Auto-Growth Setting on Log File'',
+                category = N''Database Files'',
+                finding = N''Percentage Auto-Growth Setting on Log File'',
                 database_name = DB_NAME(),
                 object_name = mf.name,
                 details = 
@@ -3925,8 +3932,8 @@ BEGIN
                     ''%). This can lead to increasingly larger growth events and significant stalls 
                     as log files must be zeroed out during auto-growth operations. 
                     Always use fixed size growth for log files.'',
-                url = ''https://erikdarling.com/''
-            FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
+                url = N''https://erikdarling.com/''
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 1
             AND   mf.type_desc = N''LOG'';';
             
@@ -3957,8 +3964,8 @@ BEGIN
                 SELECT 
                     check_id = 7103,
                     priority = 40, /* Medium-high priority */
-                    category = ''Database Files'',
-                    finding = ''Non-Optimal Log File Growth Increment'',
+                    category = N''Database Files'',
+                    finding = N''Non-Optimal Log File Growth Increment'',
                     database_name = DB_NAME(),
                     object_name = mf.name,
                     details = 
@@ -3966,8 +3973,8 @@ BEGIN
                         CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
                         ''On SQL Server 2022, Azure SQL DB, or Azure MI, transaction logs can use instant file initialization when set to exactly 64 MB. '' +
                         ''Consider changing the growth increment to 64 MB for improved performance.'',
-                    url = ''https://erikdarling.com/''
-                FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
+                    url = N''https://erikdarling.com/''
+                FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
                 WHERE mf.is_percent_growth = 0
                 AND   mf.type_desc = N''LOG''
                 AND   mf.growth * 8.0 / 1024 <> 64;';
@@ -3998,8 +4005,8 @@ BEGIN
             SELECT 
                 check_id = 7104,
                 priority = 40, /* Medium-high priority */
-                category = ''Database Files'',
-                finding = ''Extremely Large Auto-Growth Setting'',
+                category = N''Database Files'',
+                finding = N''Extremely Large Auto-Growth Setting'',
                 database_name = DB_NAME(),
                 object_name = mf.name,
                 details = 
@@ -4007,11 +4014,11 @@ BEGIN
                     CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024 / 1024)) + 
                     '' GB. Very large growth increments can lead to excessive space allocation. '' +
                     CASE 
-                        WHEN mf.type_desc = ''ROWS'' THEN ''Even with instant file initialization, consider using smaller increments for more controlled growth.''
-                        WHEN mf.type_desc = ''LOG'' THEN ''This can cause significant stalls as log files must be zeroed out during growth operations.''
+                        WHEN mf.type_desc = N''ROWS'' THEN N''Even with instant file initialization, consider using smaller increments for more controlled growth.''
+                        WHEN mf.type_desc = N''LOG'' THEN N''This can cause significant stalls as log files must be zeroed out during growth operations.''
                     END,
-                url = ''https://erikdarling.com/''
-            FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
+                url = N''https://erikdarling.com/''
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 0
             AND   mf.growth * 8.0 / 1024 / 1024 > 10; /* Growth > 10GB */';
             
@@ -4026,7 +4033,7 @@ BEGIN
         BEGIN CATCH
             IF @debug = 1
             BEGIN
-                SET @message = N'Error checking database file growth settings for ' + @current_database_name + ': ' + ERROR_MESSAGE();
+                SET @message = N'Error checking database file growth settings for ' + @current_database_name + N': ' + ERROR_MESSAGE();
                 RAISERROR(@message, 0, 1) WITH NOWAIT;
             END;
         END CATCH;
@@ -4042,7 +4049,7 @@ BEGIN
         BEGIN CATCH
             IF @debug = 1
             BEGIN
-                SET @message = N'Error checking database ' + @current_database_name + ': ' + ERROR_MESSAGE();
+                SET @message = N'Error checking database ' + @current_database_name + N': ' + ERROR_MESSAGE();
                 RAISERROR(@message, 0, 1) WITH NOWAIT;
             END;
         END CATCH;
