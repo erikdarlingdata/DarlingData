@@ -127,7 +127,7 @@ BEGIN
         @sos_scheduler_yield_pct_of_uptime decimal(10, 2),
         /* I/O stalls variables */
         @io_stall_summary nvarchar(1000),
-    /* First check what columns exist in sys.databases to handle version differences */
+        /* First check what columns exist in sys.databases to handle version differences */
         @has_is_ledger bit = 0,
         @has_is_accelerated_database_recovery bit = 0;
     
@@ -258,7 +258,7 @@ BEGIN
     CREATE TABLE
         #results
     (
-        id integer IDENTITY(1, 1) PRIMARY KEY CLUSTERED,
+        id integer IDENTITY PRIMARY KEY CLUSTERED,
         check_id integer NOT NULL,
         priority integer NOT NULL,
         category nvarchar(50) NOT NULL,
@@ -649,10 +649,12 @@ BEGIN
         finding = 'High Number of Deadlocks',
         details = 
             'Server is averaging ' + 
-            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0))) + 
+            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value / 
+              NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0))) + 
             ' deadlocks per day since startup (' + 
             CONVERT(nvarchar(20), p.cntr_value) + ' total deadlocks over ' + 
-            CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())) + ' days). ' +
+            CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())) + 
+            ' days). ' +
             'High deadlock rates indicate concurrency issues that should be investigated.',
         url = 'https://erikdarling.com/'
     FROM sys.dm_os_performance_counters AS p
@@ -663,16 +665,16 @@ BEGIN
     AND   
     (
         1.0 * p.cntr_value / 
-          NULLIF
-          (
-              DATEDIFF
-              (
-                  DAY, 
-                  osi.sqlserver_start_time, 
-                  GETDATE()
-              ), 
-              0
-          )
+        NULLIF
+        (
+            DATEDIFF
+            (
+                DAY, 
+                osi.sqlserver_start_time, 
+                GETDATE()
+            ), 
+            0
+        )
     ) > 9; /* More than 9 deadlocks per day */
     
     /* Check for large USERSTORE_TOKENPERM (security cache) */
@@ -788,7 +790,7 @@ BEGIN
     IF @has_view_server_state = 1
     BEGIN
         /* First, add Resource Governor status to server info */
-        IF EXISTS (SELECT 1/0 FROM sys.resource_governor_configuration WHERE is_enabled = 1)
+        IF EXISTS (SELECT 1/0 FROM sys.resource_governor_configuration AS rgc WHERE rgc.is_enabled = 1)
         BEGIN
             INSERT INTO
                 #server_info (info_type, value)
@@ -921,10 +923,10 @@ BEGIN
             INSERT INTO 
                 #event_class_map (event_class, event_name, category_name)
             VALUES
-                (92, 'Data File Auto Grow', 'Database'),
-                (93, 'Log File Auto Grow', 'Database'),
-                (94, 'Data File Auto Shrink', 'Database'),
-                (95, 'Log File Auto Shrink', 'Database'),
+                (92,  'Data File Auto Grow', 'Database'),
+                (93,  'Log File Auto Grow', 'Database'),
+                (94,  'Data File Auto Shrink', 'Database'),
+                (95,  'Log File Auto Shrink', 'Database'),
                 (116, 'DBCC Event', 'Database'),
                 (137, 'Server Memory Change', 'Server');
                 
@@ -984,9 +986,9 @@ BEGIN
                   )
                 )
                 /* Server memory change events */
-                OR (t.EventClass = 137)
+                OR t.EventClass = 137
                 /* Deadlock events - typically not in default trace but including for completeness */
-                OR (t.EventClass = 148)
+                OR t.EventClass = 148
                 /* Look back at the past 7 days of events at most */
                 AND t.StartTime > DATEADD(DAY, -7, GETDATE());
                 
@@ -1166,9 +1168,9 @@ BEGIN
                 (
                     (
                         SELECT 
-                            N', ' + 
+                            ', ' + 
                             CONVERT(nvarchar(50), COUNT_BIG(*)) + 
-                            N' slow ' + 
+                            ' slow ' + 
                             CASE 
                                 WHEN te.event_class = 92 
                                 THEN 'data file'
@@ -2305,7 +2307,7 @@ BEGIN
             url = 'https://erikdarling.com/'
         FROM #io_stats AS i
         WHERE i.avg_write_latency_ms > @slow_write_ms
-        AND i.num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
+        AND   i.num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
         
         /* Add drive level warnings if we have multiple slow files on same drive */
         INSERT INTO 
@@ -2500,19 +2502,16 @@ BEGIN
             /* Access check cache settings */
                (c.name = N'access check cache bucket count' AND c.value_in_use <> 0)
             OR (c.name = N'access check cache quota' AND c.value_in_use <> 0)
-            OR (c.name = N'Ad Hoc Distributed Queries' AND c.value_in_use <> 0)
-            
+            OR (c.name = N'Ad Hoc Distributed Queries' AND c.value_in_use <> 0)            
             /* ADR settings */
             OR (c.name = N'ADR cleaner retry timeout (min)' AND c.value_in_use NOT IN (15, 120))
             OR (c.name = N'ADR Cleaner Thread Count' AND c.value_in_use <> 1)
-            OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use <> 4)
-            
+            OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use <> 4)            
             /* Affinity settings */
             OR (c.name = N'affinity mask' AND c.value_in_use <> 0)
             OR (c.name = N'affinity I/O mask' AND c.value_in_use <> 0)
             OR (c.name = N'affinity64 mask' AND c.value_in_use <> 0)
-            OR (c.name = N'affinity64 I/O mask' AND c.value_in_use <> 0)
-            
+            OR (c.name = N'affinity64 I/O mask' AND c.value_in_use <> 0)            
             /* Common performance settings */
             OR (c.name = N'cost threshold for parallelism' AND c.value_in_use <> 5)
             OR (c.name = N'max degree of parallelism' AND c.value_in_use <> 0)
@@ -2824,7 +2823,8 @@ BEGIN
                 60, /* Medium priority */
                 'Server Configuration',
                 'Low Cost Threshold for Parallelism',
-                'Cost threshold for parallelism is set to ' + CONVERT(nvarchar(10), @cost_threshold) + 
+                'Cost threshold for parallelism is set to ' + 
+                CONVERT(nvarchar(10), @cost_threshold) + 
                 '. Low values can cause excessive parallelism for small queries.',
                 'https://erikdarling.com/'
             );
@@ -3171,12 +3171,25 @@ BEGIN
         END;
         
         /* Check each database for accessibility using three-part naming */
-        DECLARE db_cursor CURSOR LOCAL FAST_FORWARD FOR
-            SELECT database_name, database_id
-            FROM #database_list;
+        DECLARE 
+            db_cursor 
+                CURSOR 
+                LOCAL 
+                FAST_FORWARD
+                READ_ONLY
+            FOR
+            SELECT 
+                dl.database_name, 
+                dl.database_id
+            FROM #database_list AS dl;
             
         OPEN db_cursor;
-        FETCH NEXT FROM db_cursor INTO @current_database_name, @current_database_id;
+        
+        FETCH NEXT 
+        FROM db_cursor 
+        INTO 
+            @current_database_name, 
+            @current_database_id;
         
         WHILE @@FETCH_STATUS = 0
         BEGIN
@@ -3216,7 +3229,11 @@ BEGIN
                 END;
             END CATCH;
             
-            FETCH NEXT FROM db_cursor INTO @current_database_name, @current_database_id;
+            FETCH NEXT 
+            FROM db_cursor 
+            INTO 
+                @current_database_name, 
+                @current_database_id;
         END;
         
         CLOSE db_cursor;
@@ -3225,19 +3242,34 @@ BEGIN
     
     IF @debug = 1
     BEGIN
-        SELECT * FROM #database_list;
+        SELECT 
+            dl.* 
+        FROM #database_list AS dl;
     END;
     
     /*
     Database Iteration and Checks
     */
-    DECLARE database_cursor CURSOR LOCAL FAST_FORWARD FOR
-        SELECT database_name, database_id
-        FROM #database_list
-        WHERE can_access = 1;
+    DECLARE 
+        database_cursor 
+        CURSOR 
+            LOCAL 
+            FAST_FORWARD
+            READ_ONLY
+        FOR
+        SELECT 
+            dl.database_name, 
+            dl.database_id
+        FROM #database_list AS dl
+        WHERE dl.can_access = 1;
         
     OPEN database_cursor;
-    FETCH NEXT FROM database_cursor INTO @current_database_name, @current_database_id;
+    
+    FETCH NEXT 
+    FROM database_cursor 
+    INTO 
+        @current_database_name, 
+        @current_database_id;
     
     WHILE @@FETCH_STATUS = 0
     BEGIN
@@ -3250,9 +3282,7 @@ BEGIN
         /* 
         Database-specific checks using three-part naming to maintain context
         */
-        
-        /* Analyze database configuration settings */
-        
+                
         /* Check for auto-shrink enabled */
         INSERT INTO 
             #results
@@ -3352,7 +3382,8 @@ BEGIN
             category = 'Database Configuration',
             finding = 
                 CASE 
-                    WHEN d.is_auto_create_stats_on = 0 AND d.is_auto_update_stats_on = 0
+                    WHEN d.is_auto_create_stats_on = 0 
+                    AND  d.is_auto_update_stats_on = 0
                     THEN 'Auto Create and Update Statistics Disabled'
                     WHEN d.is_auto_create_stats_on = 0
                     THEN 'Auto Create Statistics Disabled'
@@ -3570,8 +3601,17 @@ BEGIN
                 WHERE database_id = ' + CONVERT(nvarchar(10), @current_database_id) + ';
                 
                 /* Insert default values as reference for comparison */
-                INSERT INTO #database_scoped_configs 
-                    (database_id, database_name, configuration_id, name, value, value_for_secondary, is_value_default)
+                INSERT INTO 
+                    #database_scoped_configs 
+                (
+                    database_id, 
+                    database_name, 
+                    configuration_id, 
+                    name, 
+                    value, 
+                    value_for_secondary, 
+                    is_value_default
+                )
                 VALUES
                     (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 1, N''MAXDOP'', NULL, NULL, 1),
                     (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 2, N''LEGACY_CARDINALITY_ESTIMATION'', NULL, NULL, 1),
@@ -3598,8 +3638,17 @@ BEGIN
                     (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1);
                 
                 /* Get actual non-default settings */
-                INSERT INTO #database_scoped_configs 
-                    (database_id, database_name, configuration_id, name, value, value_for_secondary, is_value_default)
+                INSERT INTO 
+                    #database_scoped_configs 
+                (
+                    database_id, 
+                    database_name, 
+                    configuration_id, 
+                    name, 
+                    value, 
+                    value_for_secondary, 
+                    is_value_default
+                )
                 SELECT 
                     ' + CONVERT(nvarchar(10), @current_database_id) + ', 
                     N''' + @current_database_name + ''', 
@@ -4005,7 +4054,11 @@ BEGIN
         3. Move to next database
         */
         
-        FETCH NEXT FROM database_cursor INTO @current_database_name, @current_database_id;
+        FETCH NEXT 
+        FROM database_cursor 
+        INTO 
+            @current_database_name, 
+            @current_database_id;
     END;
     
     CLOSE database_cursor;
@@ -4021,11 +4074,11 @@ BEGIN
     Return Server Info First
     */
     SELECT
-        info_type AS [Server Information],
-        value AS [Details]
-    FROM #server_info
+        [Server Information] = si.info_type,
+        [Details] = si.value
+    FROM #server_info AS si
     ORDER BY
-        id;
+        si.id;
         
     /*
     Return Performance Check Results
