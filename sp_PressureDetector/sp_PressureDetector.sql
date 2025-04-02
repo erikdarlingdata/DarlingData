@@ -1274,7 +1274,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     WHEN dows.wait_type = N'HADR_GROUP_COMMIT'
                     THEN N'Potential Availability Group Issues'
                     WHEN dows.wait_type = N'WAIT_ON_SYNC_STATISTICS_REFRESH'
-                    THEN N'Waiting on sync stats updates (compilation)'
+                    THEN N'Waiting on sync stats updates (compilation)'                    
+                    WHEN dows.wait_type = N'IO_QUEUE_LIMIT'
+                    THEN N'Azure SQLDB Throttling'
+                    WHEN dows.wait_type = N'IO_RETRY'
+                    THEN N'I/O Failures retried'
+                    WHEN dows.wait_type = N'RESMGR_THROTTLED'
+                    THEN N'Azure SQLDB Throttling'
                 END,
             hours_wait_time =
                 CASE
@@ -1387,7 +1393,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      N'HADR_SYNC_COMMIT',
                      N'HADR_GROUP_COMMIT',
                      /*Stats/Compilation*/
-                     N'WAIT_ON_SYNC_STATISTICS_REFRESH'
+                     N'WAIT_ON_SYNC_STATISTICS_REFRESH',
+                     /*Throttling*/
+                    N'IO_QUEUE_LIMIT',
+                    N'IO_RETRY',
+                    N'RESMGR_THROTTLED'
                  )
             /*Locking*/
             OR dows.wait_type LIKE N'LCK%'
