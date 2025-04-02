@@ -4011,6 +4011,19 @@ BEGIN
     CLOSE database_cursor;
     DEALLOCATE database_cursor;
     
+    /* Add scan time footer to server info */
+    INSERT INTO 
+        #server_info (info_type, value)
+    VALUES 
+        ('Scan Time', CONVERT(varchar(25), @start_time, 121));
+        
+    /* Add execution time footer to server info */
+    INSERT INTO 
+        #server_info (info_type, value)
+    VALUES 
+        ('Execution Time', CONVERT(varchar(25), SYSDATETIME(), 121) + ' (' + 
+                          CONVERT(varchar(10), DATEDIFF(SECOND, @start_time, SYSDATETIME())) + ' seconds)');
+    
     /*
     Return Server Info First
     */
