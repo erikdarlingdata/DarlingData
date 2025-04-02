@@ -876,7 +876,7 @@ BEGIN
             ORDER BY 
                 te.event_time DESC;
             
-            /* Check for potentially problematic DBCC commands */
+            /* Check for potentially problematic DBCC commands - group by command type */
             INSERT INTO
                 #results
             (
@@ -888,33 +888,62 @@ BEGIN
                 details,
                 url
             )
-            SELECT
-                check_id = 5003,
+            SELECT 
+                5003,
                 priority = 
                     CASE
-                        WHEN te.text_data LIKE '%FREEPROCCACHE%' 
-                             OR te.text_data LIKE '%FREESYSTEMCACHE%'
-                             OR te.text_data LIKE '%DROPCLEANBUFFERS%' 
+                        WHEN dbcc_pattern LIKE '%FREEPROCCACHE%' 
+                             OR dbcc_pattern LIKE '%FREESYSTEMCACHE%'
+                             OR dbcc_pattern LIKE '%DROPCLEANBUFFERS%' 
                              THEN 40 /* Higher priority */
                         ELSE 60 /* Medium priority */
                     END,
-                category = 'System Management',
-                finding = 'Potentially Disruptive DBCC Command',
-                database_name = te.database_name,
-                details = 
-                    'DBCC command executed on ' +
-                    CONVERT(nvarchar(30), te.event_time, 120) + ': ' +
-                    te.text_data + '. ' +
-                    'This command can impact server performance or database integrity. ' +
-                    'Review why these commands are being executed, especially if on a production system.',
-                url = 'https://erikdarling.com/'
+                'System Management',
+                'Potentially Disruptive DBCC Commands',
+                MAX(te.database_name),
+                'Found ' + 
+                CONVERT(nvarchar(20), COUNT_BIG(*)) + 
+                ' instances of "' + 
+                CASE
+                    WHEN te.text_data LIKE '%FREEPROCCACHE%' THEN 'DBCC FREEPROCCACHE'
+                    WHEN te.text_data LIKE '%FREESYSTEMCACHE%' THEN 'DBCC FREESYSTEMCACHE'
+                    WHEN te.text_data LIKE '%DROPCLEANBUFFERS%' THEN 'DBCC DROPCLEANBUFFERS'
+                    WHEN te.text_data LIKE '%CHECKDB%' THEN 'DBCC CHECKDB'
+                    WHEN te.text_data LIKE '%CHECKTABLE%' THEN 'DBCC CHECKTABLE'
+                    WHEN te.text_data LIKE '%SHRINKDATABASE%' THEN 'DBCC SHRINKDATABASE' 
+                    WHEN te.text_data LIKE '%SHRINKFILE%' THEN 'DBCC SHRINKFILE'
+                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands */
+                END + 
+                '" between ' + 
+                CONVERT(nvarchar(30), MIN(te.event_time), 120) + 
+                ' and ' + 
+                CONVERT(nvarchar(30), MAX(te.event_time), 120) + 
+                '. These commands can impact server performance or database integrity. ' +
+                'Review why these commands are being executed, especially if on a production system.',
+                'https://erikdarling.com/'
             FROM #trace_events AS te
+            CROSS APPLY
+            (
+                SELECT dbcc_pattern = 
+                    CASE
+                        WHEN te.text_data LIKE '%FREEPROCCACHE%' THEN 'DBCC FREEPROCCACHE'
+                        WHEN te.text_data LIKE '%FREESYSTEMCACHE%' THEN 'DBCC FREESYSTEMCACHE'
+                        WHEN te.text_data LIKE '%DROPCLEANBUFFERS%' THEN 'DBCC DROPCLEANBUFFERS'
+                        WHEN te.text_data LIKE '%CHECKDB%' THEN 'DBCC CHECKDB'
+                        WHEN te.text_data LIKE '%CHECKTABLE%' THEN 'DBCC CHECKTABLE'
+                        WHEN te.text_data LIKE '%SHRINKDATABASE%' THEN 'DBCC SHRINKDATABASE' 
+                        WHEN te.text_data LIKE '%SHRINKFILE%' THEN 'DBCC SHRINKFILE'
+                        ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands */
+                    END
+            ) AS dbcc_cmd
             WHERE te.event_class = 116 /* DBCC events */
             AND   te.text_data IS NOT NULL
+            GROUP BY 
+                dbcc_cmd.dbcc_pattern
             ORDER BY 
-                te.event_time DESC;
+                COUNT_BIG(*) DESC;
                 
-            /* Get summary of autogrow events for server_info */           
+            /* Get summary of SLOW autogrow events for server_info */           
             SELECT @autogrow_summary = 
                 STUFF
                 (
@@ -922,16 +951,20 @@ BEGIN
                         SELECT 
                             N', ' + 
                             CONVERT(nvarchar(50), COUNT_BIG(*)) + 
-                            N' ' + 
+                            N' slow ' + 
                             CASE 
                                 WHEN te.event_class = 92 
                                 THEN 'data file'
                                 WHEN te.event_class = 93 
                                 THEN 'log file'
                             END + 
-                            ' autogrows'
+                            ' autogrows' +
+                            ' (avg ' + 
+                            CONVERT(nvarchar(20), AVG(te.duration_ms) / 1000.0) + 
+                            ' sec)'
                         FROM #trace_events AS te
                         WHERE te.event_class IN (92, 93) /* Auto-grow events */
+                        AND   te.duration_ms > @slow_autogrow_ms /* Only slow auto-grows */
                         GROUP BY 
                             te.event_class
                         ORDER BY 
@@ -949,7 +982,7 @@ BEGIN
                 INSERT INTO
                     #server_info (info_type, value)
                 VALUES
-                    ('Recent Autogrow Events (7 days)', @autogrow_summary);
+                    ('Slow Autogrow Events (7 days)', @autogrow_summary);
             END;
         END;
     END;
@@ -1245,11 +1278,11 @@ BEGIN
             OR dows.wait_type = N'IO_RETRY'
             OR dows.wait_type = N'RESMGR_THROTTLED'
         )
-        /* Only include waits that are significant in terms of total wait percentage or average wait time */
+        /* Only include waits that are significant in terms of total wait percentage or average wait time (>1 second) */
         AND 
         (
              (dows.wait_time_ms * 1.0 / @total_waits) > (@significant_wait_threshold_pct / 100.0)
-          OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > @significant_wait_threshold_avg
+          OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
         );
         
         /* Calculate wait time as percentage of uptime */
@@ -1259,7 +1292,7 @@ BEGIN
             #wait_stats.wait_time_percent_of_uptime = 
                 (wait_time_ms * 100.0 / @uptime_ms);
         
-        /* Add top wait stats to results */
+        /* Add only waits that represent >=50% of server uptime */
         INSERT INTO
             #results
         (
@@ -1270,19 +1303,19 @@ BEGIN
             details,
             url
         )
-        SELECT TOP (10) /* Only report top 10 waits */
-            check_id = 6001,
+        SELECT TOP (10) /* Limit to top 10 most significant waits */
+            6001,
             priority = 
                 CASE
-                    WHEN ws.wait_time_percent_of_uptime > 40 OR ws.percentage > 30 
-                    THEN 30 /* High priority */
-                    WHEN ws.wait_time_percent_of_uptime > 20 OR ws.percentage > 15 
-                    THEN 40 /* Medium-high priority */
-                    ELSE 50 /* Medium priority */
+                    WHEN ws.wait_time_percent_of_uptime > 100 
+                    THEN 20 /* Very high priority if >100% of uptime */
+                    WHEN ws.wait_time_percent_of_uptime > 75 
+                    THEN 30 /* High priority if >75% of uptime */
+                    ELSE 40 /* Medium-high priority otherwise */
                 END,
             category = 'Wait Statistics',
             finding = 
-                'Significant Wait Type: ' + 
+                'High Impact Wait Type: ' + 
                 ws.wait_type + 
                 ' (' + 
                 ws.category + 
@@ -1291,63 +1324,62 @@ BEGIN
                 'Wait type: ' + 
                 ws.wait_type + 
                 ' represents ' + 
-                CONVERT(nvarchar(10), CONVERT(decimal(5,2), ws.percentage)) + 
-                '% of all waits' +
-                ' (' + 
+                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.wait_time_percent_of_uptime)) + 
+                '% of server uptime (' + 
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), ws.wait_time_minutes)) + 
                 ' minutes). ' +
                 'Average wait: ' + 
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.avg_wait_ms)) + 
                 ' ms per wait. ' +
-                'This wait type represents ' + 
-                CONVERT(nvarchar(10), CONVERT(decimal(5, 2), ws.wait_time_percent_of_uptime)) + 
-                '% of server uptime. ' +
                 'Description: ' + 
                 ws.description,
             url = 'https://erikdarling.com/'
         FROM #wait_stats AS ws
-        ORDER BY 
-            ws.percentage DESC, 
-            ws.wait_time_ms DESC;
-            
-        /* Add wait stats summary to server info */
-        INSERT INTO
-            #server_info (info_type, value)
-        SELECT TOP (1)
-            'Wait Stats Summary',
-            'Top categories: ' +
-            STUFF
+        WHERE 
             (
-                (
-                    SELECT 
-                        TOP (5) /* Only include top 5 categories */
-                        ', ' + 
-                        ws.category + ' 
-                        (' + 
-                        CONVERT
-                        (
-                            nvarchar(10), 
-                            CONVERT
-                            (
-                                decimal(5,2), 
-                                SUM(ws.percentage)
-                           )
-                       ) + 
-                       '%)'
-                    FROM #wait_stats AS ws
-                    GROUP BY 
-                        ws.category
-                    ORDER BY 
-                        SUM(percentage) DESC
-                    FOR 
-                        XML 
-                        PATH('')
-                ), 
-                1, 
-                2, ''
-           )
+                ws.wait_time_percent_of_uptime >= 50.0 /* Only include waits that are at least 50% of uptime */
+                OR ws.avg_wait_ms >= 1000.0 /* Or have average wait time > 1 second */
+            )
+        ORDER BY 
+            ws.wait_time_percent_of_uptime DESC;
+            
+        /* Add wait stats summary to server info - focus on uptime impact */
+        /* First get top wait categories in a temp table to format properly */
+        CREATE TABLE #wait_summary
+        (
+            category nvarchar(50) NOT NULL,
+            pct_of_uptime decimal(10, 2) NOT NULL
+        );
+        
+        INSERT INTO #wait_summary (category, pct_of_uptime)
+        SELECT 
+            ws.category,
+            pct_of_uptime = SUM(ws.wait_time_percent_of_uptime)
         FROM #wait_stats AS ws
-        WHERE ws.percentage > 0;
+        WHERE ws.wait_time_percent_of_uptime >= 10.0 /* Only include categories with at least 10% impact on uptime */
+        GROUP BY 
+            ws.category
+        ORDER BY 
+            SUM(ws.wait_time_percent_of_uptime) DESC;
+            
+        /* Format the output properly without XML PATH which causes spacing issues */
+        DECLARE @wait_summary nvarchar(1000) = N'';
+        
+        SELECT @wait_summary = 
+            CASE 
+                WHEN @wait_summary = N'' THEN ws.category + N' (' + CONVERT(nvarchar(10), ws.pct_of_uptime) + N'% of uptime)'
+                ELSE @wait_summary + N', ' + ws.category + N' (' + CONVERT(nvarchar(10), ws.pct_of_uptime) + N'% of uptime)'
+            END
+        FROM #wait_summary AS ws;
+        
+        /* Add wait summary to server info if any significant waits were found */
+        IF @wait_summary <> N''
+        BEGIN
+            INSERT INTO
+                #server_info (info_type, value)
+            VALUES
+                ('Wait Stats Summary', 'Top impactful categories: ' + @wait_summary);
+        END;
     END;
     
     /* Check for stolen memory from buffer pool */
@@ -1457,7 +1489,7 @@ BEGIN
                 GROUP BY 
                     domc.type
                 HAVING 
-                    SUM(domc.pages_kb) / 1024.0 / 1024.0 > 0.1 /* Only show clerks using more than 100 MB */
+                    SUM(domc.pages_kb) / 1024.0 / 1024.0 > 1.0 /* Only show clerks using more than 1 GB */
                 ORDER BY
                     SUM(domc.pages_kb) DESC
                 OFFSET 0 ROWS
