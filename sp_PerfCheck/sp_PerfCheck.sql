@@ -106,7 +106,7 @@ BEGIN
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
         @autogrow_summary nvarchar(MAX),
-        @has_tables bit,
+        @has_tables bit = 0,
         /* Determine total waits, uptime, and significant waits */
         @total_waits bigint,
         @uptime_ms bigint,
