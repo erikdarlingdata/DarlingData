@@ -3483,25 +3483,17 @@ BEGIN
                 @sql;
             
             /* Check for non-default database scoped configurations */
-            IF EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + '.sys.all_objects AS ao WHERE ao.name = N''database_scoped_configurations'' )
+            /* First check if the sys.database_scoped_configurations view exists */
+            SET @sql = N'
+            IF EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + '.sys.all_objects AS ao WHERE ao.name = N''database_scoped_configurations'')
             BEGIN
                 /* Delete any existing values for this database */
                 DELETE FROM #database_scoped_configs 
-                WHERE database_id = @current_database_id;
+                WHERE database_id = ' + CONVERT(nvarchar(10), @current_database_id) + ';
                 
                 /* Insert default values as reference for comparison */
-                SET @sql = N'
-                INSERT INTO 
-                    #database_scoped_configs 
-                (
-                    database_id, 
-                    database_name, 
-                    configuration_id, 
-                    name, 
-                    value, 
-                    value_for_secondary, 
-                    is_value_default
-                )
+                INSERT INTO #database_scoped_configs 
+                    (database_id, database_name, configuration_id, name, value, value_for_secondary, is_value_default)
                 VALUES
                     (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 1, N''MAXDOP'', NULL, NULL, 1),
                     (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 2, N''LEGACY_CARDINALITY_ESTIMATION'', NULL, NULL, 1),
@@ -3528,19 +3520,10 @@ BEGIN
                     (' + CONVERT(nvarchar(10), @current_database_id) + ', N''' + @current_database_name + ''', 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1);
                 
                 /* Get actual non-default settings */
-                INSERT INTO 
-                    #database_scoped_configs 
-                (
-                    database_id, 
-                    database_name, 
-                    configuration_id, 
-                    name, 
-                    value, 
-                    value_for_secondary, 
-                    is_value_default
-                )
+                INSERT INTO #database_scoped_configs 
+                    (database_id, database_name, configuration_id, name, value, value_for_secondary, is_value_default)
                 SELECT 
-                    ' + CONVERT(nvarchar(10), @current_database_id) + N', 
+                    ' + CONVERT(nvarchar(10), @current_database_id) + ', 
                     N''' + @current_database_name + ''', 
                     sc.configuration_id, 
                     sc.name, 
@@ -3549,15 +3532,15 @@ BEGIN
                     0 /* Non-default */
                 FROM ' + QUOTENAME(@current_database_name) + '.sys.database_scoped_configurations AS sc
                 WHERE sc.value IS NOT NULL /* Non-default */
-                   OR sc.value_for_secondary IS NOT NULL; /* Non-default */';
+                   OR sc.value_for_secondary IS NOT NULL; /* Non-default */
+            END;';
                 
-                IF @debug = 1
-                BEGIN
-                    PRINT @sql;
-                END;
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
                 
-                EXECUTE sys.sp_executesql 
-                    @sql;
+            EXECUTE sys.sp_executesql @sql;
                 
                 /* Add results for non-default configurations */
                 INSERT INTO 
