@@ -71,7 +71,12 @@ BEGIN
         @has_fixed_growth bit,
         /* Storage performance variables */
         @slow_read_ms decimal(10, 2) = 20.0, /* Threshold for slow reads (ms) */
-        @slow_write_ms decimal(10, 2) = 20.0; /* Threshold for slow writes (ms) */
+        @slow_write_ms decimal(10, 2) = 20.0, /* Threshold for slow writes (ms) */
+        /* Set threshold for "slow" autogrowth (in ms) */
+        @slow_autogrow_ms integer = 1000,  /* 1 second */
+        @trace_path nvarchar(260),
+        @autogrow_summary nvarchar(max),
+        @has_tables bit;
     
     /* Set start time for runtime tracking */
     SET @start_time = SYSDATETIME();
@@ -182,7 +187,6 @@ BEGIN
         is_ledger_on bit NULL
     );    
 
-
     /*
     Create Results Table
     */        
@@ -223,6 +227,28 @@ BEGIN
         growth_mb decimal(18, 2) NOT NULL,
         is_percent_growth bit NOT NULL
     );
+
+    /* Create temp table for IO stats */
+    CREATE TABLE 
+        #io_stats
+    (
+        database_name sysname NULL,
+        database_id integer NULL,
+        file_name sysname NULL,
+        type_desc nvarchar(60) NULL,
+        io_stall_read_ms bigint NULL,
+        num_of_reads bigint NULL,
+        avg_read_latency_ms decimal(18, 2) NULL,
+        io_stall_write_ms bigint NULL,
+        num_of_writes bigint NULL,
+        avg_write_latency_ms decimal(18, 2) NULL,
+        io_stall_ms bigint NULL,
+        total_io bigint NULL,
+        avg_io_latency_ms decimal(18, 2) NULL,
+        size_mb decimal(18, 2) NULL,
+        drive_letter nchar(1) NULL,
+        physical_name nvarchar(260) NULL
+    );
     
     /*
     Create Database List for Iteration
@@ -244,6 +270,50 @@ BEGIN
         can_access bit NOT NULL
     );
         
+    /* Create a temp table for trace flags */
+    CREATE TABLE 
+        #trace_flags
+    (
+        trace_flag integer NULL,
+        status integer NULL,
+        global integer NULL,
+        session integer NULL
+    );
+
+    /* Create temp table for trace events */
+    CREATE TABLE 
+        #trace_events
+    (
+        id integer IDENTITY PRIMARY KEY CLUSTERED,
+        event_time datetime NULL,
+        event_class integer NULL, 
+        event_subclass integer NULL,
+        event_name sysname NULL,
+        category_name sysname NULL,
+        database_name sysname NULL,
+        database_id integer NULL,
+        file_name nvarchar(260) NULL,
+        object_name sysname NULL,
+        object_type integer NULL,
+        duration_ms bigint NULL,
+        severity integer NULL,
+        success bit NULL,
+        error integer NULL,
+        text_data nvarchar(max) NULL,
+        file_growth bigint NULL,
+        is_auto bit NULL,
+        spid integer NULL
+    );
+    
+    /* Define event class mapping for more readable output */
+    CREATE TABLE 
+        #event_class_map
+    (
+        event_class integer PRIMARY KEY CLUSTERED,
+        event_name sysname NULL,
+        category_name sysname NULL
+    );
+
     /*
     Collect basic server information (works on all platforms)
     */
@@ -550,16 +620,7 @@ BEGIN
     /* Check for globally enabled trace flags (not in Azure) */
     IF  @azure_sql_db = 0
     AND @azure_managed_instance = 0
-    BEGIN
-        /* Create a temp table for trace flags */
-        CREATE TABLE #trace_flags
-        (
-            trace_flag integer,
-            status integer,
-            global integer,
-            session integer
-        );
-        
+    BEGIN        
         /* Capture trace flags */
         INSERT INTO #trace_flags
         EXEC ('DBCC TRACESTATUS WITH NO_INFOMSGS');
@@ -601,12 +662,7 @@ BEGIN
     
     /* Check for important events in default trace (Windows only for now) */
     IF  @azure_sql_db = 0
-    BEGIN
-        /* Set threshold for "slow" autogrowth (in ms) */
-        DECLARE 
-            @slow_autogrow_ms integer = 1000,  /* 1 second */
-            @trace_path nvarchar(260);
-            
+    BEGIN            
         /* Get default trace path */
         SELECT 
             @trace_path = REVERSE(SUBSTRING(REVERSE([path]), 
@@ -615,41 +671,10 @@ BEGIN
         WHERE is_default = 1;
         
         IF @trace_path IS NOT NULL
-        BEGIN
-            /* Create temp table for trace events */
-            CREATE TABLE #trace_events
-            (
-                id integer IDENTITY(1,1) PRIMARY KEY,
-                event_time datetime,
-                event_class integer, 
-                event_subclass integer,
-                event_name nvarchar(128),
-                category_name nvarchar(128),
-                database_name sysname,
-                database_id integer,
-                file_name nvarchar(260),
-                object_name nvarchar(128),
-                object_type integer,
-                duration_ms bigint,
-                severity integer,
-                success bit,
-                error integer,
-                text_data nvarchar(max),
-                file_growth bigint,
-                is_auto bit,
-                spid integer
-            );
-            
-            /* Define event class mapping for more readable output */
-            CREATE TABLE #event_class_map
-            (
-                event_class integer PRIMARY KEY,
-                event_name nvarchar(128),
-                category_name nvarchar(128)
-            );
-            
+        BEGIN            
             /* Insert common event classes we're interested in */
-            INSERT INTO #event_class_map (event_class, event_name, category_name)
+            INSERT INTO 
+                #event_class_map (event_class, event_name, category_name)
             VALUES
                 (92, 'Data File Auto Grow', 'Database'),
                 (93, 'Log File Auto Grow', 'Database'),
@@ -845,8 +870,7 @@ BEGIN
             ORDER BY 
                 event_time DESC;
                 
-            /* Get summary of autogrow events for server_info */
-            DECLARE @autogrow_summary nvarchar(1000);
+            /* Get summary of autogrow events for server_info */           
             SELECT @autogrow_summary = 
                 STUFF(
                 (
@@ -1253,29 +1277,7 @@ BEGIN
         IF @debug = 1
         BEGIN
             RAISERROR('Checking storage performance', 0, 1) WITH NOWAIT;
-        END;
-        
-        /* Create temp table for IO stats */
-        CREATE TABLE #io_stats
-        (
-            database_name sysname,
-            database_id integer,
-            file_name sysname,
-            type_desc nvarchar(60),
-            io_stall_read_ms bigint,
-            num_of_reads bigint,
-            avg_read_latency_ms decimal(18, 2),
-            io_stall_write_ms bigint,
-            num_of_writes bigint,
-            avg_write_latency_ms decimal(18, 2),
-            io_stall_ms bigint,
-            total_io bigint,
-            avg_io_latency_ms decimal(18, 2),
-            size_mb decimal(18, 2),
-            drive_letter nchar(1),
-            physical_name nvarchar(260)
-        );
-        
+        END;        
         /* Gather IO Stats */
         INSERT INTO #io_stats
         (
@@ -1729,8 +1731,7 @@ BEGIN
         WHILE @@FETCH_STATUS = 0
         BEGIN
             /* Try to access database using three-part naming to ensure we have proper permissions */
-            BEGIN TRY
-                DECLARE @has_tables BIT;
+            BEGIN TRY                
                 SET @sql = N'SELECT @has_tables = CASE WHEN EXISTS(SELECT TOP 1 1 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables) THEN 1 ELSE 0 END';
                 EXEC sys.sp_executesql @sql, N'@has_tables BIT OUTPUT', @has_tables = @has_tables OUTPUT;
             END TRY
