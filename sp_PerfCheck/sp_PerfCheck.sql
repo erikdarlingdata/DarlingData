@@ -436,38 +436,38 @@ BEGIN
     INSERT INTO 
         #server_info (info_type, value)
     VALUES 
-        ('sp_PerfCheck', 'Brought to you by Darling Data');
+        (N'sp_PerfCheck', N'Brought to you by Darling Data');
         
     INSERT INTO 
         #server_info (info_type, value)
     VALUES 
-        ('Website', 'https://erikdarling.com');
+        (N'Website', N'https://erikdarling.com');
         
     INSERT INTO 
         #server_info (info_type, value)
     VALUES 
-        ('Version', @version + ' (' + CONVERT(varchar(10), @version_date, 101) + ')');
+        (N'Version', @version + N' (' + CONVERT(varchar(10), @version_date, 101) + N')');
         
     INSERT INTO 
         #server_info (info_type, value)
     VALUES 
-        ('Server Name', CONVERT(sysname, SERVERPROPERTY('ServerName')));
+        (N'Server Name', CONVERT(sysname, SERVERPROPERTY(N'ServerName')));
     
     INSERT INTO 
         #server_info (info_type, value)
     VALUES 
         (
-            'SQL Server Version', 
-            CONVERT(sysname, SERVERPROPERTY('ProductVersion')) + 
-            ' (' + 
-            CONVERT(sysname, SERVERPROPERTY('ProductLevel')) + 
-            ')'
+            N'SQL Server Version', 
+            CONVERT(sysname, SERVERPROPERTY(N'ProductVersion')) + 
+            N' (' + 
+            CONVERT(sysname, SERVERPROPERTY(N'ProductLevel')) + 
+            N')'
         );
     
     INSERT INTO 
         #server_info (info_type, value)
     VALUES 
-        ('SQL Server Edition', CONVERT(sysname, SERVERPROPERTY('Edition')));
+        (N'SQL Server Edition', CONVERT(sysname, SERVERPROPERTY(N'Edition')));
     
     /* Environment information - Already detected earlier */
     INSERT INTO 
@@ -976,11 +976,11 @@ BEGIN
                       t.EventClass = 116
                   AND 
                   (
-                         t.TextData LIKE '%FREEPROCCACHE%'
-                      OR t.TextData LIKE '%FREESYSTEMCACHE%'
-                      OR t.TextData LIKE '%DROPCLEANBUFFERS%'
-                      OR t.TextData LIKE '%SHRINKDATABASE%'
-                      OR t.TextData LIKE '%SHRINKFILE%'
+                         t.TextData LIKE N'%FREEPROCCACHE%'
+                      OR t.TextData LIKE N'%FREESYSTEMCACHE%'
+                      OR t.TextData LIKE N'%DROPCLEANBUFFERS%'
+                      OR t.TextData LIKE N'%SHRINKDATABASE%'
+                      OR t.TextData LIKE N'%SHRINKFILE%'
                   )
                 )
                 /* Server memory change events */
@@ -1105,43 +1105,43 @@ BEGIN
                 5003,
                 priority = 
                     CASE
-                        WHEN dbcc_cmd.dbcc_pattern LIKE '%FREEPROCCACHE%' 
-                        OR   dbcc_cmd.dbcc_pattern LIKE '%FREESYSTEMCACHE%'
-                        OR   dbcc_cmd.dbcc_pattern LIKE '%DROPCLEANBUFFERS%' 
+                        WHEN dbcc_cmd.dbcc_pattern LIKE N'%FREEPROCCACHE%' 
+                        OR   dbcc_cmd.dbcc_pattern LIKE N'%FREESYSTEMCACHE%'
+                        OR   dbcc_cmd.dbcc_pattern LIKE N'%DROPCLEANBUFFERS%' 
                         THEN 40 /* Higher priority */
                         ELSE 60 /* Medium priority */
                     END,
-                'System Management',
-                'Potentially Disruptive DBCC Commands',
+                N'System Management',
+                N'Potentially Disruptive DBCC Commands',
                 MAX(te.database_name),
-                'Found ' + 
+                N'Found ' + 
                 CONVERT(nvarchar(20), COUNT_BIG(*)) + 
-                ' instances of "' + 
+                N' instances of "' + 
                 CASE
-                    WHEN te.text_data LIKE '%FREEPROCCACHE%' THEN 'DBCC FREEPROCCACHE'
-                    WHEN te.text_data LIKE '%FREESYSTEMCACHE%' THEN 'DBCC FREESYSTEMCACHE'
-                    WHEN te.text_data LIKE '%DROPCLEANBUFFERS%' THEN 'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE '%SHRINKDATABASE%' THEN 'DBCC SHRINKDATABASE' 
-                    WHEN te.text_data LIKE '%SHRINKFILE%' THEN 'DBCC SHRINKFILE'
+                    WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
+                    WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
+                    WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
+                    WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE' 
+                    WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
                     ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case */
                 END + 
-                '" between ' + 
+                N'" between ' + 
                 CONVERT(nvarchar(30), MIN(te.event_time), 120) + 
-                ' and ' + 
+                N' and ' + 
                 CONVERT(nvarchar(30), MAX(te.event_time), 120) + 
-                '. These commands can impact server performance or database integrity. ' +
-                'Review why these commands are being executed, especially if on a production system.',
-                'https://erikdarling.com/'
+                N'. These commands can impact server performance or database integrity. ' +
+                N'Review why these commands are being executed, especially if on a production system.',
+                N'https://erikdarling.com/'
             FROM #trace_events AS te
             CROSS APPLY
             (
                 SELECT dbcc_pattern = 
                     CASE
-                        WHEN te.text_data LIKE '%FREEPROCCACHE%' THEN 'DBCC FREEPROCCACHE'
-                        WHEN te.text_data LIKE '%FREESYSTEMCACHE%' THEN 'DBCC FREESYSTEMCACHE'
-                        WHEN te.text_data LIKE '%DROPCLEANBUFFERS%' THEN 'DBCC DROPCLEANBUFFERS'
-                        WHEN te.text_data LIKE '%SHRINKDATABASE%' THEN 'DBCC SHRINKDATABASE' 
-                        WHEN te.text_data LIKE '%SHRINKFILE%' THEN 'DBCC SHRINKFILE'
+                        WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
+                        WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
+                        WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
+                        WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE' 
+                        WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
                         ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case*/
                     END
             ) AS dbcc_cmd
@@ -1150,11 +1150,11 @@ BEGIN
             GROUP BY 
                 dbcc_cmd.dbcc_pattern,
                 CASE
-                    WHEN te.text_data LIKE '%FREEPROCCACHE%' THEN 'DBCC FREEPROCCACHE'
-                    WHEN te.text_data LIKE '%FREESYSTEMCACHE%' THEN 'DBCC FREESYSTEMCACHE'
-                    WHEN te.text_data LIKE '%DROPCLEANBUFFERS%' THEN 'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE '%SHRINKDATABASE%' THEN 'DBCC SHRINKDATABASE' 
-                    WHEN te.text_data LIKE '%SHRINKFILE%' THEN 'DBCC SHRINKFILE'
+                    WHEN te.text_data LIKE N'%FREEPROCCACHE%' THEN N'DBCC FREEPROCCACHE'
+                    WHEN te.text_data LIKE N'%FREESYSTEMCACHE%' THEN N'DBCC FREESYSTEMCACHE'
+                    WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
+                    WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE' 
+                    WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
                     ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just i case*/
                 END 
             ORDER BY 
@@ -4015,7 +4015,7 @@ BEGIN
     INSERT INTO 
         #server_info (info_type, value)
     VALUES 
-        ('Run Date', CONVERT(varchar(25), @start_time, 121));
+        (N'Run Date', CONVERT(varchar(25), @start_time, 121));
             
     /*
     Return Server Info First
