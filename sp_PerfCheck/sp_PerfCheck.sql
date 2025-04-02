@@ -425,7 +425,7 @@ BEGIN
         finding = 'Memory-Starved Queries Detected',
         details = 
             'Resource semaphore has ' + 
-            CONVERT(nvarchar(10), MAX(forced_grant_count)) + 
+            CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) + 
             ' forced grants. ' +
             'Target memory: ' + CONVERT(nvarchar(20), MAX(ders.target_memory_kb) / 1024) + ' MB, ' +
             'Available memory: ' + CONVERT(nvarchar(20), MAX(ders.available_memory_kb) / 1024) + ' MB, ' +
@@ -622,8 +622,9 @@ BEGIN
     AND @azure_managed_instance = 0
     BEGIN        
         /* Capture trace flags */
-        INSERT INTO #trace_flags
-        EXEC ('DBCC TRACESTATUS WITH NO_INFOMSGS');
+        INSERT INTO 
+            #trace_flags
+        EXECUTE('DBCC TRACESTATUS WITH NO_INFOMSGS');
         
         /* Add trace flags to server info */
         IF EXISTS (SELECT 1 FROM #trace_flags WHERE global = 1)
@@ -636,12 +637,19 @@ BEGIN
                 (
                     (
                         SELECT 
-                            ', ' + CONVERT(varchar(10), trace_flag)
-                        FROM #trace_flags
-                        WHERE global = 1
-                        ORDER BY trace_flag
-                        FOR XML PATH('')
-                    ), 1, 2, ''
+                            ', ' + 
+                            CONVERT(varchar(10), tf.trace_flag)
+                        FROM #trace_flags AS tf
+                        WHERE tf.global = 1
+                        ORDER BY 
+                            tf.trace_flag
+                        FOR 
+                            XML 
+                            PATH('')
+                    ), 
+                    1, 
+                    2, 
+                    ''
                 );
         END;
     END;
@@ -665,10 +673,10 @@ BEGIN
     BEGIN            
         /* Get default trace path */
         SELECT 
-            @trace_path = REVERSE(SUBSTRING(REVERSE([path]), 
-            CHARINDEX(CHAR(92), REVERSE([path])), 260)) + N'log.trc'
-        FROM sys.traces
-        WHERE is_default = 1;
+            @trace_path = REVERSE(SUBSTRING(REVERSE(t.path), 
+            CHARINDEX(CHAR(92), REVERSE(t.path)), 260)) + N'log.trc'
+        FROM sys.traces AS t
+        WHERE t.is_default = 1;
         
         IF @trace_path IS NOT NULL
         BEGIN            
@@ -681,12 +689,11 @@ BEGIN
                 (94, 'Data File Auto Shrink', 'Database'),
                 (95, 'Log File Auto Shrink', 'Database'),
                 (116, 'DBCC Event', 'Database'),
-                (137, 'Server Memory Change', 'Server'),
-                (164, 'Object Altered', 'Object'),
-                (166, 'Object Created', 'Object');
+                (137, 'Server Memory Change', 'Server');
                 
             /* Get relevant events from default trace */
-            INSERT INTO #trace_events
+            INSERT INTO 
+                #trace_events
             (
                 event_time,
                 event_class,
@@ -730,11 +737,10 @@ BEGIN
                 OR (t.EventClass = 116 
                     AND t.TextData LIKE '%DBCC%' 
                     AND (
-                        t.TextData LIKE '%CHECKDB%' 
-                        OR t.TextData LIKE '%CHECKTABLE%'
+                           t.TextData LIKE '%CHECKTABLE%'
                         OR t.TextData LIKE '%FREEPROCCACHE%'
                         OR t.TextData LIKE '%FREESYSTEMCACHE%'
-                        OR t.TextData LIKE '%DBCC DROPCLEANBUFFERS%'
+                        OR t.TextData LIKE '%DROPCLEANBUFFERS%'
                         OR t.TextData LIKE '%SHRINKDATABASE%'
                         OR t.TextData LIKE '%SHRINKFILE%'
                     )
@@ -747,10 +753,11 @@ BEGIN
                 AND t.StartTime > DATEADD(DAY, -7, GETDATE());
                 
             /* Update event names from map */
-            UPDATE te
+            UPDATE 
+                te
             SET 
-                event_name = m.event_name,
-                category_name = m.category_name
+                te.event_name = m.event_name,
+                te.category_name = m.category_name
             FROM #trace_events AS te
             JOIN #event_class_map AS m
               ON te.event_class = m.event_class;
@@ -772,14 +779,16 @@ BEGIN
                 check_id = 5001,
                 priority = 
                     CASE
-                        WHEN event_class = 93 THEN 40 /* Log file autogrow (higher priority) */
+                        WHEN te.event_class = 93 THEN 40 /* Log file autogrow (higher priority) */
                         ELSE 50 /* Data file autogrow */
                     END,
                 category = 'Database File Configuration',
                 finding = 
                     CASE
-                        WHEN event_class = 92 THEN 'Slow Data File Auto Grow'
-                        WHEN event_class = 93 THEN 'Slow Log File Auto Grow'
+                        WHEN te.event_class = 92 
+                        THEN 'Slow Data File Auto Grow'
+                        WHEN te.event_class = 93 
+                        THEN 'Slow Log File Auto Grow'
                         ELSE 'Slow File Auto Grow'
                     END,
                 database_name = te.database_name,
@@ -787,16 +796,18 @@ BEGIN
                 details = 
                     'Auto grow operation took ' + 
                     CONVERT(nvarchar(20), te.duration_ms) + ' ms (' + 
-                    CONVERT(nvarchar(20), te.duration_ms / 1000.0) + ' seconds) on ' +
+                    CONVERT(nvarchar(20), te.duration_ms / 1000.0) + 
+                    ' seconds) on ' +
                     CONVERT(nvarchar(30), te.event_time, 120) + '. ' +
                     'Growth amount: ' + 
-                    CONVERT(nvarchar(20), te.file_growth) + ' KB. ' +
-                    'Slow auto-growth events indicate potential performance issues. Consider proactively growing files or using larger growth increments.',
+                    CONVERT(nvarchar(20), te.file_growth / 1048576) + 
+                    ' GB. ',
                 url = 'https://erikdarling.com/'
             FROM #trace_events AS te
-            WHERE (event_class IN (92, 93)) /* Auto-grow events */
-            AND duration_ms > @slow_autogrow_ms
-            ORDER BY duration_ms DESC;
+            WHERE (te.event_class IN (92, 93)) /* Auto-grow events */
+            AND   te.duration_ms > @slow_autogrow_ms
+            ORDER BY 
+                te.duration_ms DESC;
             
             /* Check for auto-shrink events */
             INSERT INTO
@@ -817,21 +828,25 @@ BEGIN
                 category = 'Database File Configuration',
                 finding = 
                     CASE
-                        WHEN event_class = 94 THEN 'Data File Auto Shrink'
-                        WHEN event_class = 95 THEN 'Log File Auto Shrink'
+                        WHEN te.event_class = 94 
+                        THEN 'Data File Auto Shrink'
+                        WHEN te.event_class = 95 
+                        THEN 'Log File Auto Shrink'
                         ELSE 'File Auto Shrink'
                     END,
                 database_name = te.database_name,
                 object_name = te.file_name,
                 details = 
                     'Auto shrink operation occurred on ' +
-                    CONVERT(nvarchar(30), te.event_time, 120) + '. ' +
+                    CONVERT(nvarchar(30), te.event_time, 120) + 
+                    '. ' +
                     'Auto-shrink is generally not recommended as it can lead to file fragmentation and ' +
                     'repeated grow/shrink cycles. Consider disabling auto-shrink on this database.',
                 url = 'https://erikdarling.com/'
             FROM #trace_events AS te
-            WHERE event_class IN (94, 95) /* Auto-shrink events */
-            ORDER BY event_time DESC;
+            WHERE te.event_class IN (94, 95) /* Auto-shrink events */
+            ORDER BY 
+                te.event_time DESC;
             
             /* Check for potentially problematic DBCC commands */
             INSERT INTO
@@ -849,9 +864,10 @@ BEGIN
                 check_id = 5003,
                 priority = 
                     CASE
-                        WHEN text_data LIKE '%FREEPROCCACHE%' 
-                             OR text_data LIKE '%FREESYSTEMCACHE%'
-                             OR text_data LIKE '%DROPCLEANBUFFERS%' THEN 40 /* Higher priority */
+                        WHEN te.text_data LIKE '%FREEPROCCACHE%' 
+                             OR te.text_data LIKE '%FREESYSTEMCACHE%'
+                             OR te.text_data LIKE '%DROPCLEANBUFFERS%' 
+                             THEN 40 /* Higher priority */
                         ELSE 60 /* Medium priority */
                     END,
                 category = 'System Management',
@@ -865,29 +881,40 @@ BEGIN
                     'Review why these commands are being executed, especially if on a production system.',
                 url = 'https://erikdarling.com/'
             FROM #trace_events AS te
-            WHERE event_class = 116 /* DBCC events */
-            AND text_data IS NOT NULL
+            WHERE te.event_class = 116 /* DBCC events */
+            AND   te.text_data IS NOT NULL
             ORDER BY 
-                event_time DESC;
+                te.event_time DESC;
                 
             /* Get summary of autogrow events for server_info */           
             SELECT @autogrow_summary = 
-                STUFF(
+                STUFF
                 (
-                    SELECT 
-                        N', ' + CONVERT(nvarchar(50), COUNT(*)) + 
-                        N' ' + 
-                        CASE 
-                            WHEN event_class = 92 THEN 'data file'
-                            WHEN event_class = 93 THEN 'log file'
-                        END + 
-                        ' autogrows'
-                    FROM #trace_events
-                    WHERE event_class IN (92, 93) /* Auto-grow events */
-                    GROUP BY event_class
-                    ORDER BY event_class
-                    FOR XML PATH('')
-                ), 1, 2, '');
+                    (
+                        SELECT 
+                            N', ' + 
+                            CONVERT(nvarchar(50), COUNT_BIG(*)) + 
+                            N' ' + 
+                            CASE 
+                                WHEN te.event_class = 92 
+                                THEN 'data file'
+                                WHEN te.event_class = 93 
+                                THEN 'log file'
+                            END + 
+                            ' autogrows'
+                        FROM #trace_events AS te
+                        WHERE te.event_class IN (92, 93) /* Auto-grow events */
+                        GROUP BY 
+                            te.event_class
+                        ORDER BY 
+                            te.event_class
+                        FOR 
+                            XML 
+                            PATH('')
+                    ), 
+                    1, 
+                    2, ''
+                );
                 
             IF @autogrow_summary IS NOT NULL
             BEGIN
@@ -908,7 +935,9 @@ BEGIN
                 #server_info (info_type, value)
             SELECT 
                 'Database Size',
-                'Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(df.size * 8.0 / 1024.0 / 1024.0))) + ' GB'
+                'Allocated: ' + 
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(df.size * 8.0 / 1024.0 / 1024.0))) +
+                ' GB'
             FROM sys.database_files AS df
             WHERE df.type_desc = N'ROWS';
         END;
@@ -919,7 +948,9 @@ BEGIN
                 #server_info (info_type, value)
             SELECT 
                 'Total Database Size',
-                'Allocated: ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(mf.size * 8.0 / 1024.0 / 1024.0))) + ' GB'
+                'Allocated: ' + 
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(mf.size * 8.0 / 1024.0 / 1024.0))) + 
+                ' GB'
             FROM sys.master_files AS mf
             WHERE mf.type_desc = N'ROWS';
         END;
