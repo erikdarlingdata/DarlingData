@@ -1328,7 +1328,12 @@ BEGIN
                 'Pending value: ' + CONVERT(nvarchar(50), c.value_in_use),
             url = 'https://erikdarling.com/'
         FROM sys.configurations AS c
-        WHERE c.value <> c.value_in_use;
+        WHERE c.value <> c.value_in_use
+        AND 
+        (
+              c.name <> N'min server memory (MB)'
+          AND c.value_in_use <> 16
+        );
     END;
 
     /* Build database list based on context */
