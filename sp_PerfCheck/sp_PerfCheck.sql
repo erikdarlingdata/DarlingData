@@ -106,7 +106,7 @@ BEGIN
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
         @autogrow_summary nvarchar(MAX),
-        @has_tables bit,
+        @has_tables bit = 0,
         /* Determine total waits, uptime, and significant waits */
         @total_waits bigint,
         @uptime_ms bigint,
@@ -3053,10 +3053,15 @@ BEGIN
                 SELECT 
                     @has_tables = 
                         CASE 
-                            WHEN EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables) 
+                            WHEN EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables AS t) 
                             THEN 1 
                             ELSE 0 
                         END;';
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @sql;
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @sql, 
