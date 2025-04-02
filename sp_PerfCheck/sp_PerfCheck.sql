@@ -33,22 +33,53 @@ BEGIN
     Variable Declarations
     */
     DECLARE
-        @product_version sysname,
-        @product_version_major decimal(10, 2),
-        @product_version_minor decimal(10, 2),
-        @error_message nvarchar(4000),
-        @start_time datetime2(0),
-        @sql nvarchar(max) = N'',
-        @engine_edition integer,
+        @product_version sysname = 
+            CONVERT(sysname, SERVERPROPERTY(N'ProductVersion')),
+        @product_version_major decimal(10, 2) = 
+            SUBSTRING
+            (
+                CONVERT(sysname, SERVERPROPERTY(N'ProductVersion')), 
+                1, 
+                CHARINDEX
+                (
+                    '.', 
+                    CONVERT(sysname, SERVERPROPERTY(N'ProductVersion'))
+                ) + 1
+            ),
+        @product_version_minor decimal(10, 2) = 
+            PARSENAME
+            (
+                CONVERT
+                (
+                    varchar(32), 
+                    CONVERT(sysname, SERVERPROPERTY(N'ProductVersion'))
+                ), 
+                2
+            ),
+        @engine_edition integer = 
+            CONVERT(integer, SERVERPROPERTY(N'EngineEdition')),
+        @start_time datetime2(0) = SYSDATETIME(),
+        @error_message nvarchar(4000) = N'',
+        @sql nvarchar(MAX) = N'',
         @azure_sql_db bit = 0,
         @azure_managed_instance bit = 0,
         @aws_rds bit = 0,
-        @is_sysadmin bit,
-        @has_view_server_state bit,
+        @is_sysadmin bit = 
+            ISNULL
+            (
+                IS_SRVROLEMEMBER(N'sysadmin'), 
+                0
+            ),
+        @has_view_server_state bit =
+        /*I'm using this as a shortcut here so I don't have to do anything else later if not sa*/    
+            ISNULL
+            (
+                IS_SRVROLEMEMBER(N'sysadmin'), 
+                0
+            ), 
         @current_database_name sysname,
         @current_database_id integer,
         @processors integer,
-        @numa_nodes integer,
         @message nvarchar(4000),
         /* Memory configuration variables */
         @min_server_memory bigint,
@@ -60,10 +91,8 @@ BEGIN
         /* Other configuration variables */
         @priority_boost bit,
         @lightweight_pooling bit,
-        @mirroring_count integer,
         /* TempDB configuration variables */
         @tempdb_data_file_count integer,
-        @tempdb_log_file_count integer,
         @min_data_file_size decimal(18, 2),
         @max_data_file_size decimal(18, 2),
         @size_difference_pct decimal(18, 2),
@@ -75,7 +104,7 @@ BEGIN
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
-        @autogrow_summary nvarchar(max),
+        @autogrow_summary nvarchar(MAX),
         @has_tables bit,
         /* Determine total waits, uptime, and significant waits */
         @total_waits bigint,
@@ -90,28 +119,27 @@ BEGIN
         /* Format the output properly without XML PATH which causes spacing issues */
         @wait_summary nvarchar(1000) = N'';
     
-    /* Set start time for runtime tracking */
-    SET @start_time = SYSDATETIME();
-    
-    /* Store version properties for later use */
-    SELECT 
-        @product_version = CAST(SERVERPROPERTY('ProductVersion') AS sysname), 
-        @product_version_major = SUBSTRING(@product_version, 1, CHARINDEX('.', @product_version) + 1),
-        @product_version_minor = PARSENAME(CONVERT(varchar(32), @product_version), 2),
-        @engine_edition = CAST(SERVERPROPERTY('EngineEdition') AS integer);
-    
-    /* Check permissions */
-    SELECT 
-        @is_sysadmin = ISNULL(IS_SRVROLEMEMBER('sysadmin'), 0);
     
     /* Check for VIEW SERVER STATE permission */
-    BEGIN TRY
-        EXECUTE ('DECLARE @c bigint; SELECT @c = 1 FROM sys.dm_os_sys_info AS osi;');
-        SET @has_view_server_state = 1;
-    END TRY
-    BEGIN CATCH
-        SET @has_view_server_state = 0;
-    END CATCH;
+    IF @is_sysadmin = 0
+    BEGIN
+        BEGIN TRY
+            EXECUTE sys.sp_executesql
+                N'
+                    DECLARE 
+                        @c bigint; 
+                    
+                    SELECT 
+                        @c = 1 
+                    FROM sys.dm_os_sys_info AS osi;
+                ';
+
+            SET @has_view_server_state = 1;
+        END TRY
+        BEGIN CATCH
+            SET @has_view_server_state = 0;
+        END CATCH;
+    END;
     
     IF @debug = 1
     BEGIN
@@ -190,8 +218,6 @@ BEGIN
         is_quoted_identifier_on bit NOT NULL,
         is_parameterization_forced bit NOT NULL,
         is_query_store_on bit NOT NULL,
-        is_distributor bit NOT NULL,
-        is_cdc_enabled bit NOT NULL,
         target_recovery_time_in_seconds integer NOT NULL,
         delayed_durability_desc nvarchar(60) NOT NULL,
         is_accelerated_database_recovery_on bit NOT NULL,
@@ -222,7 +248,7 @@ BEGIN
     CREATE TABLE
         #server_info
     (
-        id integer IDENTITY(1, 1) PRIMARY KEY CLUSTERED,
+        id integer IDENTITY PRIMARY KEY CLUSTERED,
         info_type nvarchar(100) NOT NULL,
         value nvarchar(4000) NULL
     );
@@ -311,7 +337,7 @@ BEGIN
         severity integer NULL,
         success bit NULL,
         error integer NULL,
-        text_data nvarchar(max) NULL,
+        text_data nvarchar(MAX) NULL,
         file_growth bigint NULL,
         is_auto bit NULL,
         spid integer NOT NULL
@@ -349,7 +375,7 @@ BEGIN
     CREATE TABLE 
         #wait_summary
     (
-        category nvarchar(50) NOT NULL,
+        category nvarchar(60) NOT NULL,
         pct_of_uptime decimal(10, 2) NOT NULL
     );
 
@@ -400,8 +426,33 @@ BEGIN
         #server_info (info_type, value)
     SELECT 
         'Uptime', 
-        CONVERT(nvarchar(30), DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())) + ' days, ' +
-        CONVERT(nvarchar(8), CONVERT(time, DATEADD(SECOND, DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) % 86400, '00:00:00')), 108) + ' (hh:mm:ss)'
+        CONVERT
+        (
+            nvarchar(30), 
+            DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())
+        ) + 
+        ' days, ' +
+        CONVERT
+        (
+            nvarchar(8), 
+            CONVERT
+            (
+                time, 
+                DATEADD
+                (
+                    SECOND, 
+                    DATEDIFF
+                    (
+                        SECOND, 
+                        osi.sqlserver_start_time, 
+                        GETDATE()
+                    ) % 86400, 
+                    '00:00:00'
+                )
+            ), 
+            108
+        ) + 
+        ' (hh:mm:ss)'
     FROM sys.dm_os_sys_info AS osi;
     
     /* CPU information - works on all platforms */
@@ -437,11 +488,10 @@ BEGIN
                 ' CPU scheduler(s) are offline out of ' +
                 CONVERT(nvarchar(10), (SELECT cpu_count FROM sys.dm_os_sys_info)) +
                 ' logical processors. This reduces available processing power. ' +
-                'Check affinity mask configuration, and licensing.',
+                'Check affinity mask configuration, licensing, or VM CPU cores/sockets',
             url = 'https://erikdarling.com/'
         FROM sys.dm_os_schedulers AS dos
-        WHERE dos.scheduler_id < 255 /* Only CPU schedulers, not internal or hidden schedulers */
-        AND   dos.status = N'VISIBLE OFFLINE'
+        WHERE dos.is_online = 0
         HAVING 
             COUNT_BIG(*) > 0; /* Only if there are offline schedulers */
     END;
@@ -466,9 +516,9 @@ BEGIN
             'Resource semaphore has ' + 
             CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) + 
             ' forced grants. ' +
-            'Target memory: ' + CONVERT(nvarchar(20), MAX(ders.target_memory_kb) / 1024) + ' MB, ' +
-            'Available memory: ' + CONVERT(nvarchar(20), MAX(ders.available_memory_kb) / 1024) + ' MB, ' +
-            'Granted memory: ' + CONVERT(nvarchar(20), MAX(ders.granted_memory_kb) / 1024) + ' MB. ' +
+            'Target memory: ' + CONVERT(nvarchar(20), MAX(ders.target_memory_kb) / 1024 / 1024) + ' GB, ' +
+            'Available memory: ' + CONVERT(nvarchar(20), MAX(ders.available_memory_kb) / 1024 / 1024) + ' GB, ' +
+            'Granted memory: ' + CONVERT(nvarchar(20), MAX(ders.granted_memory_kb) / 1024 / 1024) + ' GB. ' +
             'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
         url = 'https://erikdarling.com/'
     FROM sys.dm_exec_query_resource_semaphores AS ders
@@ -529,15 +579,17 @@ BEGIN
         check_id = 4103,
         priority = 
             CASE
-                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 100 THEN 20 /* Very high priority */
-                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 50 THEN 30 /* High priority */
+                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 100 
+                THEN 20 /* Very high priority */
+                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 50 
+                THEN 30 /* High priority */
                 ELSE 40 /* Medium-high priority */
             END,
         category = 'Concurrency',
         finding = 'High Number of Deadlocks',
         details = 
             'Server is averaging ' + 
-            CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), 1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0))) + 
+            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0))) + 
             ' deadlocks per day since startup (' + 
             CONVERT(nvarchar(20), p.cntr_value) + ' total deadlocks over ' + 
             CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())) + ' days). ' +
@@ -548,7 +600,20 @@ BEGIN
     WHERE RTRIM(p.counter_name) = 'Number of Deadlocks/sec'
     AND   RTRIM(p.instance_name) = '_Total'
     AND   p.cntr_value > 0
-    AND   (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 9; /* More than 9 deadlocks per day */
+    AND   
+    (
+        1.0 * p.cntr_value / 
+          NULLIF
+          (
+              DATEDIFF
+              (
+                  DAY, 
+                  osi.sqlserver_start_time, 
+                  GETDATE()
+              ), 
+              0
+          )
+    ) > 9; /* More than 9 deadlocks per day */
     
     /* Check for large USERSTORE_TOKENPERM (security cache) */
     INSERT INTO
@@ -565,16 +630,19 @@ BEGIN
         check_id = 4104,
         priority = 
             CASE
-                WHEN CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 5 THEN 20 /* Very high priority >5GB */
-                WHEN CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 2 THEN 30 /* High priority >2GB */
-                WHEN CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 1 THEN 40 /* Medium-high priority >1GB */
+                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 5 
+                THEN 20 /* Very high priority >5GB */
+                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 2 
+                THEN 30 /* High priority >2GB */
+                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 1 
+                THEN 40 /* Medium-high priority >1GB */
                 ELSE 50 /* Medium priority */
             END,
         category = 'Memory Usage',
         finding = 'Large Security Token Cache',
         details = 
             'TokenAndPermUserStore cache size is ' + 
-            CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0))) + 
+            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0))) + 
             ' GB. Large security caches can consume significant memory and may indicate security-related issues ' +
             'such as excessive application role usage or frequent permission changes. ' +
             'Consider using dbo.ClearTokenPerm stored procedure to manage this issue.',
@@ -582,7 +650,7 @@ BEGIN
     FROM sys.dm_os_memory_clerks AS domc
     WHERE domc.type = N'USERSTORE_TOKENPERM'
     AND   domc.name = N'TokenAndPermUserStore'
-    AND   CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 0.5; /* Only if bigger than 500MB */
+    AND   domc.pages_kb >= 500000; /* Only if bigger than 500MB */
     
     /* Check if Lock Pages in Memory is enabled (on-prem and managed instances only) */
     IF  @azure_sql_db = 0
@@ -606,11 +674,11 @@ BEGIN
             details = 
                 'SQL Server is not using locked pages in memory (LPIM). This can lead to Windows ' +
                 'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
-                'For production SQL Servers with more than 8GB of memory, LPIM should be enabled.',
+                'For production SQL Servers with more than 64GB of memory, LPIM should be enabled.',
             url = 'https://erikdarling.com/'
         FROM sys.dm_os_sys_info AS osi
         WHERE osi.sql_memory_model_desc = N'CONVENTIONAL' /* Conventional means not using LPIM */
-        AND   @physical_memory_gb > 8 /* Only recommend for servers with >8GB RAM */;
+        AND   @physical_memory_gb >= 32 /* Only recommend for servers with >=32GB RAM */;
     END;
     
     /* Check if Instant File Initialization is enabled (on-prem and managed instances only) */
@@ -650,10 +718,10 @@ BEGIN
                 'creation and growth operations, as SQL Server must zero out data files before using them. ' +
                 'Enable this feature by granting the "Perform Volume Maintenance Tasks" permission to the SQL Server service account.',
             url = 'https://erikdarling.com/'
-        FROM sys.dm_server_services
-        WHERE filename LIKE N'%sqlservr.exe%'
-        AND   servicename LIKE N'SQL Server%'
-        AND   instant_file_initialization_enabled = N'N';
+        FROM sys.dm_server_services AS dss
+        WHERE dss.filename LIKE N'%sqlservr.exe%'
+        AND   dss.servicename LIKE N'SQL Server%'
+        AND   dss.instant_file_initialization_enabled = N'N';
     END;
     
     /* Check for globally enabled trace flags (not in Azure) */
@@ -663,10 +731,11 @@ BEGIN
         /* Capture trace flags */
         INSERT INTO 
             #trace_flags
-        EXECUTE('DBCC TRACESTATUS WITH NO_INFOMSGS');
+        EXECUTE sys.sp_executesql 
+            N'DBCC TRACESTATUS WITH NO_INFOMSGS';
         
         /* Add trace flags to server info */
-        IF EXISTS (SELECT 1 FROM #trace_flags WHERE global = 1)
+        IF EXISTS (SELECT 1/0 FROM #trace_flags AS tf WHERE tf.global = 1)
         BEGIN
             INSERT INTO
                 #server_info (info_type, value)
@@ -699,9 +768,11 @@ BEGIN
     SELECT 
         'Memory', 
         'Total: ' + 
-        CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)) + ' GB, ' +
+        CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)) + 
+        ' GB, ' +
         'Target: ' + 
-        CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.committed_target_kb / 1024.0 / 1024.0)) + ' GB' +
+        CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.committed_target_kb / 1024.0 / 1024.0)) + 
+        ' GB' +
         N', ' +
         osi.sql_memory_model_desc +
         N' enabled'
@@ -712,8 +783,20 @@ BEGIN
     BEGIN            
         /* Get default trace path */
         SELECT 
-            @trace_path = REVERSE(SUBSTRING(REVERSE(t.path), 
-            CHARINDEX(CHAR(92), REVERSE(t.path)), 260)) + N'log.trc'
+            @trace_path = 
+                REVERSE
+                (
+                    SUBSTRING
+                    (
+                        REVERSE(t.path), 
+                        CHARINDEX
+                        (
+                            CHAR(92), 
+                            REVERSE(t.path)
+                        ), 
+                        260
+                    )
+                ) + N'log.trc'
         FROM sys.traces AS t
         WHERE t.is_default = 1;
         
@@ -773,16 +856,17 @@ BEGIN
                 /* Auto-grow and auto-shrink events */
                 t.EventClass IN (92, 93, 94, 95)
                 /* DBCC Events */
-                OR (t.EventClass = 116 
-                    AND t.TextData LIKE '%DBCC%' 
-                    AND (
-                           t.TextData LIKE '%CHECKTABLE%'
-                        OR t.TextData LIKE '%FREEPROCCACHE%'
-                        OR t.TextData LIKE '%FREESYSTEMCACHE%'
-                        OR t.TextData LIKE '%DROPCLEANBUFFERS%'
-                        OR t.TextData LIKE '%SHRINKDATABASE%'
-                        OR t.TextData LIKE '%SHRINKFILE%'
-                    )
+                OR 
+                (
+                      t.EventClass = 116
+                  AND 
+                  (
+                         t.TextData LIKE '%FREEPROCCACHE%'
+                      OR t.TextData LIKE '%FREESYSTEMCACHE%'
+                      OR t.TextData LIKE '%DROPCLEANBUFFERS%'
+                      OR t.TextData LIKE '%SHRINKDATABASE%'
+                      OR t.TextData LIKE '%SHRINKFILE%'
+                  )
                 )
                 /* Server memory change events */
                 OR (t.EventClass = 137)
@@ -818,7 +902,8 @@ BEGIN
                 check_id = 5001,
                 priority = 
                     CASE
-                        WHEN te.event_class = 93 THEN 40 /* Log file autogrow (higher priority) */
+                        WHEN te.event_class = 93 
+                        THEN 40 /* Log file autogrow (higher priority) */
                         ELSE 50 /* Data file autogrow */
                     END,
                 category = 'Database File Configuration',
@@ -834,10 +919,12 @@ BEGIN
                 object_name = te.file_name,
                 details = 
                     'Auto grow operation took ' + 
-                    CONVERT(nvarchar(20), te.duration_ms) + ' ms (' + 
+                    CONVERT(nvarchar(20), te.duration_ms) + 
+                    ' ms (' + 
                     CONVERT(nvarchar(20), te.duration_ms / 1000.0) + 
                     ' seconds) on ' +
-                    CONVERT(nvarchar(30), te.event_time, 120) + '. ' +
+                    CONVERT(nvarchar(30), te.event_time, 120) + 
+                    '. ' +
                     'Growth amount: ' + 
                     CONVERT(nvarchar(20), te.file_growth / 1048576) + 
                     ' GB. ',
@@ -903,10 +990,10 @@ BEGIN
                 5003,
                 priority = 
                     CASE
-                        WHEN dbcc_pattern LIKE '%FREEPROCCACHE%' 
-                             OR dbcc_pattern LIKE '%FREESYSTEMCACHE%'
-                             OR dbcc_pattern LIKE '%DROPCLEANBUFFERS%' 
-                             THEN 40 /* Higher priority */
+                        WHEN dbcc_cmd.dbcc_pattern LIKE '%FREEPROCCACHE%' 
+                        OR   dbcc_cmd.dbcc_pattern LIKE '%FREESYSTEMCACHE%'
+                        OR   dbcc_cmd.dbcc_pattern LIKE '%DROPCLEANBUFFERS%' 
+                        THEN 40 /* Higher priority */
                         ELSE 60 /* Medium priority */
                     END,
                 'System Management',
@@ -919,11 +1006,9 @@ BEGIN
                     WHEN te.text_data LIKE '%FREEPROCCACHE%' THEN 'DBCC FREEPROCCACHE'
                     WHEN te.text_data LIKE '%FREESYSTEMCACHE%' THEN 'DBCC FREESYSTEMCACHE'
                     WHEN te.text_data LIKE '%DROPCLEANBUFFERS%' THEN 'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE '%CHECKDB%' THEN 'DBCC CHECKDB'
-                    WHEN te.text_data LIKE '%CHECKTABLE%' THEN 'DBCC CHECKTABLE'
                     WHEN te.text_data LIKE '%SHRINKDATABASE%' THEN 'DBCC SHRINKDATABASE' 
                     WHEN te.text_data LIKE '%SHRINKFILE%' THEN 'DBCC SHRINKFILE'
-                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands */
+                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case */
                 END + 
                 '" between ' + 
                 CONVERT(nvarchar(30), MIN(te.event_time), 120) + 
@@ -940,11 +1025,9 @@ BEGIN
                         WHEN te.text_data LIKE '%FREEPROCCACHE%' THEN 'DBCC FREEPROCCACHE'
                         WHEN te.text_data LIKE '%FREESYSTEMCACHE%' THEN 'DBCC FREESYSTEMCACHE'
                         WHEN te.text_data LIKE '%DROPCLEANBUFFERS%' THEN 'DBCC DROPCLEANBUFFERS'
-                        WHEN te.text_data LIKE '%CHECKDB%' THEN 'DBCC CHECKDB'
-                        WHEN te.text_data LIKE '%CHECKTABLE%' THEN 'DBCC CHECKTABLE'
                         WHEN te.text_data LIKE '%SHRINKDATABASE%' THEN 'DBCC SHRINKDATABASE' 
                         WHEN te.text_data LIKE '%SHRINKFILE%' THEN 'DBCC SHRINKFILE'
-                        ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands */
+                        ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case*/
                     END
             ) AS dbcc_cmd
             WHERE te.event_class = 116 /* DBCC events */
@@ -955,11 +1038,9 @@ BEGIN
                     WHEN te.text_data LIKE '%FREEPROCCACHE%' THEN 'DBCC FREEPROCCACHE'
                     WHEN te.text_data LIKE '%FREESYSTEMCACHE%' THEN 'DBCC FREESYSTEMCACHE'
                     WHEN te.text_data LIKE '%DROPCLEANBUFFERS%' THEN 'DBCC DROPCLEANBUFFERS'
-                    WHEN te.text_data LIKE '%CHECKDB%' THEN 'DBCC CHECKDB'
-                    WHEN te.text_data LIKE '%CHECKTABLE%' THEN 'DBCC CHECKTABLE'
                     WHEN te.text_data LIKE '%SHRINKDATABASE%' THEN 'DBCC SHRINKDATABASE' 
                     WHEN te.text_data LIKE '%SHRINKFILE%' THEN 'DBCC SHRINKFILE'
-                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands */
+                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just i case*/
                 END 
             ORDER BY 
                 COUNT_BIG(*) DESC;
@@ -995,7 +1076,8 @@ BEGIN
                             PATH('')
                     ), 
                     1, 
-                    2, ''
+                    2, 
+                    ''
                 );
                 
             IF @autogrow_summary IS NOT NULL
@@ -1013,7 +1095,8 @@ BEGIN
     BEGIN                    
         /* Get uptime */
         SELECT 
-            @uptime_ms = DATEDIFF(MILLISECOND, osi.sqlserver_start_time, GETDATE())
+            @uptime_ms = 
+                DATEDIFF(MILLISECOND, osi.sqlserver_start_time, GETDATE())
         FROM sys.dm_os_sys_info AS osi;
         
         /* Get total wait time */
@@ -1204,60 +1287,8 @@ BEGIN
                     ELSE N'Other'
                 END
         FROM sys.dm_os_wait_stats AS dows
-        WHERE dows.wait_type NOT IN 
-        (
-            /* Skip benign waits based on sys.dm_os_wait_stats documentation */
-            N'BROKER_TASK_STOP',
-            N'BROKER_TO_FLUSH',
-            N'BROKER_TRANSMITTER',
-            N'CHECKPOINT_QUEUE',
-            N'CLR_AUTO_EVENT',
-            N'CLR_MANUAL_EVENT',
-            N'DIRTY_PAGE_POLL',
-            N'DISPATCHER_QUEUE_SEMAPHORE',
-            N'FSAGENT',
-            N'FT_IFTS_SCHEDULER_IDLE_WAIT',
-            N'FT_IFTSHC_MUTEX',
-            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
-            N'HADR_LOGCAPTURE_WAIT',
-            N'HADR_TIMER_TASK',
-            N'HADR_WORK_QUEUE',
-            N'LAZYWRITER_SLEEP',
-            N'LOGMGR_QUEUE',
-            N'MEMORY_ALLOCATION_EXT',
-            N'PREEMPTIVE_XE_GETTARGETSTATE',
-            N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
-            N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
-            N'REQUEST_FOR_DEADLOCK_SEARCH',
-            N'RESOURCE_QUEUE',
-            N'SERVER_IDLE_CHECK',
-            N'SLEEP_DBSTARTUP',
-            N'SLEEP_DCOMSTARTUP',
-            N'SLEEP_MASTERDBREADY',
-            N'SLEEP_MASTERMDREADY',
-            N'SLEEP_MASTERUPGRADED',
-            N'SLEEP_MSDBSTARTUP',
-            N'SLEEP_SYSTEMTASK',
-            N'SLEEP_TEMPDBSTARTUP',
-            N'SNI_HTTP_ACCEPT',
-            N'SP_SERVER_DIAGNOSTICS_SLEEP',
-            N'SQLTRACE_BUFFER_FLUSH',
-            N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
-            N'SQLTRACE_WAIT_ENTRIES',
-            N'STARTUP_DEPENDENCY_MANAGER',
-            N'WAIT_FOR_RESULTS',
-            N'WAITFOR',
-            N'WAITFOR_TASKSHUTDOWN',
-            N'WAIT_XTP_HOST_WAIT',
-            N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
-            N'WAIT_XTP_CKPT_CLOSE',
-            N'XE_DISPATCHER_JOIN',
-            N'XE_DISPATCHER_WAIT',
-            N'XE_LIVE_TARGET_TVF',
-            N'XE_TIMER_EVENT'
-        )
+        WHERE 
         /* Only include specific wait types identified as important */
-        AND 
         (
                dows.wait_type = N'PAGEIOLATCH_SH'
             OR dows.wait_type = N'PAGEIOLATCH_EX'
@@ -1379,8 +1410,17 @@ BEGIN
         
         SELECT @wait_summary = 
             CASE 
-                WHEN @wait_summary = N'' THEN ws.category + N' (' + CONVERT(nvarchar(10), ws.pct_of_uptime) + N'% of uptime)'
-                ELSE @wait_summary + N', ' + ws.category + N' (' + CONVERT(nvarchar(10), ws.pct_of_uptime) + N'% of uptime)'
+                WHEN @wait_summary = N'' 
+                THEN ws.category + 
+                     N' (' + 
+                     CONVERT(nvarchar(10), ws.pct_of_uptime) + 
+                     N'% of uptime)'
+                ELSE @wait_summary + 
+                     N', ' + 
+                     ws.category + 
+                     N' (' + 
+                     CONVERT(nvarchar(10), ws.pct_of_uptime) + 
+                     N'% of uptime)'
             END
         FROM #wait_summary AS ws;
         
