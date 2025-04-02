@@ -436,6 +436,21 @@ BEGIN
     INSERT INTO 
         #server_info (info_type, value)
     VALUES 
+        ('sp_PerfCheck', 'Brought to you by Darling Data');
+        
+    INSERT INTO 
+        #server_info (info_type, value)
+    VALUES 
+        ('Website', 'https://erikdarling.com');
+        
+    INSERT INTO 
+        #server_info (info_type, value)
+    VALUES 
+        ('Version', @version + ' (' + CONVERT(varchar(10), @version_date, 101) + ')');
+        
+    INSERT INTO 
+        #server_info (info_type, value)
+    VALUES 
         ('Server Name', CONVERT(sysname, SERVERPROPERTY('ServerName')));
     
     INSERT INTO 
@@ -1527,10 +1542,66 @@ BEGIN
         /* Add wait summary to server info if any significant waits were found */
         IF @wait_summary <> N''
         BEGIN
+            /* Replace the result set in the server_info table with a clearer explanation */
             INSERT INTO
                 #server_info (info_type, value)
             VALUES
-                ('Wait Stats Summary', 'Top impactful categories: ' + @wait_summary);
+                ('Wait Stats Summary', 'See Wait Statistics section in results for details. High percentages indicate server has spent significant time waiting. Multiple waits can occur concurrently, leading to percentages over 100%.');
+                
+            /* Add the detailed wait categories as separate entries in the results table */
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT 
+                6000,
+                priority = 
+                    CASE
+                        WHEN ws.pct_of_uptime > 100 
+                        THEN 40 /* Medium-high priority */
+                        WHEN ws.pct_of_uptime > 50 
+                        THEN 50 /* Medium priority */
+                        ELSE 60 /* Lower priority */
+                    END,
+                category = 'Wait Statistics Summary',
+                finding = 'Wait Category: ' + ws.category,
+                details = 
+                    'This category represents ' + 
+                    CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.pct_of_uptime)) + 
+                    '% of server uptime. ' +
+                    CASE 
+                        WHEN ws.category = 'Query Execution' 
+                        THEN 'This includes various query processing waits and can indicate poorly optimized queries or procedure cache issues.'
+                        WHEN ws.category = 'Parallelism' 
+                        THEN 'This indicates time spent coordinating parallel query execution. Consider reviewing MAXDOP settings.'
+                        WHEN ws.category = 'CPU' 
+                        THEN 'This indicates CPU pressure. Server may benefit from more CPU resources or query optimization.'
+                        WHEN ws.category = 'Memory' 
+                        THEN 'This indicates memory pressure. Consider increasing server memory or optimizing memory-intensive queries.'
+                        WHEN ws.category = 'I/O' 
+                        THEN 'This indicates storage performance issues. Check for slow disks or I/O-intensive queries.'
+                        WHEN ws.category = 'TempDB Contention' 
+                        THEN 'This indicates contention in TempDB. Consider adding more TempDB files or optimizing queries that use TempDB.'
+                        WHEN ws.category = 'Transaction Log' 
+                        THEN 'This indicates log write pressure. Check for long-running transactions or log file performance issues.'
+                        WHEN ws.category = 'Locking' 
+                        THEN 'This indicates contention from locks. Look for blocking chains or query isolation level issues.'
+                        WHEN ws.category = 'Network' 
+                        THEN 'This indicates network bottlenecks or slow client applications not consuming results quickly.'
+                        WHEN ws.category = 'Azure SQL Throttling' 
+                        THEN 'This indicates resource limits imposed by Azure SQL DB. Consider upgrading to a higher service tier.'
+                        ELSE 'This category may require further investigation.'
+                    END,
+                url = 'https://erikdarling.com/'
+            FROM #wait_summary AS ws
+            ORDER BY 
+                ws.pct_of_uptime DESC;
         END;
     END;
 
