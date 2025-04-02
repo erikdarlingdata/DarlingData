@@ -795,7 +795,7 @@ BEGIN
             SELECT
                 check_id = 4107,
                 priority = 50, /* Medium priority */
-                category = 'Resource Limits',
+                category = 'Resource Governor',
                 finding = 'Resource Governor Enabled',
                 details = 
                     'Resource Governor is enabled on this instance. This affects workload resource allocation and may ' +
