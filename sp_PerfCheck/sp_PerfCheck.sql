@@ -3529,10 +3529,33 @@ BEGIN
                     sc.name, 
                     sc.value, 
                     sc.value_for_secondary, 
-                    0 /* Non-default */
-                FROM ' + QUOTENAME(@current_database_name) + '.sys.database_scoped_configurations AS sc
-                WHERE sc.value IS NOT NULL /* Non-default */
-                   OR sc.value_for_secondary IS NOT NULL; /* Non-default */
+                    CASE
+                        WHEN sc.name = ''MAXDOP'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = ''LEGACY_CARDINALITY_ESTIMATION'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = ''PARAMETER_SNIFFING'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''QUERY_OPTIMIZER_HOTFIXES'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = ''INTERLEAVED_EXECUTION_TVF'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''BATCH_MODE_MEMORY_GRANT_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''BATCH_MODE_ADAPTIVE_JOINS'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''TSQL_SCALAR_UDF_INLINING'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''OPTIMIZE_FOR_AD_HOC_WORKLOADS'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = ''ROW_MODE_MEMORY_GRANT_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''ISOLATE_SECURITY_POLICY_CARDINALITY'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = ''BATCH_MODE_ON_ROWSTORE'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''DEFERRED_COMPILATION_TV'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''ACCELERATED_PLAN_FORCING'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''LAST_QUERY_PLAN_STATS'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = ''EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''PARAMETER_SENSITIVE_PLAN_OPTIMIZATION'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''CE_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''MEMORY_GRANT_FEEDBACK_PERSISTENCE'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''OPTIMIZED_PLAN_FORCING'' AND CAST(sc.value AS integer) = 1 THEN 1
+                        WHEN sc.name = ''DOP_FEEDBACK'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = ''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        ELSE 0 /* Non-default */
+                    END
+                FROM ' + QUOTENAME(@current_database_name) + '.sys.database_scoped_configurations AS sc;
             END;';
                 
             IF @debug = 1
