@@ -3420,7 +3420,178 @@ BEGIN
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_ledger_on = 1;
+        
+        /* Check for database file growth settings */
+        BEGIN TRY
+            /* Check for percentage growth settings on data files */
+            SET @sql = N'
+            INSERT INTO 
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                object_name,
+                details,
+                url
+            )
+            SELECT 
+                check_id = 7101,
+                priority = 40, /* Medium-high priority */
+                category = ''Database Files'',
+                finding = ''Percentage Auto-Growth Setting on Data File'',
+                database_name = DB_NAME(),
+                object_name = mf.name,
+                details = 
+                    ''Database data file is using percentage growth setting ('' + 
+                    CONVERT(nvarchar(20), mf.growth) + 
+                    ''%). This can lead to increasingly larger growth events as the file grows, 
+                    potentially causing larger file sizes than intended. Even with instant file initialization enabled, 
+                    consider using a fixed size instead for more predictable growth.'',
+                url = ''https://erikdarling.com/''
+            FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
+            WHERE mf.is_percent_growth = 1
+            AND mf.type_desc = ''ROWS'';';
+            
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for percentage growth settings on log files */
+            SET @sql = N'
+            INSERT INTO 
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                object_name,
+                details,
+                url
+            )
+            SELECT 
+                check_id = 7102,
+                priority = 30, /* High priority */
+                category = ''Database Files'',
+                finding = ''Percentage Auto-Growth Setting on Log File'',
+                database_name = DB_NAME(),
+                object_name = mf.name,
+                details = 
+                    ''Transaction log file is using percentage growth setting ('' + 
+                    CONVERT(nvarchar(20), mf.growth) + 
+                    ''%). This can lead to increasingly larger growth events and significant stalls 
+                    as log files must be zeroed out during auto-growth operations. 
+                    Always use fixed size growth for log files.'',
+                url = ''https://erikdarling.com/''
+            FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
+            WHERE mf.is_percent_growth = 1
+            AND mf.type_desc = ''LOG'';';
+            
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+
+            /* Check for non-optimal log growth increments in SQL Server 2022, Azure SQL DB, or Azure MI */
+            IF @product_version_major >= 16 OR @azure_sql_db = 1 OR @azure_managed_instance = 1
+            BEGIN
+                SET @sql = N'
+                INSERT INTO 
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    database_name,
+                    object_name,
+                    details,
+                    url
+                )
+                SELECT 
+                    check_id = 7103,
+                    priority = 40, /* Medium-high priority */
+                    category = ''Database Files'',
+                    finding = ''Non-Optimal Log File Growth Increment'',
+                    database_name = DB_NAME(),
+                    object_name = mf.name,
+                    details = 
+                        ''Transaction log file is using a growth increment of '' + 
+                        CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
+                        ''On SQL Server 2022, Azure SQL DB, or Azure MI, transaction logs can use instant file initialization when set to exactly 64 MB. '' +
+                        ''Consider changing the growth increment to 64 MB for improved performance.'',
+                    url = ''https://erikdarling.com/''
+                FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
+                WHERE mf.is_percent_growth = 0
+                AND mf.type_desc = ''LOG''
+                AND mf.growth * 8.0 / 1024 <> 64;';
                 
+                IF @debug = 1
+                BEGIN
+                    PRINT @sql;
+                END;
+                
+                EXECUTE sys.sp_executesql @sql;
+            END;
+            
+            /* Check for very large fixed growth settings (>10GB) */
+            SET @sql = N'
+            INSERT INTO 
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                object_name,
+                details,
+                url
+            )
+            SELECT 
+                check_id = 7104,
+                priority = 40, /* Medium-high priority */
+                category = ''Database Files'',
+                finding = ''Extremely Large Auto-Growth Setting'',
+                database_name = DB_NAME(),
+                object_name = mf.name,
+                details = 
+                    ''Database file is using a very large fixed growth increment of '' + 
+                    CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024 / 1024)) + 
+                    '' GB. Very large growth increments can lead to excessive space allocation. '' +
+                    CASE 
+                        WHEN mf.type_desc = ''ROWS'' THEN ''Even with instant file initialization, consider using smaller increments for more controlled growth.''
+                        WHEN mf.type_desc = ''LOG'' THEN ''This can cause significant stalls as log files must be zeroed out during growth operations.''
+                    END,
+                url = ''https://erikdarling.com/''
+            FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
+            WHERE mf.is_percent_growth = 0
+            AND mf.growth * 8.0 / 1024 / 1024 > 10; /* Growth > 10GB */';
+            
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @message = N'Error checking database file growth settings for ' + @current_database_name + ': ' + ERROR_MESSAGE();
+                RAISERROR(@message, 0, 1) WITH NOWAIT;
+            END;
+        END CATCH;
+        
         /* 
         Execute the dynamic SQL - this is just a placeholder.
         In your actual implementation, you would include all your database-level 
