@@ -1546,7 +1546,7 @@ BEGIN
             INSERT INTO
                 #server_info (info_type, value)
             VALUES
-                ('Wait Stats Summary', 'See Wait Statistics section in results for details. High percentages indicate server has spent significant time waiting. Multiple waits can occur concurrently, leading to percentages over 100%.');
+                ('Wait Stats Summary', 'See Wait Statistics section in results for details.');
                 
             /* Add the detailed wait categories as separate entries in the results table */
             INSERT INTO
@@ -3538,7 +3538,7 @@ BEGIN
             WHERE qso.actual_state = 2 /* Query Store is ON */
             AND 
             (
-                   qso.max_storage_size_mb < 1024
+                   qso.max_storage_size_mb < 1000
                 OR qso.query_capture_mode_desc = N''NONE''
                 OR qso.size_based_cleanup_mode_desc = N''OFF''
                 OR qso.stale_query_threshold_days < 3
