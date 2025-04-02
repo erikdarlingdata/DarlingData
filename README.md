@@ -7,6 +7,7 @@
 # Navigatory 
  - Scripts:
     - [sp_PressureDetector](#pressure-detector): Quickly detect CPU and memory pressure
+    - [sp_PerfCheck](#perf-check): Comprehensive SQL Server performance health check
     - [sp_HumanEvents](#human-events): Use Extended Events to track down various query performance issues
     - [sp_HumanEventsBlockViewer](#human-events-block-viewer): Analyze the blocked process report
     - [sp_QuickieStore](#quickie-store): The fastest and most configurable way to navigate Query Store data
@@ -390,6 +391,33 @@ Current valid parameter details:
 | @debug               | bit       | dumps raw temp table contents                  | NULL, 0, 1                                                                   | 0            |
 | @version             | varchar   | OUTPUT; for support                            | OUTPUT; for support                                                          | none; OUTPUT |
 | @version_date        | datetime  | OUTPUT; for support                            | OUTPUT; for support                                                          | none; OUTPUT |
+
+[*Back to top*](#navigatory)
+
+## Perf Check
+
+sp_PerfCheck is a comprehensive SQL Server performance diagnostic tool that quickly identifies configuration issues, capacity problems, and performance bottlenecks at both the server and database level.
+
+The procedure performs extensive checks in multiple categories:
+- Server configuration and resource usage
+- Memory configuration and pressure indicators
+- CPU scheduling and pressure
+- Storage performance and I/O bottlenecks
+- TempDB configuration
+- Database configuration settings
+- Database file auto-growth settings
+- Query Store health and configuration
+
+Results are returned in a prioritized list, with the most critical issues displayed first. The procedure works on SQL Server 2016+ and Azure SQL DB.
+
+Current valid parameter details:
+
+| Parameter | Data Type | Default | Description |
+|-----------|-----------|---------|-------------|
+| @database_name | sysname | NULL | Specific database to check; NULL runs against all accessible user databases |
+| @debug | bit | 0 | Print diagnostic messages and intermediate query results |
+| @version | varchar(30) | NULL OUTPUT | Returns version number |
+| @version_date | datetime | NULL OUTPUT | Returns version date |
 
 [*Back to top*](#navigatory)
 
