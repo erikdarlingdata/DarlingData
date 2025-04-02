@@ -57,7 +57,7 @@ EXEC dbo.sp_PerfCheck
   - Recommends enabling for production environments with >32GB RAM
 
 - **Memory Pressure Indicators** (check_id 4001-4002)
-  - Detects high PLE churn, memory grants issues, external memory pressure
+  - Detects high buffer pool churn, memory grants issues, external memory pressure
   - Provides specific thresholds based on server class
 
 - **Instant File Initialization** (check_id 4106)
