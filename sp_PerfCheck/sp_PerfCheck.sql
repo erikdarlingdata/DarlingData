@@ -93,6 +93,7 @@ BEGIN
         @lightweight_pooling bit,
         /* TempDB configuration variables */
         @tempdb_data_file_count integer,
+        @tempdb_log_file_count integer,
         @min_data_file_size decimal(18, 2),
         @max_data_file_size decimal(18, 2),
         @size_difference_pct decimal(18, 2),
@@ -1475,123 +1476,7 @@ BEGIN
                 ('Wait Stats Summary', 'Top impactful categories: ' + @wait_summary);
         END;
     END;
-    
-    /* Check for stolen memory from buffer pool */
-    IF @has_view_server_state = 1
-    BEGIN        
-        /* Get buffer pool size */
-        SELECT 
-            @buffer_pool_size_gb = 
-                CONVERT
-                (
-                    decimal(38, 2), 
-                    SUM(domc.pages_kb) / 1024.0 / 1024.0
-                )
-        FROM sys.dm_os_memory_clerks AS domc
-        WHERE domc.type = N'MEMORYCLERK_SQLBUFFERPOOL'
-        AND   domc.memory_node_id < 64;
-        
-        /* Get stolen memory */
-        SELECT
-            @stolen_memory_gb = 
-                CONVERT(decimal(38, 2), dopc.cntr_value / 1024.0 / 1024.0)
-        FROM sys.dm_os_performance_counters AS dopc
-        WHERE dopc.counter_name LIKE N'Stolen Server%';
-        
-        /* Calculate stolen memory percentage */
-        IF @buffer_pool_size_gb > 0
-        BEGIN
-            SET @stolen_memory_pct = (@stolen_memory_gb / (@buffer_pool_size_gb + @stolen_memory_gb)) * 100.0;
-            
-            /* Add buffer pool info to server_info */
-            INSERT INTO
-                #server_info (info_type, value)
-            VALUES
-                ('Buffer Pool Size', CONVERT(nvarchar(20), @buffer_pool_size_gb) + ' GB');
-                
-            INSERT INTO
-                #server_info (info_type, value)
-            VALUES
-                ('Stolen Memory', CONVERT(nvarchar(20), @stolen_memory_gb) + ' GB (' + 
-                 CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) + '%)');
-            
-            /* Add finding if stolen memory exceeds threshold */
-            IF @stolen_memory_pct > @stolen_memory_threshold_pct
-            BEGIN
-                INSERT INTO
-                    #results
-                (
-                    check_id,
-                    priority,
-                    category,
-                    finding,
-                    details,
-                    url
-                )
-                VALUES
-                (
-                    6002,                   
-                    CASE
-                        WHEN @stolen_memory_pct > 40 THEN 30 /* High priority if >40% stolen */
-                        WHEN @stolen_memory_pct > 30 THEN 40 /* Medium-high priority if >30% stolen */
-                        ELSE 50 /* Medium priority */
-                    END,
-                    'Memory Usage',
-                    'High Stolen Memory Percentage',
-                    'Memory stolen from buffer pool: ' + 
-                    CONVERT(nvarchar(20), @stolen_memory_gb) + 
-                    ' GB (' + 
-                    CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) + 
-                    '% of total memory). This reduces memory available for data caching and can impact performance. ' +
-                    'Consider investigating memory usage by CLR, extended stored procedures, linked servers, or other memory clerks.',
-                    'https://erikdarling.com/'
-                );
-                
-                /* Also add the top 5 non-buffer pool memory consumers for visibility */
-                INSERT INTO
-                    #results
-                (
-                    check_id,
-                    priority,
-                    category,
-                    finding,
-                    details,
-                    url
-                )
-                SELECT 
-                    check_id = 6003,
-                    priority = 60, /* Informational priority */
-                    category = 'Memory Usage',
-                    finding = 'Top Memory Consumer: ' + domc.type,
-                    details = 
-                        'Memory clerk "' + 
-                        domc.type + 
-                        '" is using ' + 
-                        CONVERT
-                        (
-                            nvarchar(20), 
-                            CONVERT
-                            (
-                                decimal(38, 2),
-                                SUM(domc.pages_kb) / 1024.0 / 1024.0
-                            )
-                        ) + 
-                        ' GB of memory. This is one of the top consumers of memory outside the buffer pool.',
-                    url = 'https://erikdarling.com/'
-                FROM sys.dm_os_memory_clerks AS domc
-                WHERE domc.type <> N'MEMORYCLERK_SQLBUFFERPOOL'
-                GROUP BY 
-                    domc.type
-                HAVING 
-                    SUM(domc.pages_kb) / 1024.0 / 1024.0 > 1.0 /* Only show clerks using more than 1 GB */
-                ORDER BY
-                    SUM(domc.pages_kb) DESC
-                OFFSET 0 ROWS
-                FETCH NEXT 5 ROWS ONLY;
-            END;
-        END;
-    END;
-    
+
     /* Check for CPU scheduling pressure (signal wait ratio) */
     IF @has_view_server_state = 1
     BEGIN
@@ -1599,7 +1484,15 @@ BEGIN
         SELECT 
             @signal_wait_time_ms = SUM(osw.signal_wait_time_ms),
             @total_wait_time_ms = SUM(osw.wait_time_ms),
-            @sos_scheduler_yield_ms = SUM(CASE WHEN osw.wait_type = N'SOS_SCHEDULER_YIELD' THEN osw.wait_time_ms ELSE 0 END)
+            @sos_scheduler_yield_ms = 
+                SUM
+                (
+                    CASE 
+                        WHEN osw.wait_type = N'SOS_SCHEDULER_YIELD' 
+                        THEN osw.wait_time_ms 
+                        ELSE 0 
+                    END
+                )
         FROM sys.dm_os_wait_stats AS osw
         WHERE osw.wait_type NOT IN 
         (
@@ -1669,12 +1562,18 @@ BEGIN
             INSERT INTO
                 #server_info (info_type, value)
             VALUES
-                ('Signal Wait Ratio', CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) + '%' +
-                 CASE 
-                     WHEN @signal_wait_ratio >= 25.0 THEN ' (High - CPU pressure detected)'
-                     WHEN @signal_wait_ratio >= 15.0 THEN ' (Moderate - CPU pressure likely)'
-                     ELSE ' (Normal)'
-                 END);
+                (
+                     'Signal Wait Ratio', 
+                     CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) + 
+                     '%' +
+                     CASE 
+                         WHEN @signal_wait_ratio >= 25.0 
+                         THEN ' (High - CPU pressure detected)'
+                         WHEN @signal_wait_ratio >= 15.0 
+                         THEN ' (Moderate - CPU pressure likely)'
+                         ELSE ' (Normal)'
+                     END
+                );
             
             IF @sos_scheduler_yield_pct_of_uptime > 0
             BEGIN
@@ -1702,8 +1601,10 @@ BEGIN
                 (
                     6101,                   
                     CASE
-                        WHEN @signal_wait_ratio >= 40.0 THEN 20 /* Very high priority if >=40% signal waits */
-                        WHEN @signal_wait_ratio >= 30.0 THEN 30 /* High priority if >=30% signal waits */
+                        WHEN @signal_wait_ratio >= 40.0 
+                        THEN 20 /* Very high priority if >=40% signal waits */
+                        WHEN @signal_wait_ratio >= 30.0 
+                        THEN 30 /* High priority if >=30% signal waits */
                         ELSE 40 /* Medium-high priority */
                     END,
                     'CPU Scheduling',
@@ -1734,8 +1635,10 @@ BEGIN
                 (
                     6102,                   
                     CASE
-                        WHEN @sos_scheduler_yield_pct_of_uptime >= 30.0 THEN 30 /* High priority if >=30% of uptime */
-                        WHEN @sos_scheduler_yield_pct_of_uptime >= 20.0 THEN 40 /* Medium-high priority if >=20% of uptime */
+                        WHEN @sos_scheduler_yield_pct_of_uptime >= 30.0 
+                        THEN 30 /* High priority if >=30% of uptime */
+                        WHEN @sos_scheduler_yield_pct_of_uptime >= 20.0 
+                        THEN 40 /* Medium-high priority if >=20% of uptime */
                         ELSE 50 /* Medium priority */
                     END,
                     'CPU Scheduling',
@@ -1751,6 +1654,132 @@ BEGIN
         END;
     END;
     
+    /* Check for stolen memory from buffer pool */
+    IF @has_view_server_state = 1
+    BEGIN        
+        /* Get buffer pool size */
+        SELECT 
+            @buffer_pool_size_gb = 
+                CONVERT
+                (
+                    decimal(38, 2), 
+                    SUM(domc.pages_kb) / 1024.0 / 1024.0
+                )
+        FROM sys.dm_os_memory_clerks AS domc
+        WHERE domc.type = N'MEMORYCLERK_SQLBUFFERPOOL'
+        AND   domc.memory_node_id < 64;
+        
+        /* Get stolen memory */
+        SELECT
+            @stolen_memory_gb = 
+                CONVERT(decimal(38, 2), dopc.cntr_value / 1024.0 / 1024.0)
+        FROM sys.dm_os_performance_counters AS dopc
+        WHERE dopc.counter_name LIKE N'Stolen Server%';
+        
+        /* Calculate stolen memory percentage */
+        IF @buffer_pool_size_gb > 0
+        BEGIN
+            SET @stolen_memory_pct = (@stolen_memory_gb / (@buffer_pool_size_gb + @stolen_memory_gb)) * 100.0;
+            
+            /* Add buffer pool info to server_info */
+            INSERT INTO
+                #server_info (info_type, value)
+            VALUES
+            (
+                'Buffer Pool Size', 
+                CONVERT(nvarchar(20), @buffer_pool_size_gb) + ' GB'
+            );
+                
+            INSERT INTO
+                #server_info (info_type, value)
+            VALUES
+            (
+                'Stolen Memory', 
+                CONVERT(nvarchar(20), @stolen_memory_gb) + 
+                ' GB (' + 
+                CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) + 
+                '%)'
+            );
+            
+            /* Add finding if stolen memory exceeds threshold */
+            IF @stolen_memory_pct > @stolen_memory_threshold_pct
+            BEGIN
+                INSERT INTO
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    details,
+                    url
+                )
+                VALUES
+                (
+                    6002,                   
+                    CASE
+                        WHEN @stolen_memory_pct > 40 
+                        THEN 30 /* High priority if >40% stolen */
+                        WHEN @stolen_memory_pct > 30 
+                        THEN 40 /* Medium-high priority if >30% stolen */
+                        ELSE 50 /* Medium priority */
+                    END,
+                    'Memory Usage',
+                    'High Stolen Memory Percentage',
+                    'Memory stolen from buffer pool: ' + 
+                    CONVERT(nvarchar(20), @stolen_memory_gb) + 
+                    ' GB (' + 
+                    CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) + 
+                    '% of total memory). This reduces memory available for data caching and can impact performance. ' +
+                    'Consider investigating memory usage by CLR, extended stored procedures, linked servers, or other memory clerks.',
+                    'https://erikdarling.com/'
+                );
+                
+                /* Also add the top 5 non-buffer pool memory consumers for visibility */
+                INSERT INTO
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    details,
+                    url
+                )
+                SELECT 
+                    check_id = 6003,
+                    priority = 60, /* Informational priority */
+                    category = 'Memory Usage',
+                    finding = 'Top Memory Consumer: ' + domc.type,
+                    details = 
+                        'Memory clerk "' + 
+                        domc.type + 
+                        '" is using ' + 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            CONVERT
+                            (
+                                decimal(38, 2),
+                                SUM(domc.pages_kb) / 1024.0 / 1024.0
+                            )
+                        ) + 
+                        ' GB of memory. This is one of the top consumers of memory outside the buffer pool.',
+                    url = 'https://erikdarling.com/'
+                FROM sys.dm_os_memory_clerks AS domc
+                WHERE domc.type <> N'MEMORYCLERK_SQLBUFFERPOOL'
+                GROUP BY 
+                    domc.type
+                HAVING 
+                    SUM(domc.pages_kb) / 1024.0 / 1024.0 > 1.0 /* Only show clerks using more than 1 GB */
+                ORDER BY
+                    SUM(domc.pages_kb) DESC
+                OFFSET 0 ROWS
+                FETCH NEXT 5 ROWS ONLY;
+            END;
+        END;
+    END;
+        
     /* Check for I/O stalls per database */
     IF @has_view_server_state = 1
     BEGIN
@@ -1781,26 +1810,32 @@ BEGIN
                 database_name = DB_NAME(),
                 database_id = DB_ID(),
                 total_io_stall_ms = SUM(fs.io_stall),
-                total_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read + fs.num_of_bytes_written) / 1024.0 / 1024.0),
-                avg_io_stall_ms = CASE 
-                                      WHEN SUM(fs.num_of_reads + fs.num_of_writes) = 0 
-                                      THEN 0 
-                                      ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall) * 1.0 / SUM(fs.num_of_reads + fs.num_of_writes)) 
-                                  END,
+                total_io_mb = 
+                    CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read + fs.num_of_bytes_written) / 1024.0 / 1024.0),
+                avg_io_stall_ms = 
+                    CASE 
+                        WHEN SUM(fs.num_of_reads + fs.num_of_writes) = 0 
+                        THEN 0 
+                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall) * 1.0 / SUM(fs.num_of_reads + fs.num_of_writes)) 
+                    END,
                 read_io_stall_ms = SUM(fs.io_stall_read_ms),
-                read_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read) / 1024.0 / 1024.0),
-                avg_read_stall_ms = CASE 
-                                        WHEN SUM(fs.num_of_reads) = 0 
-                                        THEN 0 
-                                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_read_ms) * 1.0 / SUM(fs.num_of_reads)) 
-                                    END,
+                read_io_mb = 
+                    CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read) / 1024.0 / 1024.0),
+                avg_read_stall_ms = 
+                    CASE 
+                        WHEN SUM(fs.num_of_reads) = 0 
+                        THEN 0 
+                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_read_ms) * 1.0 / SUM(fs.num_of_reads)) 
+                    END,
                 write_io_stall_ms = SUM(fs.io_stall_write_ms),
-                write_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_written) / 1024.0 / 1024.0),
-                avg_write_stall_ms = CASE 
-                                         WHEN SUM(fs.num_of_writes) = 0 
-                                         THEN 0 
-                                         ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes)) 
-                                     END,
+                write_io_mb = 
+                    CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_written) / 1024.0 / 1024.0),
+                avg_write_stall_ms = 
+                    CASE 
+                        WHEN SUM(fs.num_of_writes) = 0 
+                        THEN 0 
+                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes)) 
+                    END,
                 total_size_mb = CONVERT(decimal(18, 2), SUM(df.size) * 8 / 1024.0)
             FROM sys.dm_io_virtual_file_stats(DB_ID(), NULL) AS fs
             JOIN sys.database_files AS df 
@@ -1829,58 +1864,72 @@ BEGIN
                 database_name = DB_NAME(fs.database_id),
                 database_id = fs.database_id,
                 total_io_stall_ms = SUM(fs.io_stall),
-                total_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read + fs.num_of_bytes_written) / 1024.0 / 1024.0),
-                avg_io_stall_ms = CASE 
-                                      WHEN SUM(fs.num_of_reads + fs.num_of_writes) = 0 
-                                      THEN 0 
-                                      ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall) * 1.0 / SUM(fs.num_of_reads + fs.num_of_writes)) 
-                                  END,
+                total_io_mb = 
+                    CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read + fs.num_of_bytes_written) / 1024.0 / 1024.0),
+                avg_io_stall_ms = 
+                    CASE 
+                        WHEN SUM(fs.num_of_reads + fs.num_of_writes) = 0 
+                        THEN 0 
+                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall) * 1.0 / SUM(fs.num_of_reads + fs.num_of_writes)) 
+                    END,
                 read_io_stall_ms = SUM(fs.io_stall_read_ms),
-                read_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read) / 1024.0 / 1024.0),
-                avg_read_stall_ms = CASE 
-                                        WHEN SUM(fs.num_of_reads) = 0 
-                                        THEN 0 
-                                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_read_ms) * 1.0 / SUM(fs.num_of_reads)) 
-                                    END,
+                read_io_mb = 
+                    CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read) / 1024.0 / 1024.0),
+                avg_read_stall_ms = 
+                    CASE 
+                        WHEN SUM(fs.num_of_reads) = 0 
+                        THEN 0 
+                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_read_ms) * 1.0 / SUM(fs.num_of_reads)) 
+                    END,
                 write_io_stall_ms = SUM(fs.io_stall_write_ms),
-                write_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_written) / 1024.0 / 1024.0),
-                avg_write_stall_ms = CASE 
-                                         WHEN SUM(fs.num_of_writes) = 0 
-                                         THEN 0 
-                                         ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes)) 
-                                     END,
+                write_io_mb = 
+                    CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_written) / 1024.0 / 1024.0),
+                avg_write_stall_ms = 
+                    CASE 
+                        WHEN SUM(fs.num_of_writes) = 0 
+                        THEN 0 
+                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes)) 
+                    END,
                 total_size_mb = CONVERT(decimal(18, 2), SUM(mf.size) * 8 / 1024.0)
             FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS fs
             JOIN sys.master_files AS mf 
               ON  fs.database_id = mf.database_id
               AND fs.file_id = mf.file_id
             WHERE 
-                /* Skip idle databases and system databases except tempdb */
-                (SUM(fs.num_of_reads + fs.num_of_writes) OVER (PARTITION BY fs.database_id) > 0)
-            AND (fs.database_id > 4 OR fs.database_id = 2) /* User databases or TempDB */
+            (
+                 fs.database_id > 4 
+              OR fs.database_id = 2
+            ) /* User databases or TempDB */
             GROUP BY
-                fs.database_id;
+                fs.database_id
+            HAVING
+                /* Skip idle databases and system databases except tempdb */
+                (SUM(fs.num_of_reads + fs.num_of_writes) > 0);
         END;
         
         /* Format a summary of the worst databases by I/O stalls */
         WITH io_stall_summary AS
         (
             SELECT TOP (5)
-                database_name,
-                total_io_stall_ms,
-                total_io_mb,
-                avg_io_stall_ms,
-                read_io_stall_ms,
-                read_io_mb,
-                avg_read_stall_ms,
-                write_io_stall_ms,
-                write_io_mb,
-                avg_write_stall_ms,
-                total_size_mb
-            FROM #io_stalls_by_db
-            WHERE (avg_read_stall_ms >= @slow_read_ms OR avg_write_stall_ms >= @slow_write_ms)
+                i.database_name,
+                i.total_io_stall_ms,
+                i.total_io_mb,
+                i.avg_io_stall_ms,
+                i.read_io_stall_ms,
+                i.read_io_mb,
+                i.avg_read_stall_ms,
+                i.write_io_stall_ms,
+                i.write_io_mb,
+                i.avg_write_stall_ms,
+                i.total_size_mb
+            FROM #io_stalls_by_db AS i
+            WHERE 
+            (
+                 i.avg_read_stall_ms >= @slow_read_ms 
+              OR i.avg_write_stall_ms >= @slow_write_ms
+            )
             ORDER BY
-                avg_io_stall_ms DESC
+                i.avg_io_stall_ms DESC
         )
         SELECT @io_stall_summary = 
             STUFF
@@ -1929,8 +1978,10 @@ BEGIN
             check_id = 6201,
             priority = 
                 CASE
-                    WHEN io.avg_io_stall_ms >= 100.0 THEN 30 /* High priority if >100ms */
-                    WHEN io.avg_io_stall_ms >= 50.0 THEN 40 /* Medium-high priority if >50ms */
+                    WHEN io.avg_io_stall_ms >= 100.0 
+                    THEN 30 /* High priority if >100ms */
+                    WHEN io.avg_io_stall_ms >= 50.0 
+                    THEN 40 /* Medium-high priority if >50ms */
                     ELSE 50 /* Medium priority */
                 END,
             category = 'Storage Performance',
@@ -1957,11 +2008,207 @@ BEGIN
         FROM #io_stalls_by_db AS io
         WHERE 
             /* Only include databases with significant I/O and significant stalls */
-            (io.total_io_mb > 100.0) /* Only databases with at least 100MB total I/O */
-        AND (io.avg_read_stall_ms >= @slow_read_ms OR io.avg_write_stall_ms >= @slow_write_ms)
+            io.total_io_mb > 1024.0 /* Only databases with at least 1024MB total I/O */
+        AND 
+        (
+             io.avg_read_stall_ms >= @slow_read_ms 
+          OR io.avg_write_stall_ms >= @slow_write_ms
+        )
         ORDER BY
             io.avg_io_stall_ms DESC;
     END;
+
+        /*
+        Storage Performance Checks - I/O Latency for database files
+        */
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Checking storage performance', 0, 1) WITH NOWAIT;
+        END;        
+        /* Gather IO Stats */
+        INSERT INTO 
+            #io_stats
+        (
+            database_name,
+            database_id,
+            file_name,
+            type_desc,
+            io_stall_read_ms,
+            num_of_reads,
+            avg_read_latency_ms,
+            io_stall_write_ms,
+            num_of_writes,
+            avg_write_latency_ms,
+            io_stall_ms,
+            total_io,
+            avg_io_latency_ms,
+            size_mb,
+            drive_letter,
+            physical_name
+        )
+        SELECT
+            database_name = DB_NAME(fs.database_id),
+            fs.database_id,
+            file_name = mf.name,
+            mf.type_desc,
+            io_stall_read_ms = fs.io_stall_read_ms,
+            num_of_reads = fs.num_of_reads,
+            avg_read_latency_ms = 
+                CASE 
+                    WHEN fs.num_of_reads = 0 
+                    THEN 0
+                    ELSE fs.io_stall_read_ms * 1.0 / fs.num_of_reads
+                END,
+            io_stall_write_ms = fs.io_stall_write_ms,
+            num_of_writes = fs.num_of_writes,
+            avg_write_latency_ms = 
+                CASE
+                    WHEN fs.num_of_writes = 0 
+                    THEN 0
+                    ELSE fs.io_stall_write_ms * 1.0 / fs.num_of_writes
+                END,
+            io_stall_ms = fs.io_stall,
+            total_io = fs.num_of_reads + fs.num_of_writes,
+            avg_io_latency_ms = 
+                CASE
+                    WHEN (fs.num_of_reads + fs.num_of_writes) = 0 
+                    THEN 0
+                    ELSE fs.io_stall * 1.0 / (fs.num_of_reads + fs.num_of_writes)
+                END,
+            size_mb = mf.size * 8.0 / 1024,
+            drive_letter = UPPER(LEFT(mf.physical_name, 1)),
+            physical_name = mf.physical_name
+        FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS fs
+        JOIN sys.master_files AS mf
+          ON  fs.database_id = mf.database_id
+          AND fs.file_id = mf.file_id
+        WHERE (fs.num_of_reads > 0 OR fs.num_of_writes > 0); /* Only include files with some activity */
+        
+        /* Add results for slow reads */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            object_name,
+            details,
+            url
+        )
+        SELECT
+            check_id = 3001,
+            priority = 
+                CASE 
+                    WHEN i.avg_read_latency_ms > @slow_read_ms * 2 
+                    THEN 40 /* Very slow */
+                    ELSE 50 /* Moderately slow */
+                END,
+            category = 'Storage Performance',
+            finding = 'Slow Read Latency',
+            database_name = i.database_name,
+            object_name = 
+                i.file_name + 
+                ' (' + 
+                i.type_desc + 
+                ')',
+            details = 
+                'Average read latency of ' + 
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), i.avg_read_latency_ms)) + 
+                ' ms for ' + 
+                CONVERT(nvarchar(20), i.num_of_reads) + ' reads. ' +
+                'This is above the ' + 
+                CONVERT(nvarchar(10), CONVERT(integer, @slow_read_ms)) + 
+                ' ms threshold and may indicate storage performance issues.',
+            url = 'https://erikdarling.com/'
+        FROM #io_stats AS i
+        WHERE i.avg_read_latency_ms > @slow_read_ms
+        AND i.num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
+        
+        /* Add results for slow writes */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            object_name,
+            details,
+            url
+        )
+        SELECT
+            check_id = 3002,
+            priority = 
+                CASE 
+                    WHEN i.avg_write_latency_ms > @slow_write_ms * 2 
+                    THEN 40 /* Very slow */
+                    ELSE 50 /* Moderately slow */
+                END,
+            category = 'Storage Performance',
+            finding = 'Slow Write Latency',
+            database_name = i.database_name,
+            object_name = 
+                i.file_name + 
+                ' (' + 
+                i.type_desc + 
+                ')',
+            details = 
+                'Average write latency of ' + 
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), i.avg_write_latency_ms)) + 
+                ' ms for ' + 
+                CONVERT(nvarchar(20), i.num_of_writes) + 
+                ' writes. ' +
+                'This is above the ' + 
+                CONVERT(nvarchar(10), CONVERT(integer, @slow_write_ms)) + 
+                ' ms threshold and may indicate storage performance issues.',
+            url = 'https://erikdarling.com/'
+        FROM #io_stats AS i
+        WHERE i.avg_write_latency_ms > @slow_write_ms
+        AND i.num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
+        
+        /* Add drive level warnings if we have multiple slow files on same drive */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT
+            check_id = 3003,
+            priority = 40, /* High priority */
+            category = 'Storage Performance',
+            finding = 
+                'Multiple Slow Files on Drive ' + 
+                i.drive_letter,
+            details = 
+                'Drive ' + 
+                i.drive_letter + 
+                ' has ' + 
+                CONVERT(nvarchar(10), COUNT_BIG(*)) + 
+                ' database files with slow I/O. ' +
+                'Average overall latency: ' + 
+                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), AVG(i.avg_io_latency_ms))) + 
+                ' ms. ' +
+                'This may indicate an overloaded drive or underlying storage issue.',
+            url = 'https://erikdarling.com/'
+        FROM #io_stats AS i
+        WHERE 
+        (
+             i.avg_read_latency_ms > @slow_read_ms 
+          OR i.avg_write_latency_ms > @slow_write_ms
+        )
+        AND i.drive_letter IS NOT NULL
+        GROUP BY 
+            i.drive_letter
+        HAVING 
+            COUNT_BIG(*) > 1;
     
     /* Get database sizes - safely handles permissions */
     BEGIN TRY
@@ -2187,8 +2434,8 @@ BEGIN
         SELECT
             @tempdb_data_file_count = SUM(CASE WHEN tf.type_desc = 'ROWS' THEN 1 ELSE 0 END),
             @tempdb_log_file_count = SUM(CASE WHEN tf.type_desc = 'LOG' THEN 1 ELSE 0 END),
-            @min_data_file_size = MIN(CASE WHEN tf.type_desc = 'ROWS' THEN tf.size_mb ELSE NULL END),
-            @max_data_file_size = MAX(CASE WHEN tf.type_desc = 'ROWS' THEN tf.size_mb ELSE NULL END),
+            @min_data_file_size = MIN(CASE WHEN tf.type_desc = 'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
+            @max_data_file_size = MAX(CASE WHEN tf.type_desc = 'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
             @has_percent_growth = MAX(CASE WHEN tf.type_desc = 'ROWS' AND tf.is_percent_growth = 1 THEN 1 ELSE 0 END),
             @has_fixed_growth = MAX(CASE WHEN tf.type_desc = 'ROWS' AND tf.is_percent_growth = 0 THEN 1 ELSE 0 END)
         FROM #tempdb_files AS tf;
@@ -2279,7 +2526,8 @@ BEGIN
                 'More TempDB Files Than CPUs',
                 'TempDB has ' + CONVERT(nvarchar(10), @tempdb_data_file_count) + 
                 ' data files, which is more than the ' +
-                CONVERT(nvarchar(10), @processors) + ' logical processors. ',
+                CONVERT(nvarchar(10), @processors) + 
+                ' logical processors. ',
                 'https://erikdarling.com/'
             );
         END;
@@ -2303,10 +2551,13 @@ BEGIN
                 55, /* High-medium priority */
                 'TempDB Configuration',
                 'Uneven TempDB Data File Sizes',
-                'TempDB data files vary in size by ' + CONVERT(nvarchar(10), CONVERT(integer, @size_difference_pct)) + 
-                '%. Smallest: ' + CONVERT(nvarchar(10), CONVERT(integer, @min_data_file_size)) + 
-                ' MB, Largest: ' + CONVERT(nvarchar(10), CONVERT(integer, @max_data_file_size)) + 
-                ' MB. For best performance, TempDB data files should be the same size.',
+                'TempDB data files vary in size by ' + 
+                CONVERT(nvarchar(10), CONVERT(integer, @size_difference_pct)) + 
+                '%. Smallest: ' + 
+                CONVERT(nvarchar(10), CONVERT(integer, @min_data_file_size)) + 
+                ' gB, Largest: ' + 
+                CONVERT(nvarchar(10), CONVERT(integer, @max_data_file_size)) + 
+                ' gB. For best performance, TempDB data files should be the same size.',
                 'https://erikdarling.com/'
             );
         END;
@@ -2336,199 +2587,7 @@ BEGIN
                 'https://erikdarling.com/'
             );
         END;
-        
-        /*
-        Storage Performance Checks - I/O Latency for database files
-        */
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Checking storage performance', 0, 1) WITH NOWAIT;
-        END;        
-        /* Gather IO Stats */
-        INSERT INTO 
-            #io_stats
-        (
-            database_name,
-            database_id,
-            file_name,
-            type_desc,
-            io_stall_read_ms,
-            num_of_reads,
-            avg_read_latency_ms,
-            io_stall_write_ms,
-            num_of_writes,
-            avg_write_latency_ms,
-            io_stall_ms,
-            total_io,
-            avg_io_latency_ms,
-            size_mb,
-            drive_letter,
-            physical_name
-        )
-        SELECT
-            database_name = DB_NAME(fs.database_id),
-            fs.database_id,
-            file_name = mf.name,
-            mf.type_desc,
-            io_stall_read_ms = fs.io_stall_read_ms,
-            num_of_reads = fs.num_of_reads,
-            avg_read_latency_ms = 
-                CASE 
-                    WHEN fs.num_of_reads = 0 
-                    THEN 0
-                    ELSE fs.io_stall_read_ms * 1.0 / fs.num_of_reads
-                END,
-            io_stall_write_ms = fs.io_stall_write_ms,
-            num_of_writes = fs.num_of_writes,
-            avg_write_latency_ms = 
-                CASE
-                    WHEN fs.num_of_writes = 0 
-                    THEN 0
-                    ELSE fs.io_stall_write_ms * 1.0 / fs.num_of_writes
-                END,
-            io_stall_ms = fs.io_stall,
-            total_io = fs.num_of_reads + fs.num_of_writes,
-            avg_io_latency_ms = 
-                CASE
-                    WHEN (fs.num_of_reads + fs.num_of_writes) = 0 
-                    THEN 0
-                    ELSE fs.io_stall * 1.0 / (fs.num_of_reads + fs.num_of_writes)
-                END,
-            size_mb = mf.size * 8.0 / 1024,
-            drive_letter = UPPER(LEFT(mf.physical_name, 1)),
-            physical_name = mf.physical_name
-        FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS fs
-        JOIN sys.master_files AS mf
-          ON  fs.database_id = mf.database_id
-          AND fs.file_id = mf.file_id
-        WHERE (fs.num_of_reads > 0 OR fs.num_of_writes > 0); /* Only include files with some activity */
-        
-        /* Add results for slow reads */
-        INSERT INTO 
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            object_name,
-            details,
-            url
-        )
-        SELECT
-            check_id = 3001,
-            priority = 
-                CASE 
-                    WHEN i.avg_read_latency_ms > @slow_read_ms * 2 
-                    THEN 40 /* Very slow */
-                    ELSE 50 /* Moderately slow */
-                END,
-            category = 'Storage Performance',
-            finding = 'Slow Read Latency',
-            database_name = i.database_name,
-            object_name = 
-                i.file_name + 
-                ' (' + 
-                i.type_desc + 
-                ')',
-            details = 
-                'Average read latency of ' + 
-                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), i.avg_read_latency_ms)) + 
-                ' ms for ' + 
-                CONVERT(nvarchar(20), i.num_of_reads) + ' reads. ' +
-                'This is above the ' + 
-                CONVERT(nvarchar(10), CONVERT(integer, @slow_read_ms)) + 
-                ' ms threshold and may indicate storage performance issues.',
-            url = 'https://erikdarling.com/'
-        FROM #io_stats AS i
-        WHERE i.avg_read_latency_ms > @slow_read_ms
-        AND i.num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
-        
-        /* Add results for slow writes */
-        INSERT INTO 
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            object_name,
-            details,
-            url
-        )
-        SELECT
-            check_id = 3002,
-            priority = 
-                CASE 
-                    WHEN i.avg_write_latency_ms > @slow_write_ms * 2 
-                    THEN 40 /* Very slow */
-                    ELSE 50 /* Moderately slow */
-                END,
-            category = 'Storage Performance',
-            finding = 'Slow Write Latency',
-            database_name = i.database_name,
-            object_name = 
-                i.file_name + 
-                ' (' + 
-                i.type_desc + 
-                ')',
-            details = 
-                'Average write latency of ' + 
-                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), i.avg_write_latency_ms)) + 
-                ' ms for ' + 
-                CONVERT(nvarchar(20), i.num_of_writes) + 
-                ' writes. ' +
-                'This is above the ' + 
-                CONVERT(nvarchar(10), CONVERT(integer, @slow_write_ms)) + 
-                ' ms threshold and may indicate storage performance issues.',
-            url = 'https://erikdarling.com/'
-        FROM #io_stats AS i
-        WHERE i.avg_write_latency_ms > @slow_write_ms
-        AND i.num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
-        
-        /* Add drive level warnings if we have multiple slow files on same drive */
-        INSERT INTO 
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            details,
-            url
-        )
-        SELECT
-            check_id = 3003,
-            priority = 40, /* High priority */
-            category = 'Storage Performance',
-            finding = 
-                'Multiple Slow Files on Drive ' + 
-                i.drive_letter,
-            details = 
-                'Drive ' + 
-                i.drive_letter + 
-                ' has ' + 
-                CONVERT(nvarchar(10), COUNT_BIG(*)) + 
-                ' database files with slow I/O. ' +
-                'Average overall latency: ' + 
-                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), AVG(i.avg_io_latency_ms))) + 
-                ' ms. ' +
-                'This may indicate an overloaded drive or underlying storage issue.',
-            url = 'https://erikdarling.com/'
-        FROM #io_stats AS i
-        WHERE 
-        (
-             i.avg_read_latency_ms > @slow_read_ms 
-          OR i.avg_write_latency_ms > @slow_write_ms
-        )
-        AND i.drive_letter IS NOT NULL
-        GROUP BY 
-            i.drive_letter
-        HAVING 
-            COUNT_BIG(*) > 1;
-        
+                
         /* Memory configuration checks */
         IF @min_server_memory >= @max_server_memory * 0.9 /* Within 10% */
         BEGIN
@@ -2782,7 +2841,7 @@ BEGIN
                 can_access = 1 /* Default to accessible, will check individually later */
             FROM sys.databases AS d
             WHERE d.database_id > 4 /* Skip system databases */
-            AND d.state = 0; /* Only online databases */
+            AND   d.state = 0; /* Only online databases */
         END;
         ELSE
         BEGIN
@@ -2816,7 +2875,7 @@ BEGIN
                 can_access = 1 /* Default to accessible, will check individually later */
             FROM sys.databases AS d
             WHERE d.name = @database_name
-            AND d.state = 0; /* Only online databases */
+            AND   d.state = 0; /* Only online databases */
         END;
         
         /* Check each database for accessibility using three-part naming */
@@ -2882,31 +2941,6 @@ BEGIN
         Database-specific checks using three-part naming to maintain context
         */
         
-        /* Database settings check example */
-        SET @sql = N'
-        /* Check auto-shrink setting */
-        INSERT 
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            url,
-            details
-        )
-        SELECT 
-            check_id = 3001,
-            priority = 50,
-            category = ''Database Configuration'',
-            finding = ''Auto-Shrink Enabled'',
-            database_name = N''' + @current_database_name + ''',
-            url = ''https://erikdarling.com/'',
-            details = ''Database has auto-shrink enabled, which can cause significant performance problems and fragmentation.''
-        FROM ' + QUOTENAME(@current_database_name) + '.sys.databases d
-        WHERE d.name = N''' + @current_database_name + '''
-        AND d.is_auto_shrink_on = 1;';
         
         /* 
         Execute the dynamic SQL - this is just a placeholder.
