@@ -324,16 +324,17 @@ BEGIN
             category = 'CPU Configuration',
             finding = 'Offline CPU Schedulers',
             details = 
-                CONVERT(nvarchar(10), COUNT(*)) + 
+                CONVERT(nvarchar(10), COUNT_BIG(*)) + 
                 ' CPU scheduler(s) are offline out of ' +
                 CONVERT(nvarchar(10), (SELECT cpu_count FROM sys.dm_os_sys_info)) +
                 ' logical processors. This reduces available processing power. ' +
-                'Check MAXDOP settings, affinity mask configuration, and licensing.',
+                'Check affinity mask configuration, and licensing.',
             url = 'https://erikdarling.com/'
-        FROM sys.dm_os_schedulers
-        WHERE scheduler_id < 255 /* Only CPU schedulers, not internal or hidden schedulers */
-        AND status = 'VISIBLE OFFLINE'
-        HAVING COUNT(*) > 0; /* Only if there are offline schedulers */
+        FROM sys.dm_os_schedulers AS dos
+        WHERE dos.scheduler_id < 255 /* Only CPU schedulers, not internal or hidden schedulers */
+        AND   dos.status = N'VISIBLE OFFLINE'
+        HAVING 
+            COUNT_BIG(*) > 0; /* Only if there are offline schedulers */
     END;
     
     /* Check for memory-starved queries */
@@ -1233,7 +1234,7 @@ BEGIN
             BEGIN TRY
                 DECLARE @has_tables BIT;
                 SET @sql = N'SELECT @has_tables = CASE WHEN EXISTS(SELECT TOP 1 1 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables) THEN 1 ELSE 0 END';
-                EXEC sp_executesql @sql, N'@has_tables BIT OUTPUT', @has_tables = @has_tables OUTPUT;
+                EXEC sys.sp_executesql @sql, N'@has_tables BIT OUTPUT', @has_tables = @has_tables OUTPUT;
             END TRY
             BEGIN CATCH
                 /* If we can't access it, mark it */
