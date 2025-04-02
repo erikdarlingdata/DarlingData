@@ -769,6 +769,61 @@ BEGIN
         AND   dss.instant_file_initialization_enabled = N'N';
     END;
     
+    /* Check if Resource Governor is enabled */
+    IF @has_view_server_state = 1
+    BEGIN
+        /* First, add Resource Governor status to server info */
+        IF EXISTS (SELECT 1/0 FROM sys.resource_governor_configuration WHERE is_enabled = 1)
+        BEGIN
+            INSERT INTO
+                #server_info (info_type, value)
+            SELECT
+                'Resource Governor',
+                'Enabled';
+            
+            /* Add informational message about Resource Governor with query suggestion */
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 4107,
+                priority = 50, /* Medium priority */
+                category = 'Resource Limits',
+                finding = 'Resource Governor Enabled',
+                details = 
+                    'Resource Governor is enabled on this instance. This affects workload resource allocation and may ' +
+                    'impact performance by limiting resources available to various workloads. ' +
+                    'For more details, run these queries to explore your configuration:' + CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) +
+                    '/* Resource Governor configuration */' + CHAR(13) + CHAR(10) +
+                    'SELECT * FROM sys.resource_governor_configuration;' + CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) +
+                    '/* Resource pools and their settings */' + CHAR(13) + CHAR(10) +
+                    'SELECT * FROM sys.dm_resource_governor_resource_pools;' + CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) +
+                    '/* Workload groups and their settings */' + CHAR(13) + CHAR(10) +
+                    'SELECT * FROM sys.dm_resource_governor_workload_groups;' + CHAR(13) + CHAR(10) + CHAR(13) + CHAR(10) +
+                    '/* Classifier function (if configured) */' + CHAR(13) + CHAR(10) +
+                    'SELECT * FROM sys.resource_governor_configuration ' + CHAR(13) + CHAR(10) +
+                    'CROSS APPLY (SELECT OBJECT_NAME(classifier_function_id) AS classifier_function_name) AS cf;',
+                url = 'https://erikdarling.com/'
+            FROM sys.resource_governor_configuration
+            WHERE is_enabled = 1;
+        END
+        ELSE
+        BEGIN
+            INSERT INTO
+                #server_info (info_type, value)
+            SELECT
+                'Resource Governor',
+                'Disabled';
+        END;
+    END;
+    
     /* Check for globally enabled trace flags (not in Azure) */
     IF  @azure_sql_db = 0
     AND @azure_managed_instance = 0
