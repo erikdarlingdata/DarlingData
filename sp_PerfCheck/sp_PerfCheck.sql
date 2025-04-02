@@ -3540,7 +3540,8 @@ BEGIN
                 PRINT @sql;
             END;
                 
-            EXECUTE sys.sp_executesql @sql;
+            EXECUTE sys.sp_executesql 
+                @sql;
                 
                 /* Add results for non-default configurations */
                 INSERT INTO 
