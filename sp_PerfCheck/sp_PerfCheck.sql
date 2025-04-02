@@ -3453,14 +3453,15 @@ BEGIN
                 url = ''https://erikdarling.com/''
             FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
             WHERE mf.is_percent_growth = 1
-            AND mf.type_desc = ''ROWS'';';
+            AND   mf.type_desc = N''ROWS'';';
             
             IF @debug = 1
             BEGIN
                 PRINT @sql;
             END;
             
-            EXECUTE sys.sp_executesql @sql;
+            EXECUTE sys.sp_executesql 
+                @sql;
             
             /* Check for percentage growth settings on log files */
             SET @sql = N'
@@ -3492,14 +3493,15 @@ BEGIN
                 url = ''https://erikdarling.com/''
             FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
             WHERE mf.is_percent_growth = 1
-            AND mf.type_desc = ''LOG'';';
+            AND   mf.type_desc = N''LOG'';';
             
             IF @debug = 1
             BEGIN
                 PRINT @sql;
             END;
             
-            EXECUTE sys.sp_executesql @sql;
+            EXECUTE sys.sp_executesql 
+                @sql;
 
             /* Check for non-optimal log growth increments in SQL Server 2022, Azure SQL DB, or Azure MI */
             IF @product_version_major >= 16 OR @azure_sql_db = 1 OR @azure_managed_instance = 1
@@ -3532,15 +3534,16 @@ BEGIN
                     url = ''https://erikdarling.com/''
                 FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
                 WHERE mf.is_percent_growth = 0
-                AND mf.type_desc = ''LOG''
-                AND mf.growth * 8.0 / 1024 <> 64;';
+                AND   mf.type_desc = N''LOG''
+                AND   mf.growth * 8.0 / 1024 <> 64;';
                 
                 IF @debug = 1
                 BEGIN
                     PRINT @sql;
                 END;
                 
-                EXECUTE sys.sp_executesql @sql;
+                EXECUTE sys.sp_executesql 
+                    @sql;
             END;
             
             /* Check for very large fixed growth settings (>10GB) */
@@ -3575,14 +3578,15 @@ BEGIN
                 url = ''https://erikdarling.com/''
             FROM ' + QUOTENAME(@current_database_name) + '.sys.database_files AS mf
             WHERE mf.is_percent_growth = 0
-            AND mf.growth * 8.0 / 1024 / 1024 > 10; /* Growth > 10GB */';
+            AND   mf.growth * 8.0 / 1024 / 1024 > 10; /* Growth > 10GB */';
             
             IF @debug = 1
             BEGIN
                 PRINT @sql;
             END;
             
-            EXECUTE sys.sp_executesql @sql;
+            EXECUTE sys.sp_executesql 
+                @sql;
         END TRY
         BEGIN CATCH
             IF @debug = 1
