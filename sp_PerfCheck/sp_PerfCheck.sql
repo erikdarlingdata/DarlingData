@@ -1329,7 +1329,7 @@ BEGIN
             url = 'https://erikdarling.com/'
         FROM sys.configurations AS c
         WHERE c.value <> c.value_in_use
-        AND 
+        AND
         (
               c.name <> N'min server memory (MB)'
           AND c.value_in_use <> 16
