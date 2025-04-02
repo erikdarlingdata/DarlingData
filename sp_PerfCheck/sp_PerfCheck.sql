@@ -3589,7 +3589,6 @@ BEGIN
                 FROM #database_scoped_configs AS dsc
                 WHERE dsc.database_id = @current_database_id
                 AND   dsc.is_value_default = 0;
-            END;
         END TRY
         BEGIN CATCH
             IF @debug = 1
