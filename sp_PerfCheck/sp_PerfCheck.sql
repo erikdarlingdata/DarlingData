@@ -2775,6 +2775,158 @@ BEGIN
         );
     END;
 
+    /* First check what columns exist in sys.databases to handle version differences */
+    DECLARE 
+        @has_is_ledger bit = 0,
+        @has_is_accelerated_database_recovery bit = 0;
+        
+    IF COL_LENGTH('sys.databases', 'is_ledger_on') IS NOT NULL
+    BEGIN
+        SET @has_is_ledger = 1;
+    END;
+    
+    IF COL_LENGTH('sys.databases', 'is_accelerated_database_recovery_on') IS NOT NULL
+    BEGIN
+        SET @has_is_accelerated_database_recovery = 1;
+    END;
+    
+    IF @debug = 1
+    BEGIN
+        SELECT 
+            feature_check = 'Database columns',
+            has_is_ledger = @has_is_ledger,
+            has_is_accelerated_database_recovery = @has_is_accelerated_database_recovery;
+    END;
+    
+    /* Populate #databases table with version-aware dynamic SQL */
+    SET @sql = N'
+    INSERT INTO #databases
+    (
+        name,
+        database_id,
+        compatibility_level,
+        collation_name,
+        user_access_desc,
+        is_read_only,
+        is_auto_close_on,
+        is_auto_shrink_on,
+        state_desc,
+        snapshot_isolation_state_desc,
+        is_read_committed_snapshot_on,
+        is_auto_create_stats_on,
+        is_auto_create_stats_incremental_on,
+        is_auto_update_stats_on,
+        is_auto_update_stats_async_on,
+        is_ansi_null_default_on,
+        is_ansi_nulls_on,
+        is_ansi_padding_on,
+        is_ansi_warnings_on,
+        is_arithabort_on,
+        is_concat_null_yields_null_on,
+        is_numeric_roundabort_on,
+        is_quoted_identifier_on,
+        is_parameterization_forced,
+        is_query_store_on,
+        is_distributor,
+        is_cdc_enabled,
+        target_recovery_time_in_seconds,
+        delayed_durability_desc,
+        is_accelerated_database_recovery_on,
+        is_memory_optimized_enabled';
+    
+    /* Add is_ledger_on column if it exists */
+    IF @has_is_ledger = 1
+    BEGIN
+        SET @sql = @sql + N',
+        is_ledger_on';
+    END;
+    
+    SET @sql = @sql + N'
+    )
+    SELECT
+        d.name,
+        d.database_id,
+        d.compatibility_level,
+        d.collation_name,
+        d.user_access_desc,
+        d.is_read_only,
+        d.is_auto_close_on,
+        d.is_auto_shrink_on,
+        d.state_desc,
+        d.snapshot_isolation_state_desc,
+        d.is_read_committed_snapshot_on,
+        d.is_auto_create_stats_on,
+        d.is_auto_create_stats_incremental_on,
+        d.is_auto_update_stats_on,
+        d.is_auto_update_stats_async_on,
+        d.is_ansi_null_default_on,
+        d.is_ansi_nulls_on,
+        d.is_ansi_padding_on,
+        d.is_ansi_warnings_on,
+        d.is_arithabort_on,
+        d.is_concat_null_yields_null_on,
+        d.is_numeric_roundabort_on,
+        d.is_quoted_identifier_on,
+        d.is_parameterization_forced,
+        d.is_query_store_on,
+        d.is_distributor,
+        d.is_cdc_enabled,
+        d.target_recovery_time_in_seconds,
+        d.delayed_durability_desc,';
+    
+    /* Handle accelerated database recovery column */
+    IF @has_is_accelerated_database_recovery = 1
+    BEGIN
+        SET @sql = @sql + N'
+        d.is_accelerated_database_recovery_on,';
+    END
+    ELSE
+    BEGIN
+        SET @sql = @sql + N'
+        CAST(0 AS bit) AS is_accelerated_database_recovery_on,';
+    END;
+    
+    /* Handle is_memory_optimized_enabled - correctly matching our table definition */
+    SET @sql = @sql + N'
+        d.is_memory_optimized_elevate_to_snapshot';
+    
+    /* Add is_ledger_on if it exists */
+    IF @has_is_ledger = 1
+    BEGIN
+        SET @sql = @sql + N',
+        d.is_ledger_on';
+    END;
+    
+    /* Apply appropriate filters based on environment */
+    IF @azure_sql_db = 1
+    BEGIN
+        SET @sql = @sql + N'
+        FROM sys.databases AS d
+        WHERE d.database_id = DB_ID();';
+    END
+    ELSE
+    BEGIN
+        IF @database_name IS NULL
+        BEGIN
+            SET @sql = @sql + N'
+            FROM sys.databases AS d
+            WHERE d.database_id > 4;'; /* Skip system databases */
+        END
+        ELSE
+        BEGIN
+            SET @sql = @sql + N'
+            FROM sys.databases AS d
+            WHERE d.name = @database_name;';
+        END
+    END;
+    
+    IF @debug = 1
+    BEGIN
+        RAISERROR('SQL for #databases: %s', 0, 1, @sql) WITH NOWAIT;
+    END;
+    
+    EXECUTE sp_executesql @sql, N'@database_name sysname', @database_name;
+    
     /* Build database list based on context */
     IF @azure_sql_db = 1
     BEGIN
@@ -2944,6 +3096,306 @@ BEGIN
         Database-specific checks using three-part naming to maintain context
         */
         
+        /* Analyze database configuration settings */
+        
+        /* Check for auto-shrink enabled */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7001,
+            priority = 50,
+            category = 'Database Configuration',
+            finding = 'Auto-Shrink Enabled',
+            database_name = d.name,
+            details = 'Database has auto-shrink enabled, which can cause significant performance problems and fragmentation. This setting can lead to file fragmentation, performance issues, and increased I/O.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND d.is_auto_shrink_on = 1;
+        
+        /* Check for auto-close enabled */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7002,
+            priority = 50,
+            category = 'Database Configuration',
+            finding = 'Auto-Close Enabled',
+            database_name = d.name,
+            details = 'Database has auto-close enabled, which can cause connection delays while the database is reopened. This setting can impact performance for applications that frequently connect to and disconnect from the database.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND d.is_auto_close_on = 1;
+        
+        /* Check for non-MULTI_USER access mode */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7003,
+            priority = 30, /* High priority */
+            category = 'Database Configuration',
+            finding = 'Restricted Access Mode: ' + d.user_access_desc,
+            database_name = d.name,
+            details = 'Database is not in MULTI_USER mode. Current mode: ' + d.user_access_desc + '. This restricts normal database access and may prevent applications from connecting.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND d.user_access_desc <> N'MULTI_USER';
+        
+        /* Check for disabled auto-statistics settings */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7004,
+            priority = 40, /* Medium-high priority */
+            category = 'Database Configuration',
+            finding = CASE 
+                       WHEN d.is_auto_create_stats_on = 0 AND d.is_auto_update_stats_on = 0
+                       THEN 'Auto Create and Update Statistics Disabled'
+                       WHEN d.is_auto_create_stats_on = 0
+                       THEN 'Auto Create Statistics Disabled'
+                       WHEN d.is_auto_update_stats_on = 0
+                       THEN 'Auto Update Statistics Disabled'
+                     END,
+            database_name = d.name,
+            details = CASE 
+                       WHEN d.is_auto_create_stats_on = 0 AND d.is_auto_update_stats_on = 0
+                       THEN 'Both auto create and auto update statistics are disabled. This can lead to poor query performance due to outdated or missing statistics.'
+                       WHEN d.is_auto_create_stats_on = 0
+                       THEN 'Auto create statistics is disabled. This can lead to suboptimal query plans for columns without statistics.'
+                       WHEN d.is_auto_update_stats_on = 0
+                       THEN 'Auto update statistics is disabled. This can lead to poor query performance due to outdated statistics.'
+                     END,
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND (d.is_auto_create_stats_on = 0 OR d.is_auto_update_stats_on = 0);
+        
+        /* Check ANSI settings that might cause issues */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7005,
+            priority = 50, /* Medium priority */
+            category = 'Database Configuration',
+            finding = 'Non-Standard ANSI Settings',
+            database_name = d.name,
+            details = 'Database has non-standard ANSI settings: ' +
+                      CASE WHEN d.is_ansi_null_default_on = 1 THEN 'ANSI_NULL_DEFAULT ON, ' ELSE '' END +
+                      CASE WHEN d.is_ansi_nulls_on = 0 THEN 'ANSI_NULLS OFF, ' ELSE '' END +
+                      CASE WHEN d.is_ansi_padding_on = 0 THEN 'ANSI_PADDING OFF, ' ELSE '' END +
+                      CASE WHEN d.is_ansi_warnings_on = 0 THEN 'ANSI_WARNINGS OFF, ' ELSE '' END +
+                      CASE WHEN d.is_arithabort_on = 0 THEN 'ARITHABORT OFF, ' ELSE '' END +
+                      CASE WHEN d.is_concat_null_yields_null_on = 0 THEN 'CONCAT_NULL_YIELDS_NULL OFF, ' ELSE '' END +
+                      CASE WHEN d.is_numeric_roundabort_on = 1 THEN 'NUMERIC_ROUNDABORT ON, ' ELSE '' END +
+                      CASE WHEN d.is_quoted_identifier_on = 0 THEN 'QUOTED_IDENTIFIER OFF, ' ELSE '' END +
+                      'which can cause unexpected application behavior and compatibility issues.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND (
+            d.is_ansi_null_default_on = 1
+            OR d.is_ansi_nulls_on = 0
+            OR d.is_ansi_padding_on = 0
+            OR d.is_ansi_warnings_on = 0
+            OR d.is_arithabort_on = 0
+            OR d.is_concat_null_yields_null_on = 0
+            OR d.is_numeric_roundabort_on = 1
+            OR d.is_quoted_identifier_on = 0
+        );
+        
+        /* Check Query Store Status */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7006,
+            priority = 60, /* Informational priority */
+            category = 'Database Configuration',
+            finding = 'Query Store Not Enabled',
+            database_name = d.name,
+            details = 'Query Store is not enabled. Consider enabling Query Store to track query performance over time and identify regression issues.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND d.compatibility_level >= 130 /* SQL Server 2016+ */
+        AND d.is_query_store_on = 0;
+        
+        /* Check for non-default target recovery time */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7007,
+            priority = 60, /* Informational priority */
+            category = 'Database Configuration',
+            finding = 'Non-Default Target Recovery Time',
+            database_name = d.name,
+            details = 'Database target recovery time is ' + CONVERT(nvarchar(20), d.target_recovery_time_in_seconds) + ' seconds, which differs from the default of 60 seconds. This affects checkpoint frequency and recovery time.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND d.target_recovery_time_in_seconds <> 60;
+        
+        /* Check transaction durability */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7008,
+            priority = 50, /* Medium priority */
+            category = 'Database Configuration',
+            finding = 'Delayed Durability: ' + d.delayed_durability_desc,
+            database_name = d.name,
+            details = 'Database uses ' + d.delayed_durability_desc + ' durability mode. This can improve performance but increases the risk of data loss during a server failure.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND d.delayed_durability_desc <> N'DISABLED';
+        
+        /* Check if the database has accelerated database recovery disabled with SI/RCSI enabled */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7009,
+            priority = 50, /* Medium priority */
+            category = 'Database Configuration',
+            finding = 'Accelerated Database Recovery Not Enabled With Snapshot Isolation',
+            database_name = d.name,
+            details = 'Database has Snapshot Isolation or RCSI enabled but Accelerated Database Recovery (ADR) is disabled. ' +
+                      'ADR can significantly improve performance with these isolation levels by reducing version store cleanup overhead.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND d.is_accelerated_database_recovery_on = 0
+        AND (d.snapshot_isolation_state_desc = N'ON' OR d.is_read_committed_snapshot_on = 1);
+        
+        /* Check if ledger is enabled */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7010,
+            priority = 60, /* Informational priority */
+            category = 'Database Configuration',
+            finding = 'Ledger Feature Enabled',
+            database_name = d.name,
+            details = 'Database has the ledger feature enabled, which adds blockchain-like capabilities but may impact performance due to additional overhead for maintaining cryptographic verification.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND d.is_ledger_on = 1;
+        
+        /* Check memory-optimized enabled */
+        INSERT INTO 
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT 
+            check_id = 7011,
+            priority = 60, /* Informational priority */
+            category = 'Database Configuration',
+            finding = 'Memory-Optimized Features Enabled',
+            database_name = d.name,
+            details = 'Database has memory-optimized features enabled. Ensure sufficient memory is available, as memory-optimized tables reside in memory and cannot be paged out.',
+            url = 'https://erikdarling.com/'
+        FROM #databases d
+        WHERE d.database_id = @current_database_id
+        AND d.is_memory_optimized_enabled = 1;
         
         /* 
         Execute the dynamic SQL - this is just a placeholder.
