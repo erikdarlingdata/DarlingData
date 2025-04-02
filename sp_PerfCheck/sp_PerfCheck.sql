@@ -232,22 +232,22 @@ BEGIN
     CREATE TABLE 
         #io_stats
     (
-        database_name sysname NULL,
-        database_id integer NULL,
-        file_name sysname NULL,
-        type_desc nvarchar(60) NULL,
-        io_stall_read_ms bigint NULL,
-        num_of_reads bigint NULL,
-        avg_read_latency_ms decimal(18, 2) NULL,
-        io_stall_write_ms bigint NULL,
-        num_of_writes bigint NULL,
-        avg_write_latency_ms decimal(18, 2) NULL,
-        io_stall_ms bigint NULL,
-        total_io bigint NULL,
-        avg_io_latency_ms decimal(18, 2) NULL,
-        size_mb decimal(18, 2) NULL,
+        database_name sysname NOT NULL,
+        database_id integer NOT NULL,
+        file_name sysname NOT NULL,
+        type_desc nvarchar(60) NOT NULL,
+        io_stall_read_ms bigint NOT NULL,
+        num_of_reads bigint NOT NULL,
+        avg_read_latency_ms decimal(18, 2) NOT NULL,
+        io_stall_write_ms bigint NOT NULL,
+        num_of_writes bigint NOT NULL,
+        avg_write_latency_ms decimal(18, 2) NOT NULL,
+        io_stall_ms bigint NOT NULL,
+        total_io bigint NOT NULL,
+        avg_io_latency_ms decimal(18, 2) NOT NULL,
+        size_mb decimal(18, 2) NOT NULL,
         drive_letter nchar(1) NULL,
-        physical_name nvarchar(260) NULL
+        physical_name nvarchar(260) NOT NULL
     );
     
     /*
@@ -274,10 +274,10 @@ BEGIN
     CREATE TABLE 
         #trace_flags
     (
-        trace_flag integer NULL,
-        status integer NULL,
-        global integer NULL,
-        session integer NULL
+        trace_flag integer NOT NULL,
+        status integer NOT NULL,
+        global integer NOT NULL,
+        session integer NOT NULL
     );
 
     /* Create temp table for trace events */
@@ -285,8 +285,8 @@ BEGIN
         #trace_events
     (
         id integer IDENTITY PRIMARY KEY CLUSTERED,
-        event_time datetime NULL,
-        event_class integer NULL, 
+        event_time datetime NOT NULL,
+        event_class integer NOT NULL, 
         event_subclass integer NULL,
         event_name sysname NULL,
         category_name sysname NULL,
@@ -302,7 +302,7 @@ BEGIN
         text_data nvarchar(max) NULL,
         file_growth bigint NULL,
         is_auto bit NULL,
-        spid integer NULL
+        spid integer NOT NULL
     );
     
     /* Define event class mapping for more readable output */
@@ -310,8 +310,8 @@ BEGIN
         #event_class_map
     (
         event_class integer PRIMARY KEY CLUSTERED,
-        event_name sysname NULL,
-        category_name sysname NULL
+        event_name sysname NOT NULL,
+        category_name sysname NOT NULL
     );
 
     /*
