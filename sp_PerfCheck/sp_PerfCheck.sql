@@ -355,10 +355,8 @@ BEGIN
         finding = 'Memory-Starved Queries Detected',
         details = 
             'Resource semaphore has ' + 
-            CONVERT(nvarchar(10), MAX(forced_grants_count)) + 
-            ' forced grants and ' +
-            CONVERT(nvarchar(10), MAX(waiting_tasks_count)) + 
-            ' waiting tasks. ' +
+            CONVERT(nvarchar(10), MAX(forced_grant_count)) + 
+            ' forced grants. ' +
             'Target memory: ' + CONVERT(nvarchar(20), MAX(ders.target_memory_kb) / 1024) + ' MB, ' +
             'Available memory: ' + CONVERT(nvarchar(20), MAX(ders.available_memory_kb) / 1024) + ' MB, ' +
             'Granted memory: ' + CONVERT(nvarchar(20), MAX(ders.granted_memory_kb) / 1024) + ' MB. ' +
@@ -392,13 +390,18 @@ BEGIN
                 category = 'Server Stability',
                 finding = 'Memory Dumps Detected',
                 details = 
-                    CONVERT(nvarchar(10), COUNT(*)) + 
+                    CONVERT(nvarchar(10), COUNT_BIG(*)) + 
                     ' memory dump(s) found. Most recent: ' + 
-                    CONVERT(nvarchar(30), MAX(creation_time), 120) + '. ' +
-                    'Memory dumps indicate serious issues that need investigation. Check the SQL Server error log and Windows event logs.',
+                    CONVERT(nvarchar(30), MAX(dsmd.creation_time), 120) + 
+                    ', ' 
+                    +
+                    ' at ' +
+                    MAX(dsmd.filename) +
+                    '. Check the SQL Server error log and Windows event logs.',
                 url = 'https://erikdarling.com/'
-            FROM sys.dm_server_memory_dumps
-            HAVING COUNT(*) > 0; /* Only if there are memory dumps */
+            FROM sys.dm_server_memory_dumps AS dsmd
+            HAVING 
+                COUNT_BIG(*) > 0; /* Only if there are memory dumps */
         END;
     END;
     
@@ -454,16 +457,16 @@ BEGIN
         check_id = 4104,
         priority = 
             CASE
-                WHEN CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0)) > 5 THEN 20 /* Very high priority >5GB */
-                WHEN CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0)) > 2 THEN 30 /* High priority >2GB */
-                WHEN CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0)) > 1 THEN 40 /* Medium-high priority >1GB */
+                WHEN CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 5 THEN 20 /* Very high priority >5GB */
+                WHEN CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 2 THEN 30 /* High priority >2GB */
+                WHEN CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 1 THEN 40 /* Medium-high priority >1GB */
                 ELSE 50 /* Medium priority */
             END,
         category = 'Memory Usage',
         finding = 'Large Security Token Cache',
         details = 
             'TokenAndPermUserStore cache size is ' + 
-            CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0))) + 
+            CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0))) + 
             ' GB. Large security caches can consume significant memory and may indicate security-related issues ' +
             'such as excessive application role usage or frequent permission changes. ' +
             'Consider using dbo.ClearTokenPerm stored procedure to manage this issue.',
@@ -471,7 +474,7 @@ BEGIN
     FROM sys.dm_os_memory_clerks AS domc
     WHERE domc.type = N'USERSTORE_TOKENPERM'
     AND   domc.name = N'TokenAndPermUserStore'
-    AND   CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0)) > 0.5; /* Only if bigger than 500MB */
+    AND   CONVERT(DECIMAL(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 0.5; /* Only if bigger than 500MB */
     
     /* Check if Lock Pages in Memory is enabled (on-prem and managed instances only) */
     IF  @azure_sql_db = 0
@@ -497,9 +500,8 @@ BEGIN
                 'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
                 'For production SQL Servers with more than 8GB of memory, LPIM should be enabled.',
             url = 'https://erikdarling.com/'
-        FROM sys.dm_os_process_memory
-        WHERE locked_page_allocations_kb = 0
-        AND   @physical_memory_gb > 8; /* Only recommend for servers with >8GB RAM */
+        FROM sys.dm_os_process_memory AS dosp
+        WHERE dosp.locked_page_allocations_kb = 0;
     END;
     
     /* Check if Instant File Initialization is enabled (on-prem and managed instances only) */
@@ -511,12 +513,13 @@ BEGIN
         SELECT
             'Instant File Initialization',
             CASE 
-                WHEN instant_file_initialization_enabled = 1 THEN 'Enabled'
+                WHEN dss.instant_file_initialization_enabled = N'Y' 
+                THEN 'Enabled'
                 ELSE 'Disabled'
             END
-        FROM sys.dm_server_services
-        WHERE filename LIKE '%sqlservr.exe%'
-        AND   servicename LIKE 'SQL Server%';
+        FROM sys.dm_server_services AS dss
+        WHERE dss.filename LIKE N'%sqlservr.exe%'
+        AND   dss.servicename LIKE N'SQL Server%';
         
         INSERT INTO
             #results
@@ -539,9 +542,9 @@ BEGIN
                 'Enable this feature by granting the "Perform Volume Maintenance Tasks" permission to the SQL Server service account.',
             url = 'https://erikdarling.com/'
         FROM sys.dm_server_services
-        WHERE filename LIKE '%sqlservr.exe%'
-        AND   servicename LIKE 'SQL Server%'
-        AND   instant_file_initialization_enabled = 0;
+        WHERE filename LIKE N'%sqlservr.exe%'
+        AND   servicename LIKE N'SQL Server%'
+        AND   instant_file_initialization_enabled = N'N';
     END;
     
     /* Check for globally enabled trace flags (not in Azure) */
@@ -551,10 +554,10 @@ BEGIN
         /* Create a temp table for trace flags */
         CREATE TABLE #trace_flags
         (
-            trace_flag INTEGER,
-            status INTEGER,
-            global INTEGER,
-            session INTEGER
+            trace_flag integer,
+            status integer,
+            global integer,
+            session integer
         );
         
         /* Capture trace flags */
@@ -572,7 +575,7 @@ BEGIN
                 (
                     (
                         SELECT 
-                            ', ' + CONVERT(VARCHAR(10), trace_flag)
+                            ', ' + CONVERT(varchar(10), trace_flag)
                         FROM #trace_flags
                         WHERE global = 1
                         ORDER BY trace_flag
