@@ -599,6 +599,282 @@ BEGIN
         N' enabled'
     FROM sys.dm_os_sys_info AS osi;
     
+    /* Check for important events in default trace (Windows only for now) */
+    IF  @azure_sql_db = 0
+    BEGIN
+        /* Set threshold for "slow" autogrowth (in ms) */
+        DECLARE 
+            @slow_autogrow_ms integer = 1000,  /* 1 second */
+            @trace_path nvarchar(260);
+            
+        /* Get default trace path */
+        SELECT 
+            @trace_path = REVERSE(SUBSTRING(REVERSE([path]), 
+            CHARINDEX(CHAR(92), REVERSE([path])), 260)) + N'log.trc'
+        FROM sys.traces
+        WHERE is_default = 1;
+        
+        IF @trace_path IS NOT NULL
+        BEGIN
+            /* Create temp table for trace events */
+            CREATE TABLE #trace_events
+            (
+                id integer IDENTITY(1,1) PRIMARY KEY,
+                event_time datetime,
+                event_class integer, 
+                event_subclass integer,
+                event_name nvarchar(128),
+                category_name nvarchar(128),
+                database_name sysname,
+                database_id integer,
+                file_name nvarchar(260),
+                object_name nvarchar(128),
+                object_type integer,
+                duration_ms bigint,
+                severity integer,
+                success bit,
+                error integer,
+                text_data nvarchar(max),
+                file_growth bigint,
+                is_auto bit,
+                spid integer
+            );
+            
+            /* Define event class mapping for more readable output */
+            CREATE TABLE #event_class_map
+            (
+                event_class integer PRIMARY KEY,
+                event_name nvarchar(128),
+                category_name nvarchar(128)
+            );
+            
+            /* Insert common event classes we're interested in */
+            INSERT INTO #event_class_map (event_class, event_name, category_name)
+            VALUES
+                (92, 'Data File Auto Grow', 'Database'),
+                (93, 'Log File Auto Grow', 'Database'),
+                (94, 'Data File Auto Shrink', 'Database'),
+                (95, 'Log File Auto Shrink', 'Database'),
+                (116, 'DBCC Event', 'Database'),
+                (137, 'Server Memory Change', 'Server'),
+                (164, 'Object Altered', 'Object'),
+                (166, 'Object Created', 'Object');
+                
+            /* Get relevant events from default trace */
+            INSERT INTO #trace_events
+            (
+                event_time,
+                event_class,
+                event_subclass,
+                database_name,
+                database_id,
+                file_name,
+                object_name,
+                object_type,
+                duration_ms,
+                severity, 
+                success,
+                error,
+                text_data,
+                file_growth,
+                is_auto,
+                spid
+            )
+            SELECT 
+                event_time = t.StartTime,
+                event_class = t.EventClass,
+                event_subclass = t.EventSubClass,
+                database_name = DB_NAME(t.DatabaseID),
+                database_id = t.DatabaseID,
+                file_name = t.FileName,
+                object_name = t.ObjectName,
+                object_type = t.ObjectType,
+                duration_ms = t.Duration / 1000, /* Duration is in microseconds, convert to ms */
+                severity = t.Severity,
+                success = t.Success,
+                error = t.Error,
+                text_data = t.TextData,
+                file_growth = t.IntegerData, /* Size of growth in Data/Log Auto Grow event */
+                is_auto = t.IsSystem,
+                spid = t.SPID
+            FROM sys.fn_trace_gettable(@trace_path, DEFAULT) AS t
+            WHERE 
+                /* Auto-grow and auto-shrink events */
+                t.EventClass IN (92, 93, 94, 95)
+                /* DBCC Events */
+                OR (t.EventClass = 116 
+                    AND t.TextData LIKE '%DBCC%' 
+                    AND (
+                        t.TextData LIKE '%CHECKDB%' 
+                        OR t.TextData LIKE '%CHECKTABLE%'
+                        OR t.TextData LIKE '%FREEPROCCACHE%'
+                        OR t.TextData LIKE '%FREESYSTEMCACHE%'
+                        OR t.TextData LIKE '%DBCC DROPCLEANBUFFERS%'
+                        OR t.TextData LIKE '%SHRINKDATABASE%'
+                        OR t.TextData LIKE '%SHRINKFILE%'
+                    )
+                )
+                /* Server memory change events */
+                OR (t.EventClass = 137)
+                /* Deadlock events - typically not in default trace but including for completeness */
+                OR (t.EventClass = 148)
+                /* Look back at the past 7 days of events at most */
+                AND t.StartTime > DATEADD(DAY, -7, GETDATE());
+                
+            /* Update event names from map */
+            UPDATE te
+            SET 
+                event_name = m.event_name,
+                category_name = m.category_name
+            FROM #trace_events AS te
+            JOIN #event_class_map AS m
+              ON te.event_class = m.event_class;
+            
+            /* Check for slow autogrow events */
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                object_name,
+                details,
+                url
+            )
+            SELECT
+                check_id = 5001,
+                priority = 
+                    CASE
+                        WHEN event_class = 93 THEN 40 /* Log file autogrow (higher priority) */
+                        ELSE 50 /* Data file autogrow */
+                    END,
+                category = 'Database File Configuration',
+                finding = 
+                    CASE
+                        WHEN event_class = 92 THEN 'Slow Data File Auto Grow'
+                        WHEN event_class = 93 THEN 'Slow Log File Auto Grow'
+                        ELSE 'Slow File Auto Grow'
+                    END,
+                database_name = te.database_name,
+                object_name = te.file_name,
+                details = 
+                    'Auto grow operation took ' + 
+                    CONVERT(nvarchar(20), te.duration_ms) + ' ms (' + 
+                    CONVERT(nvarchar(20), te.duration_ms / 1000.0) + ' seconds) on ' +
+                    CONVERT(nvarchar(30), te.event_time, 120) + '. ' +
+                    'Growth amount: ' + 
+                    CONVERT(nvarchar(20), te.file_growth) + ' KB. ' +
+                    'Slow auto-growth events indicate potential performance issues. Consider proactively growing files or using larger growth increments.',
+                url = 'https://erikdarling.com/'
+            FROM #trace_events AS te
+            WHERE (event_class IN (92, 93)) /* Auto-grow events */
+            AND duration_ms > @slow_autogrow_ms
+            ORDER BY duration_ms DESC;
+            
+            /* Check for auto-shrink events */
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                object_name,
+                details,
+                url
+            )
+            SELECT
+                check_id = 5002,
+                priority = 60, /* Medium priority */
+                category = 'Database File Configuration',
+                finding = 
+                    CASE
+                        WHEN event_class = 94 THEN 'Data File Auto Shrink'
+                        WHEN event_class = 95 THEN 'Log File Auto Shrink'
+                        ELSE 'File Auto Shrink'
+                    END,
+                database_name = te.database_name,
+                object_name = te.file_name,
+                details = 
+                    'Auto shrink operation occurred on ' +
+                    CONVERT(nvarchar(30), te.event_time, 120) + '. ' +
+                    'Auto-shrink is generally not recommended as it can lead to file fragmentation and ' +
+                    'repeated grow/shrink cycles. Consider disabling auto-shrink on this database.',
+                url = 'https://erikdarling.com/'
+            FROM #trace_events AS te
+            WHERE event_class IN (94, 95) /* Auto-shrink events */
+            ORDER BY event_time DESC;
+            
+            /* Check for potentially problematic DBCC commands */
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                details,
+                url
+            )
+            SELECT
+                check_id = 5003,
+                priority = 
+                    CASE
+                        WHEN text_data LIKE '%FREEPROCCACHE%' 
+                             OR text_data LIKE '%FREESYSTEMCACHE%'
+                             OR text_data LIKE '%DROPCLEANBUFFERS%' THEN 40 /* Higher priority */
+                        ELSE 60 /* Medium priority */
+                    END,
+                category = 'System Management',
+                finding = 'Potentially Disruptive DBCC Command',
+                database_name = te.database_name,
+                details = 
+                    'DBCC command executed on ' +
+                    CONVERT(nvarchar(30), te.event_time, 120) + ': ' +
+                    te.text_data + '. ' +
+                    'This command can impact server performance or database integrity. ' +
+                    'Review why these commands are being executed, especially if on a production system.',
+                url = 'https://erikdarling.com/'
+            FROM #trace_events AS te
+            WHERE event_class = 116 /* DBCC events */
+            AND text_data IS NOT NULL
+            ORDER BY 
+                event_time DESC;
+                
+            /* Get summary of autogrow events for server_info */
+            DECLARE @autogrow_summary nvarchar(1000);
+            SELECT @autogrow_summary = 
+                STUFF(
+                (
+                    SELECT 
+                        N', ' + CONVERT(nvarchar(50), COUNT(*)) + 
+                        N' ' + 
+                        CASE 
+                            WHEN event_class = 92 THEN 'data file'
+                            WHEN event_class = 93 THEN 'log file'
+                        END + 
+                        ' autogrows'
+                    FROM #trace_events
+                    WHERE event_class IN (92, 93) /* Auto-grow events */
+                    GROUP BY event_class
+                    ORDER BY event_class
+                    FOR XML PATH('')
+                ), 1, 2, '');
+                
+            IF @autogrow_summary IS NOT NULL
+            BEGIN
+                INSERT INTO
+                    #server_info (info_type, value)
+                VALUES
+                    ('Recent Autogrow Events (7 days)', @autogrow_summary);
+            END;
+        END;
+    END;
+    
     /* Get database sizes - safely handles permissions */
     BEGIN TRY
         IF @azure_sql_db = 1
