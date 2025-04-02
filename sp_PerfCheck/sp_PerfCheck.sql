@@ -86,7 +86,9 @@ BEGIN
         @buffer_pool_size_gb decimal(38, 2),
         @stolen_memory_gb decimal(38, 2),
         @stolen_memory_pct decimal(10, 2),
-        @stolen_memory_threshold_pct decimal(10, 2) = 25.0; /* Alert if more than 25% memory is stolen */
+        @stolen_memory_threshold_pct decimal(10, 2) = 25.0, /* Alert if more than 25% memory is stolen */
+        /* Format the output properly without XML PATH which causes spacing issues */
+        @wait_summary nvarchar(1000) = N'';
     
     /* Set start time for runtime tracking */
     SET @start_time = SYSDATETIME();
@@ -340,6 +342,15 @@ BEGIN
         signal_wait_time_ms bigint NOT NULL,
         wait_time_percent_of_uptime decimal(5, 2) NULL,
         category nvarchar(50) NOT NULL
+    );
+
+    /* Add wait stats summary to server info - focus on uptime impact */
+    /* First get top wait categories in a temp table to format properly */
+    CREATE TABLE 
+        #wait_summary
+    (
+        category nvarchar(50) NOT NULL,
+        pct_of_uptime decimal(10, 2) NOT NULL
     );
 
     /*
@@ -939,7 +950,17 @@ BEGIN
             WHERE te.event_class = 116 /* DBCC events */
             AND   te.text_data IS NOT NULL
             GROUP BY 
-                dbcc_cmd.dbcc_pattern
+                dbcc_cmd.dbcc_pattern,
+                CASE
+                    WHEN te.text_data LIKE '%FREEPROCCACHE%' THEN 'DBCC FREEPROCCACHE'
+                    WHEN te.text_data LIKE '%FREESYSTEMCACHE%' THEN 'DBCC FREESYSTEMCACHE'
+                    WHEN te.text_data LIKE '%DROPCLEANBUFFERS%' THEN 'DBCC DROPCLEANBUFFERS'
+                    WHEN te.text_data LIKE '%CHECKDB%' THEN 'DBCC CHECKDB'
+                    WHEN te.text_data LIKE '%CHECKTABLE%' THEN 'DBCC CHECKTABLE'
+                    WHEN te.text_data LIKE '%SHRINKDATABASE%' THEN 'DBCC SHRINKDATABASE' 
+                    WHEN te.text_data LIKE '%SHRINKFILE%' THEN 'DBCC SHRINKFILE'
+                    ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands */
+                END 
             ORDER BY 
                 COUNT_BIG(*) DESC;
                 
@@ -1340,18 +1361,12 @@ BEGIN
                 ws.wait_time_percent_of_uptime >= 50.0 /* Only include waits that are at least 50% of uptime */
                 OR ws.avg_wait_ms >= 1000.0 /* Or have average wait time > 1 second */
             )
+        AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY 
             ws.wait_time_percent_of_uptime DESC;
-            
-        /* Add wait stats summary to server info - focus on uptime impact */
-        /* First get top wait categories in a temp table to format properly */
-        CREATE TABLE #wait_summary
-        (
-            category nvarchar(50) NOT NULL,
-            pct_of_uptime decimal(10, 2) NOT NULL
-        );
-        
-        INSERT INTO #wait_summary (category, pct_of_uptime)
+                    
+        INSERT INTO 
+            #wait_summary (category, pct_of_uptime)
         SELECT 
             ws.category,
             pct_of_uptime = SUM(ws.wait_time_percent_of_uptime)
@@ -1361,9 +1376,6 @@ BEGIN
             ws.category
         ORDER BY 
             SUM(ws.wait_time_percent_of_uptime) DESC;
-            
-        /* Format the output properly without XML PATH which causes spacing issues */
-        DECLARE @wait_summary nvarchar(1000) = N'';
         
         SELECT @wait_summary = 
             CASE 
