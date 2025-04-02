@@ -1562,26 +1562,29 @@ BEGIN
             INSERT INTO
                 #server_info (info_type, value)
             VALUES
-                (
-                     'Signal Wait Ratio', 
-                     CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) + 
-                     '%' +
-                     CASE 
-                         WHEN @signal_wait_ratio >= 25.0 
-                         THEN ' (High - CPU pressure detected)'
-                         WHEN @signal_wait_ratio >= 15.0 
-                         THEN ' (Moderate - CPU pressure likely)'
-                         ELSE ' (Normal)'
-                     END
-                );
+            (
+                 'Signal Wait Ratio', 
+                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) + 
+                 '%' +
+                 CASE 
+                     WHEN @signal_wait_ratio >= 25.0 
+                     THEN ' (High - CPU pressure detected)'
+                     WHEN @signal_wait_ratio >= 15.0 
+                     THEN ' (Moderate - CPU pressure likely)'
+                     ELSE ' (Normal)'
+                 END
+            );
             
             IF @sos_scheduler_yield_pct_of_uptime > 0
             BEGIN
                 INSERT INTO
                     #server_info (info_type, value)
                 VALUES
-                    ('SOS_SCHEDULER_YIELD', CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @sos_scheduler_yield_pct_of_uptime)) + 
-                     '% of server uptime');
+                (
+                    'SOS_SCHEDULER_YIELD', 
+                    CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @sos_scheduler_yield_pct_of_uptime)) + 
+                    '% of server uptime'
+                );
             END;
             
             /* Add finding if signal wait ratio exceeds threshold */
