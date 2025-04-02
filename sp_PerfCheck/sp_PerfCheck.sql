@@ -899,6 +899,535 @@ BEGIN
         END;
     END;
     
+    /* Check for significant wait stats */
+    IF @has_view_server_state = 1
+    BEGIN
+        /* Create temp table for wait stats */
+        CREATE TABLE #wait_stats
+        (
+            id integer IDENTITY(1,1) PRIMARY KEY CLUSTERED,
+            wait_type nvarchar(60) NOT NULL,
+            description nvarchar(100) NOT NULL,
+            wait_time_ms bigint NOT NULL,
+            wait_time_minutes AS (wait_time_ms / 1000.0 / 60.0),
+            wait_time_hours AS (wait_time_ms / 1000.0 / 60.0 / 60.0),
+            waiting_tasks_count bigint NOT NULL,
+            avg_wait_ms AS (wait_time_ms / NULLIF(waiting_tasks_count, 0)),
+            percentage decimal(5, 2) NOT NULL,
+            signal_wait_time_ms bigint NOT NULL,
+            wait_time_percent_of_uptime decimal(5, 2) NULL,
+            category nvarchar(50) NOT NULL
+        );
+        
+        /* Determine total waits, uptime, and significant waits */
+        DECLARE 
+            @total_waits bigint,
+            @uptime_ms bigint,
+            @significant_wait_threshold_pct decimal(5, 2) = 0.5, /* Only waits above 0.5% */
+            @significant_wait_threshold_avg decimal(10, 2) = 10.0; /* Or avg wait time > 10ms */
+            
+        /* Get uptime */
+        SELECT 
+            @uptime_ms = DATEDIFF(MILLISECOND, sqlserver_start_time, GETDATE())
+        FROM sys.dm_os_sys_info;
+        
+        /* Get total wait time */
+        SELECT 
+            @total_waits = SUM(wait_time_ms)
+        FROM sys.dm_os_wait_stats
+        WHERE wait_type NOT IN (
+            /* Skip benign waits based on sys.dm_os_wait_stats documentation */
+            N'BROKER_TASK_STOP',
+            N'BROKER_TO_FLUSH',
+            N'BROKER_TRANSMITTER',
+            N'CHECKPOINT_QUEUE',
+            N'CLR_AUTO_EVENT',
+            N'CLR_MANUAL_EVENT',
+            N'DIRTY_PAGE_POLL',
+            N'DISPATCHER_QUEUE_SEMAPHORE',
+            N'EXECSYNC',
+            N'FSAGENT',
+            N'FT_IFTS_SCHEDULER_IDLE_WAIT',
+            N'FT_IFTSHC_MUTEX',
+            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
+            N'HADR_LOGCAPTURE_WAIT',
+            N'HADR_TIMER_TASK',
+            N'HADR_WORK_QUEUE',
+            N'LAZYWRITER_SLEEP',
+            N'LOGMGR_QUEUE',
+            N'MEMORY_ALLOCATION_EXT',
+            N'PREEMPTIVE_XE_GETTARGETSTATE',
+            N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
+            N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
+            N'REQUEST_FOR_DEADLOCK_SEARCH',
+            N'RESOURCE_QUEUE',
+            N'SERVER_IDLE_CHECK',
+            N'SLEEP_BPOOL_FLUSH',
+            N'SLEEP_DBSTARTUP',
+            N'SLEEP_DCOMSTARTUP',
+            N'SLEEP_MASTERDBREADY',
+            N'SLEEP_MASTERMDREADY',
+            N'SLEEP_MASTERUPGRADED',
+            N'SLEEP_MSDBSTARTUP',
+            N'SLEEP_SYSTEMTASK',
+            N'SLEEP_TEMPDBSTARTUP',
+            N'SNI_HTTP_ACCEPT',
+            N'SP_SERVER_DIAGNOSTICS_SLEEP',
+            N'SQLTRACE_BUFFER_FLUSH',
+            N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
+            N'SQLTRACE_WAIT_ENTRIES',
+            N'STARTUP_DEPENDENCY_MANAGER',
+            N'WAIT_FOR_RESULTS',
+            N'WAITFOR',
+            N'WAITFOR_TASKSHUTDOWN',
+            N'WAIT_XTP_HOST_WAIT',
+            N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
+            N'WAIT_XTP_CKPT_CLOSE',
+            N'XE_DISPATCHER_JOIN',
+            N'XE_DISPATCHER_WAIT',
+            N'XE_LIVE_TARGET_TVF',
+            N'XE_TIMER_EVENT'
+        );
+        
+        /* Insert important waits into the temp table */
+        INSERT INTO #wait_stats
+        (
+            wait_type,
+            description,
+            wait_time_ms,
+            waiting_tasks_count,
+            signal_wait_time_ms,
+            percentage,
+            category
+        )
+        SELECT
+            dows.wait_type,
+            description = 
+                CASE
+                    WHEN dows.wait_type = N'PAGEIOLATCH_SH'
+                    THEN N'Selects reading pages from disk into memory'
+                    WHEN dows.wait_type = N'PAGEIOLATCH_EX'
+                    THEN N'Modifications reading pages from disk into memory'
+                    WHEN dows.wait_type = N'RESOURCE_SEMAPHORE'
+                    THEN N'Queries waiting to get memory to run'
+                    WHEN dows.wait_type = N'RESOURCE_SEMAPHORE_QUERY_COMPILE'
+                    THEN N'Queries waiting to get memory to compile'
+                    WHEN dows.wait_type = N'CXPACKET'
+                    THEN N'Query parallelism'
+                    WHEN dows.wait_type = N'CXCONSUMER'
+                    THEN N'Query parallelism'
+                    WHEN dows.wait_type = N'CXSYNC_PORT'
+                    THEN N'Query parallelism'
+                    WHEN dows.wait_type = N'CXSYNC_CONSUMER'
+                    THEN N'Query parallelism'
+                    WHEN dows.wait_type = N'SOS_SCHEDULER_YIELD'
+                    THEN N'Query scheduling'
+                    WHEN dows.wait_type = N'THREADPOOL'
+                    THEN N'Potential worker thread exhaustion'
+                    WHEN dows.wait_type = N'RESOURCE_GOVERNOR_IDLE'
+                    THEN N'Potential CPU cap waits'
+                    WHEN dows.wait_type = N'CMEMTHREAD'
+                    THEN N'Tasks waiting on memory objects'
+                    WHEN dows.wait_type = N'PAGELATCH_EX'
+                    THEN N'Potential tempdb contention'
+                    WHEN dows.wait_type = N'PAGELATCH_SH'
+                    THEN N'Potential tempdb contention'
+                    WHEN dows.wait_type = N'PAGELATCH_UP'
+                    THEN N'Potential tempdb contention'
+                    WHEN dows.wait_type LIKE N'LCK%'
+                    THEN N'Queries waiting to acquire locks'
+                    WHEN dows.wait_type = N'WRITELOG'
+                    THEN N'Transaction Log writes'
+                    WHEN dows.wait_type = N'LOGBUFFER'
+                    THEN N'Transaction Log buffering'
+                    WHEN dows.wait_type = N'LOG_RATE_GOVERNOR'
+                    THEN N'Azure Transaction Log throttling'
+                    WHEN dows.wait_type = N'POOL_LOG_RATE_GOVERNOR'
+                    THEN N'Azure Transaction Log throttling'
+                    WHEN dows.wait_type = N'SLEEP_TASK'
+                    THEN N'Potential Hash spills'
+                    WHEN dows.wait_type = N'BPSORT'
+                    THEN N'Potential batch mode sort performance issues'
+                    WHEN dows.wait_type = N'EXECSYNC'
+                    THEN N'Potential eager index spool creation'
+                    WHEN dows.wait_type = N'IO_COMPLETION'
+                    THEN N'Potential sort spills'
+                    WHEN dows.wait_type = N'ASYNC_NETWORK_IO'
+                    THEN N'Potential client issues'
+                    WHEN dows.wait_type = N'SLEEP_BPOOL_STEAL'
+                    THEN N'Potential buffer pool pressure'
+                    WHEN dows.wait_type = N'PWAIT_QRY_BPMEMORY'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTREPARTITION'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTBUILD'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTMEMO'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTDELETE'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'HTREINIT'
+                    THEN N'Potential batch mode performance issues'
+                    WHEN dows.wait_type = N'BTREE_INSERT_FLOW_CONTROL'
+                    THEN N'Optimize For Sequential Key'
+                    WHEN dows.wait_type = N'HADR_SYNC_COMMIT'
+                    THEN N'Potential Availability Group Issues'
+                    WHEN dows.wait_type = N'HADR_GROUP_COMMIT'
+                    THEN N'Potential Availability Group Issues'
+                    WHEN dows.wait_type = N'WAIT_ON_SYNC_STATISTICS_REFRESH'
+                    THEN N'Waiting on sync stats updates (compilation)'                    
+                    WHEN dows.wait_type = N'IO_QUEUE_LIMIT'
+                    THEN N'Azure SQLDB Throttling'
+                    WHEN dows.wait_type = N'IO_RETRY'
+                    THEN N'I/O Failures retried'
+                    WHEN dows.wait_type = N'RESMGR_THROTTLED'
+                    THEN N'Azure SQLDB Throttling'
+                    ELSE N'Other significant wait type'
+                END,
+            wait_time_ms = dows.wait_time_ms,
+            waiting_tasks_count = dows.waiting_tasks_count,
+            signal_wait_time_ms = dows.signal_wait_time_ms,
+            percentage = CONVERT(decimal(5,2), dows.wait_time_ms * 100.0 / @total_waits),
+            category = 
+                CASE
+                    WHEN dows.wait_type IN (N'PAGEIOLATCH_SH', N'PAGEIOLATCH_EX', N'IO_COMPLETION', N'IO_RETRY')
+                    THEN N'I/O'
+                    WHEN dows.wait_type IN (N'RESOURCE_SEMAPHORE', N'RESOURCE_SEMAPHORE_QUERY_COMPILE', N'CMEMTHREAD', N'SLEEP_BPOOL_STEAL')
+                    THEN N'Memory'
+                    WHEN dows.wait_type IN (N'CXPACKET', N'CXCONSUMER', N'CXSYNC_PORT', N'CXSYNC_CONSUMER')
+                    THEN N'Parallelism'
+                    WHEN dows.wait_type IN (N'SOS_SCHEDULER_YIELD', N'THREADPOOL', N'RESOURCE_GOVERNOR_IDLE')
+                    THEN N'CPU'
+                    WHEN dows.wait_type IN (N'PAGELATCH_EX', N'PAGELATCH_SH', N'PAGELATCH_UP')
+                    THEN N'TempDB Contention'
+                    WHEN dows.wait_type LIKE N'LCK%'
+                    THEN N'Locking'
+                    WHEN dows.wait_type IN (N'WRITELOG', N'LOGBUFFER', N'LOG_RATE_GOVERNOR', N'POOL_LOG_RATE_GOVERNOR')
+                    THEN N'Transaction Log'
+                    WHEN dows.wait_type IN (N'SLEEP_TASK', N'BPSORT', N'PWAIT_QRY_BPMEMORY', N'HTREPARTITION', N'HTBUILD', N'HTMEMO', N'HTDELETE', N'HTREINIT')
+                    THEN N'Query Execution'
+                    WHEN dows.wait_type = N'ASYNC_NETWORK_IO'
+                    THEN N'Network'
+                    WHEN dows.wait_type IN (N'HADR_SYNC_COMMIT', N'HADR_GROUP_COMMIT')
+                    THEN N'Availability Groups'
+                    WHEN dows.wait_type IN (N'IO_QUEUE_LIMIT', N'RESMGR_THROTTLED')
+                    THEN N'Azure SQL Throttling'
+                    WHEN dows.wait_type = N'BTREE_INSERT_FLOW_CONTROL'
+                    THEN N'Index Management'
+                    WHEN dows.wait_type = N'WAIT_ON_SYNC_STATISTICS_REFRESH'
+                    THEN N'Statistics'
+                    ELSE N'Other'
+                END
+        FROM sys.dm_os_wait_stats AS dows
+        WHERE dows.wait_type NOT IN (
+            /* Skip benign waits based on sys.dm_os_wait_stats documentation */
+            N'BROKER_TASK_STOP',
+            N'BROKER_TO_FLUSH',
+            N'BROKER_TRANSMITTER',
+            N'CHECKPOINT_QUEUE',
+            N'CLR_AUTO_EVENT',
+            N'CLR_MANUAL_EVENT',
+            N'DIRTY_PAGE_POLL',
+            N'DISPATCHER_QUEUE_SEMAPHORE',
+            N'EXECSYNC',
+            N'FSAGENT',
+            N'FT_IFTS_SCHEDULER_IDLE_WAIT',
+            N'FT_IFTSHC_MUTEX',
+            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
+            N'HADR_LOGCAPTURE_WAIT',
+            N'HADR_TIMER_TASK',
+            N'HADR_WORK_QUEUE',
+            N'LAZYWRITER_SLEEP',
+            N'LOGMGR_QUEUE',
+            N'MEMORY_ALLOCATION_EXT',
+            N'PREEMPTIVE_XE_GETTARGETSTATE',
+            N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
+            N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
+            N'REQUEST_FOR_DEADLOCK_SEARCH',
+            N'RESOURCE_QUEUE',
+            N'SERVER_IDLE_CHECK',
+            N'SLEEP_BPOOL_FLUSH',
+            N'SLEEP_DBSTARTUP',
+            N'SLEEP_DCOMSTARTUP',
+            N'SLEEP_MASTERDBREADY',
+            N'SLEEP_MASTERMDREADY',
+            N'SLEEP_MASTERUPGRADED',
+            N'SLEEP_MSDBSTARTUP',
+            N'SLEEP_SYSTEMTASK',
+            N'SLEEP_TEMPDBSTARTUP',
+            N'SNI_HTTP_ACCEPT',
+            N'SP_SERVER_DIAGNOSTICS_SLEEP',
+            N'SQLTRACE_BUFFER_FLUSH',
+            N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
+            N'SQLTRACE_WAIT_ENTRIES',
+            N'STARTUP_DEPENDENCY_MANAGER',
+            N'WAIT_FOR_RESULTS',
+            N'WAITFOR',
+            N'WAITFOR_TASKSHUTDOWN',
+            N'WAIT_XTP_HOST_WAIT',
+            N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
+            N'WAIT_XTP_CKPT_CLOSE',
+            N'XE_DISPATCHER_JOIN',
+            N'XE_DISPATCHER_WAIT',
+            N'XE_LIVE_TARGET_TVF',
+            N'XE_TIMER_EVENT'
+        )
+        /* Only include specific wait types identified as important */
+        AND (
+            dows.wait_type = N'PAGEIOLATCH_SH'
+            OR dows.wait_type = N'PAGEIOLATCH_EX'
+            OR dows.wait_type = N'RESOURCE_SEMAPHORE'
+            OR dows.wait_type = N'RESOURCE_SEMAPHORE_QUERY_COMPILE'
+            OR dows.wait_type = N'CXPACKET'
+            OR dows.wait_type = N'CXCONSUMER'
+            OR dows.wait_type = N'CXSYNC_PORT'
+            OR dows.wait_type = N'CXSYNC_CONSUMER'
+            OR dows.wait_type = N'SOS_SCHEDULER_YIELD'
+            OR dows.wait_type = N'THREADPOOL'
+            OR dows.wait_type = N'RESOURCE_GOVERNOR_IDLE'
+            OR dows.wait_type = N'CMEMTHREAD'
+            OR dows.wait_type = N'PAGELATCH_EX'
+            OR dows.wait_type = N'PAGELATCH_SH'
+            OR dows.wait_type = N'PAGELATCH_UP'
+            OR dows.wait_type LIKE N'LCK%'
+            OR dows.wait_type = N'WRITELOG'
+            OR dows.wait_type = N'LOGBUFFER'
+            OR dows.wait_type = N'LOG_RATE_GOVERNOR'
+            OR dows.wait_type = N'POOL_LOG_RATE_GOVERNOR'
+            OR dows.wait_type = N'SLEEP_TASK'
+            OR dows.wait_type = N'BPSORT'
+            OR dows.wait_type = N'EXECSYNC'
+            OR dows.wait_type = N'IO_COMPLETION'
+            OR dows.wait_type = N'ASYNC_NETWORK_IO'
+            OR dows.wait_type = N'SLEEP_BPOOL_STEAL'
+            OR dows.wait_type = N'PWAIT_QRY_BPMEMORY'
+            OR dows.wait_type = N'HTREPARTITION'
+            OR dows.wait_type = N'HTBUILD'
+            OR dows.wait_type = N'HTMEMO'
+            OR dows.wait_type = N'HTDELETE'
+            OR dows.wait_type = N'HTREINIT'
+            OR dows.wait_type = N'BTREE_INSERT_FLOW_CONTROL'
+            OR dows.wait_type = N'HADR_SYNC_COMMIT'
+            OR dows.wait_type = N'HADR_GROUP_COMMIT'
+            OR dows.wait_type = N'WAIT_ON_SYNC_STATISTICS_REFRESH'
+            OR dows.wait_type = N'IO_QUEUE_LIMIT'
+            OR dows.wait_type = N'IO_RETRY'
+            OR dows.wait_type = N'RESMGR_THROTTLED'
+        )
+        /* Only include waits that are significant in terms of total wait percentage or average wait time */
+        AND (
+            (dows.wait_time_ms * 1.0 / @total_waits) > (@significant_wait_threshold_pct / 100.0)
+            OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > @significant_wait_threshold_avg
+        );
+        
+        /* Calculate wait time as percentage of uptime */
+        UPDATE #wait_stats
+        SET wait_time_percent_of_uptime = (wait_time_ms * 100.0 / @uptime_ms);
+        
+        /* Add top wait stats to results */
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT TOP (10) /* Only report top 10 waits */
+            check_id = 6001,
+            priority = 
+                CASE
+                    WHEN wait_time_percent_of_uptime > 40 OR percentage > 30 THEN 30 /* High priority */
+                    WHEN wait_time_percent_of_uptime > 20 OR percentage > 15 THEN 40 /* Medium-high priority */
+                    ELSE 50 /* Medium priority */
+                END,
+            category = 'Wait Statistics',
+            finding = 'Significant Wait Type: ' + wait_type + ' (' + ws.category + ')',
+            details = 
+                'Wait type: ' + wait_type + 
+                ' represents ' + CONVERT(nvarchar(10), CONVERT(decimal(5,2), percentage)) + '% of all waits' +
+                ' (' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), wait_time_minutes)) + ' minutes). ' +
+                'Average wait: ' + CONVERT(nvarchar(10), CONVERT(decimal(10, 2), avg_wait_ms)) + ' ms per wait. ' +
+                'This wait type represents ' + CONVERT(nvarchar(10), CONVERT(decimal(5, 2), wait_time_percent_of_uptime)) + '% of server uptime. ' +
+                'Description: ' + description,
+            url = 'https://erikdarling.com/'
+        FROM #wait_stats AS ws
+        ORDER BY 
+            percentage DESC, 
+            wait_time_ms DESC;
+            
+        /* Add wait stats summary to server info */
+        INSERT INTO
+            #server_info (info_type, value)
+        SELECT TOP (1)
+            'Wait Stats Summary',
+            'Top categories: ' +
+            STUFF(
+            (
+                SELECT 
+                    TOP (3) /* Only include top 3 categories */
+                    ', ' + category + ' (' + 
+                    CONVERT(nvarchar(10), CONVERT(decimal(5,2), 
+                        SUM(percentage))) + '%)'
+                FROM #wait_stats
+                GROUP BY 
+                    category
+                ORDER BY 
+                    SUM(percentage) DESC
+                FOR XML PATH('')
+            ), 1, 2, '')
+        FROM #wait_stats
+        WHERE percentage > 0;
+    END;
+    
+    /* Check for stolen memory from buffer pool */
+    IF @has_view_server_state = 1
+    BEGIN
+        /* Threshold settings for stolen memory alert */
+        DECLARE 
+            @buffer_pool_size_gb decimal(38, 2),
+            @stolen_memory_gb decimal(38, 2),
+            @stolen_memory_pct decimal(10, 2),
+            @stolen_memory_threshold_pct decimal(10, 2) = 25.0; /* Alert if more than 25% memory is stolen */
+        
+        /* Get buffer pool size */
+        SELECT 
+            @buffer_pool_size_gb = CONVERT(decimal(38, 2), 
+                SUM(
+                    CASE
+                        /* Handle different SQL Server versions */
+                        WHEN EXISTS (SELECT 1 FROM sys.all_columns 
+                                     WHERE object_id = OBJECT_ID('sys.dm_os_memory_clerks') 
+                                     AND name = 'pages_kb')
+                        THEN domc.pages_kb
+                        ELSE domc.single_pages_kb + domc.multi_pages_kb
+                    END
+                ) / 1024.0 / 1024.0
+            )
+        FROM sys.dm_os_memory_clerks AS domc
+        WHERE domc.type = N'MEMORYCLERK_SQLBUFFERPOOL'
+        AND domc.memory_node_id < 64;
+        
+        /* Get stolen memory */
+        SELECT
+            @stolen_memory_gb = CONVERT(decimal(38, 2), dopc.cntr_value / 1024.0 / 1024.0)
+        FROM sys.dm_os_performance_counters AS dopc
+        WHERE dopc.counter_name LIKE N'Stolen Server%';
+        
+        /* Calculate stolen memory percentage */
+        IF @buffer_pool_size_gb > 0
+        BEGIN
+            SET @stolen_memory_pct = (@stolen_memory_gb / (@buffer_pool_size_gb + @stolen_memory_gb)) * 100.0;
+            
+            /* Add buffer pool info to server_info */
+            INSERT INTO
+                #server_info (info_type, value)
+            VALUES
+                ('Buffer Pool Size', CONVERT(nvarchar(20), @buffer_pool_size_gb) + ' GB');
+                
+            INSERT INTO
+                #server_info (info_type, value)
+            VALUES
+                ('Stolen Memory', CONVERT(nvarchar(20), @stolen_memory_gb) + ' GB (' + 
+                 CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) + '%)');
+            
+            /* Add finding if stolen memory exceeds threshold */
+            IF @stolen_memory_pct > @stolen_memory_threshold_pct
+            BEGIN
+                INSERT INTO
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    details,
+                    url
+                )
+                VALUES
+                (
+                    check_id = 6002,
+                    priority = 
+                        CASE
+                            WHEN @stolen_memory_pct > 40 THEN 30 /* High priority if >40% stolen */
+                            WHEN @stolen_memory_pct > 30 THEN 40 /* Medium-high priority if >30% stolen */
+                            ELSE 50 /* Medium priority */
+                        END,
+                    category = 'Memory Usage',
+                    finding = 'High Stolen Memory Percentage',
+                    details = 
+                        'Memory stolen from buffer pool: ' + CONVERT(nvarchar(20), @stolen_memory_gb) + 
+                        ' GB (' + CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) + 
+                        '% of total memory). This reduces memory available for data caching and can impact performance. ' +
+                        'Consider investigating memory usage by CLR, extended stored procedures, linked servers, or other memory clerks.',
+                    url = 'https://erikdarling.com/'
+                );
+                
+                /* Also add the top 5 non-buffer pool memory consumers for visibility */
+                INSERT INTO
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    details,
+                    url
+                )
+                SELECT 
+                    check_id = 6003,
+                    priority = 60, /* Informational priority */
+                    category = 'Memory Usage',
+                    finding = 'Top Memory Consumer: ' + domc.type,
+                    details = 
+                        'Memory clerk "' + domc.type + '" is using ' + 
+                        CONVERT(nvarchar(20), 
+                            CONVERT(decimal(38, 2),
+                                SUM(
+                                    CASE
+                                        /* Handle different SQL Server versions */
+                                        WHEN EXISTS (SELECT 1 FROM sys.all_columns 
+                                                    WHERE object_id = OBJECT_ID('sys.dm_os_memory_clerks') 
+                                                    AND name = 'pages_kb')
+                                        THEN domc.pages_kb
+                                        ELSE domc.single_pages_kb + domc.multi_pages_kb
+                                    END
+                                ) / 1024.0 / 1024.0
+                            )
+                        ) + ' GB of memory. This is one of the top consumers of memory outside the buffer pool.',
+                    url = 'https://erikdarling.com/'
+                FROM sys.dm_os_memory_clerks AS domc
+                WHERE domc.type <> N'MEMORYCLERK_SQLBUFFERPOOL'
+                GROUP BY domc.type
+                HAVING SUM(
+                        CASE
+                            /* Handle different SQL Server versions */
+                            WHEN EXISTS (SELECT 1 FROM sys.all_columns 
+                                        WHERE object_id = OBJECT_ID('sys.dm_os_memory_clerks') 
+                                        AND name = 'pages_kb')
+                            THEN domc.pages_kb
+                            ELSE domc.single_pages_kb + domc.multi_pages_kb
+                        END
+                    ) / 1024.0 / 1024.0 > 0.1 /* Only show clerks using more than 100 MB */
+                ORDER BY
+                    SUM(
+                        CASE
+                            /* Handle different SQL Server versions */
+                            WHEN EXISTS (SELECT 1 FROM sys.all_columns 
+                                        WHERE object_id = OBJECT_ID('sys.dm_os_memory_clerks') 
+                                        AND name = 'pages_kb')
+                            THEN domc.pages_kb
+                            ELSE domc.single_pages_kb + domc.multi_pages_kb
+                        END
+                    ) DESC
+                OFFSET 0 ROWS
+                FETCH NEXT 5 ROWS ONLY;
+            END;
+        END;
+    END;
+    
     /* Get database sizes - safely handles permissions */
     BEGIN TRY
         IF @azure_sql_db = 1
