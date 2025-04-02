@@ -368,6 +368,219 @@ BEGIN
     WHERE forced_grants_count > 0
     HAVING MAX(forced_grants_count) > 0; /* Only if there are actually forced grants */
     
+    /* Check for SQL Server memory dumps (on-prem only) */
+    IF  @azure_sql_db = 0
+    AND @azure_managed_instance = 0
+    BEGIN
+        /* First check if the DMV exists (SQL 2008+) */
+        IF OBJECT_ID('sys.dm_server_memory_dumps') IS NOT NULL
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 4102,
+                priority = 20, /* Very high priority */
+                category = 'Server Stability',
+                finding = 'Memory Dumps Detected',
+                details = 
+                    CONVERT(nvarchar(10), COUNT(*)) + 
+                    ' memory dump(s) found. Most recent: ' + 
+                    CONVERT(nvarchar(30), MAX(creation_time), 120) + '. ' +
+                    'Memory dumps indicate serious issues that need investigation. Check the SQL Server error log and Windows event logs.',
+                url = 'https://erikdarling.com/'
+            FROM sys.dm_server_memory_dumps
+            HAVING COUNT(*) > 0; /* Only if there are memory dumps */
+        END;
+    END;
+    
+    /* Check for high number of deadlocks */
+    INSERT INTO
+        #results
+    (
+        check_id,
+        priority,
+        category,
+        finding,
+        details,
+        url
+    )
+    SELECT
+        check_id = 4103,
+        priority = 
+            CASE
+                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, d.create_date, GETDATE()), 0)) > 100 THEN 20 /* Very high priority */
+                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, d.create_date, GETDATE()), 0)) > 50 THEN 30 /* High priority */
+                ELSE 40 /* Medium-high priority */
+            END,
+        category = 'Concurrency',
+        finding = 'High Number of Deadlocks',
+        details = 
+            'Server is averaging ' + 
+            CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), 1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, d.create_date, GETDATE()), 0))) + 
+            ' deadlocks per day since startup (' + 
+            CONVERT(nvarchar(20), p.cntr_value) + ' total deadlocks over ' + 
+            CONVERT(nvarchar(10), DATEDIFF(DAY, d.create_date, GETDATE())) + ' days). ' +
+            'High deadlock rates indicate concurrency issues that should be investigated.',
+        url = 'https://erikdarling.com/'
+    FROM sys.dm_os_performance_counters AS p
+    JOIN sys.databases AS d 
+      ON d.name = 'tempdb'
+    WHERE RTRIM(p.counter_name) = 'Number of Deadlocks/sec'
+    AND   RTRIM(p.instance_name) = '_Total'
+    AND   p.cntr_value > 0
+    AND   (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, d.create_date, GETDATE()), 0)) > 9; /* More than 9 deadlocks per day */
+    
+    /* Check for large USERSTORE_TOKENPERM (security cache) */
+    INSERT INTO
+        #results
+    (
+        check_id,
+        priority,
+        category,
+        finding,
+        details,
+        url
+    )
+    SELECT
+        check_id = 4104,
+        priority = 
+            CASE
+                WHEN CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0)) > 5 THEN 20 /* Very high priority >5GB */
+                WHEN CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0)) > 2 THEN 30 /* High priority >2GB */
+                WHEN CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0)) > 1 THEN 40 /* Medium-high priority >1GB */
+                ELSE 50 /* Medium priority */
+            END,
+        category = 'Memory Usage',
+        finding = 'Large Security Token Cache',
+        details = 
+            'TokenAndPermUserStore cache size is ' + 
+            CONVERT(nvarchar(20), CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0))) + 
+            ' GB. Large security caches can consume significant memory and may indicate security-related issues ' +
+            'such as excessive application role usage or frequent permission changes. ' +
+            'Consider using dbo.ClearTokenPerm stored procedure to manage this issue.',
+        url = 'https://www.erikdarling.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/'
+    FROM sys.dm_os_memory_clerks AS domc
+    WHERE domc.type = N'USERSTORE_TOKENPERM'
+    AND   domc.name = N'TokenAndPermUserStore'
+    AND   CONVERT(DECIMAL(10, 2), (pages_kb / 1024.0 / 1024.0)) > 0.5; /* Only if bigger than 500MB */
+    
+    /* Check if Lock Pages in Memory is enabled (on-prem and managed instances only) */
+    IF  @azure_sql_db = 0
+    AND @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT
+            check_id = 4105,
+            priority = 50, /* Medium priority */
+            category = 'Memory Configuration',
+            finding = 'Lock Pages in Memory Not Enabled',
+            details = 
+                'SQL Server is not using locked pages in memory (LPIM). This can lead to Windows ' +
+                'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
+                'For production SQL Servers with more than 8GB of memory, LPIM should be enabled.',
+            url = 'https://erikdarling.com/'
+        FROM sys.dm_os_process_memory
+        WHERE locked_page_allocations_kb = 0
+        AND   @physical_memory_gb > 8; /* Only recommend for servers with >8GB RAM */
+    END;
+    
+    /* Check if Instant File Initialization is enabled (on-prem and managed instances only) */
+    IF  @azure_sql_db = 0 
+    AND @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #server_info (info_type, value)
+        SELECT
+            'Instant File Initialization',
+            CASE 
+                WHEN instant_file_initialization_enabled = 1 THEN 'Enabled'
+                ELSE 'Disabled'
+            END
+        FROM sys.dm_server_services
+        WHERE filename LIKE '%sqlservr.exe%'
+        AND   servicename LIKE 'SQL Server%';
+        
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT TOP (1)
+            check_id = 4106,
+            priority = 50, /* Medium priority */
+            category = 'Storage Configuration',
+            finding = 'Instant File Initialization Disabled',
+            details = 
+                'Instant File Initialization is not enabled. This can significantly slow down database file ' +
+                'creation and growth operations, as SQL Server must zero out data files before using them. ' +
+                'Enable this feature by granting the "Perform Volume Maintenance Tasks" permission to the SQL Server service account.',
+            url = 'https://erikdarling.com/'
+        FROM sys.dm_server_services
+        WHERE filename LIKE '%sqlservr.exe%'
+        AND   servicename LIKE 'SQL Server%'
+        AND   instant_file_initialization_enabled = 0;
+    END;
+    
+    /* Check for globally enabled trace flags (not in Azure) */
+    IF  @azure_sql_db = 0
+    AND @azure_managed_instance = 0
+    BEGIN
+        /* Create a temp table for trace flags */
+        CREATE TABLE #trace_flags
+        (
+            trace_flag INTEGER,
+            status INTEGER,
+            global INTEGER,
+            session INTEGER
+        );
+        
+        /* Capture trace flags */
+        INSERT INTO #trace_flags
+        EXEC ('DBCC TRACESTATUS WITH NO_INFOMSGS');
+        
+        /* Add trace flags to server info */
+        IF EXISTS (SELECT 1 FROM #trace_flags WHERE global = 1)
+        BEGIN
+            INSERT INTO
+                #server_info (info_type, value)
+            SELECT
+                'Global Trace Flags',
+                STUFF
+                (
+                    (
+                        SELECT 
+                            ', ' + CONVERT(VARCHAR(10), trace_flag)
+                        FROM #trace_flags
+                        WHERE global = 1
+                        ORDER BY trace_flag
+                        FOR XML PATH('')
+                    ), 1, 2, ''
+                );
+        END;
+    END;
+    
     /* Memory information - works on all platforms */
     INSERT INTO 
         #server_info (info_type, value)
