@@ -1076,7 +1076,7 @@ BEGIN
         FROM sys.configurations AS c
         WHERE 
             /* Access check cache settings */
-            (c.name = N'access check cache bucket count' AND c.value_in_use <> 0)
+               (c.name = N'access check cache bucket count' AND c.value_in_use <> 0)
             OR (c.name = N'access check cache quota' AND c.value_in_use <> 0)
             OR (c.name = N'Ad Hoc Distributed Queries' AND c.value_in_use <> 0)
             
@@ -1223,7 +1223,6 @@ BEGIN
         
         /* Check for more files than CPUs */
         IF  @tempdb_data_file_count > @processors 
-        AND @processors > 8
         BEGIN
             INSERT INTO 
                 #results
@@ -1243,8 +1242,7 @@ BEGIN
                 'More TempDB Files Than CPUs',
                 'TempDB has ' + CONVERT(nvarchar(10), @tempdb_data_file_count) + 
                 ' data files, which is more than the ' +
-                CONVERT(nvarchar(10), @processors) + ' logical processors. ' +
-                'This is not necessarily a problem, but typically not needed for systems with more than 8 cores.',
+                CONVERT(nvarchar(10), @processors) + ' logical processors. ',
                 'https://erikdarling.com/'
             );
         END;
@@ -1310,7 +1308,8 @@ BEGIN
             RAISERROR('Checking storage performance', 0, 1) WITH NOWAIT;
         END;        
         /* Gather IO Stats */
-        INSERT INTO #io_stats
+        INSERT INTO 
+            #io_stats
         (
             database_name,
             database_id,
@@ -1336,33 +1335,40 @@ BEGIN
             mf.type_desc,
             io_stall_read_ms = fs.io_stall_read_ms,
             num_of_reads = fs.num_of_reads,
-            avg_read_latency_ms = CASE 
-                                    WHEN fs.num_of_reads = 0 THEN 0
-                                    ELSE fs.io_stall_read_ms * 1.0 / fs.num_of_reads
-                                  END,
+            avg_read_latency_ms = 
+                CASE 
+                    WHEN fs.num_of_reads = 0 
+                    THEN 0
+                    ELSE fs.io_stall_read_ms * 1.0 / fs.num_of_reads
+                END,
             io_stall_write_ms = fs.io_stall_write_ms,
             num_of_writes = fs.num_of_writes,
-            avg_write_latency_ms = CASE
-                                     WHEN fs.num_of_writes = 0 THEN 0
-                                     ELSE fs.io_stall_write_ms * 1.0 / fs.num_of_writes
-                                   END,
+            avg_write_latency_ms = 
+                CASE
+                    WHEN fs.num_of_writes = 0 
+                    THEN 0
+                    ELSE fs.io_stall_write_ms * 1.0 / fs.num_of_writes
+                END,
             io_stall_ms = fs.io_stall,
             total_io = fs.num_of_reads + fs.num_of_writes,
-            avg_io_latency_ms = CASE
-                                  WHEN (fs.num_of_reads + fs.num_of_writes) = 0 THEN 0
-                                  ELSE fs.io_stall * 1.0 / (fs.num_of_reads + fs.num_of_writes)
-                                END,
+            avg_io_latency_ms = 
+                CASE
+                    WHEN (fs.num_of_reads + fs.num_of_writes) = 0 
+                    THEN 0
+                    ELSE fs.io_stall * 1.0 / (fs.num_of_reads + fs.num_of_writes)
+                END,
             size_mb = mf.size * 8.0 / 1024,
             drive_letter = UPPER(LEFT(mf.physical_name, 1)),
             physical_name = mf.physical_name
         FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS fs
         JOIN sys.master_files AS mf
-          ON fs.database_id = mf.database_id
+          ON  fs.database_id = mf.database_id
           AND fs.file_id = mf.file_id
         WHERE (fs.num_of_reads > 0 OR fs.num_of_writes > 0); /* Only include files with some activity */
         
         /* Add results for slow reads */
-        INSERT INTO #results
+        INSERT INTO 
+            #results
         (
             check_id,
             priority,
@@ -1375,25 +1381,36 @@ BEGIN
         )
         SELECT
             check_id = 3001,
-            priority = CASE 
-                          WHEN avg_read_latency_ms > @slow_read_ms * 2 THEN 40 /* Very slow */
-                          ELSE 50 /* Moderately slow */
-                       END,
+            priority = 
+                CASE 
+                    WHEN i.avg_read_latency_ms > @slow_read_ms * 2 
+                    THEN 40 /* Very slow */
+                    ELSE 50 /* Moderately slow */
+                END,
             category = 'Storage Performance',
             finding = 'Slow Read Latency',
-            database_name = database_name,
-            object_name = file_name + ' (' + type_desc + ')',
-            details = 'Average read latency of ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), avg_read_latency_ms)) + 
-                      ' ms for ' + CONVERT(nvarchar(20), num_of_reads) + ' reads. ' +
-                      'This is above the ' + CONVERT(nvarchar(10), CONVERT(integer, @slow_read_ms)) + 
-                      ' ms threshold and may indicate storage performance issues.',
+            database_name = i.database_name,
+            object_name = 
+                i.file_name + 
+                ' (' + 
+                i.type_desc + 
+                ')',
+            details = 
+                'Average read latency of ' + 
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), i.avg_read_latency_ms)) + 
+                ' ms for ' + 
+                CONVERT(nvarchar(20), i.num_of_reads) + ' reads. ' +
+                'This is above the ' + 
+                CONVERT(nvarchar(10), CONVERT(integer, @slow_read_ms)) + 
+                ' ms threshold and may indicate storage performance issues.',
             url = 'https://erikdarling.com/'
-        FROM #io_stats
-        WHERE avg_read_latency_ms > @slow_read_ms
-        AND num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
+        FROM #io_stats AS i
+        WHERE i.avg_read_latency_ms > @slow_read_ms
+        AND i.num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
         
         /* Add results for slow writes */
-        INSERT INTO #results
+        INSERT INTO 
+            #results
         (
             check_id,
             priority,
@@ -1406,25 +1423,37 @@ BEGIN
         )
         SELECT
             check_id = 3002,
-            priority = CASE 
-                          WHEN avg_write_latency_ms > @slow_write_ms * 2 THEN 40 /* Very slow */
-                          ELSE 50 /* Moderately slow */
-                       END,
+            priority = 
+                CASE 
+                    WHEN i.avg_write_latency_ms > @slow_write_ms * 2 
+                    THEN 40 /* Very slow */
+                    ELSE 50 /* Moderately slow */
+                END,
             category = 'Storage Performance',
             finding = 'Slow Write Latency',
-            database_name = database_name,
-            object_name = file_name + ' (' + type_desc + ')',
-            details = 'Average write latency of ' + CONVERT(nvarchar(20), CONVERT(decimal(10, 2), avg_write_latency_ms)) + 
-                      ' ms for ' + CONVERT(nvarchar(20), num_of_writes) + ' writes. ' +
-                      'This is above the ' + CONVERT(nvarchar(10), CONVERT(integer, @slow_write_ms)) + 
-                      ' ms threshold and may indicate storage performance issues.',
+            database_name = i.database_name,
+            object_name = 
+                i.file_name + 
+                ' (' + 
+                i.type_desc + 
+                ')',
+            details = 
+                'Average write latency of ' + 
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), i.avg_write_latency_ms)) + 
+                ' ms for ' + 
+                CONVERT(nvarchar(20), i.num_of_writes) + 
+                ' writes. ' +
+                'This is above the ' + 
+                CONVERT(nvarchar(10), CONVERT(integer, @slow_write_ms)) + 
+                ' ms threshold and may indicate storage performance issues.',
             url = 'https://erikdarling.com/'
-        FROM #io_stats
-        WHERE avg_write_latency_ms > @slow_write_ms
-        AND num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
+        FROM #io_stats AS i
+        WHERE i.avg_write_latency_ms > @slow_write_ms
+        AND i.num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
         
         /* Add drive level warnings if we have multiple slow files on same drive */
-        INSERT INTO #results
+        INSERT INTO 
+            #results
         (
             check_id,
             priority,
@@ -1437,7 +1466,9 @@ BEGIN
             check_id = 3003,
             priority = 40, /* High priority */
             category = 'Storage Performance',
-            finding = 'Multiple Slow Files on Drive ' + i.drive_letter,
+            finding = 
+                'Multiple Slow Files on Drive ' + 
+                i.drive_letter,
             details = 
                 'Drive ' + 
                 i.drive_letter + 
@@ -1515,7 +1546,7 @@ BEGIN
         
         /* MAXDOP check */
         IF  @max_dop = 0 
-        AND @processors > 1
+        AND @processors > 8
         BEGIN
             INSERT INTO 
                 #results
