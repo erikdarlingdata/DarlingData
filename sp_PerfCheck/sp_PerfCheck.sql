@@ -3053,10 +3053,15 @@ BEGIN
                 SELECT 
                     @has_tables = 
                         CASE 
-                            WHEN EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables) 
+                            WHEN EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables AS t) 
                             THEN 1 
                             ELSE 0 
                         END;';
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @sql;
+                END;
                 
                 EXECUTE sys.sp_executesql 
                     @sql, 
