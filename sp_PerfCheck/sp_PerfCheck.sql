@@ -88,7 +88,15 @@ BEGIN
         @stolen_memory_pct decimal(10, 2),
         @stolen_memory_threshold_pct decimal(10, 2) = 25.0, /* Alert if more than 25% memory is stolen */
         /* Format the output properly without XML PATH which causes spacing issues */
-        @wait_summary nvarchar(1000) = N'';
+        @wait_summary nvarchar(1000) = N'',
+        /* CPU scheduling variables */
+        @signal_wait_time_ms bigint,
+        @total_wait_time_ms bigint,
+        @sos_scheduler_yield_ms bigint,
+        @signal_wait_ratio decimal(10, 2),
+        @sos_scheduler_yield_pct_of_uptime decimal(10, 2),
+        /* I/O stalls variables */
+        @io_stall_summary nvarchar(1000);
     
     /* Set start time for runtime tracking */
     SET @start_time = SYSDATETIME();
@@ -161,43 +169,57 @@ BEGIN
     
     /*
     Create a table for stuff I care about from sys.databases
+    With comments on what we want to check
     */
     CREATE TABLE 
         #databases
     (
-        name sysname NOT NULL,
+        name sysname NOT NULL,              /* Database name */
+        database_id integer NOT NULL,       /* Database ID */
+        compatibility_level tinyint NOT NULL, /* Informational */
+        collation_name sysname NOT NULL,    /* Informational */
+        user_access_desc nvarchar(60) NOT NULL, /* Warn if not MULTI_USER */
+        is_read_only bit NOT NULL,          /* Informational - can we write there? */
+        is_auto_close_on bit NOT NULL,      /* Warn if ON */
+        is_auto_shrink_on bit NOT NULL,     /* Warn if ON */
+        state_desc nvarchar(60) NOT NULL,   /* Warn if not ONLINE */
+        snapshot_isolation_state_desc nvarchar(60) NOT NULL, /* Notify if ON */
+        is_read_committed_snapshot_on bit NOT NULL, /* Notify if ON */
+        is_auto_create_stats_on bit NOT NULL, /* Warn if not ON */
+        is_auto_create_stats_incremental_on bit NOT NULL, /* Informational */
+        is_auto_update_stats_on bit NOT NULL, /* Warn if not ON */
+        is_auto_update_stats_async_on bit NOT NULL, /* Informational */
+        is_ansi_null_default_on bit NOT NULL, /* Warn if ON */
+        is_ansi_nulls_on bit NOT NULL,      /* Warn if OFF */
+        is_ansi_padding_on bit NOT NULL,    /* Warn if OFF */
+        is_ansi_warnings_on bit NOT NULL,   /* Warn if OFF */
+        is_arithabort_on bit NOT NULL,      /* Warn if OFF */
+        is_concat_null_yields_null_on bit NOT NULL, /* Warn if OFF */
+        is_numeric_roundabort_on bit NOT NULL, /* Warn if ON */
+        is_quoted_identifier_on bit NOT NULL, /* Warn if OFF */
+        is_parameterization_forced bit NOT NULL, /* Informational */
+        is_query_store_on bit NOT NULL,     /* List databases where it's OFF */
+        is_distributor bit NOT NULL,        /* Informational */
+        is_cdc_enabled bit NOT NULL,        /* Informational */
+        target_recovery_time_in_seconds integer NOT NULL, /* List if not 60 */
+        delayed_durability_desc nvarchar(60) NOT NULL, /* Informational if ALLOWED or FORCED */
+        is_accelerated_database_recovery_on bit NOT NULL, /* Suggest turning ON if OFF, especially if SI/RCSI */
+        is_memory_optimized_enabled bit NOT NULL, /* Warn if ON */
+        is_ledger_on bit NULL               /* Question sanity if ON */
+    );
+    
+    /* Create table for database scoped configurations */
+    CREATE TABLE
+        #database_scoped_configs
+    (
         database_id integer NOT NULL,
-        compatibility_level tinyint NOT NULL,
-        collation_name sysname NOT NULL,
-        user_access_desc nvarchar(60) NOT NULL,
-        is_read_only bit NOT NULL,
-        is_auto_close_on bit NOT NULL,
-        is_auto_shrink_on bit NOT NULL,
-        state_desc nvarchar(60) NOT NULL,
-        snapshot_isolation_state_desc nvarchar(60) NOT NULL,
-        is_read_committed_snapshot_on bit NOT NULL,
-        is_auto_create_stats_on bit NOT NULL,
-        is_auto_create_stats_incremental_on bit NOT NULL,
-        is_auto_update_stats_on bit NOT NULL,
-        is_auto_update_stats_async_on bit NOT NULL,
-        is_ansi_null_default_on bit NOT NULL,
-        is_ansi_nulls_on bit NOT NULL,
-        is_ansi_padding_on bit NOT NULL,
-        is_ansi_warnings_on bit NOT NULL,
-        is_arithabort_on bit NOT NULL,
-        is_concat_null_yields_null_on bit NOT NULL,
-        is_numeric_roundabort_on bit NOT NULL,
-        is_quoted_identifier_on bit NOT NULL,
-        is_parameterization_forced bit NOT NULL,
-        is_query_store_on bit NOT NULL,
-        is_distributor bit NOT NULL,
-        is_cdc_enabled bit NOT NULL,
-        target_recovery_time_in_seconds integer NOT NULL,
-        delayed_durability_desc nvarchar(60) NOT NULL,
-        is_accelerated_database_recovery_on bit NOT NULL,
-        is_memory_optimized_enabled bit NOT NULL,
-        is_ledger_on bit NULL
-    );    
+        database_name sysname NOT NULL,
+        configuration_id integer NOT NULL,
+        name nvarchar(60) NOT NULL,
+        value sql_variant NULL,
+        value_for_secondary sql_variant NULL,
+        is_value_default bit NOT NULL
+    );
 
     /*
     Create Results Table
@@ -351,6 +373,24 @@ BEGIN
     (
         category nvarchar(50) NOT NULL,
         pct_of_uptime decimal(10, 2) NOT NULL
+    );
+    
+    /* Create temp table for database I/O stalls */
+    CREATE TABLE 
+        #io_stalls_by_db
+    (
+        database_name sysname NOT NULL,
+        database_id integer NOT NULL,
+        total_io_stall_ms bigint NOT NULL,
+        total_io_mb decimal(18, 2) NOT NULL,
+        avg_io_stall_ms decimal(18, 2) NOT NULL,
+        read_io_stall_ms bigint NOT NULL,
+        read_io_mb decimal(18, 2) NOT NULL,
+        avg_read_stall_ms decimal(18, 2) NOT NULL,
+        write_io_stall_ms bigint NOT NULL,
+        write_io_mb decimal(18, 2) NOT NULL,
+        avg_write_stall_ms decimal(18, 2) NOT NULL,
+        total_size_mb decimal(18, 2) NOT NULL
     );
 
     /*
@@ -1508,6 +1548,377 @@ BEGIN
                 FETCH NEXT 5 ROWS ONLY;
             END;
         END;
+    END;
+    
+    /* Check for CPU scheduling pressure (signal wait ratio) */
+    IF @has_view_server_state = 1
+    BEGIN
+        /* Get total and signal wait times */
+        SELECT 
+            @signal_wait_time_ms = SUM(osw.signal_wait_time_ms),
+            @total_wait_time_ms = SUM(osw.wait_time_ms),
+            @sos_scheduler_yield_ms = SUM(CASE WHEN osw.wait_type = N'SOS_SCHEDULER_YIELD' THEN osw.wait_time_ms ELSE 0 END)
+        FROM sys.dm_os_wait_stats AS osw
+        WHERE osw.wait_type NOT IN 
+        (
+            /* Skip benign waits based on sys.dm_os_wait_stats documentation */
+            N'BROKER_TASK_STOP',
+            N'BROKER_TO_FLUSH',
+            N'BROKER_TRANSMITTER',
+            N'CHECKPOINT_QUEUE',
+            N'CLR_AUTO_EVENT',
+            N'CLR_MANUAL_EVENT',
+            N'DIRTY_PAGE_POLL',
+            N'DISPATCHER_QUEUE_SEMAPHORE',
+            N'FSAGENT',
+            N'FT_IFTS_SCHEDULER_IDLE_WAIT',
+            N'FT_IFTSHC_MUTEX',
+            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
+            N'HADR_LOGCAPTURE_WAIT',
+            N'HADR_TIMER_TASK',
+            N'HADR_WORK_QUEUE',
+            N'LAZYWRITER_SLEEP',
+            N'LOGMGR_QUEUE',
+            N'MEMORY_ALLOCATION_EXT',
+            N'PREEMPTIVE_XE_GETTARGETSTATE',
+            N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
+            N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
+            N'REQUEST_FOR_DEADLOCK_SEARCH',
+            N'RESOURCE_QUEUE',
+            N'SERVER_IDLE_CHECK',
+            N'SLEEP_DBSTARTUP',
+            N'SLEEP_DCOMSTARTUP',
+            N'SLEEP_MASTERDBREADY',
+            N'SLEEP_MASTERMDREADY',
+            N'SLEEP_MASTERUPGRADED',
+            N'SLEEP_MSDBSTARTUP',
+            N'SLEEP_SYSTEMTASK',
+            N'SLEEP_TEMPDBSTARTUP',
+            N'SNI_HTTP_ACCEPT',
+            N'SP_SERVER_DIAGNOSTICS_SLEEP',
+            N'SQLTRACE_BUFFER_FLUSH',
+            N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
+            N'SQLTRACE_WAIT_ENTRIES',
+            N'STARTUP_DEPENDENCY_MANAGER',
+            N'WAIT_FOR_RESULTS',
+            N'WAITFOR',
+            N'WAITFOR_TASKSHUTDOWN',
+            N'WAIT_XTP_HOST_WAIT',
+            N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
+            N'WAIT_XTP_CKPT_CLOSE',
+            N'XE_DISPATCHER_JOIN',
+            N'XE_DISPATCHER_WAIT',
+            N'XE_LIVE_TARGET_TVF',
+            N'XE_TIMER_EVENT'
+        );
+        
+        /* Calculate signal wait ratio (time spent waiting for CPU vs. total wait time) */
+        IF @total_wait_time_ms > 0
+        BEGIN
+            SET @signal_wait_ratio = (@signal_wait_time_ms * 100.0) / @total_wait_time_ms;
+            
+            /* Calculate SOS_SCHEDULER_YIELD percentage of uptime */
+            IF @uptime_ms > 0 AND @sos_scheduler_yield_ms > 0
+            BEGIN
+                SET @sos_scheduler_yield_pct_of_uptime = (@sos_scheduler_yield_ms * 100.0) / @uptime_ms;
+            END;
+            
+            /* Add CPU scheduling info to server_info */
+            INSERT INTO
+                #server_info (info_type, value)
+            VALUES
+                ('Signal Wait Ratio', CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) + '%' +
+                 CASE 
+                     WHEN @signal_wait_ratio >= 25.0 THEN ' (High - CPU pressure detected)'
+                     WHEN @signal_wait_ratio >= 15.0 THEN ' (Moderate - CPU pressure likely)'
+                     ELSE ' (Normal)'
+                 END);
+            
+            IF @sos_scheduler_yield_pct_of_uptime > 0
+            BEGIN
+                INSERT INTO
+                    #server_info (info_type, value)
+                VALUES
+                    ('SOS_SCHEDULER_YIELD', CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @sos_scheduler_yield_pct_of_uptime)) + 
+                     '% of server uptime');
+            END;
+            
+            /* Add finding if signal wait ratio exceeds threshold */
+            IF @signal_wait_ratio >= 25.0
+            BEGIN
+                INSERT INTO
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    details,
+                    url
+                )
+                VALUES
+                (
+                    6101,                   
+                    CASE
+                        WHEN @signal_wait_ratio >= 40.0 THEN 20 /* Very high priority if >=40% signal waits */
+                        WHEN @signal_wait_ratio >= 30.0 THEN 30 /* High priority if >=30% signal waits */
+                        ELSE 40 /* Medium-high priority */
+                    END,
+                    'CPU Scheduling',
+                    'High Signal Wait Ratio',
+                    'Signal wait ratio is ' + 
+                    CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) + 
+                    '%. This indicates significant CPU scheduling pressure. ' +
+                    'Processes are waiting to get scheduled on the CPU, which can impact query performance. ' +
+                    'Consider investigating high-CPU queries, reducing server load, or adding CPU resources.',
+                    'https://erikdarling.com/'
+                );
+            END;
+            
+            /* Add finding for significant SOS_SCHEDULER_YIELD waits */
+            IF @sos_scheduler_yield_pct_of_uptime >= 10.0 
+            BEGIN
+                INSERT INTO
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    details,
+                    url
+                )
+                VALUES
+                (
+                    6102,                   
+                    CASE
+                        WHEN @sos_scheduler_yield_pct_of_uptime >= 30.0 THEN 30 /* High priority if >=30% of uptime */
+                        WHEN @sos_scheduler_yield_pct_of_uptime >= 20.0 THEN 40 /* Medium-high priority if >=20% of uptime */
+                        ELSE 50 /* Medium priority */
+                    END,
+                    'CPU Scheduling',
+                    'High SOS_SCHEDULER_YIELD Waits',
+                    'SOS_SCHEDULER_YIELD waits account for ' + 
+                    CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @sos_scheduler_yield_pct_of_uptime)) + 
+                    '% of server uptime. This indicates tasks frequently giving up their quantum of CPU time. ' +
+                    'This can be caused by CPU-intensive queries, causing threads to context switch frequently. ' +
+                    'Consider tuning queries with high CPU usage or adding CPU resources.',
+                    'https://erikdarling.com/'
+                );
+            END;
+        END;
+    END;
+    
+    /* Check for I/O stalls per database */
+    IF @has_view_server_state = 1
+    BEGIN
+        /* First clear any existing data */
+        DELETE FROM #io_stalls_by_db;
+        
+        /* Get database-level I/O stall statistics */
+        IF @azure_sql_db = 1
+        BEGIN
+            /* Azure SQL DB - only current database is accessible */
+            INSERT INTO 
+                #io_stalls_by_db
+            (
+                database_name,
+                database_id,
+                total_io_stall_ms,
+                total_io_mb,
+                avg_io_stall_ms,
+                read_io_stall_ms,
+                read_io_mb,
+                avg_read_stall_ms,
+                write_io_stall_ms,
+                write_io_mb,
+                avg_write_stall_ms,
+                total_size_mb
+            )
+            SELECT
+                database_name = DB_NAME(),
+                database_id = DB_ID(),
+                total_io_stall_ms = SUM(fs.io_stall),
+                total_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read + fs.num_of_bytes_written) / 1024.0 / 1024.0),
+                avg_io_stall_ms = CASE 
+                                      WHEN SUM(fs.num_of_reads + fs.num_of_writes) = 0 
+                                      THEN 0 
+                                      ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall) * 1.0 / SUM(fs.num_of_reads + fs.num_of_writes)) 
+                                  END,
+                read_io_stall_ms = SUM(fs.io_stall_read_ms),
+                read_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read) / 1024.0 / 1024.0),
+                avg_read_stall_ms = CASE 
+                                        WHEN SUM(fs.num_of_reads) = 0 
+                                        THEN 0 
+                                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_read_ms) * 1.0 / SUM(fs.num_of_reads)) 
+                                    END,
+                write_io_stall_ms = SUM(fs.io_stall_write_ms),
+                write_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_written) / 1024.0 / 1024.0),
+                avg_write_stall_ms = CASE 
+                                         WHEN SUM(fs.num_of_writes) = 0 
+                                         THEN 0 
+                                         ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes)) 
+                                     END,
+                total_size_mb = CONVERT(decimal(18, 2), SUM(df.size) * 8 / 1024.0)
+            FROM sys.dm_io_virtual_file_stats(DB_ID(), NULL) AS fs
+            JOIN sys.database_files AS df 
+              ON fs.file_id = df.file_id;
+        END;
+        ELSE
+        BEGIN
+            /* Non-Azure SQL DB - get stats for all databases */
+            INSERT INTO 
+                #io_stalls_by_db
+            (
+                database_name,
+                database_id,
+                total_io_stall_ms,
+                total_io_mb,
+                avg_io_stall_ms,
+                read_io_stall_ms,
+                read_io_mb,
+                avg_read_stall_ms,
+                write_io_stall_ms,
+                write_io_mb,
+                avg_write_stall_ms,
+                total_size_mb
+            )
+            SELECT
+                database_name = DB_NAME(fs.database_id),
+                database_id = fs.database_id,
+                total_io_stall_ms = SUM(fs.io_stall),
+                total_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read + fs.num_of_bytes_written) / 1024.0 / 1024.0),
+                avg_io_stall_ms = CASE 
+                                      WHEN SUM(fs.num_of_reads + fs.num_of_writes) = 0 
+                                      THEN 0 
+                                      ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall) * 1.0 / SUM(fs.num_of_reads + fs.num_of_writes)) 
+                                  END,
+                read_io_stall_ms = SUM(fs.io_stall_read_ms),
+                read_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_read) / 1024.0 / 1024.0),
+                avg_read_stall_ms = CASE 
+                                        WHEN SUM(fs.num_of_reads) = 0 
+                                        THEN 0 
+                                        ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_read_ms) * 1.0 / SUM(fs.num_of_reads)) 
+                                    END,
+                write_io_stall_ms = SUM(fs.io_stall_write_ms),
+                write_io_mb = CONVERT(decimal(18, 2), SUM(fs.num_of_bytes_written) / 1024.0 / 1024.0),
+                avg_write_stall_ms = CASE 
+                                         WHEN SUM(fs.num_of_writes) = 0 
+                                         THEN 0 
+                                         ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes)) 
+                                     END,
+                total_size_mb = CONVERT(decimal(18, 2), SUM(mf.size) * 8 / 1024.0)
+            FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS fs
+            JOIN sys.master_files AS mf 
+              ON  fs.database_id = mf.database_id
+              AND fs.file_id = mf.file_id
+            WHERE 
+                /* Skip idle databases and system databases except tempdb */
+                (SUM(fs.num_of_reads + fs.num_of_writes) OVER (PARTITION BY fs.database_id) > 0)
+            AND (fs.database_id > 4 OR fs.database_id = 2) /* User databases or TempDB */
+            GROUP BY
+                fs.database_id;
+        END;
+        
+        /* Format a summary of the worst databases by I/O stalls */
+        WITH io_stall_summary AS
+        (
+            SELECT TOP (5)
+                database_name,
+                total_io_stall_ms,
+                total_io_mb,
+                avg_io_stall_ms,
+                read_io_stall_ms,
+                read_io_mb,
+                avg_read_stall_ms,
+                write_io_stall_ms,
+                write_io_mb,
+                avg_write_stall_ms,
+                total_size_mb
+            FROM #io_stalls_by_db
+            WHERE (avg_read_stall_ms >= @slow_read_ms OR avg_write_stall_ms >= @slow_write_ms)
+            ORDER BY
+                avg_io_stall_ms DESC
+        )
+        SELECT @io_stall_summary = 
+            STUFF
+            (
+                (
+                    SELECT 
+                        N', ' + 
+                        db.database_name + 
+                        N' (' + 
+                        CONVERT(nvarchar(10), CONVERT(decimal(10, 2), db.avg_io_stall_ms)) + 
+                        N' ms)'
+                    FROM io_stall_summary AS db
+                    ORDER BY 
+                        db.avg_io_stall_ms DESC
+                    FOR 
+                        XML 
+                        PATH('')
+                ), 
+                1, 
+                2, 
+                ''
+            );
+        
+        /* Add I/O stall summary to server_info if any significant stalls were found */
+        IF @io_stall_summary IS NOT NULL AND LEN(@io_stall_summary) > 0
+        BEGIN
+            INSERT INTO
+                #server_info (info_type, value)
+            VALUES
+                ('Database I/O Stalls', 'Top databases with high I/O latency: ' + @io_stall_summary);
+        END;
+        
+        /* Add findings for significant I/O stalls */
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            database_name,
+            details,
+            url
+        )
+        SELECT
+            check_id = 6201,
+            priority = 
+                CASE
+                    WHEN io.avg_io_stall_ms >= 100.0 THEN 30 /* High priority if >100ms */
+                    WHEN io.avg_io_stall_ms >= 50.0 THEN 40 /* Medium-high priority if >50ms */
+                    ELSE 50 /* Medium priority */
+                END,
+            category = 'Storage Performance',
+            finding = 'High Database I/O Stalls',
+            database_name = io.database_name,
+            details = 
+                'Database ' + 
+                io.database_name + 
+                ' has average I/O stall of ' + 
+                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_io_stall_ms)) + 
+                ' ms. ' +
+                'Read latency: ' + 
+                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_read_stall_ms)) + 
+                ' ms, Write latency: ' + 
+                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_write_stall_ms)) + 
+                ' ms. ' +
+                'Total read: ' + 
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), io.read_io_mb)) + 
+                ' MB, Total write: ' + 
+                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), io.write_io_mb)) + 
+                ' MB. ' +
+                'This indicates slow I/O subsystem performance for this database.',
+            url = 'https://erikdarling.com/'
+        FROM #io_stalls_by_db AS io
+        WHERE 
+            /* Only include databases with significant I/O and significant stalls */
+            (io.total_io_mb > 100.0) /* Only databases with at least 100MB total I/O */
+        AND (io.avg_read_stall_ms >= @slow_read_ms OR io.avg_write_stall_ms >= @slow_write_ms)
+        ORDER BY
+            io.avg_io_stall_ms DESC;
     END;
     
     /* Get database sizes - safely handles permissions */
