@@ -583,7 +583,7 @@ BEGIN
             N'Granted memory: ' + CONVERT(nvarchar(20), MAX(ders.granted_memory_kb) / 1024 / 1024) + 
             N' GB. ' +
             N'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
-        url = N'https://erikdarling.com/'
+        url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
     FROM sys.dm_exec_query_resource_semaphores AS ders
     WHERE ders.forced_grant_count > 0
     HAVING 
@@ -619,7 +619,7 @@ BEGIN
                     N' at ' +
                     MAX(dsmd.filename) +
                     N'. Check the SQL Server error log and Windows event logs.',
-                url = N'https://erikdarling.com/'
+                url = N'https://erikdarling.com/sp_PerfCheck#MemoryDumps'
             FROM sys.dm_server_memory_dumps AS dsmd
             HAVING 
                 COUNT_BIG(*) > 0; /* Only if there are memory dumps */
@@ -658,7 +658,7 @@ BEGIN
             CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())) + 
             N' days). ' +
             N'High deadlock rates indicate concurrency issues that should be investigated.',
-        url = N'https://erikdarling.com/'
+        url = N'https://erikdarling.com/sp_PerfCheck#Deadlocks'
     FROM sys.dm_os_performance_counters AS p
     CROSS JOIN sys.dm_os_sys_info AS osi
     WHERE RTRIM(p.counter_name) = N'Number of Deadlocks/sec'
@@ -739,7 +739,7 @@ BEGIN
                 N'SQL Server is not using locked pages in memory (LPIM). This can lead to Windows ' +
                 N'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
                 N'For production SQL Servers with more than 64GB of memory, LPIM should be enabled.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#LPIM'
         FROM sys.dm_os_sys_info AS osi
         WHERE osi.sql_memory_model_desc = N'CONVENTIONAL' /* Conventional means not using LPIM */
         AND   @physical_memory_gb >= 32 /* Only recommend for servers with >=32GB RAM */;
@@ -781,7 +781,7 @@ BEGIN
                 N'Instant File Initialization is not enabled. This can significantly slow down database file ' +
                 N'creation and growth operations, as SQL Server must zero out data files before using them. ' +
                 N'Enable this feature by granting the "Perform Volume Maintenance Tasks" permission to the SQL Server service account.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#IFI'
         FROM sys.dm_server_services AS dss
         WHERE dss.filename LIKE N'%sqlservr.exe%'
         AND   dss.servicename LIKE N'SQL Server%'
@@ -829,7 +829,7 @@ BEGIN
                     N'/* Classifier function (if configured) */' + NCHAR(13) + NCHAR(10) +
                     N'SELECT * FROM sys.resource_governor_configuration ' + NCHAR(13) + NCHAR(10) +
                     N'CROSS APPLY (SELECT OBJECT_NAME(classifier_function_id) AS classifier_function_name) AS cf;',
-                url = N'https://erikdarling.com/'
+                url = N'https://erikdarling.com/sp_PerfCheck#ResourceGovernor'
             FROM sys.resource_governor_configuration
             WHERE is_enabled = 1;
         END
@@ -1504,7 +1504,7 @@ BEGIN
                 N' ms per wait. ' +
                 N'Description: ' + 
                 ws.description,
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#WaitStats'
         FROM #wait_stats AS ws
         WHERE 
             (
@@ -1749,7 +1749,7 @@ BEGIN
                     N'%. This indicates significant CPU scheduling pressure. ' +
                     N'Processes are waiting to get scheduled on the CPU, which can impact query performance. ' +
                     N'Consider investigating high-CPU queries, reducing server load, or adding CPU resources.',
-                    N'https://erikdarling.com/'
+                    N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
                 );
             END;
             
@@ -1783,7 +1783,7 @@ BEGIN
                     N'% of server uptime. This indicates tasks frequently giving up their quantum of CPU time. ' +
                     N'This can be caused by CPU-intensive queries, causing threads to context switch frequently. ' +
                     N'Consider tuning queries with high CPU usage or adding CPU resources.',
-                    N'https://erikdarling.com/'
+                    N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
                 );
             END;
         END;
@@ -2140,7 +2140,7 @@ BEGIN
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), io.write_io_mb)) + 
                 N' MB. ' +
                 N'This indicates slow I/O subsystem performance for this database.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#IOStalls'
         FROM #io_stalls_by_db AS io
         WHERE 
             /* Only include databases with significant I/O and significant stalls */
@@ -2266,7 +2266,7 @@ BEGIN
                 N'This is above the ' + 
                 CONVERT(nvarchar(10), CONVERT(integer, @slow_read_ms)) + 
                 N' ms threshold and may indicate storage performance issues.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#StoragePerformance'
         FROM #io_stats AS i
         WHERE i.avg_read_latency_ms > @slow_read_ms
         AND i.num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
@@ -2615,7 +2615,7 @@ BEGIN
                 N'Single TempDB Data File',
                 N'TempDB has only one data file. Multiple files can reduce allocation page contention. ' + 
                 N'Recommendation: Use multiple files (equal to number of logical processors up to 8).',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_PerfCheck#TempDB'
             );
         END;
         
@@ -3311,7 +3311,7 @@ BEGIN
             database_name = d.name,
             details = 
                 N'Database has auto-shrink enabled, which can cause significant performance problems.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#AutoShrink'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_auto_shrink_on = 1;
@@ -3337,7 +3337,7 @@ BEGIN
             details = 
                 N'Database has auto-close enabled, which can cause connection delays while the database is reopened. 
                  This setting can impact performance for applications that frequently connect to and disconnect from the database.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#AutoClose'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_auto_close_on = 1;
@@ -3366,7 +3366,7 @@ BEGIN
                 N'Database is not in MULTI_USER mode. Current mode: ' + 
                 d.user_access_desc + 
                 N'. This restricts normal database access and may prevent applications from connecting.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#RestrictedAccess'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.user_access_desc <> N'MULTI_USER';
@@ -3408,7 +3408,7 @@ BEGIN
                     WHEN d.is_auto_update_stats_on = 0
                     THEN N'Auto update statistics is disabled. This can lead to poor query performance due to outdated statistics.'
                 END,
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#Statistics'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND  
@@ -3446,7 +3446,7 @@ BEGIN
                       CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON, ' ELSE N'' END +
                       CASE WHEN d.is_quoted_identifier_on = 1 THEN N'QUOTED_IDENTIFIER OFF, ' ELSE N'' END +
                 N'which can cause unexpected application behavior and compatibility issues.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#ANSISettings'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND 
@@ -3480,7 +3480,7 @@ BEGIN
             finding = N'Query Store Not Enabled',
             database_name = d.name,
             details = N'Query Store is not enabled. Consider enabling Query Store to track query performance over time and identify regression issues.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#QueryStore'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_query_store_on = 0;
@@ -3525,7 +3525,7 @@ BEGIN
                         WHEN 524288 THEN N''Database has reached disk size limit.''
                         ELSE N''Unknown reason code: '' + CONVERT(nvarchar(20), qso.readonly_reason)
                     END,
-                url = N''https://erikdarling.com/''
+                url = N''https://erikdarling.com/sp_PerfCheck#QueryStoreHealth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_query_store_options AS qso
             WHERE qso.desired_state <> 0 /* Not intentionally OFF */
             AND   qso.readonly_reason <> 8 /* Ignore AG secondaries */
@@ -3578,7 +3578,7 @@ BEGIN
                              CONVERT(nvarchar(20), qso.max_plans_per_query) + 
                              ''. This may cause relevant plans to be purged prematurely.''
                     END,
-                url = N''https://erikdarling.com/''
+                url = N''https://erikdarling.com/sp_PerfCheck#QueryStoreHealth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_query_store_options AS qso
             WHERE qso.actual_state = 2 /* Query Store is ON */
             AND 
@@ -3763,7 +3763,7 @@ BEGIN
                              WHEN N'BATCH_MODE_ON_ROWSTORE' THEN N'Controls whether batch mode processing can be used on rowstore indexes.'
                              ELSE N'Controls ' + REPLACE(LOWER(dsc.name), N'_', N' ') + N' behavior.'
                         END,
-                    url = N'https://erikdarling.com/'
+                    url = N'https://erikdarling.com/sp_PerfCheck#DSC'
                 FROM #database_scoped_configs AS dsc
                 WHERE dsc.database_id = @current_database_id
                 AND   dsc.is_value_default = 0;
@@ -3912,7 +3912,7 @@ BEGIN
                     ''%). This can lead to increasingly larger growth events as the file grows, 
                     potentially causing larger file sizes than intended. Even with instant file initialization enabled, 
                     consider using a fixed size instead for more predictable growth.'',
-                url = N''https://erikdarling.com/''
+                url = N''https://erikdarling.com/sp_PerfCheck#DataFileGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 1
             AND   mf.type_desc = N''ROWS'';';
@@ -3952,7 +3952,7 @@ BEGIN
                     ''%). This can lead to increasingly larger growth events and significant stalls 
                     as log files must be zeroed out during auto-growth operations. 
                     Always use fixed size growth for log files.'',
-                url = N''https://erikdarling.com/''
+                url = N''https://erikdarling.com/sp_PerfCheck#LogFileGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 1
             AND   mf.type_desc = N''LOG'';';
@@ -3993,7 +3993,7 @@ BEGIN
                         CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
                         ''On SQL Server 2022, Azure SQL DB, or Azure MI, transaction logs can use instant file initialization when set to exactly 64 MB. '' +
                         ''Consider changing the growth increment to 64 MB for improved performance.'',
-                    url = N''https://erikdarling.com/''
+                    url = N''https://erikdarling.com/sp_PerfCheck#LogGrowthSize''
                 FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
                 WHERE mf.is_percent_growth = 0
                 AND   mf.type_desc = N''LOG''
@@ -4037,7 +4037,7 @@ BEGIN
                         WHEN mf.type_desc = N''ROWS'' THEN N''Even with instant file initialization, consider using smaller increments for more controlled growth.''
                         WHEN mf.type_desc = N''LOG'' THEN N''This can cause significant stalls as log files must be zeroed out during growth operations.''
                     END,
-                url = N''https://erikdarling.com/''
+                url = N''https://erikdarling.com/sp_PerfCheck#LargeGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 0
             AND   mf.growth * 8.0 / 1024 / 1024 > 10; /* Growth > 10GB */';
