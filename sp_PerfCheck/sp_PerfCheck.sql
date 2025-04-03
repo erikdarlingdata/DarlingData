@@ -549,7 +549,7 @@ BEGIN
                 CONVERT(nvarchar(10), (SELECT cpu_count FROM sys.dm_os_sys_info)) +
                 N' logical processors. This reduces available processing power. ' +
                 N'Check affinity mask configuration, licensing, or VM CPU cores/sockets',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
         FROM sys.dm_os_schedulers AS dos
         WHERE dos.is_online = 0
         HAVING 
@@ -1047,7 +1047,7 @@ BEGIN
                     N'Growth amount: ' + 
                     CONVERT(nvarchar(20), te.file_growth / 1048576) + 
                     N' GB. ',
-                url = N'https://erikdarling.com/'
+                url = N'https://erikdarling.com/sp_PerfCheck#AutoGrowth'
             FROM #trace_events AS te
             WHERE (te.event_class IN (92, 93)) /* Auto-grow events */
             AND   te.duration_ms > @slow_autogrow_ms
@@ -1087,7 +1087,7 @@ BEGIN
                     N'. ' +
                     N'Auto-shrink is generally not recommended as it can lead to file fragmentation and ' +
                     N'repeated grow/shrink cycles. Consider disabling auto-shrink on this database.',
-                url = N'https://erikdarling.com/'
+                url = N'https://erikdarling.com/sp_PerfCheck#AutoShrink'
             FROM #trace_events AS te
             WHERE te.event_class IN (94, 95) /* Auto-shrink events */
             ORDER BY 
@@ -1602,7 +1602,7 @@ BEGIN
                         THEN N'This indicates resource limits imposed by Azure SQL DB. Consider upgrading to a higher service tier.'
                         ELSE N'This category may require further investigation.'
                     END,
-                url = N'https://erikdarling.com/'
+                url = N'https://erikdarling.com/sp_PerfCheck#WaitStats'
             FROM #wait_summary AS ws
             ORDER BY 
                 ws.pct_of_uptime DESC;
@@ -1901,7 +1901,7 @@ BEGIN
                             )
                         ) + 
                         N' GB of memory. This is one of the top consumers of memory outside the buffer pool.',
-                    url = N'https://erikdarling.com/'
+                    url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
                 FROM sys.dm_os_memory_clerks AS domc
                 WHERE domc.type <> N'MEMORYCLERK_SQLBUFFERPOOL'
                 GROUP BY 
@@ -2309,7 +2309,7 @@ BEGIN
                 N'This is above the ' + 
                 CONVERT(nvarchar(10), CONVERT(integer, @slow_write_ms)) + 
                 N' ms threshold and may indicate storage performance issues.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#StoragePerformance'
         FROM #io_stats AS i
         WHERE i.avg_write_latency_ms > @slow_write_ms
         AND   i.num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
@@ -2342,7 +2342,7 @@ BEGIN
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), AVG(i.avg_io_latency_ms))) + 
                 N' ms. ' +
                 N'This may indicate an overloaded drive or underlying storage issue.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#StoragePerformance'
         FROM #io_stats AS i
         WHERE 
         (
@@ -2501,7 +2501,7 @@ BEGIN
                     WHEN c.name = N'lightweight pooling' THEN N', Default: 0'
                     ELSE N', Default: Unknown'
                 END,
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#ServerSettings'
         FROM sys.configurations AS c
         WHERE 
             /* Access check cache settings */
@@ -2908,7 +2908,7 @@ BEGIN
                 N', ' +
                 N'Pending value: ' + 
                 CONVERT(nvarchar(50), c.value_in_use),
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#ServerSettings'
         FROM sys.configurations AS c
         WHERE c.value <> c.value_in_use
         AND
@@ -3798,7 +3798,7 @@ BEGIN
                 N'Database target recovery time is ' + 
                 CONVERT(nvarchar(20), d.target_recovery_time_in_seconds) + 
                 N' seconds, which differs from the default of 60 seconds. This affects checkpoint frequency and recovery time.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#RecoveryTime'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.target_recovery_time_in_seconds <> 60;
@@ -3825,7 +3825,7 @@ BEGIN
                 N'Database uses ' + 
                 d.delayed_durability_desc + 
                 N' durability mode. This can improve performance but increases the risk of data loss during a server failure.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#TransactionDurability'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.delayed_durability_desc <> N'DISABLED';
@@ -3851,7 +3851,7 @@ BEGIN
             details = 
                 N'Database has Snapshot Isolation or RCSI enabled but Accelerated Database Recovery (ADR) is disabled. ' +
                 N'ADR can significantly improve performance with these isolation levels by reducing version store cleanup overhead.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#ADR'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_accelerated_database_recovery_on = 0
@@ -3878,7 +3878,7 @@ BEGIN
             details = 
                 N'Database has the ledger feature enabled, which adds blockchain-like capabilities 
                  but may impact performance due to additional overhead for maintaining cryptographic verification.',
-            url = N'https://erikdarling.com/'
+            url = N'https://erikdarling.com/sp_PerfCheck#Ledger'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_ledger_on = 1;
