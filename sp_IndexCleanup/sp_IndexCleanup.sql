@@ -282,21 +282,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
-                             integer,
-                             SUBSTRING
-                             (
-                                 CONVERT
-                                 (
-                                     varchar(20),
-                                     SERVERPROPERTY('ProductVersion')
-                                 ),
-                                 1,
-                                 2
-                             )
-                         ) >= 15
-                THEN 1
-                ELSE 0
-            END,
         @uptime_days nvarchar(10) =
         (
             SELECT
@@ -1867,13 +1852,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,' + 
-CASE 
-    WHEN @supports_optimize_for_sequential_key = 1 
-    THEN N'
+        CASE 
+            WHEN @supports_optimize_for_sequential_key = 1 
+            THEN N'
         optimize_for_sequential_key = ISNULL(i.optimize_for_sequential_key, 0),'
-    ELSE N'
+            ELSE N'
         optimize_for_sequential_key = 0,'
-END + N'
+        END + N'
         user_seeks = ISNULL(us.user_seeks, 0),
         user_scans = ISNULL(us.user_scans, 0),
         user_lookups = ISNULL(us.user_lookups, 0),
@@ -2002,6 +1987,7 @@ END + N'
         is_included_column,
         filter_definition,
         is_max_length,
+        optimize_for_sequential_key,
         user_seeks,
         user_scans,
         user_lookups,
