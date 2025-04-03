@@ -70,8 +70,7 @@ EXEC dbo.sp_PerfCheck
   - Detects high buffer pool churn, memory grants issues, external memory pressure
   - Provides specific thresholds based on server class
 
-- **Memory-Starved Queries** (check_id 4101)
-  - Identifies queries that requested more memory than available
+- **Memory Pressure Analysis** (check_id 4101)
   - Detects forced memory grants that can impact query performance
   - Analyzes memory clerk distribution and pressure points
 
@@ -88,8 +87,6 @@ EXEC dbo.sp_PerfCheck
 - **CPU Scheduling Pressure** (check_id 6101-6102)
   - High signal waits ratio (>25%) indicating CPU scheduler contention
   - Excessive SOS_SCHEDULER_YIELD waits showing CPU pressure
-  - Analysis of worker threads vs. CPU cores
-  - Detects NUMA configuration issues affecting performance
 
 #### Server Stability
 - **Memory Dumps Analysis** (check_id 4102)
@@ -133,12 +130,10 @@ EXEC dbo.sp_PerfCheck
 - **Storage Performance by File** (check_id 6202-6204)
   - Analyzes performance metrics for each database file
   - Identifies specific files causing I/O bottlenecks
-  - Correlates I/O stalls with storage layout decisions
 
 - **Auto-growth Events** (server_info)
   - Captures slow auto-growth events for data and log files
   - Reports frequency and average duration
-  - Identifies growth events causing application timeouts
 
 ### Database Configuration (7000-series)
 
@@ -157,12 +152,10 @@ EXEC dbo.sp_PerfCheck
 - **Query Store Health** (check_id 7011-7012)
   - State mismatch (7011): Desired state doesn't match actual state
   - Suboptimal configuration (7012): Identifies settings that might limit effectiveness
-  - Performance impact of Query Store overhead
 
 - **Database Scoped Configurations** (check_id 7020)
   - Identifies non-default DSC settings
   - Explains the performance impact of each setting
-  - Analyzes version-specific optimal settings
 
 - **Database File Settings** (check_id 7101-7104)
   - Percentage growth for data files (7101): Risk of increasingly larger growth events
@@ -187,7 +180,6 @@ Results are returned in two sections:
    - Displays as info_type/value pairs
    - Includes version, resource usage, configuration settings
    - Shows wait statistics summary and resource utilization
-   - Provides execution metrics and runtime information
 
 2. **Performance Check Results**: Specific findings from all checks
    - Sorted by priority (lower numbers = higher priority)
