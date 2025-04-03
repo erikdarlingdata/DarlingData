@@ -1646,6 +1646,7 @@ DECLARE
     @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(max),
+    @having_clause nvarchar(max),
     @query_text_search_original_value nvarchar(4000),
     @query_text_search_not_original_value nvarchar(4000),
     @procedure_exists bit,
@@ -2469,6 +2470,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         9223372036854775807,
     @nc10 = NCHAR(10),
     @where_clause = N'',
+    @having_clause = N'',
     @query_text_search =
         CASE
             WHEN @get_all_databases = 1
@@ -3735,26 +3737,27 @@ IF @start_date <= @end_date
 BEGIN
     SELECT
         @where_clause += N'AND   qsrs.last_execution_time >= @start_date
-AND   qsrs.last_execution_time <  @end_date' + @nc10;
+    AND   qsrs.last_execution_time <  @end_date' + @nc10;
 END;
 
 /*Other filters*/
 IF @execution_count IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.count_executions >= @execution_count' + @nc10;
+        @having_clause += N'HAVING  
+        SUM(qsrs.count_executions) >= @execution_count';
 END;
 
 IF @duration_ms IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.avg_duration >= (@duration_ms * 1000.)' + @nc10;
+        @where_clause += N'    AND   qsrs.avg_duration >= (@duration_ms * 1000.)' + @nc10;
 END;
 
 IF @execution_type_desc IS NOT NULL
 BEGIN
     SELECT
-        @where_clause += N'AND   qsrs.execution_type_desc = @execution_type_desc' + @nc10;
+        @where_clause += N'    AND   qsrs.execution_type_desc = @execution_type_desc' + @nc10;
 END;
 
 IF @workdays = 1
@@ -3942,7 +3945,7 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     SELECT
-        @where_clause += N'AND   EXISTS
+        @where_clause += N'    AND   EXISTS
         (
             SELECT
                 1/0
@@ -4022,7 +4025,7 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     SELECT
-        @where_clause += N'AND   EXISTS
+        @where_clause += N'    AND   EXISTS
         (
             SELECT
                 1/0
@@ -4477,7 +4480,7 @@ BEGIN
         END;
 
         SELECT
-            @where_clause += N'AND   EXISTS
+            @where_clause += N'    AND   EXISTS
            (
                SELECT
                    1/0
@@ -4553,7 +4556,7 @@ BEGIN
         END;
 
         SELECT
-            @where_clause += N'AND   EXISTS
+            @where_clause += N'    AND   EXISTS
            (
                SELECT
                    1/0
@@ -4629,7 +4632,7 @@ BEGIN
         END;
 
         SELECT
-            @where_clause += N'AND   EXISTS
+            @where_clause += N'    AND   EXISTS
            (
                SELECT
                    1/0
@@ -4711,7 +4714,7 @@ OPTION(RECOMPILE);' + @nc10;
     END;
 
     SELECT
-        @where_clause += N'AND   EXISTS
+        @where_clause += N'    AND   EXISTS
        (
            SELECT
                1/0
@@ -4822,13 +4825,13 @@ AND @procedure_exists = 1
 BEGIN
     SELECT
         @sql += N'
-AND   EXISTS
-      (
-          SELECT
-              1/0
-          FROM #procedure_plans AS pp
-          WHERE pp.plan_id = qsp.plan_id
-      )';
+    AND   EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #procedure_plans AS pp
+              WHERE pp.plan_id = qsp.plan_id
+          )';
 END;
 
     SELECT
@@ -4871,7 +4874,7 @@ END;
     END;
 
     SELECT
-        @where_clause += N'AND   EXISTS
+        @where_clause += N'    AND   EXISTS
        (
            SELECT
                1/0
@@ -4982,13 +4985,13 @@ AND @procedure_exists = 1
 BEGIN
     SELECT
         @sql += N'
-AND   EXISTS
-      (
-          SELECT
-              1/0
-          FROM #procedure_plans AS pp
-          WHERE pp.plan_id = qsp.plan_id
-      )';
+    AND   EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #procedure_plans AS pp
+              WHERE pp.plan_id = qsp.plan_id
+          )';
 END;
 
     SELECT
@@ -5031,7 +5034,7 @@ END;
     END;
 
     SELECT
-        @where_clause += N'AND   NOT EXISTS
+        @where_clause += N'    AND   NOT EXISTS
        (
            SELECT
                1/0
@@ -5215,7 +5218,7 @@ BEGIN
 END;
 
 SELECT
-    @where_clause += N'AND   NOT EXISTS
+    @where_clause += N'    AND   NOT EXISTS
       (
           SELECT
               1/0
@@ -5627,7 +5630,7 @@ BEGIN
         BY qsrs.plan_id,
         CASE
             WHEN qsrs.last_execution_time >= @start_date
-            AND   qsrs.last_execution_time < @end_date
+            AND  qsrs.last_execution_time < @end_date
             THEN ''No''
             ELSE ''Yes''
         END
@@ -6178,8 +6181,10 @@ BEGIN
     WHERE 1 = 1
     ' + @where_clause
       + N'
-    GROUP
-        BY qsrs.plan_id
+    GROUP BY 
+        qsrs.plan_id
+    ' + @having_clause
+      + N'
     ORDER BY
         MAX(' +
     CASE @sort_order
@@ -6367,7 +6372,7 @@ ELSE
 BEGIN
    SELECT
        @sql +=  N'
-   NULL,';
+    NULL,';
 END;
 
 SELECT
@@ -6629,7 +6634,8 @@ the two time periods under consideration
 distinct.
 */
 CASE @regression_mode
-   WHEN 1 THEN  N',
+     WHEN 1 
+     THEN  N',
    CASE
        WHEN qsrs_with_lasts.last_execution_time >= @start_date AND qsrs_with_lasts.last_execution_time < @end_date
        THEN ''No''
@@ -6637,7 +6643,16 @@ CASE @regression_mode
    END'
    ELSE N' '
 END
-+ N'
++ 
+N'
+' +
+REPLACE
+(
+    @having_clause, 
+    'qsrs.', 
+    'qsrs_with_lasts.'
+) +
+N'
 OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 
 IF @debug = 1

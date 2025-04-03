@@ -206,37 +206,37 @@ BEGIN
     CREATE TABLE 
         #databases
     (
-        name sysname NOT NULL,              /* Database name */
-        database_id integer NOT NULL,       /* Database ID */
-        compatibility_level tinyint NOT NULL, /* Informational */
-        collation_name sysname NOT NULL,    /* Informational */
-        user_access_desc nvarchar(60) NOT NULL, /* Warn if not MULTI_USER */
-        is_read_only bit NOT NULL,          /* Informational - can we write there? */
-        is_auto_close_on bit NOT NULL,      /* Warn if ON */
-        is_auto_shrink_on bit NOT NULL,     /* Warn if ON */
-        state_desc nvarchar(60) NOT NULL,   /* Warn if not ONLINE */
-        snapshot_isolation_state_desc nvarchar(60) NOT NULL, /* Notify if ON */
-        is_read_committed_snapshot_on bit NOT NULL, /* Notify if ON */
-        is_auto_create_stats_on bit NOT NULL, /* Warn if not ON */
-        is_auto_create_stats_incremental_on bit NOT NULL, /* Informational */
-        is_auto_update_stats_on bit NOT NULL, /* Warn if not ON */
-        is_auto_update_stats_async_on bit NOT NULL, /* Informational */
-        is_ansi_null_default_on bit NOT NULL, /* Warn if ON */
-        is_ansi_nulls_on bit NOT NULL,      /* Warn if ON */
-        is_ansi_padding_on bit NOT NULL,    /* Warn if ON */
-        is_ansi_warnings_on bit NOT NULL,   /* Warn if ON */
-        is_arithabort_on bit NOT NULL,      /* Warn if ON */
-        is_concat_null_yields_null_on bit NOT NULL, /* Warn if ON */
-        is_numeric_roundabort_on bit NOT NULL, /* Warn if ON */
-        is_quoted_identifier_on bit NOT NULL, /* Warn if ON */
-        is_parameterization_forced bit NOT NULL, /* Informational */
-        is_query_store_on bit NOT NULL,     /* List databases where it's OFF */
-        is_distributor bit NOT NULL,        /* Informational */
-        is_cdc_enabled bit NOT NULL,        /* Informational */
-        target_recovery_time_in_seconds integer NOT NULL, /* List if not 60 */
-        delayed_durability_desc nvarchar(60) NOT NULL, /* Informational if ALLOWED or FORCED */
-        is_accelerated_database_recovery_on bit NOT NULL, /* Suggest turning ON if OFF, especially if SI/RCSI */
-        is_ledger_on bit NULL               /* Question sanity if ON */
+        name sysname NOT NULL,              
+        database_id integer NOT NULL,       
+        compatibility_level tinyint NOT NULL, 
+        collation_name sysname NOT NULL,    
+        user_access_desc nvarchar(60) NOT NULL, 
+        is_read_only bit NOT NULL,          
+        is_auto_close_on bit NOT NULL,      
+        is_auto_shrink_on bit NOT NULL,    
+        state_desc nvarchar(60) NOT NULL,   
+        snapshot_isolation_state_desc nvarchar(60) NOT NULL, 
+        is_read_committed_snapshot_on bit NOT NULL, 
+        is_auto_create_stats_on bit NOT NULL, 
+        is_auto_create_stats_incremental_on bit NOT NULL, 
+        is_auto_update_stats_on bit NOT NULL, 
+        is_auto_update_stats_async_on bit NOT NULL, 
+        is_ansi_null_default_on bit NOT NULL, 
+        is_ansi_nulls_on bit NOT NULL,      
+        is_ansi_padding_on bit NOT NULL,    
+        is_ansi_warnings_on bit NOT NULL,   
+        is_arithabort_on bit NOT NULL,      
+        is_concat_null_yields_null_on bit NOT NULL, 
+        is_numeric_roundabort_on bit NOT NULL, 
+        is_quoted_identifier_on bit NOT NULL, 
+        is_parameterization_forced bit NOT NULL, 
+        is_query_store_on bit NOT NULL,     
+        is_distributor bit NOT NULL,        
+        is_cdc_enabled bit NOT NULL,        
+        target_recovery_time_in_seconds integer NOT NULL, 
+        delayed_durability_desc nvarchar(60) NOT NULL, 
+        is_accelerated_database_recovery_on bit NOT NULL, 
+        is_ledger_on bit NULL               
     );
     
     /* Create table for database scoped configurations */
@@ -441,7 +441,7 @@ BEGIN
     INSERT INTO 
         #server_info (info_type, value)
     VALUES 
-        (N'Website', N'https://erikdarling.com');
+        (N'https://code.erikdarling.com', N'https://erikdarling.com');
         
     INSERT INTO 
         #server_info (info_type, value)
