@@ -257,6 +257,46 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* OPTIMIZE_FOR_SEQUENTIAL_KEY variables (SQL 2019+, Azure SQL DB, and Managed Instance) */
+        @supports_optimize_for_sequential_key bit =
+            CASE
+                /* Azure SQL DB or Managed Instance */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
+                THEN 1
+                /* SQL Server 2019+ */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) = 3
+                     AND CONVERT
+                         (
+                             integer,
+                             SUBSTRING
+                             (
+                                 CONVERT
+                                 (
+                                     varchar(20),
+                                     SERVERPROPERTY('ProductVersion')
+                                 ),
+                                 1,
+                                 2
+                             )
+                         ) >= 15
+                THEN 1
+                ELSE 0
+            END,
+                             integer,
+                             SUBSTRING
+                             (
+                                 CONVERT
+                                 (
+                                     varchar(20),
+                                     SERVERPROPERTY('ProductVersion')
+                                 ),
+                                 1,
+                                 2
+                             )
+                         ) >= 15
+                THEN 1
+                ELSE 0
+            END,
         @uptime_days nvarchar(10) =
         (
             SELECT
@@ -475,6 +515,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_included_column bit NULL,
         filter_definition nvarchar(max) NULL,
         is_max_length integer NOT NULL,
+        optimize_for_sequential_key bit NOT NULL,
         user_seeks bigint NOT NULL,
         user_scans bigint NOT NULL,
         user_lookups bigint NOT NULL,
@@ -1825,7 +1866,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      )
                 THEN 1
                 ELSE 0
-            END,
+            END,' + 
+CASE 
+    WHEN @supports_optimize_for_sequential_key = 1 
+    THEN N'
+        optimize_for_sequential_key = ISNULL(i.optimize_for_sequential_key, 0),'
+    ELSE N'
+        optimize_for_sequential_key = 0,'
+END + N'
         user_seeks = ISNULL(us.user_seeks, 0),
         user_scans = ISNULL(us.user_scans, 0),
         user_lookups = ISNULL(us.user_lookups, 0),
@@ -4380,6 +4428,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN ', DATA_COMPRESSION = PAGE'
                 ELSE N''
             END +
+            CASE
+                WHEN @supports_optimize_for_sequential_key = 1
+                AND EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_ofsk
+                    WHERE id_ofsk.database_id = ia.database_id
+                    AND   id_ofsk.object_id = ia.object_id
+                    AND   id_ofsk.index_id = ia.index_id
+                    AND   id_ofsk.optimize_for_sequential_key = 1
+                )
+                THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
             N')',
         additional_info = N'Compression type: All Partitions',
         superseded_info = NULL, /* No target index for compression scripts */
@@ -4574,6 +4637,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN ce.can_compress = 1
                 THEN ', DATA_COMPRESSION = PAGE'
                 ELSE N''
+                END +
+                CASE
+                    WHEN @supports_optimize_for_sequential_key = 1
+                    AND EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id_ofsk
+                        WHERE id_ofsk.database_id = ia.database_id
+                        AND   id_ofsk.object_id = ia.object_id
+                        AND   id_ofsk.index_id = ia.index_id
+                        AND   id_ofsk.optimize_for_sequential_key = 1
+                    )
+                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                    ELSE N''
                 END +
             N')',
             N'Compression type: Per Partition | Partition: ' +
