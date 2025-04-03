@@ -83,10 +83,35 @@ EXEC dbo.sp_PerfCheck
   - Verifies if IFI is enabled for data file operations
   - Critical for fast file growths and database restores
 
+- **Min and Max Server Memory** (check_id 1001-1002)
+  - Check for min server memory too close to max (≥90%)
+  - Identifies max server memory set too close to physical memory (≥95%)
+  - Prevents SQL Server from dynamically adjusting memory usage
+
+- **High Stolen Memory** (check_id 6002)
+  - Identifies high percentage of memory stolen from buffer pool
+  - Calculates impact on data caching capability
+  - Suggests investigating memory usage by CLR, extended stored procedures, or linked servers
+
 #### CPU Configuration
 - **CPU Scheduling Pressure** (check_id 6101-6102)
   - High signal waits ratio (>25%) indicating CPU scheduler contention
   - Excessive SOS_SCHEDULER_YIELD waits showing CPU pressure
+
+- **Offline CPU Schedulers** (check_id 4001)
+  - Detects when CPU schedulers are offline
+  - Identifies potential affinity mask misconfigurations
+  - Checks for licensing or VM configuration issues limiting processor availability
+
+- **MAXDOP Settings** (check_id 1003)
+  - Identifies default MAXDOP setting (0) on multi-processor systems
+  - Warns about potential excessive parallelism issues
+  - Provides recommendations based on logical processor count
+
+- **Cost Threshold for Parallelism** (check_id 1004)
+  - Detects low cost threshold settings that may cause excessive parallelism
+  - Analyzes impact on small query performance
+  - Recommends appropriate values based on workload characteristics
 
 #### Server Stability
 - **Memory Dumps Analysis** (check_id 4102)
@@ -98,6 +123,17 @@ EXEC dbo.sp_PerfCheck
   - Identifies deadlock frequency and patterns
   - Tracks deadlocks per day since server startup
   - Indicates potential application concurrency issues
+
+#### Advanced Configuration Settings
+- **Priority Boost** (check_id 1005)
+  - Detects when priority boost is enabled
+  - Warns about potential issues with Windows scheduling priorities
+  - Provides guidance on recommended settings
+
+- **Lightweight Pooling** (check_id 1006)
+  - Identifies when lightweight pooling (fiber mode) is enabled
+  - Warns about potential compatibility issues with OLEDB providers
+  - Explains performance implications and alternatives
 
 #### Resource Governor
 - **Resource Governor State** (check_id 4107)
@@ -118,6 +154,11 @@ EXEC dbo.sp_PerfCheck
   - Checks for equal file sizes and settings
   - Identifies suboptimal growth settings
   - Analyzes TempDB contention indicators
+
+- **Potentially Disruptive DBCC Commands** (check_id 5003)
+  - Detects execution of DBCC FREEPROCCACHE, FREESYSTEMCACHE, DROPCLEANBUFFERS
+  - Identifies DBCC SHRINKDATABASE and SHRINKFILE operations
+  - Warns about performance impact on production environments
 
 ### Storage Performance (6000-series)
 
