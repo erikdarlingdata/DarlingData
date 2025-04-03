@@ -1408,9 +1408,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ce
         SET
             ce.can_compress = 0,
-            ce.reason = ''Table contains sparse columns or incompatible data types''
+            ce.reason = ''Table contains sparse columns''
         FROM #compression_eligibility AS ce
         WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+            WHERE c.object_id = ce.object_id
+            AND
+            (
+                 c.is_sparse = 1
+            )
+        )
+        OPTION(RECOMPILE);
+        ';
+
+        IF @debug = 1
+        BEGIN
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+		 SELECT
+            @sql = N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+        UPDATE
+            ce
+        SET
+            ce.can_compress = 0,
+            ce.reason = ''Index contains incompatible data types''
+        FROM #compression_eligibility AS ce
+        JOIN sys.indexes AS i 
+	      ON i.object_id = ce.object_id AND i.index_id = ce.index_id
+	    WHERE ce.can_compress = 1 
+          AND i.type = 1 
+          AND EXISTS 
         (
             SELECT
                 1/0
@@ -1420,8 +1456,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE c.object_id = ce.object_id
             AND
             (
-                 c.is_sparse = 1
-              OR t.name IN (N''text'', N''ntext'', N''image'')
+                 t.name IN (N''text'', N''ntext'', N''image'')
             )
         )
         OPTION(RECOMPILE);
