@@ -544,7 +544,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         result_type varchar(100) NOT NULL,
         sort_order integer NOT NULL,
-        database_name sysname NULL,
+        database_name nvarchar(max) NULL,
         schema_name sysname NULL,
         table_name sysname NULL,
         index_name sysname NULL,
