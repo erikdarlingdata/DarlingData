@@ -710,7 +710,7 @@ BEGIN
             N' GB. Large security caches can consume significant memory and may indicate security-related issues ' +
             N'such as excessive application role usage or frequent permission changes. ' +
             N'Consider using dbo.ClearTokenPerm stored procedure to manage this issue.',
-        url = N'https://www.erikdarling.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/'
+        url = N'https://erikdarling.com/sp_PerfCheck#SecurityToken'
     FROM sys.dm_os_memory_clerks AS domc
     WHERE domc.type = N'USERSTORE_TOKENPERM'
     AND   domc.name = N'TokenAndPermUserStore'
@@ -1868,7 +1868,7 @@ BEGIN
                     CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) + 
                     N'% of total memory). This reduces memory available for data caching and can impact performance. ' +
                     N'Consider investigating memory usage by CLR, extended stored procedures, linked servers, or other memory clerks.',
-                    N'https://erikdarling.com/'
+                    N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
                 );
                 
                 /* Also add the top 5 non-buffer pool memory consumers for visibility */
@@ -2643,7 +2643,7 @@ BEGIN
                 N' data files. This is an odd number and not equal to the ' +
                 CONVERT(nvarchar(10), @processors) + ' logical processors. ' +
                 N'Consider using an even number of files for better performance.',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_PerfCheck#TempDB'
             );
         END;
         
@@ -2670,7 +2670,7 @@ BEGIN
                 N' data files, which is more than the ' +
                 CONVERT(nvarchar(10), @processors) + 
                 N' logical processors. ',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_PerfCheck#TempDB'
             );
         END;
         
@@ -2700,7 +2700,7 @@ BEGIN
                 N' GB, Largest: ' + 
                 CONVERT(nvarchar(10), CONVERT(integer, @max_data_file_size)) + 
                 N' GB. For best performance, TempDB data files should be the same size.',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_PerfCheck#TempDB'
             );
         END;
         
@@ -2726,7 +2726,7 @@ BEGIN
                 N'Mixed TempDB Autogrowth Settings',
                 N'TempDB data files have inconsistent autogrowth settings - some use percentage growth and others use fixed size growth. ' +
                 N'This can lead to uneven file sizes over time. Use consistent settings for all files.',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_PerfCheck#TempDB'
             );
         END;
                 
@@ -2752,7 +2752,7 @@ BEGIN
                 N'Min server memory (' + CONVERT(nvarchar(20), @min_server_memory) + 
                 N' MB) is >= 90% of max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
                 N' MB). This prevents SQL Server from dynamically adjusting memory.',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
             );
         END;
         
@@ -2778,7 +2778,7 @@ BEGIN
                 N'Max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
                 N' MB) is >= 95% of physical memory (' + CONVERT(nvarchar(20), CONVERT(bigint, @physical_memory_gb * 1024)) + 
                 N' MB). This may not leave enough memory for the OS and other processes.',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
             );
         END;
         
@@ -2805,7 +2805,7 @@ BEGIN
                 N'Max degree of parallelism is set to 0 (default) on a server with ' + 
                 CONVERT(nvarchar(10), @processors) + 
                 N' logical processors. This can lead to excessive parallelism.',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
             );
         END;
         
@@ -2831,7 +2831,7 @@ BEGIN
                 N'Cost threshold for parallelism is set to ' + 
                 CONVERT(nvarchar(10), @cost_threshold) + 
                 N'. Low values can cause excessive parallelism for small queries.',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
             );
         END;
         
