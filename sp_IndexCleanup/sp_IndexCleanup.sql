@@ -1442,7 +1442,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ce.can_compress = 0,
             ce.reason = ''Index contains incompatible data types''
         FROM #compression_eligibility AS ce
-        JOIN sys.indexes AS i 
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i 
 	      ON i.object_id = ce.object_id AND i.index_id = ce.index_id
 	    WHERE ce.can_compress = 1 
           AND i.type = 1 
