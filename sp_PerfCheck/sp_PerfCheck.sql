@@ -3604,8 +3604,8 @@ BEGIN
             IF EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + N'.sys.all_objects AS ao WHERE ao.name = N''database_scoped_configurations'')
             BEGIN
                 /* Delete any existing values for this database */
-                DELETE FROM #database_scoped_configs 
-                WHERE database_id = N' + CONVERT(nvarchar(10), @current_database_id) + N';
+                TRUNCATE TABLE
+                    #database_scoped_configs;
                 
                 /* Insert default values as reference for comparison */
                 INSERT INTO 
@@ -3620,29 +3620,29 @@ BEGIN
                     is_value_default
                 )
                 VALUES
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 1, N''MAXDOP'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 2, N''LEGACY_CARDINALITY_ESTIMATION'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 3, N''PARAMETER_SNIFFING'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 4, N''QUERY_OPTIMIZER_HOTFIXES'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 7, N''INTERLEAVED_EXECUTION_TVF'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 8, N''BATCH_MODE_MEMORY_GRANT_FEEDBACK'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 9, N''BATCH_MODE_ADAPTIVE_JOINS'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 10, N''TSQL_SCALAR_UDF_INLINING'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 13, N''OPTIMIZE_FOR_AD_HOC_WORKLOADS'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 16, N''ROW_MODE_MEMORY_GRANT_FEEDBACK'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 17, N''ISOLATE_SECURITY_POLICY_CARDINALITY'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 18, N''BATCH_MODE_ON_ROWSTORE'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 19, N''DEFERRED_COMPILATION_TV'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 20, N''ACCELERATED_PLAN_FORCING'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 24, N''LAST_QUERY_PLAN_STATS'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 27, N''EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 28, N''PARAMETER_SENSITIVE_PLAN_OPTIMIZATION'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 31, N''CE_FEEDBACK'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 33, N''MEMORY_GRANT_FEEDBACK_PERSISTENCE'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 34, N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 35, N''OPTIMIZED_PLAN_FORCING'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 37, N''DOP_FEEDBACK'', NULL, NULL, 1),
-                    (' + CONVERT(nvarchar(10), @current_database_id) + N', N''' + @current_database_name + N''', 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1);
+                    (@current_database_id, @current_database_name, 1,  N''MAXDOP'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 2,  N''LEGACY_CARDINALITY_ESTIMATION'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 3,  N''PARAMETER_SNIFFING'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 4,  N''QUERY_OPTIMIZER_HOTFIXES'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 7,  N''INTERLEAVED_EXECUTION_TVF'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 8,  N''BATCH_MODE_MEMORY_GRANT_FEEDBACK'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 9,  N''BATCH_MODE_ADAPTIVE_JOINS'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 10, N''TSQL_SCALAR_UDF_INLINING'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 13, N''OPTIMIZE_FOR_AD_HOC_WORKLOADS'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 16, N''ROW_MODE_MEMORY_GRANT_FEEDBACK'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 17, N''ISOLATE_SECURITY_POLICY_CARDINALITY'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 18, N''BATCH_MODE_ON_ROWSTORE'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 19, N''DEFERRED_COMPILATION_TV'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 20, N''ACCELERATED_PLAN_FORCING'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 24, N''LAST_QUERY_PLAN_STATS'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 27, N''EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 28, N''PARAMETER_SENSITIVE_PLAN_OPTIMIZATION'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 31, N''CE_FEEDBACK'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 33, N''MEMORY_GRANT_FEEDBACK_PERSISTENCE'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 34, N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 35, N''OPTIMIZED_PLAN_FORCING'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 37, N''DOP_FEEDBACK'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1);
                 
                 /* Get actual non-default settings */
                 INSERT INTO 
@@ -3657,48 +3657,68 @@ BEGIN
                     is_value_default
                 )
                 SELECT 
-                    ' + CONVERT(nvarchar(10), @current_database_id) + N', 
-                    N''' + @current_database_name + N''', 
+                    @current_database_id, 
+                    @current_database_name, 
                     sc.configuration_id, 
                     sc.name, 
                     sc.value, 
                     sc.value_for_secondary, 
                     CASE
-                        WHEN sc.name = N''MAXDOP'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = N''LEGACY_CARDINALITY_ESTIMATION'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = N''PARAMETER_SNIFFING'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''QUERY_OPTIMIZER_HOTFIXES'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = N''INTERLEAVED_EXECUTION_TVF'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''BATCH_MODE_MEMORY_GRANT_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''BATCH_MODE_ADAPTIVE_JOINS'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''TSQL_SCALAR_UDF_INLINING'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''OPTIMIZE_FOR_AD_HOC_WORKLOADS'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = N''ROW_MODE_MEMORY_GRANT_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''ISOLATE_SECURITY_POLICY_CARDINALITY'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = N''BATCH_MODE_ON_ROWSTORE'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''DEFERRED_COMPILATION_TV'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''ACCELERATED_PLAN_FORCING'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''LAST_QUERY_PLAN_STATS'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = N''EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''PARAMETER_SENSITIVE_PLAN_OPTIMIZATION'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''CE_FEEDBACK'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERSISTENCE'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''OPTIMIZED_PLAN_FORCING'' AND CAST(sc.value AS integer) = 1 THEN 1
-                        WHEN sc.name = N''DOP_FEEDBACK'' AND CAST(sc.value AS integer) = 0 THEN 1
-                        WHEN sc.name = N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'' AND CAST(sc.value AS integer) = 0 THEN 1
+                        WHEN sc.name = N''MAXDOP'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''LEGACY_CARDINALITY_ESTIMATION'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''PARAMETER_SNIFFING'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''QUERY_OPTIMIZER_HOTFIXES'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''INTERLEAVED_EXECUTION_TVF'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''BATCH_MODE_MEMORY_GRANT_FEEDBACK'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''BATCH_MODE_ADAPTIVE_JOINS'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''TSQL_SCALAR_UDF_INLINING'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''OPTIMIZE_FOR_AD_HOC_WORKLOADS'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''ROW_MODE_MEMORY_GRANT_FEEDBACK'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''ISOLATE_SECURITY_POLICY_CARDINALITY'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''BATCH_MODE_ON_ROWSTORE'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''DEFERRED_COMPILATION_TV'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''ACCELERATED_PLAN_FORCING'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''LAST_QUERY_PLAN_STATS'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''PARAMETER_SENSITIVE_PLAN_OPTIMIZATION'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''CE_FEEDBACK'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERSISTENCE'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''OPTIMIZED_PLAN_FORCING'' AND CONVERT(integer, sc.value) = 1 THEN 1
+                        WHEN sc.name = N''DOP_FEEDBACK'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'' AND CONVERT(integer, sc.value) = 0 THEN 1
                         ELSE 0 /* Non-default */
                     END
-                FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_scoped_configurations AS sc;
+                FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_scoped_configurations AS sc
+                WHERE sc.configuration_id IN
+                      (
+                        1, 2, 3, 4, 7, 8, 9, 
+                        10,13,16,17,18,19,20,24,
+                        27,28,31,33,34,35,37,39                
+                      );
             END;';
                 
             IF @debug = 1
             BEGIN
-                PRINT @sql;
+                SELECT
+                    dsc.*
+                FROM #database_scoped_configs AS dsc
+                ORDER BY
+                    dsc.database_id,
+                    dsc.configuration_id;
+
+                PRINT @current_database_id;
+                PRINT @current_database_name;
+                PRINT SUBSTRING(@sql, 1, 4000);
+                PRINT SUBSTRING(@sql, 4001, 8000);
             END;
                 
             EXECUTE sys.sp_executesql 
-                @sql;
+                @sql,
+              N'@current_database_id integer,
+                @current_database_name sysname',
+                @current_database_id,
+                @current_database_name;
                 
                 /* Add results for non-default configurations */
                 INSERT INTO 
