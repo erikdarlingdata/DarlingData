@@ -257,6 +257,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* OPTIMIZE_FOR_SEQUENTIAL_KEY variables (SQL 2019+, Azure SQL DB, and Managed Instance) */
+        @supports_optimize_for_sequential_key bit =
+            CASE
+                /* Azure SQL DB or Managed Instance */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
+                THEN 1
+                /* SQL Server 2019+ */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) = 3
+                     AND CONVERT
+                         (
+                             integer,
+                             SUBSTRING
+                             (
+                                 CONVERT
+                                 (
+                                     varchar(20),
+                                     SERVERPROPERTY('ProductVersion')
+                                 ),
+                                 1,
+                                 2
+                             )
+                         ) >= 15
+                THEN 1
+                ELSE 0
+            END,
         @uptime_days nvarchar(10) =
         (
             SELECT
@@ -475,6 +500,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_included_column bit NULL,
         filter_definition nvarchar(max) NULL,
         is_max_length integer NOT NULL,
+        optimize_for_sequential_key bit NOT NULL,
         user_seeks bigint NOT NULL,
         user_scans bigint NOT NULL,
         user_lookups bigint NOT NULL,
@@ -544,8 +570,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         result_type varchar(100) NOT NULL,
         sort_order integer NOT NULL,
-        database_name sysname NULL,
-        schema_name sysname NULL,
+        database_name nvarchar(max) NULL,
+        schema_name nvarchar(max) NULL,
         table_name sysname NULL,
         index_name sysname NULL,
         script_type nvarchar(60) NULL, /* Type of script (e.g., MERGE SCRIPT, DISABLE SCRIPT, etc.) */
@@ -665,6 +691,57 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (
         database_name sysname NOT NULL PRIMARY KEY,
         reason nvarchar(100) NOT NULL
+    );
+    
+    CREATE TABLE
+        #computed_columns_analysis
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        column_id integer NOT NULL,
+        column_name sysname NOT NULL,
+        definition nvarchar(max) NULL,
+        contains_udf bit NOT NULL,
+        udf_names nvarchar(max) NULL,
+        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, column_id)
+    );
+    
+    CREATE TABLE
+        #check_constraints_analysis
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        constraint_id integer NOT NULL,
+        constraint_name sysname NOT NULL,
+        definition nvarchar(max) NULL,
+        contains_udf bit NOT NULL,
+        udf_names nvarchar(max) NULL,
+        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, constraint_id)
+    );
+    
+    CREATE TABLE
+        #filtered_index_columns_analysis
+    (
+        database_id integer NOT NULL,
+        database_name sysname NOT NULL,
+        schema_id integer NOT NULL,
+        schema_name sysname NOT NULL,
+        object_id integer NOT NULL,
+        table_name sysname NOT NULL,
+        index_id integer NOT NULL,
+        index_name sysname NULL,
+        filter_definition nvarchar(max) NULL,
+        missing_included_columns nvarchar(max) NULL,
+        should_include_filter_columns bit NOT NULL,
+        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
     );
 
     /* Parse @include_databases comma-separated list */
@@ -1331,9 +1408,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ce
         SET
             ce.can_compress = 0,
-            ce.reason = ''Table contains sparse columns or incompatible data types''
+            ce.reason = ''Table contains sparse columns''
         FROM #compression_eligibility AS ce
         WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+            WHERE c.object_id = ce.object_id
+            AND
+            (
+                 c.is_sparse = 1
+            )
+        )
+        OPTION(RECOMPILE);
+        ';
+
+        IF @debug = 1
+        BEGIN
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+		 SELECT
+            @sql = N'
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+        UPDATE
+            ce
+        SET
+            ce.can_compress = 0,
+            ce.reason = ''Index contains incompatible data types''
+        FROM #compression_eligibility AS ce
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i 
+	      ON i.object_id = ce.object_id AND i.index_id = ce.index_id
+	    WHERE ce.can_compress = 1 
+          AND i.type = 1 
+          AND EXISTS 
         (
             SELECT
                 1/0
@@ -1343,8 +1456,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE c.object_id = ce.object_id
             AND
             (
-                 c.is_sparse = 1
-              OR t.name IN (N''text'', N''ntext'', N''image'')
+                 t.name IN (N''text'', N''ntext'', N''image'')
             )
         )
         OPTION(RECOMPILE);
@@ -1365,6 +1477,177 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#compression_eligibility after update',
             ce.*
         FROM #compression_eligibility AS ce
+        OPTION(RECOMPILE);
+
+        RAISERROR('Analyzing computed columns for UDF references', 0, 0) WITH NOWAIT;
+    END;
+
+    /* Check for computed columns that potentially use UDFs */
+    SELECT
+        @sql = N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+    INSERT
+        #computed_columns_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        object_id,
+        table_name,
+        column_id,
+        column_name,
+        definition,
+        contains_udf,
+        udf_names
+    )
+    SELECT
+        fo.database_id,
+        fo.database_name,
+        fo.schema_id,
+        fo.schema_name,
+        fo.object_id,
+        fo.table_name,
+        c.column_id,
+        column_name = c.name,
+        definition = cc.definition,
+        contains_udf = 
+            CASE 
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                THEN 1
+                ELSE 0
+            END,
+        udf_names =
+            CASE
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                THEN
+                    SUBSTRING
+                    (
+                        cc.definition,
+                        CHARINDEX(N''['', cc.definition),
+                        CHARINDEX
+                        (
+                            N'']'', 
+                            cc.definition, 
+                            CHARINDEX
+                            (
+                                N''].['', 
+                                cc.definition
+                            ) + 3
+                        ) - 
+                        CHARINDEX(N''['', cc.definition) + 1
+                    )
+                ELSE NULL
+            END
+    FROM #filtered_objects AS fo
+    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+      ON fo.object_id = c.object_id
+    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.computed_columns AS cc
+      ON  c.object_id = cc.object_id
+      AND c.column_id = cc.column_id
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#computed_columns_analysis',
+            cca.*
+        FROM #computed_columns_analysis AS cca
+        OPTION(RECOMPILE);
+
+        RAISERROR('Analyzing check constraints for UDF references', 0, 0) WITH NOWAIT;
+    END;
+
+    /* Check for check constraints that potentially use UDFs */
+    SELECT
+        @sql = N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+    INSERT
+        #check_constraints_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        object_id,
+        table_name,
+        constraint_id,
+        constraint_name,
+        definition,
+        contains_udf,
+        udf_names
+    )
+    SELECT
+        fo.database_id,
+        fo.database_name,
+        fo.schema_id,
+        fo.schema_name,
+        fo.object_id,
+        fo.table_name,
+        cc.object_id AS constraint_id,
+        constraint_name = cc.name,
+        definition = cc.definition,
+        contains_udf = 
+            CASE 
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                THEN 1
+                ELSE 0
+            END,
+        udf_names =
+            CASE
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                THEN
+                    SUBSTRING
+                    (
+                        cc.definition,
+                        CHARINDEX(N''['', cc.definition),
+                        CHARINDEX
+                        (
+                            N'']'', 
+                            cc.definition, 
+                            CHARINDEX
+                            (
+                                N''].['', 
+                                cc.definition
+                            ) + 3
+                        ) - 
+                        CHARINDEX(N''['', cc.definition) + 1
+                    )
+                ELSE NULL
+            END
+    FROM #filtered_objects AS fo
+    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.check_constraints AS cc
+      ON fo.object_id = cc.parent_object_id
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#check_constraints_analysis',
+            cca.*
+        FROM #check_constraints_analysis AS cca
         OPTION(RECOMPILE);
 
         RAISERROR('Generating #operational_stats insert', 0, 0) WITH NOWAIT;
@@ -1603,7 +1886,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      )
                 THEN 1
                 ELSE 0
-            END,
+            END,' + 
+        CASE 
+            WHEN @supports_optimize_for_sequential_key = 1 
+            THEN N'
+        optimize_for_sequential_key = ISNULL(i.optimize_for_sequential_key, 0),'
+            ELSE N'
+        optimize_for_sequential_key = 0,'
+        END + N'
         user_seeks = ISNULL(us.user_seeks, 0),
         user_scans = ISNULL(us.user_scans, 0),
         user_lookups = ISNULL(us.user_lookups, 0),
@@ -1732,6 +2022,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_included_column,
         filter_definition,
         is_max_length,
+        optimize_for_sequential_key,
         user_seeks,
         user_scans,
         user_lookups,
@@ -2198,6 +2489,106 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             table_name = '#index_analysis',
             ia.*
         FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+
+        RAISERROR('Analyzing filtered indexes for columns to include', 0, 0) WITH NOWAIT;
+    END;
+
+    /* Analyze filtered indexes to identify columns used in filters that should be included */
+    INSERT
+        #filtered_index_columns_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        object_id,
+        table_name,
+        index_id,
+        index_name,
+        filter_definition,
+        missing_included_columns,
+        should_include_filter_columns
+    )
+    SELECT
+        ia.database_id,
+        ia.database_name,
+        ia.schema_id,
+        ia.schema_name,
+        ia.object_id,
+        ia.table_name,
+        ia.index_id,
+        ia.index_name,
+        ia.filter_definition,
+        missing_included_columns =
+            (
+                SELECT
+                    STUFF
+                    (
+                        (
+                            /* Find column names mentioned in filter_definition that aren't already key or included columns */
+                            SELECT
+                                N', ' + 
+                                c.name
+                            FROM sys.columns AS c
+                            WHERE c.object_id = ia.object_id
+                            AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_details AS id
+                                WHERE id.object_id = ia.object_id
+                                AND   id.index_id = ia.index_id
+                                AND   id.column_id = c.column_id
+                            )
+                            GROUP BY
+                                c.name
+                            FOR 
+                                XML 
+                                PATH(''), 
+                                TYPE
+                        ).value('text()[1]','nvarchar(max)'),
+                        1, 
+                        2, 
+                        N''
+                    )
+            ),
+        should_include_filter_columns =
+            CASE
+                WHEN EXISTS
+                (
+                    /* Check if any columns mentioned in filter_definition aren't already in the index */
+                    SELECT
+                        1/0
+                    FROM sys.columns AS c
+                    WHERE c.object_id = ia.object_id
+                    AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id
+                        WHERE id.object_id = ia.object_id
+                        AND   id.index_id = ia.index_id
+                        AND   id.column_id = c.column_id
+                    )
+                )
+                THEN 1
+                ELSE 0
+            END
+    FROM #index_analysis AS ia
+    WHERE ia.filter_definition IS NOT NULL
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#filtered_index_columns_analysis',
+            fica.*
+        FROM #filtered_index_columns_analysis AS fica
         OPTION(RECOMPILE);
 
         RAISERROR('Starting updates', 0, 0) WITH NOWAIT;
@@ -4058,6 +4449,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN ', DATA_COMPRESSION = PAGE'
                 ELSE N''
             END +
+            CASE
+                WHEN @supports_optimize_for_sequential_key = 1
+                AND EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_ofsk
+                    WHERE id_ofsk.database_id = ia.database_id
+                    AND   id_ofsk.object_id = ia.object_id
+                    AND   id_ofsk.index_id = ia.index_id
+                    AND   id_ofsk.optimize_for_sequential_key = 1
+                )
+                THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
             N')',
         additional_info = N'Compression type: All Partitions',
         superseded_info = NULL, /* No target index for compression scripts */
@@ -4252,6 +4658,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHEN ce.can_compress = 1
                 THEN ', DATA_COMPRESSION = PAGE'
                 ELSE N''
+                END +
+                CASE
+                    WHEN @supports_optimize_for_sequential_key = 1
+                    AND EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id_ofsk
+                        WHERE id_ofsk.database_id = ia.database_id
+                        AND   id_ofsk.object_id = ia.object_id
+                        AND   id_ofsk.index_id = ia.index_id
+                        AND   id_ofsk.optimize_for_sequential_key = 1
+                    )
+                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                    ELSE N''
                 END +
             N')',
             N'Compression type: Per Partition | Partition: ' +
@@ -5515,6 +5936,144 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N' GB total maximum: ' +
             FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2') +
             N'GB',
+            
+        /* ===== Section for Computed Columns with UDFs ===== */
+        computed_columns_with_udfs =
+            CASE
+                WHEN irs.summary_level = 'TABLE'
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #computed_columns_analysis AS cca 
+                          WHERE cca.database_name = irs.database_name
+                          AND   cca.schema_name = irs.schema_name
+                          AND   cca.table_name = irs.table_name
+                          AND   cca.contains_udf = 1
+                        )
+                    )
+                WHEN irs.summary_level = 'DATABASE'
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #computed_columns_analysis AS cca 
+                          WHERE cca.database_name = irs.database_name
+                          AND   cca.contains_udf = 1
+                        )
+                    )
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #computed_columns_analysis AS cca 
+                          WHERE cca.contains_udf = 1
+                        )
+                    )
+                ELSE '0'
+            END,
+            
+        /* ===== Section for Check Constraints with UDFs ===== */
+        check_constraints_with_udfs =
+            CASE
+                WHEN irs.summary_level = 'TABLE'
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #check_constraints_analysis AS cca 
+                          WHERE cca.database_name = irs.database_name
+                          AND   cca.schema_name = irs.schema_name
+                          AND   cca.table_name = irs.table_name
+                          AND   cca.contains_udf = 1
+                        )
+                    )
+                WHEN irs.summary_level = 'DATABASE'
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #check_constraints_analysis AS cca 
+                          WHERE cca.database_name = irs.database_name
+                          AND   cca.contains_udf = 1
+                        )
+                    )
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #check_constraints_analysis AS cca 
+                          WHERE cca.contains_udf = 1
+                        )
+                    )
+                ELSE '0'
+            END,
+            
+        /* ===== Section for Filtered Indexes Analysis ===== */
+        filtered_indexes_needing_includes =
+            CASE
+                WHEN irs.summary_level = 'TABLE'
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #filtered_index_columns_analysis AS fica 
+                          WHERE fica.database_name = irs.database_name
+                          AND   fica.schema_name = irs.schema_name
+                          AND   fica.table_name = irs.table_name
+                          AND   fica.should_include_filter_columns = 1
+                        )
+                    )
+                WHEN irs.summary_level = 'DATABASE'
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #filtered_index_columns_analysis AS fica 
+                          WHERE fica.database_name = irs.database_name
+                          AND   fica.should_include_filter_columns = 1
+                        )
+                    )
+                WHEN irs.summary_level = 'SUMMARY'
+                THEN 
+                    CONVERT
+                    (
+                        nvarchar(20), 
+                        (
+                          SELECT 
+                              COUNT_BIG(*) 
+                          FROM #filtered_index_columns_analysis AS fica 
+                          WHERE fica.should_include_filter_columns = 1
+                        )
+                    )
+                ELSE '0'
+            END,
 
         /* ===== Section 3: Table and Usage Statistics ===== */
         /* Row count */
@@ -5806,6 +6365,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.schema_name,
         irs.table_name
     OPTION(RECOMPILE);
+    
+    /* Check for databases that were processed but had no objects to analyze */
+    WITH empty_databases AS
+    (
+        SELECT 
+            database_name
+        FROM #databases AS d
+        WHERE NOT EXISTS
+        (
+            SELECT 
+                1/0
+            FROM #index_reporting_stats AS irs
+            WHERE irs.database_name = d.database_name
+        )
+    )
+    
+    SELECT
+        finding_type = 'DATABASES WITH NO QUALIFYING OBJECTS',
+        database_name = d.database_name + N' - Nothing Found',
+        recommendation = 'Database was processed but no objects met the analysis criteria'
+    FROM empty_databases AS d
+    ORDER BY
+        d.database_name
+    OPTION(RECOMPILE);
 
     /* Output message for dedupe_only mode */
     IF @dedupe_only = 1
@@ -5814,6 +6397,85 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Note: Operating in dedupe_only mode. Unused indexes were considered for deduplication only, not for removal.', 0, 1) WITH NOWAIT;
         END;
+    END;
+    
+    /* Display detailed reports for computed columns with UDFs */
+    IF EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM #computed_columns_analysis  AS cca
+        WHERE cca.contains_udf = 1
+    )
+    BEGIN
+        SELECT
+            finding_type = 'COMPUTED COLUMNS WITH UDF REFERENCES',
+            cca.database_name,
+            cca.schema_name,
+            cca.table_name,
+            cca.column_name,
+            cca.definition,
+            recommendation = 'Consider replacing UDF with inline logic to improve performance'
+        FROM #computed_columns_analysis AS cca
+        WHERE cca.contains_udf = 1
+        ORDER BY
+            cca.database_name,
+            cca.schema_name,
+            cca.table_name,
+            cca.column_name;
+    END;
+    
+    /* Display detailed reports for check constraints with UDFs */
+    IF EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM #check_constraints_analysis AS cca
+        WHERE cca.contains_udf = 1
+    )
+    BEGIN
+        SELECT
+            finding_type = 'CHECK CONSTRAINTS WITH UDF REFERENCES',
+            cca.database_name,
+            cca.schema_name,
+            cca.table_name,
+            cca.constraint_name,
+            cca.definition,
+            recommendation = 'Consider replacing UDF with inline logic to improve performance'
+        FROM #check_constraints_analysis AS cca
+        WHERE cca.contains_udf = 1
+        ORDER BY
+            cca.database_name,
+            cca.schema_name,
+            cca.table_name,
+            cca.constraint_name;
+    END;
+    
+    /* Display detailed reports for filtered indexes that need column optimization */
+    IF EXISTS 
+    (
+        SELECT 
+            1/0 
+        FROM #filtered_index_columns_analysis AS fica
+        WHERE fica.should_include_filter_columns = 1
+    )
+    BEGIN
+        SELECT
+            finding_type = 'FILTERED INDEXES NEEDING INCLUDED COLUMNS',
+            fica.database_name,
+            fica.schema_name,
+            fica.table_name,
+            fica.index_name,
+            fica.filter_definition,
+            fica.missing_included_columns,
+            recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
+        FROM #filtered_index_columns_analysis AS fica
+        WHERE fica.should_include_filter_columns = 1
+        ORDER BY
+            fica.database_name,
+            fica.schema_name,
+            fica.table_name,
+            fica.index_name;
     END;
 
 END TRY
