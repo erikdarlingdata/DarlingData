@@ -692,7 +692,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         database_name sysname NOT NULL PRIMARY KEY,
         reason nvarchar(100) NOT NULL
     );
-    
+
     CREATE TABLE
         #computed_columns_analysis
     (
@@ -709,7 +709,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         udf_names nvarchar(max) NULL,
         PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, column_id)
     );
-    
+
     CREATE TABLE
         #check_constraints_analysis
     (
@@ -726,7 +726,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         udf_names nvarchar(max) NULL,
         PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, constraint_id)
     );
-    
+
     CREATE TABLE
         #filtered_index_columns_analysis
     (
@@ -1432,7 +1432,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         EXECUTE sys.sp_executesql
             @sql;
 
-		 SELECT
+         SELECT
             @sql = N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
@@ -1442,11 +1442,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ce.can_compress = 0,
             ce.reason = ''Index contains incompatible data types''
         FROM #compression_eligibility AS ce
-        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i 
-	      ON i.object_id = ce.object_id AND i.index_id = ce.index_id
-	    WHERE ce.can_compress = 1 
-          AND i.type = 1 
-          AND EXISTS 
+        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
+          ON i.object_id = ce.object_id AND i.index_id = ce.index_id
+        WHERE ce.can_compress = 1
+          AND i.type = 1
+          AND EXISTS
         (
             SELECT
                 1/0
@@ -1514,15 +1514,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         c.column_id,
         column_name = c.name,
         definition = cc.definition,
-        contains_udf = 
-            CASE 
-                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+        contains_udf =
+            CASE
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
                 THEN 1
                 ELSE 0
             END,
         udf_names =
             CASE
-                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
                 THEN
                     SUBSTRING
                     (
@@ -1530,14 +1530,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         CHARINDEX(N''['', cc.definition),
                         CHARINDEX
                         (
-                            N'']'', 
-                            cc.definition, 
+                            N'']'',
+                            cc.definition,
                             CHARINDEX
                             (
-                                N''].['', 
+                                N''].['',
                                 cc.definition
                             ) + 3
-                        ) - 
+                        ) -
                         CHARINDEX(N''['', cc.definition) + 1
                     )
                 ELSE NULL
@@ -1601,15 +1601,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         cc.object_id AS constraint_id,
         constraint_name = cc.name,
         definition = cc.definition,
-        contains_udf = 
-            CASE 
-                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+        contains_udf =
+            CASE
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
                 THEN 1
                 ELSE 0
             END,
         udf_names =
             CASE
-                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|'' 
+                WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
                 THEN
                     SUBSTRING
                     (
@@ -1617,14 +1617,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         CHARINDEX(N''['', cc.definition),
                         CHARINDEX
                         (
-                            N'']'', 
-                            cc.definition, 
+                            N'']'',
+                            cc.definition,
                             CHARINDEX
                             (
-                                N''].['', 
+                                N''].['',
                                 cc.definition
                             ) + 3
-                        ) - 
+                        ) -
                         CHARINDEX(N''['', cc.definition) + 1
                     )
                 ELSE NULL
@@ -1886,9 +1886,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                      )
                 THEN 1
                 ELSE 0
-            END,' + 
-        CASE 
-            WHEN @supports_optimize_for_sequential_key = 1 
+            END,' +
+        CASE
+            WHEN @supports_optimize_for_sequential_key = 1
             THEN N'
         optimize_for_sequential_key = ISNULL(i.optimize_for_sequential_key, 0),'
             ELSE N'
@@ -2530,7 +2530,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         (
                             /* Find column names mentioned in filter_definition that aren't already key or included columns */
                             SELECT
-                                N', ' + 
+                                N', ' +
                                 c.name
                             FROM sys.columns AS c
                             WHERE c.object_id = ia.object_id
@@ -2546,13 +2546,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             )
                             GROUP BY
                                 c.name
-                            FOR 
-                                XML 
-                                PATH(''), 
+                            FOR
+                                XML
+                                PATH(''),
                                 TYPE
                         ).value('text()[1]','nvarchar(max)'),
-                        1, 
-                        2, 
+                        1,
+                        2,
                         N''
                     )
             ),
@@ -5936,19 +5936,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N' GB total maximum: ' +
             FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2') +
             N'GB',
-            
+
         /* ===== Section for Computed Columns with UDFs ===== */
         computed_columns_with_udfs =
             CASE
                 WHEN irs.summary_level = 'TABLE'
-                THEN 
+                THEN
                     CONVERT
                     (
-                        nvarchar(20), 
+                        nvarchar(20),
                         (
-                          SELECT 
-                              COUNT_BIG(*) 
-                          FROM #computed_columns_analysis AS cca 
+                          SELECT
+                              COUNT_BIG(*)
+                          FROM #computed_columns_analysis AS cca
                           WHERE cca.database_name = irs.database_name
                           AND   cca.schema_name = irs.schema_name
                           AND   cca.table_name = irs.table_name
@@ -5956,45 +5956,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         )
                     )
                 WHEN irs.summary_level = 'DATABASE'
-                THEN 
+                THEN
                     CONVERT
                     (
-                        nvarchar(20), 
+                        nvarchar(20),
                         (
-                          SELECT 
-                              COUNT_BIG(*) 
-                          FROM #computed_columns_analysis AS cca 
+                          SELECT
+                              COUNT_BIG(*)
+                          FROM #computed_columns_analysis AS cca
                           WHERE cca.database_name = irs.database_name
                           AND   cca.contains_udf = 1
                         )
                     )
                 WHEN irs.summary_level = 'SUMMARY'
-                THEN 
+                THEN
                     CONVERT
                     (
-                        nvarchar(20), 
+                        nvarchar(20),
                         (
-                          SELECT 
-                              COUNT_BIG(*) 
-                          FROM #computed_columns_analysis AS cca 
+                          SELECT
+                              COUNT_BIG(*)
+                          FROM #computed_columns_analysis AS cca
                           WHERE cca.contains_udf = 1
                         )
                     )
                 ELSE '0'
             END,
-            
+
         /* ===== Section for Check Constraints with UDFs ===== */
         check_constraints_with_udfs =
             CASE
                 WHEN irs.summary_level = 'TABLE'
-                THEN 
+                THEN
                     CONVERT
                     (
-                        nvarchar(20), 
+                        nvarchar(20),
                         (
-                          SELECT 
-                              COUNT_BIG(*) 
-                          FROM #check_constraints_analysis AS cca 
+                          SELECT
+                              COUNT_BIG(*)
+                          FROM #check_constraints_analysis AS cca
                           WHERE cca.database_name = irs.database_name
                           AND   cca.schema_name = irs.schema_name
                           AND   cca.table_name = irs.table_name
@@ -6002,45 +6002,45 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         )
                     )
                 WHEN irs.summary_level = 'DATABASE'
-                THEN 
+                THEN
                     CONVERT
                     (
-                        nvarchar(20), 
+                        nvarchar(20),
                         (
-                          SELECT 
-                              COUNT_BIG(*) 
-                          FROM #check_constraints_analysis AS cca 
+                          SELECT
+                              COUNT_BIG(*)
+                          FROM #check_constraints_analysis AS cca
                           WHERE cca.database_name = irs.database_name
                           AND   cca.contains_udf = 1
                         )
                     )
                 WHEN irs.summary_level = 'SUMMARY'
-                THEN 
+                THEN
                     CONVERT
                     (
-                        nvarchar(20), 
+                        nvarchar(20),
                         (
-                          SELECT 
-                              COUNT_BIG(*) 
-                          FROM #check_constraints_analysis AS cca 
+                          SELECT
+                              COUNT_BIG(*)
+                          FROM #check_constraints_analysis AS cca
                           WHERE cca.contains_udf = 1
                         )
                     )
                 ELSE '0'
             END,
-            
+
         /* ===== Section for Filtered Indexes Analysis ===== */
         filtered_indexes_needing_includes =
             CASE
                 WHEN irs.summary_level = 'TABLE'
-                THEN 
+                THEN
                     CONVERT
                     (
-                        nvarchar(20), 
+                        nvarchar(20),
                         (
-                          SELECT 
-                              COUNT_BIG(*) 
-                          FROM #filtered_index_columns_analysis AS fica 
+                          SELECT
+                              COUNT_BIG(*)
+                          FROM #filtered_index_columns_analysis AS fica
                           WHERE fica.database_name = irs.database_name
                           AND   fica.schema_name = irs.schema_name
                           AND   fica.table_name = irs.table_name
@@ -6048,27 +6048,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         )
                     )
                 WHEN irs.summary_level = 'DATABASE'
-                THEN 
+                THEN
                     CONVERT
                     (
-                        nvarchar(20), 
+                        nvarchar(20),
                         (
-                          SELECT 
-                              COUNT_BIG(*) 
-                          FROM #filtered_index_columns_analysis AS fica 
+                          SELECT
+                              COUNT_BIG(*)
+                          FROM #filtered_index_columns_analysis AS fica
                           WHERE fica.database_name = irs.database_name
                           AND   fica.should_include_filter_columns = 1
                         )
                     )
                 WHEN irs.summary_level = 'SUMMARY'
-                THEN 
+                THEN
                     CONVERT
                     (
-                        nvarchar(20), 
+                        nvarchar(20),
                         (
-                          SELECT 
-                              COUNT_BIG(*) 
-                          FROM #filtered_index_columns_analysis AS fica 
+                          SELECT
+                              COUNT_BIG(*)
+                          FROM #filtered_index_columns_analysis AS fica
                           WHERE fica.should_include_filter_columns = 1
                         )
                     )
@@ -6365,22 +6365,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.schema_name,
         irs.table_name
     OPTION(RECOMPILE);
-    
+
     /* Check for databases that were processed but had no objects to analyze */
     WITH empty_databases AS
     (
-        SELECT 
+        SELECT
             database_name
         FROM #databases AS d
         WHERE NOT EXISTS
         (
-            SELECT 
+            SELECT
                 1/0
             FROM #index_reporting_stats AS irs
             WHERE irs.database_name = d.database_name
         )
     )
-    
+
     SELECT
         finding_type = 'DATABASES WITH NO QUALIFYING OBJECTS',
         database_name = d.database_name + N' - Nothing Found',
@@ -6398,12 +6398,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             RAISERROR('Note: Operating in dedupe_only mode. Unused indexes were considered for deduplication only, not for removal.', 0, 1) WITH NOWAIT;
         END;
     END;
-    
+
     /* Display detailed reports for computed columns with UDFs */
-    IF EXISTS 
+    IF EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM #computed_columns_analysis  AS cca
         WHERE cca.contains_udf = 1
     )
@@ -6424,12 +6424,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             cca.table_name,
             cca.column_name;
     END;
-    
+
     /* Display detailed reports for check constraints with UDFs */
-    IF EXISTS 
+    IF EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM #check_constraints_analysis AS cca
         WHERE cca.contains_udf = 1
     )
@@ -6450,12 +6450,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             cca.table_name,
             cca.constraint_name;
     END;
-    
+
     /* Display detailed reports for filtered indexes that need column optimization */
-    IF EXISTS 
+    IF EXISTS
     (
-        SELECT 
-            1/0 
+        SELECT
+            1/0
         FROM #filtered_index_columns_analysis AS fica
         WHERE fica.should_include_filter_columns = 1
     )
