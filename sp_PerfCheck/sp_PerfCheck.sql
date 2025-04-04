@@ -549,7 +549,7 @@ BEGIN
                 CONVERT(nvarchar(10), (SELECT cpu_count FROM sys.dm_os_sys_info)) +
                 N' logical processors. This reduces available processing power. ' +
                 N'Check affinity mask configuration, licensing, or VM CPU cores/sockets',
-            url = N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
+            url = N'https://erikdarling.com/sp_perfcheck/#OfflineCPU'
         FROM sys.dm_os_schedulers AS dos
         WHERE dos.is_online = 0
         HAVING 
@@ -573,7 +573,7 @@ BEGIN
         category = N'Memory Pressure',
         finding = N'Memory-Starved Queries Detected',
         details = 
-            N'Resource semaphore has ' + 
+            N'dm_exec_query_resource_semaphores has ' + 
             CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) + 
             N' forced grants. ' +
             N'Target memory: ' + CONVERT(nvarchar(20), MAX(ders.target_memory_kb) / 1024 / 1024) + 
@@ -830,8 +830,8 @@ BEGIN
                     N'SELECT * FROM sys.resource_governor_configuration ' + NCHAR(13) + NCHAR(10) +
                     N'CROSS APPLY (SELECT OBJECT_NAME(classifier_function_id) AS classifier_function_name) AS cf;',
                 url = N'https://erikdarling.com/sp_PerfCheck#ResourceGovernor'
-            FROM sys.resource_governor_configuration
-            WHERE is_enabled = 1;
+            FROM sys.resource_governor_configuration AS rgc
+            WHERE rgc.is_enabled = 1;
         END
         ELSE
         BEGIN
@@ -1685,9 +1685,11 @@ BEGIN
             SET @signal_wait_ratio = (@signal_wait_time_ms * 100.0) / @total_wait_time_ms;
             
             /* Calculate SOS_SCHEDULER_YIELD percentage of uptime */
-            IF @uptime_ms > 0 AND @sos_scheduler_yield_ms > 0
+            IF  @uptime_ms > 0 
+            AND @sos_scheduler_yield_ms > 0
             BEGIN
-                SET @sos_scheduler_yield_pct_of_uptime = (@sos_scheduler_yield_ms * 100.0) / @uptime_ms;
+                SET @sos_scheduler_yield_pct_of_uptime = 
+                        (@sos_scheduler_yield_ms * 100.0) / @uptime_ms;
             END;
             
             /* Add CPU scheduling info to server_info */
@@ -1814,7 +1816,8 @@ BEGIN
         /* Calculate stolen memory percentage */
         IF @buffer_pool_size_gb > 0
         BEGIN
-            SET @stolen_memory_pct = (@stolen_memory_gb / (@buffer_pool_size_gb + @stolen_memory_gb)) * 100.0;
+            SET @stolen_memory_pct = 
+                    (@stolen_memory_gb / (@buffer_pool_size_gb + @stolen_memory_gb)) * 100.0;
             
             /* Add buffer pool info to server_info */
             INSERT INTO
@@ -1886,7 +1889,9 @@ BEGIN
                     check_id = 6003,
                     priority = 60, /* Informational priority */
                     category = N'Memory Usage',
-                    finding = N'Top Memory Consumer: ' + domc.type,
+                    finding = 
+                        N'Top Memory Consumer: ' + 
+                        domc.type,
                     details = 
                         N'Memory clerk "' + 
                         domc.type + 
@@ -1920,7 +1925,8 @@ BEGIN
     IF @has_view_server_state = 1
     BEGIN
         /* First clear any existing data */
-        DELETE FROM #io_stalls_by_db;
+        TRUNCATE TABLE
+            #io_stalls_by_db;
         
         /* Get database-level I/O stall statistics */
         IF @azure_sql_db = 1
@@ -2090,7 +2096,8 @@ BEGIN
             );
         
         /* Add I/O stall summary to server_info if any significant stalls were found */
-        IF @io_stall_summary IS NOT NULL AND LEN(@io_stall_summary) > 0
+        IF  @io_stall_summary IS NOT NULL 
+        AND LEN(@io_stall_summary) > 0
         BEGIN
             INSERT INTO
                 #server_info (info_type, value)
@@ -2269,7 +2276,7 @@ BEGIN
             url = N'https://erikdarling.com/sp_PerfCheck#StoragePerformance'
         FROM #io_stats AS i
         WHERE i.avg_read_latency_ms > @slow_read_ms
-        AND i.num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
+        AND   i.num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
         
         /* Add results for slow writes */
         INSERT INTO 
@@ -2749,10 +2756,12 @@ BEGIN
                 50, /* High priority */
                 N'Server Configuration',
                 N'Min Server Memory Too Close To Max',
-                N'Min server memory (' + CONVERT(nvarchar(20), @min_server_memory) + 
-                N' MB) is >= 90% of max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
+                N'Min server memory (' + 
+                CONVERT(nvarchar(20), @min_server_memory) + 
+                N' MB) is >= 90% of max server memory (' + 
+                CONVERT(nvarchar(20), @max_server_memory) + 
                 N' MB). This prevents SQL Server from dynamically adjusting memory.',
-                N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+                N'https://erikdarling.com/sp_perfcheck/#MinMaxMemory'
             );
         END;
         
@@ -2775,10 +2784,12 @@ BEGIN
                 40, /* High priority */
                 N'Server Configuration',
                 N'Max Server Memory Too Close To Physical Memory',
-                N'Max server memory (' + CONVERT(nvarchar(20), @max_server_memory) + 
-                N' MB) is >= 95% of physical memory (' + CONVERT(nvarchar(20), CONVERT(bigint, @physical_memory_gb * 1024)) + 
+                N'Max server memory (' + 
+                CONVERT(nvarchar(20), @max_server_memory) + 
+                N' MB) is >= 95% of physical memory (' + 
+                CONVERT(nvarchar(20), CONVERT(bigint, @physical_memory_gb * 1024)) + 
                 N' MB). This may not leave enough memory for the OS and other processes.',
-                N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+                N'https://erikdarling.com/sp_perfcheck/#MinMaxMemory'
             );
         END;
         
@@ -2805,7 +2816,7 @@ BEGIN
                 N'Max degree of parallelism is set to 0 (default) on a server with ' + 
                 CONVERT(nvarchar(10), @processors) + 
                 N' logical processors. This can lead to excessive parallelism.',
-                N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
+                N'https://erikdarling.com/sp_perfcheck/#MAXDOP'
             );
         END;
         
@@ -2831,7 +2842,7 @@ BEGIN
                 N'Cost threshold for parallelism is set to ' + 
                 CONVERT(nvarchar(10), @cost_threshold) + 
                 N'. Low values can cause excessive parallelism for small queries.',
-                N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
+                N'https://erikdarling.com/sp_perfcheck/#CostThreshold'
             );
         END;
         
@@ -2854,8 +2865,9 @@ BEGIN
                 30, /* High priority */
                 N'Server Configuration',
                 N'Priority Boost Enabled',
-                N'Priority boost is enabled. This can cause issues with Windows scheduling priorities and is not recommended.',
-                N'https://erikdarling.com/'
+                N'Priority boost is enabled. 
+                  This can cause issues with Windows scheduling priorities and is not recommended.',
+                N'https://erikdarling.com/sp_perfcheck/#PriorityBoost'
             );
         END;
         
@@ -2878,8 +2890,9 @@ BEGIN
                 50, /* Medium priority */
                 N'Server Configuration',
                 N'Lightweight Pooling Enabled',
-                N'Lightweight pooling (fiber mode) is enabled. This is rarely beneficial and can cause issues with OLEDB providers and other components.',
-                N'https://erikdarling.com/'
+                N'Lightweight pooling (fiber mode) is enabled. 
+                  This is rarely beneficial and can cause issues with OLEDB providers and other components.',
+                N'https://erikdarling.com/sp_perfcheck/#LightweightPooling'
             );
         END;
         
@@ -3453,7 +3466,7 @@ BEGIN
         (
              d.is_ansi_null_default_on = 1
           OR d.is_ansi_nulls_on = 1
-          OR d.is_ansi_padding_on = 2
+          OR d.is_ansi_padding_on = 1
           OR d.is_ansi_warnings_on = 1
           OR d.is_arithabort_on = 1
           OR d.is_concat_null_yields_null_on = 1
@@ -3479,7 +3492,8 @@ BEGIN
             category = N'Database Configuration',
             finding = N'Query Store Not Enabled',
             database_name = d.name,
-            details = N'Query Store is not enabled. Consider enabling Query Store to track query performance over time and identify regression issues.',
+            details = N'Query Store is not enabled. 
+                        Consider enabling Query Store to track query performance over time and identify regression issues.',
             url = N'https://erikdarling.com/sp_PerfCheck#QueryStore'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
@@ -3709,6 +3723,7 @@ BEGIN
 
                 PRINT @current_database_id;
                 PRINT @current_database_name;
+                PRINT REPLICATE('=', 128);
                 PRINT SUBSTRING(@sql, 1, 4000);
                 PRINT SUBSTRING(@sql, 4001, 8000);
             END;
@@ -3855,7 +3870,11 @@ BEGIN
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_accelerated_database_recovery_on = 0
-        AND  (d.snapshot_isolation_state_desc = N'ON' OR d.is_read_committed_snapshot_on = 1);
+        AND  
+        (
+              d.snapshot_isolation_state_desc = N'ON' 
+           OR d.is_read_committed_snapshot_on = 1
+        );
         
         /* Check if ledger is enabled */
         INSERT INTO 
