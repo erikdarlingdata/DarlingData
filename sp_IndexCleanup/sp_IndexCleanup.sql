@@ -1504,7 +1504,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         contains_udf,
         udf_names
     )
-    SELECT
+    SELECT DISTINCT
         fo.database_id,
         fo.database_name,
         fo.schema_id,
@@ -1591,7 +1591,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         contains_udf,
         udf_names
     )
-    SELECT
+    SELECT DISTINCT
         fo.database_id,
         fo.database_name,
         fo.schema_id,
