@@ -1135,7 +1135,7 @@ BEGIN
                 CONVERT(nvarchar(30), MAX(te.event_time), 120) + 
                 N'. These commands can impact server performance or database integrity. ' +
                 N'Review why these commands are being executed, especially if on a production system.',
-                N'https://erikdarling.com/'
+                N'https://erikdarling.com/sp_perfcheck/#DisruptiveDBCC'
             FROM #trace_events AS te
             CROSS APPLY
             (
