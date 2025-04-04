@@ -6342,28 +6342,74 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE '0'
             END
     FROM #index_reporting_stats AS irs
+
+    UNION ALL
+
+    /* Add row for processed database with no tables/indexes found to analyze */
+    SELECT 
+        level = 'DATABASE',
+        database_info = d.database_name + N' - Nothing Found',
+        schema_name = N'N/A',
+        table_name = N'N/A',
+        tables_analyzed = '0',
+        total_indexes = '0',
+        removable_indexes = '0',
+        mergeable_indexes = '0',
+        percent_removable = '0.0%',
+        current_size_gb = '0.00',
+        size_after_cleanup_gb = '0.00',
+        space_saved_gb = '0.00',
+        space_reduction_percent = '0.0%',
+        compression_savings_potential = N'minimum: 0.00 GB maximum 0.00GB',
+        compression_savings_potential_total = N'total minimum: 0.00 GB total maximum: 0.00GB',
+        computed_columns_with_udfs = '0',
+        check_constraints_with_udfs = '0',
+        filtered_indexes_needing_includes = '0',
+        total_rows = '0',
+        reads_breakdown = 'N/A',
+        writes = 'N/A',
+        daily_write_ops_saved = 'N/A',
+        lock_wait_count = 'N/A',
+        daily_lock_waits_saved = 'N/A',
+        avg_lock_wait_ms = 'N/A',
+        latch_wait_count = 'N/A',
+        daily_latch_waits_saved = 'N/A',
+        avg_latch_wait_ms = 'N/A'
+    FROM #databases AS d
+    WHERE d.is_processed = 1
+    AND d.is_skipped = 0
+    AND NOT EXISTS
+    (
+        SELECT 
+            1/0
+        FROM #index_reporting_stats AS irs
+        WHERE irs.database_name = d.database_name
+    )
+
     ORDER BY
         /* Order by database name */
-        irs.database_name,
+        database_info,
         /* Then order by level - summary first */
         CASE
-            WHEN irs.summary_level = 'SUMMARY' THEN 0
-            WHEN irs.summary_level = 'DATABASE' THEN 1
-            WHEN irs.summary_level = 'TABLE' THEN 2
+            WHEN level = 'ANALYZED OBJECT DETAILS' THEN 0
+            WHEN level = 'DATABASE' THEN 1
+            WHEN level = 'TABLE' THEN 2
             ELSE 3
         END,
         /* For tables, sort by potential savings and size */
         CASE
-            WHEN irs.summary_level = 'TABLE' THEN irs.unused_size_gb
+            WHEN level = 'TABLE' THEN 
+                TRY_CONVERT(decimal(38,2), REPLACE(space_saved_gb, ',', ''))
             ELSE 0
         END DESC,
         CASE
-            WHEN irs.summary_level = 'TABLE' THEN irs.total_size_gb
+            WHEN level = 'TABLE' THEN 
+                TRY_CONVERT(decimal(38,2), REPLACE(current_size_gb, ',', ''))
             ELSE 0
         END DESC,
         /* Then by schema, table */
-        irs.schema_name,
-        irs.table_name
+        schema_name,
+        table_name
     OPTION(RECOMPILE);
     
     /* Output message for dedupe_only mode */
