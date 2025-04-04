@@ -1161,7 +1161,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
             WHERE v.object_id = i.object_id
-        )';
+        )
+        AND i.is_disabled = 0
+        AND i.is_hypothetical = 0';
 
     IF /* Check for temporal tables support */
     (
