@@ -3744,7 +3744,7 @@ END;
 IF @execution_count IS NOT NULL
 BEGIN
     SELECT
-        @having_clause += N'HAVING  
+        @having_clause += N'HAVING
         SUM(qsrs.count_executions) >= @execution_count';
 END;
 
@@ -6181,7 +6181,7 @@ BEGIN
     WHERE 1 = 1
     ' + @where_clause
       + N'
-    GROUP BY 
+    GROUP BY
         qsrs.plan_id
     ' + @having_clause
       + N'
@@ -6634,7 +6634,7 @@ the two time periods under consideration
 distinct.
 */
 CASE @regression_mode
-     WHEN 1 
+     WHEN 1
      THEN  N',
    CASE
        WHEN qsrs_with_lasts.last_execution_time >= @start_date AND qsrs_with_lasts.last_execution_time < @end_date
@@ -6643,13 +6643,13 @@ CASE @regression_mode
    END'
    ELSE N' '
 END
-+ 
++
 N'
 ' +
 REPLACE
 (
-    @having_clause, 
-    'qsrs.', 
+    @having_clause,
+    'qsrs.',
     'qsrs_with_lasts.'
 ) +
 N'
