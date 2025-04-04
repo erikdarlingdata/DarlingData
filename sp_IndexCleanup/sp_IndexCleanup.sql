@@ -6366,11 +6366,532 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.table_name
     OPTION(RECOMPILE);
     
-    /* Check for databases that were processed but had no objects to analyze */
-    WITH empty_databases AS
+    /* Return a separate result for databases with no objects to analyze */
+    ;WITH report_results AS 
     (
+        SELECT
+            level =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'ANALYZED OBJECT DETAILS'
+                    ELSE irs.summary_level
+                END,
+            database_info =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    AND  irs.uptime_warning = 1
+                    THEN 'WARNING: Server uptime only ' +
+                         CONVERT(varchar(10), irs.server_uptime_days) +
+                         ' days - usage data may be incomplete!'
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'Server uptime: ' +
+                         CONVERT(varchar(10), irs.server_uptime_days) +
+                         ' days'
+                    ELSE irs.database_name
+                END,
+            schema_name =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN ISNULL(irs.schema_name, 'ALWAYS TEST THESE RECOMMENDATIONS')
+                    WHEN irs.summary_level = 'DATABASE'
+                    THEN N'N/A'
+                    ELSE irs.schema_name
+                END,
+            table_name =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN ISNULL(irs.table_name, 'IN A NON-PRODUCTION ENVIRONMENT FIRST!')
+                    WHEN irs.summary_level = 'DATABASE'
+                    THEN N'N/A'
+                    ELSE irs.table_name
+                END,
+            tables_analyzed =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN FORMAT(irs.tables_analyzed, 'N0')
+                    WHEN irs.summary_level = 'DATABASE'
+                    THEN FORMAT
+                         (
+                           (
+                               SELECT
+                                   COUNT_BIG(DISTINCT CONCAT(ia.schema_id, N'.', ia.object_id))
+                               FROM #index_analysis AS ia
+                               WHERE ia.database_name = irs.database_name
+                           ),
+                           'N0'
+                         )
+                    WHEN irs.summary_level = 'TABLE'
+                    THEN FORMAT(1, 'N0') /* Each table row represents 1 analyzed table */
+                    ELSE FORMAT(0, 'N0') /* Show 0 instead of NULL */
+                END,
+            total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
+            removable_indexes =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN FORMAT(ISNULL(irs.indexes_to_disable, 0), 'N0') /* Indexes that will be disabled based on analysis */
+                    ELSE FORMAT(ISNULL(irs.unused_indexes, 0), 'N0') /* Unused indexes at database/table level */
+                END,
+            mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
+            percent_removable =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    AND  irs.index_count > 0
+                    THEN FORMAT(100.0 * ISNULL(irs.indexes_to_disable, 0)
+                         / NULLIF(irs.index_count, 0), 'N1') + '%'
+                    WHEN irs.index_count > 0
+                    THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0)
+                         / NULLIF(irs.index_count, 0), 'N1') + '%'
+                    ELSE '0.0%'
+                END,
+            current_size_gb = FORMAT(ISNULL(irs.total_size_gb, 0), 'N2'),
+            size_after_cleanup_gb =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.space_saved_gb, 0), 'N2')
+                    ELSE FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.unused_size_gb, 0), 'N2')
+                END,
+            space_saved_gb =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN FORMAT(ISNULL(irs.space_saved_gb, 0), 'N2')
+                    ELSE FORMAT(ISNULL(irs.unused_size_gb, 0), 'N2')
+                END,
+            space_reduction_percent =
+                CASE
+                    WHEN ISNULL(irs.total_size_gb, 0) > 0
+                    THEN
+                        CASE
+                            WHEN irs.summary_level = 'SUMMARY'
+                            THEN FORMAT((ISNULL(irs.space_saved_gb, 0) /
+                                 NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                            ELSE FORMAT((ISNULL(irs.unused_size_gb, 0) /
+                                 NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                        END
+                    ELSE '0.0%'
+                END,
+            compression_savings_potential =
+                N'minimum: ' +
+                FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2') +
+                N' GB maximum ' +
+                FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2')
+                + N'GB',
+            compression_savings_potential_total =
+                N'total minimum: ' +
+                FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2') +
+                N' GB total maximum: ' +
+                FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2') +
+                N'GB',
+            computed_columns_with_udfs =
+                CASE
+                    WHEN irs.summary_level = 'TABLE'
+                    THEN 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            (
+                              SELECT 
+                                  COUNT_BIG(*) 
+                              FROM #computed_columns_analysis AS cca 
+                              WHERE cca.database_name = irs.database_name
+                              AND   cca.schema_name = irs.schema_name
+                              AND   cca.table_name = irs.table_name
+                              AND   cca.contains_udf = 1
+                            )
+                        )
+                    WHEN irs.summary_level = 'DATABASE'
+                    THEN 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            (
+                              SELECT 
+                                  COUNT_BIG(*) 
+                              FROM #computed_columns_analysis AS cca 
+                              WHERE cca.database_name = irs.database_name
+                              AND   cca.contains_udf = 1
+                            )
+                        )
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            (
+                              SELECT 
+                                  COUNT_BIG(*) 
+                              FROM #computed_columns_analysis AS cca 
+                              WHERE cca.contains_udf = 1
+                            )
+                        )
+                    ELSE '0'
+                END,
+            check_constraints_with_udfs =
+                CASE
+                    WHEN irs.summary_level = 'TABLE'
+                    THEN 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            (
+                              SELECT 
+                                  COUNT_BIG(*) 
+                              FROM #check_constraints_analysis AS cca 
+                              WHERE cca.database_name = irs.database_name
+                              AND   cca.schema_name = irs.schema_name
+                              AND   cca.table_name = irs.table_name
+                              AND   cca.contains_udf = 1
+                            )
+                        )
+                    WHEN irs.summary_level = 'DATABASE'
+                    THEN 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            (
+                              SELECT 
+                                  COUNT_BIG(*) 
+                              FROM #check_constraints_analysis AS cca 
+                              WHERE cca.database_name = irs.database_name
+                              AND   cca.contains_udf = 1
+                            )
+                        )
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            (
+                              SELECT 
+                                  COUNT_BIG(*) 
+                              FROM #check_constraints_analysis AS cca 
+                              WHERE cca.contains_udf = 1
+                            )
+                        )
+                    ELSE '0'
+                END,
+            filtered_indexes_needing_includes =
+                CASE
+                    WHEN irs.summary_level = 'TABLE'
+                    THEN 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            (
+                              SELECT 
+                                  COUNT_BIG(*) 
+                              FROM #filtered_index_columns_analysis AS fica 
+                              WHERE fica.database_name = irs.database_name
+                              AND   fica.schema_name = irs.schema_name
+                              AND   fica.table_name = irs.table_name
+                              AND   fica.should_include_filter_columns = 1
+                            )
+                        )
+                    WHEN irs.summary_level = 'DATABASE'
+                    THEN 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            (
+                              SELECT 
+                                  COUNT_BIG(*) 
+                              FROM #filtered_index_columns_analysis AS fica 
+                              WHERE fica.database_name = irs.database_name
+                              AND   fica.should_include_filter_columns = 1
+                            )
+                        )
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 
+                        CONVERT
+                        (
+                            nvarchar(20), 
+                            (
+                              SELECT 
+                                  COUNT_BIG(*) 
+                              FROM #filtered_index_columns_analysis AS fica 
+                              WHERE fica.should_include_filter_columns = 1
+                            )
+                        )
+                    ELSE '0'
+                END,
+            total_rows = FORMAT(ISNULL(irs.total_rows, 0), 'N0'),
+            reads_breakdown =
+                CASE
+                    WHEN irs.summary_level <> 'SUMMARY'
+                    THEN FORMAT(ISNULL(irs.total_reads, 0), 'N0') +
+                         ' (' +
+                         FORMAT(ISNULL(irs.user_seeks, 0), 'N0') +
+                         ' seeks, ' +
+                         FORMAT(ISNULL(irs.user_scans, 0), 'N0') +
+                         ' scans, ' +
+                         FORMAT(ISNULL(irs.user_lookups, 0), 'N0') +
+                         ' lookups)'
+                    ELSE 'N/A'
+                END,
+            writes =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'N/A'
+                    WHEN irs.summary_level <> 'SUMMARY'
+                    THEN FORMAT(ISNULL(irs.total_writes, 0), 'N0')
+                    ELSE '0'
+                END,
+            daily_write_ops_saved =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
+                    WHEN irs.summary_level = 'DATABASE'
+                    THEN 'N/A'
+                    WHEN irs.summary_level = 'TABLE'
+                    THEN
+                        /* For TABLE rows, calculate estimated savings */
+                        CASE
+                            WHEN ISNULL(irs.unused_indexes, 0) > 0
+                            THEN FORMAT
+                                 (
+                                     CONVERT
+                                     (
+                                         decimal(38,2),
+                                         ISNULL
+                                         (
+                                             irs.user_updates /
+                                             NULLIF
+                                             (
+                                                 CONVERT
+                                                 (
+                                                     decimal(38,2),
+                                                     (
+                                                       SELECT TOP (1)
+                                                           irs2.server_uptime_days
+                                                       FROM #index_reporting_stats AS irs2
+                                                       WHERE irs2.summary_level = 'SUMMARY'
+                                                     )
+                                                 ),
+                                                 0
+                                             ) *
+                                             (
+                                               ISNULL
+                                               (
+                                                   irs.unused_indexes,
+                                                   0
+                                               ) /
+                                               NULLIF
+                                               (
+                                                   CONVERT
+                                                   (
+                                                       decimal(38,2),
+                                                       irs.index_count
+                                                   ),
+                                                   0
+                                               )
+                                             ),
+                                             0
+                                         )
+                                     ),
+                                     'N0'
+                                 )
+                            /* Rows without unused indexes have no savings */
+                            ELSE '0'
+                        END
+                    ELSE '0'
+                END,
+            lock_wait_count =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'N/A'
+                    WHEN irs.summary_level <> 'SUMMARY'
+                    THEN FORMAT(ISNULL(irs.row_lock_wait_count, 0) +
+                         ISNULL(irs.page_lock_wait_count, 0), 'N0')
+                    ELSE '0'
+                END,
+            daily_lock_waits_saved =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
+                    WHEN irs.summary_level = 'DATABASE'
+                    THEN 'N/A'
+                    WHEN irs.summary_level = 'TABLE'
+                    THEN
+                        /* For TABLE rows, calculate estimated savings */
+                        CASE
+                            WHEN ISNULL(irs.unused_indexes, 0) > 0
+                            THEN
+                                FORMAT
+                                (
+                                    CONVERT
+                                    (
+                                        decimal(38,2),
+                                        ISNULL
+                                        (
+                                            (irs.row_lock_wait_count + irs.page_lock_wait_count) /
+                                            NULLIF
+                                            (
+                                                CONVERT
+                                                (
+                                                    decimal(38,2),
+                                                    (
+                                                      SELECT TOP (1)
+                                                          irs2.server_uptime_days
+                                                      FROM #index_reporting_stats AS irs2
+                                                      WHERE irs2.summary_level = 'SUMMARY'
+                                                    )
+                                                ),
+                                                0
+                                            ) *
+                                            (
+                                              ISNULL
+                                              (
+                                                  irs.unused_indexes,
+                                                  0
+                                              ) /
+                                              NULLIF
+                                              (
+                                                  CONVERT
+                                                  (
+                                                      decimal(38,2),
+                                                      irs.index_count
+                                                  ),
+                                                  0
+                                              )
+                                            ),
+                                            0
+                                        )
+                                    ),
+                                    'N0'
+                                )
+                            /* Rows without unused indexes have no savings */
+                            ELSE '0'
+                        END
+                    ELSE '0'
+                END,
+            avg_lock_wait_ms =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'N/A'
+                    WHEN irs.summary_level <> 'SUMMARY'
+                    AND (ISNULL(irs.row_lock_wait_count, 0) +
+                         ISNULL(irs.page_lock_wait_count, 0)) > 0
+                    THEN FORMAT(1.0 * (ISNULL(irs.row_lock_wait_in_ms, 0) +
+                         ISNULL(irs.page_lock_wait_in_ms, 0)) /
+                         NULLIF(ISNULL(irs.row_lock_wait_count, 0) +
+                         ISNULL(irs.page_lock_wait_count, 0), 0), 'N2')
+                    ELSE '0'
+                END,
+            latch_wait_count =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'N/A'
+                    WHEN irs.summary_level <> 'SUMMARY'
+                    THEN FORMAT(ISNULL(irs.page_latch_wait_count, 0) +
+                         ISNULL(irs.page_io_latch_wait_count, 0), 'N0')
+                    ELSE '0'
+                END,
+            daily_latch_waits_saved =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
+                    WHEN irs.summary_level = 'DATABASE'
+                    THEN 'N/A'
+                    WHEN irs.summary_level = 'TABLE'
+                    THEN
+                        /* For TABLE rows, calculate estimated savings */
+                        CASE
+                            WHEN ISNULL(irs.unused_indexes, 0) > 0
+                            THEN
+                                FORMAT
+                                (
+                                    CONVERT
+                                    (
+                                        decimal(38,2),
+                                        ISNULL
+                                        (
+                                            (irs.page_latch_wait_count + irs.page_io_latch_wait_count) /
+                                            NULLIF
+                                            (
+                                                CONVERT
+                                                (
+                                                    decimal(38,2),
+                                                    (
+                                                      SELECT TOP (1)
+                                                          irs2.server_uptime_days
+                                                      FROM #index_reporting_stats AS irs2
+                                                      WHERE irs2.summary_level = 'SUMMARY'
+                                                    )
+                                                ),
+                                                0
+                                            ) *
+                                            (
+                                                ISNULL
+                                                (
+                                                    irs.unused_indexes,
+                                                    0
+                                                ) /
+                                                NULLIF
+                                                (
+                                                    CONVERT
+                                                    (
+                                                        decimal(38,2),
+                                                        irs.index_count
+                                                    ),
+                                                    0
+                                                )
+                                            ),
+                                            0
+                                        )
+                                    ),
+                                    'N0'
+                                )
+                            /* Rows without unused indexes have no savings */
+                            ELSE '0'
+                        END
+                    ELSE '0'
+                END,
+            avg_latch_wait_ms =
+                CASE
+                    WHEN irs.summary_level = 'SUMMARY'
+                    THEN 'N/A'
+                    WHEN irs.summary_level <> 'SUMMARY'
+                    AND (ISNULL(irs.page_latch_wait_count, 0) +
+                         ISNULL(irs.page_io_latch_wait_count, 0)) > 0
+                    THEN FORMAT(1.0 * (ISNULL(irs.page_latch_wait_in_ms, 0) +
+                         ISNULL(irs.page_io_latch_wait_in_ms, 0)) /
+                         NULLIF(ISNULL(irs.page_latch_wait_count, 0) +
+                         ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
+                    ELSE '0'
+                END
+        FROM #index_reporting_stats AS irs
+        
+        UNION ALL
+        
+        /* Add rows for processed databases with no objects to analyze */
         SELECT 
-            database_name
+            level = 'DATABASE',
+            database_info = d.database_name + N' - Nothing Found',
+            schema_name = N'N/A',
+            table_name = N'N/A',
+            tables_analyzed = '0',
+            total_indexes = '0',
+            removable_indexes = '0',
+            mergeable_indexes = '0',
+            percent_removable = '0.0%',
+            current_size_gb = '0.00',
+            size_after_cleanup_gb = '0.00',
+            space_saved_gb = '0.00',
+            space_reduction_percent = '0.0%',
+            compression_savings_potential = N'minimum: 0.00 GB maximum 0.00GB',
+            compression_savings_potential_total = N'total minimum: 0.00 GB total maximum: 0.00GB',
+            computed_columns_with_udfs = '0',
+            check_constraints_with_udfs = '0',
+            filtered_indexes_needing_includes = '0',
+            total_rows = '0',
+            reads_breakdown = 'N/A',
+            writes = 'N/A',
+            daily_write_ops_saved = 'N/A',
+            lock_wait_count = 'N/A',
+            daily_lock_waits_saved = 'N/A',
+            avg_lock_wait_ms = 'N/A',
+            latch_wait_count = 'N/A',
+            daily_latch_waits_saved = 'N/A',
+            avg_latch_wait_ms = 'N/A'
         FROM #databases AS d
         WHERE NOT EXISTS
         (
@@ -6381,13 +6902,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     )
     
-    SELECT
-        finding_type = 'DATABASES WITH NO QUALIFYING OBJECTS',
-        database_name = d.database_name + N' - Nothing Found',
-        recommendation = 'Database was processed but no objects met the analysis criteria'
-    FROM empty_databases AS d
+    SELECT * 
+    FROM report_results
     ORDER BY
-        d.database_name
+        /* Order by database name */
+        database_info,
+        /* Then order by level - summary first */
+        CASE
+            WHEN level = 'ANALYZED OBJECT DETAILS' THEN 0
+            WHEN level = 'DATABASE' THEN 1
+            WHEN level = 'TABLE' THEN 2
+            ELSE 3
+        END,
+        /* Then by schema, table */
+        schema_name,
+        table_name
     OPTION(RECOMPILE);
     
     /* Output message for dedupe_only mode */
