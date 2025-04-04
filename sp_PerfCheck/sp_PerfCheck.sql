@@ -3766,32 +3766,7 @@ BEGIN
                             N')'
                             ELSE N''
                         END + 
-                        N'. ' +
-                        CASE dsc.name
-                             WHEN N'MAXDOP' THEN N'Controls degree of parallelism for queries in this database.'
-                             WHEN N'LEGACY_CARDINALITY_ESTIMATION' THEN N'Controls whether the query optimizer uses the SQL Server 2014 or earlier cardinality estimation model.'
-                             WHEN N'PARAMETER_SNIFFING' THEN N'Controls parameter sniffing behavior for the database.'
-                             WHEN N'QUERY_OPTIMIZER_HOTFIXES' THEN N'Controls whether query optimizer hotfixes are enabled.'
-                             WHEN N'OPTIMIZE_FOR_AD_HOC_WORKLOADS' THEN N'Controls caching behavior for single-use query plans.'
-                             WHEN N'ACCELERATED_PLAN_FORCING' THEN N'Controls whether query plans can be forced in an accelerated way.'
-                             WHEN N'BATCH_MODE_ON_ROWSTORE' THEN N'Controls whether batch mode processing can be used on rowstore indexes.'
-                             WHEN N'INTERLEAVED_EXECUTION_TVF' THEN N''
-                             WHEN N'BATCH_MODE_MEMORY_GRANT_FEEDBACK' THEN N''
-                             WHEN N'BATCH_MODE_ADAPTIVE_JOINS' THEN N''
-                             WHEN N'TSQL_SCALAR_UDF_INLINING' THEN N''
-                             WHEN N'ROW_MODE_MEMORY_GRANT_FEEDBACK' THEN N''
-                             WHEN N'DEFERRED_COMPILATION_TV' THEN N''
-                             WHEN N'LAST_QUERY_PLAN_STATS' THEN N''
-                             WHEN N'EXEC_QUERY_STATS_FOR_SCALAR_FUNCTIONS' THEN N''
-                             WHEN N'PARAMETER_SENSITIVE_PLAN_OPTIMIZATION' THEN N''
-                             WHEN N'CE_FEEDBACK' THEN N''
-                             WHEN N'MEMORY_GRANT_FEEDBACK_PERSISTENCE' THEN N''
-                             WHEN N'MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT' THEN N''
-                             WHEN N'OPTIMIZED_PLAN_FORCING' THEN N''
-                             WHEN N'DOP_FEEDBACK' THEN N''
-                             WHEN N'FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION' THEN N''
-                             ELSE N'Controls ' + REPLACE(LOWER(dsc.name), N'_', N' ') + N' behavior.'
-                        END,
+                        N'. ',
                     url = N'https://erikdarling.com/sp_PerfCheck#DSC'
                 FROM #database_scoped_configs AS dsc
                 WHERE dsc.database_id = @current_database_id
