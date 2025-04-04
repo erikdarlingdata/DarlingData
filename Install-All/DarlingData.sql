@@ -1,4 +1,4 @@
--- Compile Date: 04/04/2025 13:52:15 UTC
+-- Compile Date: 04/04/2025 13:56:36 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -15208,7 +15208,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         contains_udf,
         udf_names
     )
-    SELECT
+    SELECT DISTINCT
         fo.database_id,
         fo.database_name,
         fo.schema_id,
@@ -15295,7 +15295,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         contains_udf,
         udf_names
     )
-    SELECT
+    SELECT DISTINCT
         fo.database_id,
         fo.database_name,
         fo.schema_id,
