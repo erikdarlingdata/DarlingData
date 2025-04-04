@@ -24,6 +24,7 @@ The DarlingData.sql file includes all of the following stored procedures:
 | [sp_HumanEventsBlockViewer](../sp_HumanEvents) | Analyzes blocked process reports | [Link](../sp_HumanEvents) |
 | [sp_IndexCleanup](../sp_IndexCleanup) | Identifies unused and duplicate indexes | [Link](../sp_IndexCleanup) |
 | [sp_LogHunter](../sp_LogHunter) | Searches SQL Server error logs for important messages | [Link](../sp_LogHunter) |
+| [sp_PerfCheck](../sp_PerfCheck) | Comprehensive SQL Server performance health check | [Link](../sp_PerfCheck) |
 | [sp_PressureDetector](../sp_PressureDetector) | Detects CPU and memory pressure in SQL Server | [Link](../sp_PressureDetector) |
 | [sp_QuickieStore](../sp_QuickieStore) | Fast and configurable way to navigate Query Store data | [Link](../sp_QuickieStore) |
 
