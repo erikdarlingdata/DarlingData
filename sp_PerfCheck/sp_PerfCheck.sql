@@ -26,8 +26,8 @@ BEGIN
     Set version information
     */
     SELECT 
-        @version = N'1.0', 
-        @version_date = N'20250401';
+        @version = N'1.0.4', 
+        @version_date = N'20250404';
     
     /*
     Variable Declarations
