@@ -116,7 +116,7 @@ BEGIN
         @buffer_pool_size_gb decimal(38, 2),
         @stolen_memory_gb decimal(38, 2),
         @stolen_memory_pct decimal(10, 2),
-        @stolen_memory_threshold_pct decimal(10, 2) = 25.0, /* Alert if more than 25% memory is stolen */
+        @stolen_memory_threshold_pct decimal(10, 2) = 15.0, /* Alert if more than 15% memory is stolen */
         /* Format the output properly without XML PATH which causes spacing issues */
         @wait_summary nvarchar(1000) = N'',
         /* CPU scheduling variables */
@@ -1687,7 +1687,8 @@ BEGIN
         /* Calculate signal wait ratio (time spent waiting for CPU vs. total wait time) */
         IF @total_wait_time_ms > 0
         BEGIN
-            SET @signal_wait_ratio = (@signal_wait_time_ms * 100.0) / @total_wait_time_ms;
+            SET @signal_wait_ratio = 
+                    (@signal_wait_time_ms * 100.0) / @total_wait_time_ms;
 
             /* Calculate SOS_SCHEDULER_YIELD percentage of uptime */
             IF  @uptime_ms > 0
@@ -1706,9 +1707,9 @@ BEGIN
                  CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) +
                  N'%' +
                  CASE
-                     WHEN @signal_wait_ratio >= 25.0
+                     WHEN @signal_wait_ratio >= 50.0
                      THEN N' (High - CPU pressure detected)'
-                     WHEN @signal_wait_ratio >= 15.0
+                     WHEN @signal_wait_ratio >= 25.0
                      THEN N' (Moderate - CPU pressure likely)'
                      ELSE N' (Normal)'
                  END
@@ -1743,8 +1744,8 @@ BEGIN
                 (
                     6101,
                     CASE
-                        WHEN @signal_wait_ratio >= 40.0
-                        THEN 20 /* Very high priority if >=40% signal waits */
+                        WHEN @signal_wait_ratio >= 50.0
+                        THEN 20 /* Very high priority if >=50% signal waits */
                         WHEN @signal_wait_ratio >= 30.0
                         THEN 30 /* High priority if >=30% signal waits */
                         ELSE 40 /* Medium-high priority */
@@ -1761,7 +1762,7 @@ BEGIN
             END;
 
             /* Add finding for significant SOS_SCHEDULER_YIELD waits */
-            IF @sos_scheduler_yield_pct_of_uptime >= 10.0
+            IF @sos_scheduler_yield_pct_of_uptime >= 25.0
             BEGIN
                 INSERT INTO
                     #results
@@ -1777,10 +1778,10 @@ BEGIN
                 (
                     6102,
                     CASE
+                        WHEN @sos_scheduler_yield_pct_of_uptime >= 50.0
+                        THEN 30 /* High priority if >=50% of uptime */
                         WHEN @sos_scheduler_yield_pct_of_uptime >= 30.0
-                        THEN 30 /* High priority if >=30% of uptime */
-                        WHEN @sos_scheduler_yield_pct_of_uptime >= 20.0
-                        THEN 40 /* Medium-high priority if >=20% of uptime */
+                        THEN 40 /* Medium-high priority if >=30% of uptime */
                         ELSE 50 /* Medium priority */
                     END,
                     N'CPU Scheduling',
@@ -1862,10 +1863,10 @@ BEGIN
                 (
                     6002,
                     CASE
-                        WHEN @stolen_memory_pct > 40
-                        THEN 30 /* High priority if >40% stolen */
                         WHEN @stolen_memory_pct > 30
-                        THEN 40 /* Medium-high priority if >30% stolen */
+                        THEN 30 /* High priority if >30% stolen */
+                        WHEN @stolen_memory_pct > 15
+                        THEN 40 /* Medium-high priority if >15% stolen */
                         ELSE 50 /* Medium priority */
                     END,
                     N'Memory Usage',
@@ -2238,7 +2239,11 @@ BEGIN
         JOIN sys.master_files AS mf
           ON  fs.database_id = mf.database_id
           AND fs.file_id = mf.file_id
-        WHERE (fs.num_of_reads > 0 OR fs.num_of_writes > 0); /* Only include files with some activity */
+        WHERE 
+        (
+             fs.num_of_reads > 0 
+          OR fs.num_of_writes > 0
+        ); /* Only include files with some activity */
 
         /* Add results for slow reads */
         INSERT INTO
@@ -2361,7 +2366,7 @@ BEGIN
              i.avg_read_latency_ms > @slow_read_ms
           OR i.avg_write_latency_ms > @slow_write_ms
         )
-        AND i.drive_location IS NOT NULL
+        AND  i.drive_location IS NOT NULL
         GROUP BY
             i.drive_location
         HAVING
@@ -2420,7 +2425,8 @@ BEGIN
 
         /* Get physical memory for comparison */
         SELECT
-            @physical_memory_gb = CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)
+            @physical_memory_gb = 
+                CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)
         FROM sys.dm_os_sys_info AS osi;
 
         /* Add min/max server memory info */
@@ -2570,15 +2576,15 @@ BEGIN
             size_mb = CONVERT(decimal(18, 2), mf.size * 8.0 / 1024),
             max_size_mb =
                 CASE
-                   WHEN mf.max_size = -1
-                   THEN -1 -- Unlimited
-                   ELSE CONVERT(decimal(18, 2), mf.max_size * 8.0 / 1024)
+                    WHEN mf.max_size = -1
+                    THEN -1 -- Unlimited
+                    ELSE CONVERT(decimal(18, 2), mf.max_size * 8.0 / 1024)
                 END,
             growth_mb =
                 CASE
-                   WHEN mf.is_percent_growth = 1
-                   THEN CONVERT(decimal(18, 2), mf.growth) -- Percent
-                   ELSE CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024) -- MB
+                    WHEN mf.is_percent_growth = 1
+                    THEN CONVERT(decimal(18, 2), mf.growth) -- Percent
+                    ELSE CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024) -- MB
                 END,
             mf.is_percent_growth
         FROM sys.master_files AS mf
