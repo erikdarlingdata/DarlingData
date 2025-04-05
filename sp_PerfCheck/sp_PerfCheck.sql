@@ -1454,10 +1454,10 @@ BEGIN
             OR dows.wait_type = N'IO_RETRY'
             OR dows.wait_type = N'RESMGR_THROTTLED'
         )
-        /* Only include waits that are significant in terms of total wait percentage or average wait time (>1 second) */
+        /* Only include waits that are significant in terms of percentage of uptime or average wait time (>1 second) */
         AND
         (
-             (dows.wait_time_ms * 1.0 / @total_waits) > (@significant_wait_threshold_pct / 100.0)
+             (dows.wait_time_ms * 100.0 / @uptime_ms) > @significant_wait_threshold_pct
           OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
         );
 
