@@ -100,8 +100,8 @@ BEGIN
         @has_percent_growth bit,
         @has_fixed_growth bit,
         /* Storage performance variables */
-        @slow_read_ms decimal(10, 2) = 20.0, /* Threshold for slow reads (ms) */
-        @slow_write_ms decimal(10, 2) = 20.0, /* Threshold for slow writes (ms) */
+        @slow_read_ms decimal(10, 2) = 100.0, /* Threshold for slow reads (ms) */
+        @slow_write_ms decimal(10, 2) = 100.0, /* Threshold for slow writes (ms) */
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
@@ -925,12 +925,12 @@ BEGIN
             INSERT INTO
                 #event_class_map (event_class, event_name, category_name)
             VALUES
-                (92,  N'Data File Auto Grow', N'Database'),
-                (93,  N'Log File Auto Grow', N'Database'),
+                (92,  N'Data File Auto Grow',   N'Database'),
+                (93,  N'Log File Auto Grow',    N'Database'),
                 (94,  N'Data File Auto Shrink', N'Database'),
-                (95,  N'Log File Auto Shrink', N'Database'),
-                (116, N'DBCC Event', N'Database'),
-                (137, N'Server Memory Change', N'Server');
+                (95,  N'Log File Auto Shrink',  N'Database'),
+                (116, N'DBCC Event',            N'Database'),
+                (137, N'Server Memory Change',  N'Server');
 
             /* Get relevant events from default trace */
             INSERT INTO
@@ -985,6 +985,7 @@ BEGIN
                       OR t.TextData LIKE N'%DROPCLEANBUFFERS%'
                       OR t.TextData LIKE N'%SHRINKDATABASE%'
                       OR t.TextData LIKE N'%SHRINKFILE%'
+                      OR t.TextData LIKE N'%WRITEPAGE%'
                   )
                 )
                 /* Server memory change events */
@@ -1112,6 +1113,7 @@ BEGIN
                         WHEN dbcc_cmd.dbcc_pattern LIKE N'%FREEPROCCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%FREESYSTEMCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%DROPCLEANBUFFERS%'
+                        OR   dbcc_cmd.dbcc_pattern LIKE N'%WRITEPAGE%'
                         THEN 40 /* Higher priority */
                         ELSE 60 /* Medium priority */
                     END,
@@ -1127,6 +1129,7 @@ BEGIN
                     WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
                     WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
                     WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
+                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
                     ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case */
                 END +
                 N'" between ' +
@@ -1146,6 +1149,7 @@ BEGIN
                         WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
                         WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
                         WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
+                        WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
                         ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case*/
                     END
             ) AS dbcc_cmd
@@ -1159,6 +1163,7 @@ BEGIN
                     WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
                     WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
                     WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
+                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
                     ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just i case*/
                 END
             ORDER BY
@@ -1508,8 +1513,8 @@ BEGIN
         FROM #wait_stats AS ws
         WHERE
             (
-                ws.wait_time_percent_of_uptime >= 50.0 /* Only include waits that are at least 50% of uptime */
-                OR ws.avg_wait_ms >= 1000.0 /* Or have average wait time > 1 second */
+                 ws.wait_time_percent_of_uptime >= 50.0 /* Only include waits that are at least 50% of uptime */
+              OR ws.avg_wait_ms >= 1000.0 /* Or have average wait time > 1 second */
             )
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
