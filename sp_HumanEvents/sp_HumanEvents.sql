@@ -1227,39 +1227,6 @@ BEGIN
             );
 END;
 
-/*
-If we're writing to a table, we don't want to do anything else
-Or anything else after this, really
-We want the session to get set up
-*/
-IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and log tables?', 0, 1) WITH NOWAIT; END;
-IF
-(
-        @output_database_name <> N''
-    AND @output_schema_name <> N''
-    AND @cleanup = 0
-)
-BEGIN
-    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT; END;
-    GOTO output_results;
-    RETURN;
-END;
-
-
-/* just finishing up the second coat now */
-IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and cleanup?', 0, 1) WITH NOWAIT; END;
-IF
-(
-        @output_database_name <> N''
-    AND @output_schema_name <> N''
-    AND @cleanup = 1
-)
-BEGIN
-    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to cleanup', 0, 1) WITH NOWAIT; END;
-    GOTO cleanup;
-    RETURN;
-END;
-
 
 /* Start setting up individual filters */
 IF @debug = 1 BEGIN RAISERROR(N'Setting up individual filters', 0, 1) WITH NOWAIT; END;
@@ -1705,8 +1672,10 @@ EXECUTE (@session_sql);
 IF @debug = 1 BEGIN RAISERROR(@start_sql, 0, 1) WITH NOWAIT; END;
 EXECUTE (@start_sql);
 
-/* bail out here if we want to keep the session */
-IF @keep_alive = 1
+/* bail out here if we want to keep the session and not log to tables*/
+IF  @keep_alive = 1
+AND @output_database_name = N''
+AND @output_schema_name IN (N'', N'dbo')
 BEGIN
     IF @debug = 1
     BEGIN
@@ -1718,6 +1687,38 @@ BEGIN
     RETURN;
 END;
 
+/*
+If we're writing to a table, we don't want to do anything else
+Or anything else after this, really
+We want the session to get set up
+*/
+IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and log tables?', 0, 1) WITH NOWAIT; END;
+IF
+(
+        @output_database_name <> N''
+    AND @output_schema_name <> N''
+    AND @cleanup = 0
+)
+BEGIN
+    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT; END;
+    GOTO output_results;
+    RETURN;
+END;
+
+
+/* just finishing up the second coat now */
+IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and cleanup?', 0, 1) WITH NOWAIT; END;
+IF
+(
+        @output_database_name <> N''
+    AND @output_schema_name <> N''
+    AND @cleanup = 1
+)
+BEGIN
+    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to cleanup', 0, 1) WITH NOWAIT; END;
+    GOTO cleanup;
+    RETURN;
+END;
 
 /* NOW WE WAIT, MR. BOND */
 WAITFOR DELAY @waitfor;
