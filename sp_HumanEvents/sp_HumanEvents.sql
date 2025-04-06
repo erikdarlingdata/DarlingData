@@ -1240,6 +1240,35 @@ IF
     AND @cleanup = 0
 )
 BEGIN
+    /* First make sure the session exists before going to output_results */
+    IF @keep_alive = 1 AND @debug = 1 
+    BEGIN 
+        RAISERROR(N'Creating keeper session before going to data logging', 0, 1) WITH NOWAIT; 
+    END;
+    
+    /* Need to actually create the session before jumping to output_results */
+    IF @keep_alive = 1 AND NOT EXISTS (
+        SELECT 1 
+        FROM sys.server_event_sessions AS ses
+        WHERE ses.name = @session_name
+    )
+    BEGIN
+        /* Set up and run the session creation SQL */
+        EXEC sp_executesql @session_sql;
+        
+        /* Start the session so it's active when we look for it */
+        IF @azure = 0
+        BEGIN
+            SET @sql = N'ALTER EVENT SESSION ' + @session_name + N' ON SERVER STATE = START;';
+        END;
+        ELSE
+        BEGIN
+            SET @sql = N'ALTER EVENT SESSION ' + @session_name + N' ON DATABASE STATE = START;';
+        END;
+        
+        EXEC sp_executesql @sql;
+    END;
+    
     IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT; END;
     GOTO output_results;
     RETURN;
