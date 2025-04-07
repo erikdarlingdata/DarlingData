@@ -1,4 +1,4 @@
-SET ANSI_WARNINGS ON;
+﻿SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
@@ -6,6 +6,40 @@ SET NUMERIC_ROUNDABORT OFF;
 SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;
 GO
+
+
+/*
+██╗███╗   ██╗██████╗ ███████╗██╗  ██╗                      
+██║████╗  ██║██╔══██╗██╔════╝╚██╗██╔╝                      
+██║██╔██╗ ██║██║  ██║█████╗   ╚███╔╝                       
+██║██║╚██╗██║██║  ██║██╔══╝   ██╔██╗                       
+██║██║ ╚████║██████╔╝███████╗██╔╝ ██╗                      
+╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝                      
+                                                           
+ ██████╗██╗     ███████╗ █████╗ ███╗   ██╗██╗   ██╗██████╗ 
+██╔════╝██║     ██╔════╝██╔══██╗████╗  ██║██║   ██║██╔══██╗
+██║     ██║     █████╗  ███████║██╔██╗ ██║██║   ██║██████╔╝
+██║     ██║     ██╔══╝  ██╔══██║██║╚██╗██║██║   ██║██╔═══╝ 
+╚██████╗███████╗███████╗██║  ██║██║ ╚████║╚██████╔╝██║     
+ ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝     
+                                                               
+
+Copyright 2025 Darling Data, LLC
+https://www.erikdarling.com/
+
+For usage and licensing details, run:
+EXECUTE sp_IndexCleanup
+    @help = 1;
+
+For working through errors:
+EXECUTE sp_IndexCleanup
+    @debug = 1;
+
+For support, head over to GitHub:
+https://code.erikdarling.com                                                           
+
+*/
+
 
 IF OBJECT_ID('dbo.sp_IndexCleanup', 'P') IS NULL
 BEGIN
