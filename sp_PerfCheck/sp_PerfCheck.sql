@@ -62,8 +62,8 @@ BEGIN
     /*
     Set version information
     */
-    SELECT 
-        @version = N'1.0.4', 
+    SELECT
+        @version = N'1.0.4',
         @version_date = N'20250404';
 
     /*
@@ -161,7 +161,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         RETURN;
     END;
-    
+
     /*
     Variable Declarations
     */
