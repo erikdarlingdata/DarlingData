@@ -1,4 +1,4 @@
-﻿SET ANSI_WARNINGS ON;
+SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
@@ -8,20 +8,20 @@ SET STATISTICS TIME, IO OFF;
 GO
 
 /*
-██████╗ ███████╗██████╗ ███████╗        
-██╔══██╗██╔════╝██╔══██╗██╔════╝        
-██████╔╝█████╗  ██████╔╝█████╗          
-██╔═══╝ ██╔══╝  ██╔══██╗██╔══╝          
-██║     ███████╗██║  ██║██║             
-╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝             
-                                        
+██████╗ ███████╗██████╗ ███████╗
+██╔══██╗██╔════╝██╔══██╗██╔════╝
+██████╔╝█████╗  ██████╔╝█████╗
+██╔═══╝ ██╔══╝  ██╔══██╗██╔══╝
+██║     ███████╗██║  ██║██║
+╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝
+
  ██████╗██╗  ██╗███████╗ ██████╗██╗  ██╗
 ██╔════╝██║  ██║██╔════╝██╔════╝██║ ██╔╝
-██║     ███████║█████╗  ██║     █████╔╝ 
-██║     ██╔══██║██╔══╝  ██║     ██╔═██╗ 
+██║     ███████║█████╗  ██║     █████╔╝
+██║     ██╔══██║██╔══╝  ██║     ██╔═██╗
 ╚██████╗██║  ██║███████╗╚██████╗██║  ██╗
  ╚═════╝╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝
-                                        
+
 Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
@@ -34,7 +34,7 @@ EXECUTE sp_PerfCheck
     @debug = 1;
 
 For support, head over to GitHub:
-https://code.erikdarling.com     
+https://code.erikdarling.com
 
 */
 
@@ -1820,7 +1820,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Calculate signal wait ratio (time spent waiting for CPU vs. total wait time) */
         IF @total_wait_time_ms > 0
         BEGIN
-            SET @signal_wait_ratio = 
+            SET @signal_wait_ratio =
                     (@signal_wait_time_ms * 100.0) / @total_wait_time_ms;
 
             /* Calculate SOS_SCHEDULER_YIELD percentage of uptime */
@@ -2372,9 +2372,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         JOIN sys.master_files AS mf
           ON  fs.database_id = mf.database_id
           AND fs.file_id = mf.file_id
-        WHERE 
+        WHERE
         (
-             fs.num_of_reads > 0 
+             fs.num_of_reads > 0
           OR fs.num_of_writes > 0
         ); /* Only include files with some activity */
 
@@ -2558,7 +2558,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         /* Get physical memory for comparison */
         SELECT
-            @physical_memory_gb = 
+            @physical_memory_gb =
                 CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)
         FROM sys.dm_os_sys_info AS osi;
 
