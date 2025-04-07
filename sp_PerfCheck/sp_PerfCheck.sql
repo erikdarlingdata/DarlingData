@@ -1,6 +1,42 @@
-SET ANSI_NULLS ON;
+﻿SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
+SET IMPLICIT_TRANSACTIONS OFF;
+SET STATISTICS TIME, IO OFF;
 GO
+
+/*
+██████╗ ███████╗██████╗ ███████╗        
+██╔══██╗██╔════╝██╔══██╗██╔════╝        
+██████╔╝█████╗  ██████╔╝█████╗          
+██╔═══╝ ██╔══╝  ██╔══██╗██╔══╝          
+██║     ███████╗██║  ██║██║             
+╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝             
+                                        
+ ██████╗██╗  ██╗███████╗ ██████╗██╗  ██╗
+██╔════╝██║  ██║██╔════╝██╔════╝██║ ██╔╝
+██║     ███████║█████╗  ██║     █████╔╝ 
+██║     ██╔══██║██╔══╝  ██║     ██╔═██╗ 
+╚██████╗██║  ██║███████╗╚██████╗██║  ██╗
+ ╚═════╝╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝
+                                        
+Copyright 2025 Darling Data, LLC
+https://www.erikdarling.com/
+
+For usage and licensing details, run:
+EXECUTE sp_PerfCheck
+    @help = 1;
+
+For working through errors:
+EXECUTE sp_PerfCheck
+    @debug = 1;
+
+For support, head over to GitHub:
+https://code.erikdarling.com     
+
+*/
 
 IF OBJECT_ID(N'dbo.sp_PerfCheck', N'P') IS NULL
 BEGIN
@@ -12,6 +48,7 @@ ALTER PROCEDURE
     dbo.sp_PerfCheck
 (
     @database_name sysname = NULL, /* Database to check, NULL for all user databases */
+    @help bit = 0, /*For helpfulness*/
     @debug bit = 0, /* Print diagnostic messages */
     @version varchar(30) = NULL OUTPUT, /* Returns version */
     @version_date datetime = NULL OUTPUT /* Returns version date */
@@ -28,6 +65,102 @@ BEGIN
     SELECT 
         @version = N'1.0.4', 
         @version_date = N'20250404';
+
+    /*
+    Help section, for help.
+    Will become more helpful when out of beta.
+    */
+    IF @help = 1
+    BEGIN
+        SELECT
+            help = N'hello, i am sp_PerfCheck'
+          UNION ALL
+        SELECT
+            help = N'i look at important performance settings and metrics'
+          UNION ALL
+        SELECT
+            help = N'don''t hate me because i''m beautiful.'
+          UNION ALL
+        SELECT
+            help = N'brought to you by erikdarling.com / code.erikdarling.com';
+
+        /*
+        Parameters
+        */
+        SELECT
+            parameter_name =
+                ap.name,
+            data_type =
+                t.name,
+            description =
+                CASE
+                    ap.name
+                    WHEN N'@database_name' THEN 'the name of the database you wish to analyze'
+                    WHEN N'@help' THEN 'displays this help information'
+                    WHEN N'@debug' THEN 'prints debug information during execution'
+                    WHEN N'@version' THEN 'returns the version number of the procedure'
+                    WHEN N'@version_date' THEN 'returns the date this version was released'
+                    ELSE NULL
+                END,
+            valid_inputs =
+                CASE
+                    ap.name
+                    WHEN N'@database_name' THEN 'the name of a database you care about indexes in'
+                    WHEN N'@help' THEN '0 or 1'
+                    WHEN N'@debug' THEN '0 or 1'
+                    WHEN N'@version' THEN 'OUTPUT parameter'
+                    WHEN N'@version_date' THEN 'OUTPUT parameter'
+                    ELSE NULL
+                END,
+            defaults =
+                CASE
+                    ap.name
+                    WHEN N'@database_name' THEN 'NULL'
+                    WHEN N'@help' THEN 'false'
+                    WHEN N'@debug' THEN 'true'
+                    WHEN N'@version' THEN 'NULL'
+                    WHEN N'@version_date' THEN 'NULL'
+                    ELSE NULL
+                END
+        FROM sys.all_parameters AS ap
+        JOIN sys.all_objects AS o
+          ON ap.object_id = o.object_id
+        JOIN sys.types AS t
+          ON  ap.system_type_id = t.system_type_id
+          AND ap.user_type_id = t.user_type_id
+        WHERE o.name = N'sp_PerfCheck'
+        OPTION(MAXDOP 1, RECOMPILE);
+
+        SELECT
+            mit_license_yo = 'i am MIT licensed, so like, do whatever'
+
+        UNION ALL
+
+        SELECT
+            mit_license_yo = 'see printed messages for full license';
+
+        RAISERROR('
+MIT License
+
+Copyright 2025 Darling Data, LLC
+
+https://www.erikdarling.com/
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+', 0, 1) WITH NOWAIT;
+
+        RETURN;
+    END;
     
     /*
     Variable Declarations
