@@ -1,4 +1,4 @@
--- Compile Date: 04/04/2025 14:35:12 UTC
+-- Compile Date: 04/04/2025 17:55:21 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -71,8 +71,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '2.4',
-        @version_date = '20250401';
+        @version = '2.4.4',
+        @version_date = '20250404';
 
     IF @help = 1
     BEGIN
@@ -5369,8 +5369,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '6.4',
-    @version_date = '20250401';
+    @version = '6.4.4',
+    @version_date = '20250404';
 
 IF @help = 1
 BEGIN
@@ -10164,8 +10164,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.4',
-    @version_date = '20250401';
+    @version = '4.4.4',
+    @version_date = '20250404';
 
 IF @help = 1
 BEGIN
@@ -13742,8 +13742,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '1.4',
-        @version_date = '20250401';
+        @version = '1.4.4',
+        @version_date = '20250404';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -14865,7 +14865,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
             WHERE v.object_id = i.object_id
-        )';
+        )
+        AND i.is_disabled = 0
+        AND i.is_hypothetical = 0';
 
     IF /* Check for temporal tables support */
     (
@@ -20262,8 +20264,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
     SELECT
-        @version = '2.4',
-        @version_date = '20250401';
+        @version = '2.4.4',
+        @version_date = '20250404';
 
     IF @help = 1
     BEGIN
@@ -20955,8 +20957,8 @@ BEGIN
     Set version information
     */
     SELECT
-        @version = N'1.0',
-        @version_date = N'20250401';
+        @version = N'1.0.4',
+        @version_date = N'20250404';
 
     /*
     Variable Declarations
@@ -25143,8 +25145,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.4',
-    @version_date = '20250401';
+    @version = '5.4.4',
+    @version_date = '20250404';
 
 
 IF @help = 1
@@ -29493,8 +29495,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '5.4',
-    @version_date = '20250401';
+    @version = '5.4.4',
+    @version_date = '20250404';
 
 /*
 Helpful section! For help.
