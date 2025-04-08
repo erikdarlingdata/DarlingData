@@ -140,6 +140,15 @@ END
 GO
 
 /*
+Create system.create_collector_table procedure
+*/
+RAISERROR (N'Creating system.create_collector_table procedure', 0, 1) WITH NOWAIT;
+GO
+
+:r ./system.create_collector_table.sql
+GO
+
+/*
 Create system.detect_environment procedure
 */
 RAISERROR (N'Creating system.detect_environment procedure', 0, 1) WITH NOWAIT;

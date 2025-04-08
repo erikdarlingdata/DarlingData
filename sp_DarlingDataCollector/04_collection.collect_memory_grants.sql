@@ -46,42 +46,9 @@ BEGIN
         */
         IF OBJECT_ID('collection.memory_grants') IS NULL
         BEGIN
-            CREATE TABLE
-                collection.memory_grants
-            (
-                collection_id BIGINT IDENTITY(1,1) NOT NULL,
-                collection_time DATETIME2(7) NOT NULL,
-                session_id INTEGER NOT NULL,
-                request_id INTEGER NOT NULL,
-                scheduler_id INTEGER NULL,
-                dop INTEGER NULL,
-                request_time DATETIME NULL,
-                grant_time DATETIME NULL,
-                requested_memory_kb BIGINT NULL,
-                granted_memory_kb BIGINT NULL,
-                required_memory_kb BIGINT NULL,
-                used_memory_kb BIGINT NULL,
-                max_used_memory_kb BIGINT NULL,
-                ideal_memory_kb BIGINT NULL,
-                grant_ratio DECIMAL(5,2) NULL,
-                grant_wait_ms BIGINT NULL,
-                query_cost FLOAT NULL,
-                timeout_sec INTEGER NULL,
-                resource_semaphore_id INTEGER NULL,
-                pool_id INTEGER NULL,
-                is_small BIT NULL,
-                plan_handle VARBINARY(64) NULL,
-                sql_handle VARBINARY(64) NULL,
-                statement_start_offset INTEGER NULL,
-                statement_end_offset INTEGER NULL,
-                query_text NVARCHAR(MAX) NULL,
-                CONSTRAINT pk_memory_grants PRIMARY KEY CLUSTERED (collection_id, session_id, request_id)
-            );
-            
-            IF @debug = 1
-            BEGIN
-                RAISERROR(N'Created collection.memory_grants table', 0, 1) WITH NOWAIT;
-            END;
+            EXECUTE system.create_collector_table
+                @table_name = 'memory_grants',
+                @debug = @debug;
         END;
         
         /*

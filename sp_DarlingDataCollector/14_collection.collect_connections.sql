@@ -122,6 +122,16 @@ BEGIN
     
     BEGIN TRY
         /*
+        Create the collection table if it doesn't exist
+        */
+        IF OBJECT_ID('collection.connections') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'connections',
+                @debug = @debug;
+        END;
+        
+        /*
         Collect base session information with wait stats and query data
         */
         INSERT

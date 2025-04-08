@@ -1,6 +1,6 @@
-# DarlingDataCollector Installation Script
+# DarlingDataCollector Installation Guide
 
-This document contains the complete installation script to set up the DarlingDataCollector solution. It creates the repository database, all schemas, tables, and core procedures.
+This document outlines the installation process for the DarlingDataCollector solution. The collector supports dynamic table creation through a centralized system procedure.
 
 ## Supported Environments
 
@@ -11,6 +11,29 @@ DarlingDataCollector supports the following SQL Server environments:
 - Amazon RDS for SQL Server
 
 > **Note**: Azure SQL Database is **not** supported due to its limitations with SQL Agent and other system-level features required by this solution.
+
+## Installation Options
+
+### Option 1: Using the SQLCMD Installer (Recommended)
+
+The simplest way to install DarlingDataCollector is to use the SQLCMD-mode installer:
+
+1. Open a command prompt with administrative privileges
+2. Navigate to the DarlingDataCollector directory
+3. Run the following command:
+
+```
+sqlcmd -S [server_name] -i .\install-darling-data-collector.sql -v TargetDB = "[database_name]"
+```
+
+Replace `[server_name]` with your SQL Server instance name and `[database_name]` with the name of the database where you want to install the collector (create it first if it doesn't exist).
+
+This installer will:
+- Create all required schemas (collection, system, analysis)
+- Create system tables for logging and configuration
+- Create the table creator procedure for dynamic table creation
+- Install all collector procedures
+- Create SQL Agent jobs for scheduling collections (except on Azure SQL Database)
 
 ## Installation Script
 

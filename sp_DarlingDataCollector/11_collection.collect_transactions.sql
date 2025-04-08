@@ -45,57 +45,13 @@ BEGIN
     
     BEGIN TRY
         /*
-        Create transactions table if it doesn't exist
+        Create the collection table if it doesn't exist
         */
         IF OBJECT_ID('collection.transactions') IS NULL
         BEGIN
-            CREATE TABLE
-                collection.transactions
-            (
-                collection_id BIGINT IDENTITY(1,1) NOT NULL,
-                collection_time DATETIME2(7) NOT NULL,
-                transaction_id BIGINT NOT NULL,
-                name NVARCHAR(32) NULL,
-                transaction_begin_time DATETIME NULL,
-                transaction_type NVARCHAR(32) NULL,
-                transaction_state NVARCHAR(32) NULL,
-                transaction_status BIGINT NULL,
-                transaction_status2 BIGINT NULL,
-                dtc_state NVARCHAR(32) NULL,
-                is_user_transaction BIT NULL,
-                is_local BIT NULL,
-                session_id INTEGER NULL,
-                login_name NVARCHAR(128) NULL,
-                host_name NVARCHAR(128) NULL,
-                program_name NVARCHAR(128) NULL,
-                database_id INTEGER NULL,
-                database_name NVARCHAR(128) NULL,
-                is_snapshot BIT NULL,
-                isolation_level NVARCHAR(32) NULL,
-                has_snapshot_capability BIT NULL,
-                first_snapshot_sequence_num BIGINT NULL,
-                max_version_chain_traversed INTEGER NULL,
-                transaction_sequence_num BIGINT NULL,
-                is_enlisted BIT NULL,
-                is_bound BIT NULL,
-                open_transaction_count INTEGER NULL,
-                database_transaction_begin_time DATETIME NULL,
-                database_transaction_log_record_count BIGINT NULL,
-                database_transaction_replicate_record_count BIGINT NULL,
-                database_transaction_log_bytes_used BIGINT NULL,
-                database_transaction_log_bytes_reserved BIGINT NULL,
-                database_transaction_log_bytes_used_system BIGINT NULL,
-                database_transaction_log_bytes_reserved_system BIGINT NULL,
-                active_transaction_duration_seconds BIGINT NULL,
-                elapsed_time_seconds BIGINT NULL,
-                transaction_sql_text NVARCHAR(MAX) NULL,
-                CONSTRAINT pk_transactions PRIMARY KEY CLUSTERED (collection_id, transaction_id, session_id, database_id)
-            );
-            
-            IF @debug = 1
-            BEGIN
-                RAISERROR(N'Created collection.transactions table', 0, 1) WITH NOWAIT;
-            END;
+            EXECUTE system.create_collector_table
+                @table_name = 'transactions',
+                @debug = @debug;
         END;
         
         /*
