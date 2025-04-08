@@ -262,7 +262,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @io_stall_summary nvarchar(1000),
         /* First check what columns exist in sys.databases to handle version differences */
         @has_is_ledger bit = 0,
-        @has_is_accelerated_database_recovery bit = 0;
+        @has_is_accelerated_database_recovery bit = 0,
+        /*SQLDB stuff for IO stats*/
+        @io_sql nvarchar(max) = N'',
+        @file_io_sql nvarchar(max) = N'',
+        @db_size_sql nvarchar(max) = N'',
+        @tempdb_files_sql nvarchar(max) = N'';
 
 
     /* Check for VIEW SERVER STATE permission */
@@ -2123,27 +2128,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               ON fs.file_id = df.file_id;
         END;
         ELSE
-        BEGIN
-            /* Non-Azure SQL DB - get stats for all databases */
-            INSERT INTO
-                #io_stalls_by_db
-            (
-                database_name,
-                database_id,
-                total_io_stall_ms,
-                total_io_mb,
-                avg_io_stall_ms,
-                read_io_stall_ms,
-                read_io_mb,
-                avg_read_stall_ms,
-                write_io_stall_ms,
-                write_io_mb,
-                avg_write_stall_ms,
-                total_size_mb
-            )
-            DECLARE
-                @io_sql nvarchar(max) = N'';
-                
+        BEGIN                
             SET @io_sql = N'
             SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
             
@@ -2178,12 +2163,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes))
                     END,
                 total_size_mb = CONVERT(decimal(18, 2), SUM(mf.size) * 8 / 1024.0)
-            FROM sys.dm_io_virtual_file_stats(' + 
+            FROM sys.dm_io_virtual_file_stats
+            (' + 
             CASE 
                 WHEN @azure_sql_db = 1 
                 THEN N'DB_ID()' 
                 ELSE N'NULL' 
-            END + N', NULL) AS fs
+            END + N',
+                NULL
+            ) AS fs
             JOIN ' +
             CASE
                 WHEN @azure_sql_db = 1
@@ -2199,7 +2187,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ' + 
             CASE 
                 WHEN @azure_sql_db = 1 
-                THEN N'1=1' /* Always true for Azure SQL DB since we only have the current database */
+                THEN N'1 = 1' /* Always true for Azure SQL DB since we only have the current database */
                 ELSE N'fs.database_id > 4
               OR fs.database_id = 2' 
             END + 
@@ -2210,8 +2198,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             HAVING
                 /* Skip idle databases and system databases except tempdb */
                 (SUM(fs.num_of_reads + fs.num_of_writes) > 0);';
-                
-            EXECUTE sys.sp_executesql @io_sql;
+
+            IF @debug = 1
+            BEGIN
+                PRINT @io_sql;
+            END;
+            
+            /* Non-Azure SQL DB - get stats for all databases */
+            INSERT INTO
+                #io_stalls_by_db
+            (
+                database_name,
+                database_id,
+                total_io_stall_ms,
+                total_io_mb,
+                avg_io_stall_ms,
+                read_io_stall_ms,
+                read_io_mb,
+                avg_read_stall_ms,
+                write_io_stall_ms,
+                write_io_mb,
+                avg_write_stall_ms,
+                total_size_mb
+            )                
+            EXECUTE sys.sp_executesql 
+                @io_sql;
         END;
 
         /* Format a summary of the worst databases by I/O stalls */
@@ -2333,30 +2344,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Checking storage performance', 0, 1) WITH NOWAIT;
         END;
-        /* Gather IO Stats */
-        INSERT INTO
-            #io_stats
-        (
-            database_name,
-            database_id,
-            file_name,
-            type_desc,
-            io_stall_read_ms,
-            num_of_reads,
-            avg_read_latency_ms,
-            io_stall_write_ms,
-            num_of_writes,
-            avg_write_latency_ms,
-            io_stall_ms,
-            total_io,
-            avg_io_latency_ms,
-            size_mb,
-            drive_location,
-            physical_name
-        )
-        DECLARE
-            @file_io_sql nvarchar(max) = N'';
-            
+        
         SET @file_io_sql = N'
         SELECT
             database_name = DB_NAME(fs.database_id),
@@ -2398,12 +2386,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ELSE UPPER(LEFT(mf.physical_name, 2))
                 END,
             physical_name = mf.physical_name
-        FROM sys.dm_io_virtual_file_stats(' + 
+        FROM sys.dm_io_virtual_file_stats
+        (' + 
         CASE 
             WHEN @azure_sql_db = 1 
             THEN N'DB_ID()' 
             ELSE N'NULL' 
-        END + N', NULL) AS fs
+        END + N', 
+            NULL
+        ) AS fs
         JOIN ' +
         CASE
             WHEN @azure_sql_db = 1
@@ -2418,10 +2409,36 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
              fs.num_of_reads > 0 
           OR fs.num_of_writes > 0
-        ) /* Only include files with some activity */';
+        ); /* Only include files with some activity */';
+
+        IF @debug = 1
+        BEGIN
+            PRINT @file_io_sql;
+        END;
         
-        INSERT INTO #io_stats
-        EXECUTE sys.sp_executesql @file_io_sql;
+        /* Gather IO Stats */
+        INSERT INTO
+            #io_stats
+        (
+            database_name,
+            database_id,
+            file_name,
+            type_desc,
+            io_stall_read_ms,
+            num_of_reads,
+            avg_read_latency_ms,
+            io_stall_write_ms,
+            num_of_writes,
+            avg_write_latency_ms,
+            io_stall_ms,
+            total_io,
+            avg_io_latency_ms,
+            size_mb,
+            drive_location,
+            physical_name
+        )
+        EXECUTE sys.sp_executesql 
+            @file_io_sql;
 
         /* Add results for slow reads */
         INSERT INTO
@@ -2566,13 +2583,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE df.type_desc = N'ROWS';
         END;
         ELSE
-        BEGIN
-            /* For non-Azure SQL DB, get size across all accessible databases */
-            INSERT INTO
-                #server_info (info_type, value)
-            DECLARE
-                @db_size_sql nvarchar(max);
-                
+        BEGIN                
             SET @db_size_sql = N'
             SELECT
                 N''Total Database Size'',
@@ -2587,9 +2598,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ELSE N'sys.master_files AS mf
                 WHERE mf.type_desc = N''ROWS'''
             END;
+
+            IF @db_size_sql = 1
+            BEGIN
+                PRINT @file_io_sql;
+            END;
             
-            INSERT INTO #server_info
-            EXECUTE sys.sp_executesql @db_size_sql;
+            /* For non-Azure SQL DB, get size across all accessible databases */
+            INSERT INTO
+                #server_info (info_type, value)
+            EXECUTE sys.sp_executesql 
+                @db_size_sql;
         END;
     END TRY
     BEGIN CATCH
@@ -2747,21 +2766,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Checking TempDB configuration', 0, 1) WITH NOWAIT;
         END;
-
-        /* Get TempDB file information */
-        INSERT INTO
-            #tempdb_files
-        (
-            file_id,
-            file_name,
-            type_desc,
-            size_mb,
-            max_size_mb,
-            growth_mb,
-            is_percent_growth
-        )
-        DECLARE
-            @tempdb_files_sql nvarchar(MAX);
             
         SET @tempdb_files_sql = N'
         SELECT
@@ -2786,13 +2790,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CASE 
             WHEN @azure_sql_db = 1
             THEN N'sys.database_files AS mf
-            WHERE DB_NAME() = N''tempdb'''
+            WHERE DB_NAME() = N''tempdb'';'
             ELSE N'sys.master_files AS mf
-            WHERE mf.database_id = 2'
+            WHERE mf.database_id = 2;'
+        END;
+
+        IF @db_size_sql = 1
+        BEGIN
+            PRINT @tempdb_files_sql;
         END;
         
-        INSERT INTO #tempdb_files
-        EXECUTE sys.sp_executesql @tempdb_files_sql;
+        /* Get TempDB file information */
+        INSERT INTO
+            #tempdb_files
+        (
+            file_id,
+            file_name,
+            type_desc,
+            size_mb,
+            max_size_mb,
+            growth_mb,
+            is_percent_growth
+        )
+        EXECUTE sys.sp_executesql 
+            @tempdb_files_sql;
 
         /* Get file counts and size range */
         SELECT
@@ -3249,6 +3270,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @debug = 1
     BEGIN
         RAISERROR('SQL for #databases: %s', 0, 1, @sql) WITH NOWAIT;
+        PRINT REPLICATE(N'=', 128);
+        PRINT @sql;
     END;
 
     INSERT INTO
