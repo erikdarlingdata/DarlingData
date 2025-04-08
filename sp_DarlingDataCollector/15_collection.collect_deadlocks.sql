@@ -49,6 +49,16 @@ BEGIN
     
     BEGIN TRY
         /*
+        Create the collection table if it doesn't exist
+        */
+        IF OBJECT_ID('collection.deadlocks') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'deadlocks',
+                @debug = @debug;
+        END;
+        
+        /*
         Calculate date range for historical data if specified
         */
         IF @history_start_period_minutes IS NOT NULL

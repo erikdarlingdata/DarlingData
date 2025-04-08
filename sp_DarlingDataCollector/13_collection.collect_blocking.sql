@@ -54,6 +54,16 @@ BEGIN
     
     BEGIN TRY
         /*
+        Create the collection table if it doesn't exist
+        */
+        IF OBJECT_ID('collection.blocking') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'blocking',
+                @debug = @debug;
+        END;
+        
+        /*
         Check the blocked process threshold setting
         */
         SELECT 

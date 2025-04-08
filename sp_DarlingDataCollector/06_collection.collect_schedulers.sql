@@ -43,36 +43,9 @@ BEGIN
         */
         IF OBJECT_ID('collection.schedulers') IS NULL
         BEGIN
-            CREATE TABLE
-                collection.schedulers
-            (
-                collection_id BIGINT IDENTITY(1,1) NOT NULL,
-                collection_time DATETIME2(7) NOT NULL,
-                scheduler_id INTEGER NOT NULL,
-                cpu_id INTEGER NULL,
-                parent_node_id INTEGER NULL,
-                status NVARCHAR(60) NULL,
-                is_online BIT NULL,
-                is_idle BIT NULL,
-                preemptive_switches_count BIGINT NULL,
-                context_switches_count BIGINT NULL,
-                yield_count BIGINT NULL,
-                current_tasks_count INTEGER NULL,
-                runnable_tasks_count INTEGER NULL,
-                current_workers_count INTEGER NULL,
-                active_workers_count INTEGER NULL,
-                work_queue_count BIGINT NULL,
-                pending_disk_io_count BIGINT NULL,
-                load_factor INTEGER NULL,
-                scheduler_total_cpu_usage_ms BIGINT NULL,
-                scheduler_total_scheduler_delay_ms BIGINT NULL,
-                CONSTRAINT pk_schedulers PRIMARY KEY CLUSTERED (collection_id, scheduler_id)
-            );
-            
-            IF @debug = 1
-            BEGIN
-                RAISERROR(N'Created collection.schedulers table', 0, 1) WITH NOWAIT;
-            END;
+            EXECUTE system.create_collector_table
+                @table_name = 'schedulers',
+                @debug = @debug;
         END;
         
         /*

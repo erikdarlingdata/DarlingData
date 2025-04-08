@@ -44,38 +44,9 @@ BEGIN
         */
         IF OBJECT_ID('collection.process_memory') IS NULL
         BEGIN
-            CREATE TABLE
-                collection.process_memory
-            (
-                collection_id BIGINT IDENTITY(1,1) NOT NULL,
-                collection_time DATETIME2(7) NOT NULL,
-                physical_memory_in_use_kb BIGINT NULL,
-                large_page_allocations_kb BIGINT NULL,
-                locked_page_allocations_kb BIGINT NULL,
-                total_virtual_address_space_kb BIGINT NULL,
-                virtual_address_space_reserved_kb BIGINT NULL,
-                virtual_address_space_committed_kb BIGINT NULL,
-                virtual_address_space_available_kb BIGINT NULL,
-                page_fault_count BIGINT NULL,
-                memory_utilization_percentage INTEGER NULL,
-                process_physical_memory_low BIT NULL,
-                process_virtual_memory_low BIT NULL,
-                system_physical_memory_high BIT NULL,
-                system_virtual_memory_low BIT NULL,
-                system_total_physical_memory_kb BIGINT NULL,
-                system_available_physical_memory_kb BIGINT NULL,
-                system_total_page_file_kb BIGINT NULL,
-                system_available_page_file_kb BIGINT NULL,
-                system_cache_kb BIGINT NULL,
-                system_kernel_paged_pool_kb BIGINT NULL,
-                system_kernel_nonpaged_pool_kb BIGINT NULL,
-                CONSTRAINT pk_process_memory PRIMARY KEY CLUSTERED (collection_id)
-            );
-            
-            IF @debug = 1
-            BEGIN
-                RAISERROR(N'Created collection.process_memory table', 0, 1) WITH NOWAIT;
-            END;
+            EXECUTE system.create_collector_table
+                @table_name = 'process_memory',
+                @debug = @debug;
         END;
         
         /*

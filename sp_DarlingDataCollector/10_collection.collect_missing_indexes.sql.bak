@@ -27,14 +27,13 @@ CREATE OR ALTER PROCEDURE
     collection.collect_missing_indexes
 (
     @debug BIT = 0, /*Print debugging information*/
-    @use_database_list BIT = 0, /*Use database list from system.database_collection_config*/
+    @min_improvement_pct DECIMAL(5, 2) = 10.0, /*Minimum improvement percentage to include*/
+    @min_user_seeks INTEGER = 1, /*Minimum number of user seeks to include*/
+    @min_avg_user_impact DECIMAL(5, 2) = 50.0, /*Minimum average user impact to include*/
+    @use_database_list BIT = 1, /*Use database list from system.database_collection_config*/
     @include_databases NVARCHAR(MAX) = NULL, /*Optional: Comma-separated list of databases to include*/
     @exclude_databases NVARCHAR(MAX) = NULL, /*Optional: Comma-separated list of databases to exclude*/
-    @include_system_databases BIT = 0, /*Include system databases*/
-    @min_user_seeks INTEGER = 0, /*Minimum number of user seeks to include*/
-    @min_user_scans INTEGER = 0, /*Minimum number of user scans to include*/
-    @min_avg_user_impact DECIMAL(5,2) = 0, /*Minimum average user impact percentage to include*/
-    @min_avg_total_user_cost DECIMAL(18,2) = 0 /*Minimum average total user cost to include*/
+    @exclude_system_databases BIT = 1 /*Exclude system databases*/
 )
 AS
 BEGIN
@@ -70,6 +69,25 @@ BEGIN
                 @table_name = 'missing_indexes',
                 @debug = @debug;
         END;
+                avg_user_impact DECIMAL(5, 2) NULL,
+                user_seeks BIGINT NULL,
+                user_scans BIGINT NULL,
+                last_user_seek DATETIME NULL,
+                last_user_scan DATETIME NULL,
+                improvement_measure DECIMAL(18, 2) NULL,
+                included_columns NVARCHAR(MAX) NULL,
+                equality_columns NVARCHAR(MAX) NULL,
+                inequality_columns NVARCHAR(MAX) NULL,
+                statement NVARCHAR(4000) NULL,
+                create_index_statement NVARCHAR(MAX) NULL,
+                CONSTRAINT pk_missing_indexes PRIMARY KEY CLUSTERED (collection_id, database_id, index_handle)
+            );
+            
+            IF @debug = 1
+            BEGIN
+                RAISERROR(N'Created collection.missing_indexes table', 0, 1) WITH NOWAIT;
+            END;
+        END;
         
         /*
         Build database lists
@@ -83,7 +101,7 @@ BEGIN
             SELECT
                 database_name
             FROM system.database_collection_config
-            WHERE collection_type IN (N'MISSING_INDEXES', N'ALL')
+            WHERE collection_type IN (N'INDEX', N'ALL')
             AND active = 1;
             
             IF @debug = 1
@@ -133,7 +151,7 @@ BEGIN
         END;
         
         /*
-        Collect missing indexes
+        Collect missing indexes information
         */
         INSERT
             collection.missing_indexes
@@ -143,76 +161,89 @@ BEGIN
             database_name,
             schema_name,
             table_name,
-            equality_columns,
-            inequality_columns,
-            included_columns,
-            unique_compiles,
-            user_seeks,
-            user_scans,
+            index_handle,
+            missing_index_group_handle,
             avg_total_user_cost,
             avg_user_impact,
+            user_seeks,
+            user_scans,
             last_user_seek,
             last_user_scan,
-            index_advantage,
+            improvement_measure,
+            included_columns,
+            equality_columns,
+            inequality_columns,
+            statement,
             create_index_statement
         )
         SELECT
-            collection_time = @collection_start,
+            collection_time = SYSDATETIME(),
             mid.database_id,
             database_name = DB_NAME(mid.database_id),
             schema_name = OBJECT_SCHEMA_NAME(mid.object_id, mid.database_id),
             table_name = OBJECT_NAME(mid.object_id, mid.database_id),
-            equality_columns = mid.equality_columns,
-            inequality_columns = mid.inequality_columns,
-            included_columns = mid.included_columns,
-            migs.unique_compiles,
-            migs.user_seeks,
-            migs.user_scans,
+            mid.index_handle,
+            migs.group_handle AS missing_index_group_handle,
             migs.avg_total_user_cost,
             migs.avg_user_impact,
+            migs.user_seeks,
+            migs.user_scans,
             migs.last_user_seek,
             migs.last_user_scan,
-            index_advantage = CAST(migs.user_seeks AS DECIMAL(18,2)) * migs.avg_user_impact * migs.avg_total_user_cost / 100.0,
+            improvement_measure = (migs.user_seeks + migs.user_scans) * migs.avg_total_user_cost * (migs.avg_user_impact / 100.0),
+            mid.included_columns,
+            mid.equality_columns,
+            mid.inequality_columns,
+            mid.statement,
             create_index_statement = 
-                'CREATE NONCLUSTERED INDEX ix_' + 
-                ISNULL(REPLACE(REPLACE(REPLACE(REPLACE(
-                    OBJECT_NAME(mid.object_id, mid.database_id),
-                    ' ', ''), '[', ''), ']', ''), '.', '') + 
-                '_missing_' + CAST(mid.index_handle AS NVARCHAR(20)), 'unknown_name') + 
+                N'CREATE INDEX [IX_' + 
+                OBJECT_NAME(mid.object_id, mid.database_id) + N'_missing_' + 
+                CAST(mid.index_handle AS NVARCHAR(20)) + N'] ON ' + 
+                mid.statement + 
                 CASE 
-                    WHEN mid.equality_columns IS NOT NULL AND mid.inequality_columns IS NULL 
-                    THEN '_eq' 
-                    WHEN mid.equality_columns IS NULL AND mid.inequality_columns IS NOT NULL 
-                    THEN '_ineq' 
-                    ELSE '_comb' 
+                    WHEN mid.equality_columns IS NOT NULL 
+                    THEN N' (' + mid.equality_columns + 
+                        CASE 
+                            WHEN mid.inequality_columns IS NOT NULL 
+                            THEN N', ' + mid.inequality_columns 
+                            ELSE N'' 
+                        END + N')' 
+                    ELSE N' (' + mid.inequality_columns + N')' 
                 END + 
-                ' ON ' + QUOTENAME(DB_NAME(mid.database_id)) + '.' + 
-                QUOTENAME(OBJECT_SCHEMA_NAME(mid.object_id, mid.database_id)) + '.' + 
-                QUOTENAME(OBJECT_NAME(mid.object_id, mid.database_id)) + 
-                ' (' + ISNULL(mid.equality_columns, '') + 
                 CASE 
-                    WHEN mid.equality_columns IS NOT NULL AND mid.inequality_columns IS NOT NULL 
-                    THEN ', ' 
-                    ELSE '' 
-                END + 
-                ISNULL(mid.inequality_columns, '') + ')' + 
-                ISNULL(' INCLUDE (' + mid.included_columns + ')', '')
+                    WHEN mid.included_columns IS NOT NULL 
+                    THEN N' INCLUDE (' + mid.included_columns + N')' 
+                    ELSE N'' 
+                END
         FROM sys.dm_db_missing_index_details AS mid
         JOIN sys.dm_db_missing_index_groups AS mig
             ON mid.index_handle = mig.index_handle
         JOIN sys.dm_db_missing_index_group_stats AS migs
             ON mig.index_group_handle = migs.group_handle
-        WHERE mid.database_id > 0
-        AND mid.object_id > 0
-        AND migs.user_seeks >= @min_user_seeks
-        AND migs.user_scans >= @min_user_scans
-        AND migs.avg_user_impact >= @min_avg_user_impact
-        AND migs.avg_total_user_cost >= @min_avg_total_user_cost
-        AND ((@include_databases IS NULL AND @use_database_list = 0) -- If no includes specified, use all databases
-             OR DB_NAME(mid.database_id) IN (SELECT database_name FROM @include_database_list))
-        AND ((mid.database_id > 4) OR @include_system_databases = 1) -- User databases or if system databases are included
-        AND DB_NAME(mid.database_id) NOT IN (SELECT database_name FROM @exclude_database_list) -- Not in exclude list
-        ORDER BY index_advantage DESC;
+        WHERE 
+            (migs.user_seeks + migs.user_scans) * migs.avg_total_user_cost * (migs.avg_user_impact / 100.0) > @min_improvement_pct
+            AND migs.user_seeks >= @min_user_seeks
+            AND migs.avg_user_impact >= @min_avg_user_impact
+            AND 
+            (
+                -- Use include list if specified
+                (
+                    EXISTS (SELECT 1 FROM @include_database_list)
+                    AND DB_NAME(mid.database_id) IN (SELECT database_name FROM @include_database_list)
+                )
+                OR 
+                (
+                    -- Otherwise use all databases except excluded ones
+                    NOT EXISTS (SELECT 1 FROM @include_database_list)
+                    AND 
+                    (
+                        -- Skip system databases if specified
+                        (@exclude_system_databases = 0 OR mid.database_id > 4)
+                        -- Skip excluded databases
+                        AND DB_NAME(mid.database_id) NOT IN (SELECT database_name FROM @exclude_database_list)
+                    )
+                )
+            );
         
         SET @rows_collected = @@ROWCOUNT;
         SET @collection_end = SYSDATETIME();

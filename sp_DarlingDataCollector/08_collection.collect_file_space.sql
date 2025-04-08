@@ -15,8 +15,7 @@ GO
 * 
 * Copyright (C) Darling Data, LLC
 * 
-* Collects database file space information from 
-* sys.dm_db_file_space_usage and sys.dm_db_log_space_usage
+* Collects file space usage information for databases
 * 
 **************************************************************/
 */
@@ -25,10 +24,10 @@ CREATE OR ALTER PROCEDURE
     collection.collect_file_space
 (
     @debug BIT = 0, /*Print debugging information*/
-    @use_database_list BIT = 1, /*Use database list from system.database_collection_config*/
+    @use_database_list BIT = 0, /*Use database list from system.database_collection_config*/
     @include_databases NVARCHAR(MAX) = NULL, /*Optional: Comma-separated list of databases to include*/
     @exclude_databases NVARCHAR(MAX) = NULL, /*Optional: Comma-separated list of databases to exclude*/
-    @exclude_system_databases BIT = 1 /*Exclude system databases*/
+    @include_system_databases BIT = 0 /*Include system databases*/
 )
 AS
 BEGIN
@@ -42,7 +41,8 @@ BEGIN
         @error_number INTEGER,
         @error_message NVARCHAR(4000),
         @sql NVARCHAR(MAX) = N'',
-        @database_name NVARCHAR(128);
+        @database_name NVARCHAR(128),
+        @database_id INTEGER;
     
     DECLARE
         @include_database_list TABLE
@@ -65,49 +65,13 @@ BEGIN
     
     BEGIN TRY
         /*
-        Create file_space_usage table if it doesn't exist
+        Create file_space table if it doesn't exist
         */
-        IF OBJECT_ID('collection.file_space_usage') IS NULL
+        IF OBJECT_ID('collection.file_space') IS NULL
         BEGIN
-            CREATE TABLE
-                collection.file_space_usage
-            (
-                collection_id BIGINT IDENTITY(1,1) NOT NULL,
-                collection_time DATETIME2(7) NOT NULL,
-                database_id INTEGER NOT NULL,
-                database_name NVARCHAR(128) NOT NULL,
-                file_id INTEGER NOT NULL,
-                file_name NVARCHAR(128) NULL,
-                file_type NVARCHAR(60) NULL,
-                size_mb DECIMAL(18, 2) NULL,
-                space_used_mb DECIMAL(18, 2) NULL,
-                free_space_mb DECIMAL(18, 2) NULL,
-                growth_units NVARCHAR(15) NULL,
-                growth_increment DECIMAL(18, 2) NULL,
-                max_size_mb DECIMAL(18, 2) NULL,
-                is_percent_growth BIT NULL,
-                is_read_only BIT NULL,
-                is_log BIT NULL,
-                log_space_in_use_percentage DECIMAL(5, 2) NULL,
-                log_space_used_mb DECIMAL(18, 2) NULL,
-                log_space_reserved_mb DECIMAL(18, 2) NULL,
-                file_type_desc NVARCHAR(60) NULL,
-                data_space_id INTEGER NULL,
-                data_space_name NVARCHAR(128) NULL,
-                total_page_count BIGINT NULL,
-                allocated_extent_page_count BIGINT NULL,
-                unallocated_extent_page_count BIGINT NULL,
-                version_store_reserved_page_count BIGINT NULL,
-                user_object_reserved_page_count BIGINT NULL,
-                internal_object_reserved_page_count BIGINT NULL,
-                mixed_extent_page_count BIGINT NULL,
-                CONSTRAINT pk_file_space_usage PRIMARY KEY CLUSTERED (collection_id, database_id, file_id)
-            );
-            
-            IF @debug = 1
-            BEGIN
-                RAISERROR(N'Created collection.file_space_usage table', 0, 1) WITH NOWAIT;
-            END;
+            EXECUTE system.create_collector_table
+                @table_name = 'file_space',
+                @debug = @debug;
         END;
         
         /*
@@ -180,55 +144,34 @@ BEGIN
             database_name
         )
         SELECT
-            d.database_id,
-            database_name = d.name
-        FROM sys.databases AS d
-        WHERE d.state = 0 -- Only online databases
-        AND 
-        (
-            -- Use include list if specified
-            (
-                EXISTS (SELECT 1 FROM @include_database_list)
-                AND d.name IN (SELECT database_name FROM @include_database_list)
-            )
-            OR 
-            (
-                -- Otherwise use all databases except excluded ones
-                NOT EXISTS (SELECT 1 FROM @include_database_list)
-                AND 
-                (
-                    -- Skip system databases if specified
-                    (@exclude_system_databases = 0 OR d.database_id > 4)
-                    -- Skip excluded databases
-                    AND d.name NOT IN (SELECT database_name FROM @exclude_database_list)
-                )
-            )
-        );
+            database_id,
+            name
+        FROM sys.databases
+        WHERE (@include_databases IS NULL AND @use_database_list = 0) -- If no includes specified, use all databases
+        OR name IN (SELECT database_name FROM @include_database_list)
+        AND state = 0 -- Online databases only
+        AND (database_id > 4 OR @include_system_databases = 1) -- User databases or if system databases are included
+        AND name NOT IN (SELECT database_name FROM @exclude_database_list) -- Not in exclude list
+        ORDER BY name;
         
         IF @debug = 1
         BEGIN
             SELECT
-                db_list = N'Final database list',
-                dl.database_id,
-                dl.database_name
-            FROM @database_list AS dl
-            ORDER BY
-                dl.database_name;
+                database_count = COUNT(*)
+            FROM @database_list;
         END;
         
         /*
-        Loop through each database and collect file space information
+        Process each database
         */
-        DECLARE
-            db_cursor CURSOR LOCAL FORWARD_ONLY STATIC READ_ONLY
+        DECLARE db_cursor CURSOR LOCAL FAST_FORWARD
         FOR
-            SELECT
+            SELECT 
                 database_id,
                 database_name
             FROM @database_list
-            ORDER BY
-                database_name;
-                
+            ORDER BY database_name;
+        
         OPEN db_cursor;
         
         FETCH NEXT FROM
@@ -239,175 +182,66 @@ BEGIN
             
         WHILE @@FETCH_STATUS = 0
         BEGIN
-            IF @debug = 1
-            BEGIN
-                RAISERROR(N'Processing database %s (ID: %d)', 0, 1, @database_name, @database_id) WITH NOWAIT;
-            END;
-            
-            -- Build dynamic SQL to get file space usage for the current database
+            /*
+            Build SQL to collect file space info from the current database
+            */
             SET @sql = N'
             USE ' + QUOTENAME(@database_name) + N';
             
             INSERT
-                collection.file_space_usage
+                collection.file_space
             (
                 collection_time,
                 database_id,
                 database_name,
                 file_id,
                 file_name,
-                file_type,
+                file_path,
+                type_desc,
                 size_mb,
                 space_used_mb,
                 free_space_mb,
-                growth_units,
-                growth_increment,
+                free_space_percent,
                 max_size_mb,
+                growth,
                 is_percent_growth,
-                is_read_only,
-                is_log,
-                log_space_in_use_percentage,
-                log_space_used_mb,
-                log_space_reserved_mb,
-                file_type_desc,
-                data_space_id,
-                data_space_name,
-                total_page_count,
-                allocated_extent_page_count,
-                unallocated_extent_page_count,
-                version_store_reserved_page_count,
-                user_object_reserved_page_count,
-                internal_object_reserved_page_count,
-                mixed_extent_page_count
+                is_read_only
             )
             SELECT
-                collection_time = SYSDATETIME(),
-                database_id = DB_ID(),
-                database_name = DB_NAME(),
-                mf.file_id,
-                mf.name,
-                file_type = 
+                collection_time = ''' + CONVERT(NVARCHAR(30), @collection_start, 126) + N''',
+                database_id = ' + CAST(@database_id AS NVARCHAR(10)) + N',
+                database_name = ''' + @database_name + N''',
+                file_id = f.file_id,
+                file_name = f.name,
+                file_path = f.physical_name,
+                type_desc = f.type_desc,
+                size_mb = CAST(f.size AS DECIMAL(18,2)) * 8.0 / 1024,
+                space_used_mb = CAST(FILEPROPERTY(f.name, ''SpaceUsed'') AS DECIMAL(18,2)) * 8.0 / 1024,
+                free_space_mb = CAST((f.size - FILEPROPERTY(f.name, ''SpaceUsed'')) AS DECIMAL(18,2)) * 8.0 / 1024,
+                free_space_percent = 
                     CASE 
-                        WHEN mf.type = 0 THEN ''DATA''
-                        WHEN mf.type = 1 THEN ''LOG''
-                        ELSE ''OTHER''
-                    END,
-                size_mb = 
-                    CONVERT(DECIMAL(18,2), mf.size/128.0),
-                space_used_mb = 
-                    CONVERT(DECIMAL(18,2), FILEPROPERTY(mf.name, ''SpaceUsed'')/128.0),
-                free_space_mb = 
-                    CONVERT(DECIMAL(18,2), mf.size/128.0 - FILEPROPERTY(mf.name, ''SpaceUsed'')/128.0),
-                growth_units = 
-                    CASE 
-                        WHEN mf.is_percent_growth = 1 THEN ''%''
-                        ELSE ''MB''
-                    END,
-                growth_increment = 
-                    CASE
-                        WHEN mf.is_percent_growth = 1 THEN CONVERT(DECIMAL(18,2), mf.growth)
-                        ELSE CONVERT(DECIMAL(18,2), mf.growth/128.0)
-                    END,
-                max_size_mb = 
-                    CASE
-                        WHEN mf.max_size = -1 THEN -1
-                        WHEN mf.max_size = 268435456 THEN -1
-                        ELSE CONVERT(DECIMAL(18,2), mf.max_size/128.0)
-                    END,
-                mf.is_percent_growth,
-                mf.is_read_only,
-                is_log = 
-                    CASE 
-                        WHEN mf.type = 1 THEN 1
+                        WHEN f.size > 0 
+                        THEN CAST(100.0 * (f.size - FILEPROPERTY(f.name, ''SpaceUsed'')) / f.size AS DECIMAL(5,2))
                         ELSE 0
                     END,
-                log_space_in_use_percentage = 
+                max_size_mb = 
                     CASE 
-                        WHEN mf.type = 1 THEN 
-                            (SELECT CONVERT(DECIMAL(5,2), lsu.used_log_space_in_percent)
-                             FROM sys.dm_db_log_space_usage AS lsu)
-                        ELSE NULL
+                        WHEN f.max_size = -1 THEN -1 -- Unlimited
+                        WHEN f.max_size = 268435456 THEN -1 -- Unlimited
+                        ELSE CAST(f.max_size AS DECIMAL(18,2)) * 8.0 / 1024 -- Convert from 8KB pages to MB
                     END,
-                log_space_used_mb = 
+                growth = 
                     CASE 
-                        WHEN mf.type = 1 THEN 
-                            (SELECT CONVERT(DECIMAL(18,2), lsu.used_log_space_in_bytes/1024.0/1024.0)
-                             FROM sys.dm_db_log_space_usage AS lsu)
-                        ELSE NULL
+                        WHEN f.is_percent_growth = 1 THEN f.growth
+                        ELSE CAST(f.growth AS DECIMAL(18,2)) * 8.0 / 1024 -- Convert from 8KB pages to MB
                     END,
-                log_space_reserved_mb = 
-                    CASE 
-                        WHEN mf.type = 1 THEN 
-                            (SELECT CONVERT(DECIMAL(18,2), lsu.total_log_size_in_bytes/1024.0/1024.0)
-                             FROM sys.dm_db_log_space_usage AS lsu)
-                        ELSE NULL
-                    END,
-                mf.type_desc,
-                mf.data_space_id,
-                data_space_name = ds.name,
-                total_page_count = 
-                    CASE 
-                        WHEN mf.type = 0 THEN 
-                            (SELECT fsu.total_page_count 
-                             FROM sys.dm_db_file_space_usage AS fsu 
-                             WHERE fsu.file_id = mf.file_id)
-                        ELSE NULL
-                    END,
-                allocated_extent_page_count = 
-                    CASE 
-                        WHEN mf.type = 0 THEN 
-                            (SELECT fsu.allocated_extent_page_count 
-                             FROM sys.dm_db_file_space_usage AS fsu 
-                             WHERE fsu.file_id = mf.file_id)
-                        ELSE NULL
-                    END,
-                unallocated_extent_page_count = 
-                    CASE 
-                        WHEN mf.type = 0 THEN 
-                            (SELECT fsu.unallocated_extent_page_count 
-                             FROM sys.dm_db_file_space_usage AS fsu 
-                             WHERE fsu.file_id = mf.file_id)
-                        ELSE NULL
-                    END,
-                version_store_reserved_page_count = 
-                    CASE 
-                        WHEN mf.type = 0 THEN 
-                            (SELECT fsu.version_store_reserved_page_count 
-                             FROM sys.dm_db_file_space_usage AS fsu 
-                             WHERE fsu.file_id = mf.file_id)
-                        ELSE NULL
-                    END,
-                user_object_reserved_page_count = 
-                    CASE 
-                        WHEN mf.type = 0 THEN 
-                            (SELECT fsu.user_object_reserved_page_count 
-                             FROM sys.dm_db_file_space_usage AS fsu 
-                             WHERE fsu.file_id = mf.file_id)
-                        ELSE NULL
-                    END,
-                internal_object_reserved_page_count = 
-                    CASE 
-                        WHEN mf.type = 0 THEN 
-                            (SELECT fsu.internal_object_reserved_page_count 
-                             FROM sys.dm_db_file_space_usage AS fsu 
-                             WHERE fsu.file_id = mf.file_id)
-                        ELSE NULL
-                    END,
-                mixed_extent_page_count = 
-                    CASE 
-                        WHEN mf.type = 0 THEN 
-                            (SELECT fsu.mixed_extent_page_count 
-                             FROM sys.dm_db_file_space_usage AS fsu 
-                             WHERE fsu.file_id = mf.file_id)
-                        ELSE NULL
-                    END
-            FROM sys.database_files AS mf
-            LEFT JOIN sys.data_spaces AS ds
-                ON mf.data_space_id = ds.data_space_id
-            OPTION(RECOMPILE);
+                is_percent_growth = f.is_percent_growth,
+                is_read_only = f.is_read_only
+            FROM sys.database_files AS f
+            WHERE f.type IN (0, 1, 2, 4) -- Data (0), Log (1), Filestream (2), Full-text (4)
+            ORDER BY f.type, f.file_id;
             ';
             
-            -- Execute the dynamic SQL to collect file space information
             BEGIN TRY
                 EXECUTE sp_executesql @sql;
                 
@@ -437,7 +271,7 @@ BEGIN
         -- Get the count of rows collected
         SELECT
             @rows_collected = COUNT(*)
-        FROM collection.file_space_usage
+        FROM collection.file_space
         WHERE collection_time = @collection_start;
         
         SET @collection_end = SYSDATETIME();
@@ -469,7 +303,7 @@ BEGIN
         IF @debug = 1
         BEGIN
             SELECT
-                N'File Space Usage Collected' AS collection_type,
+                N'File Space Collected' AS collection_type,
                 @rows_collected AS rows_collected,
                 CAST(DATEDIFF(MILLISECOND, @collection_start, @collection_end) / 1000.0 AS DECIMAL(18,2)) AS duration_seconds;
         END;

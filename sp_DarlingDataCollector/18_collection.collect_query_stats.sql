@@ -50,6 +50,16 @@ BEGIN
     
     BEGIN TRY
         /*
+        Create the collection table if it doesn't exist
+        */
+        IF OBJECT_ID('collection.query_stats') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'query_stats',
+                @debug = @debug;
+        END;
+        
+        /*
         Detect environment
         */
         IF @engine_edition IS NULL
@@ -351,7 +361,13 @@ BEGIN
             /*
             Wait for the specified sample period
             */
-            WAITFOR DELAY CONVERT(CHAR(8), DATEADD(SECOND, @sample_seconds, 0), 114);
+            DECLARE
+                @wait_delay CHAR(8);
+                
+            SELECT
+                @wait_delay = CONVERT(CHAR(8), DATEADD(SECOND, @sample_seconds, 0), 114);
+                
+            WAITFOR DELAY @wait_delay;
             
             /*
             Insert data with delta values - QUERY STATS

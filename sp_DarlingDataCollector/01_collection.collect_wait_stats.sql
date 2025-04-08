@@ -42,6 +42,16 @@ BEGIN
     
     BEGIN TRY
         /*
+        Create the collection table if it doesn't exist
+        */
+        IF OBJECT_ID('collection.wait_stats') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'wait_stats',
+                @debug = @debug;
+        END;
+        
+        /*
         Get SQL Server uptime in seconds
         */
         SELECT
@@ -112,7 +122,13 @@ BEGIN
             /*
             Wait for the specified sample period
             */
-            WAITFOR DELAY CONVERT(CHAR(8), DATEADD(SECOND, @sample_seconds, 0), 114);
+            DECLARE
+                @wait_delay CHAR(8);
+                
+            SELECT
+                @wait_delay = CONVERT(CHAR(8), DATEADD(SECOND, @sample_seconds, 0), 114);
+                
+            WAITFOR DELAY @wait_delay;
             
             /*
             Insert data with delta values

@@ -48,6 +48,26 @@ BEGIN
     
     BEGIN TRY
         /*
+        Create the collection table if it doesn't exist
+        */
+        IF OBJECT_ID('collection.io_stats') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'io_stats',
+                @debug = @debug;
+        END;
+        
+        /*
+        Create the drive stats table if it doesn't exist and we're collecting drive stats
+        */
+        IF @collect_drive_stats = 1 AND OBJECT_ID('collection.drive_stats') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'drive_stats',
+                @debug = @debug;
+        END;
+        
+        /*
         Detect environment
         */
         SELECT
@@ -142,7 +162,13 @@ BEGIN
             /*
             Wait for the specified sample period
             */
-            WAITFOR DELAY CONVERT(CHAR(8), DATEADD(SECOND, @sample_seconds, 0), 114);
+            DECLARE
+                @wait_delay CHAR(8);
+                
+            SELECT
+                @wait_delay = CONVERT(CHAR(8), DATEADD(SECOND, @sample_seconds, 0), 114);
+                
+            WAITFOR DELAY @wait_delay;
             
             /*
             Insert data with delta values - environment-specific approach

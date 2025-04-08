@@ -308,7 +308,17 @@ Example usage:
         END;
         
         /*
-        Create collection tables if they don't exist
+        Create the collection table if it doesn't exist
+        */
+        IF OBJECT_ID('collection.query_store') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'query_store',
+                @debug = @debug;
+        END;
+        
+        /*
+        Create query_store_queries table if it doesn't exist
         */
         IF OBJECT_ID('collection.query_store_queries') IS NULL
         BEGIN
