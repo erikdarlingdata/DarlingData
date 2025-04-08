@@ -44,23 +44,9 @@ BEGIN
         */
         IF OBJECT_ID('collection.perf_counters') IS NULL
         BEGIN
-            CREATE TABLE
-                collection.perf_counters
-            (
-                collection_id BIGINT IDENTITY(1,1) NOT NULL,
-                collection_time DATETIME2(7) NOT NULL,
-                object_name NVARCHAR(128) NOT NULL,
-                counter_name NVARCHAR(128) NOT NULL,
-                instance_name NVARCHAR(128) NULL,
-                cntr_value BIGINT NOT NULL,
-                cntr_type INTEGER NOT NULL,
-                CONSTRAINT pk_perf_counters PRIMARY KEY CLUSTERED (collection_id, object_name, counter_name, instance_name)
-            );
-            
-            IF @debug = 1
-            BEGIN
-                RAISERROR(N'Created collection.perf_counters table', 0, 1) WITH NOWAIT;
-            END;
+            EXECUTE system.create_collector_table
+                @table_name = 'perf_counters',
+                @debug = @debug;
         END;
         
         /*

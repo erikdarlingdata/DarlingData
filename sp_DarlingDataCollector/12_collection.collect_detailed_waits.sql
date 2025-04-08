@@ -45,70 +45,13 @@ BEGIN
     
     BEGIN TRY
         /*
-        Create waiting_tasks table if it doesn't exist and we're collecting waiting tasks
+        Create the collection table if it doesn't exist
         */
-        IF @collect_waiting_tasks = 1 AND OBJECT_ID('collection.waiting_tasks') IS NULL
+        IF OBJECT_ID('collection.detailed_waits') IS NULL
         BEGIN
-            CREATE TABLE
-                collection.waiting_tasks
-            (
-                collection_id BIGINT IDENTITY(1,1) NOT NULL,
-                collection_time DATETIME2(7) NOT NULL,
-                session_id INTEGER NOT NULL,
-                waiting_task_address VARBINARY(8) NOT NULL,
-                blocking_session_id INTEGER NULL,
-                blocking_task_address VARBINARY(8) NULL,
-                blocking_exec_context_id INTEGER NULL,
-                wait_type NVARCHAR(60) NULL,
-                wait_duration_ms BIGINT NULL,
-                resource_description NVARCHAR(3072) NULL,
-                wait_resource NVARCHAR(256) NULL,
-                wait_duration_seconds DECIMAL(18, 2) NULL,
-                database_id INTEGER NULL,
-                database_name NVARCHAR(128) NULL,
-                login_name NVARCHAR(128) NULL,
-                program_name NVARCHAR(128) NULL,
-                host_name NVARCHAR(128) NULL,
-                transaction_name NVARCHAR(32) NULL,
-                transaction_isolation_level NVARCHAR(32) NULL,
-                wait_query_text NVARCHAR(MAX) NULL,
-                CONSTRAINT pk_waiting_tasks PRIMARY KEY CLUSTERED (collection_id, session_id, waiting_task_address)
-            );
-            
-            IF @debug = 1
-            BEGIN
-                RAISERROR(N'Created collection.waiting_tasks table', 0, 1) WITH NOWAIT;
-            END;
-        END;
-        
-        /*
-        Create session_wait_stats table if it doesn't exist and we're collecting session wait stats
-        */
-        IF @collect_session_waits = 1 AND OBJECT_ID('collection.session_wait_stats') IS NULL
-        BEGIN
-            CREATE TABLE
-                collection.session_wait_stats
-            (
-                collection_id BIGINT IDENTITY(1,1) NOT NULL,
-                collection_time DATETIME2(7) NOT NULL,
-                session_id INTEGER NOT NULL,
-                wait_type NVARCHAR(60) NOT NULL,
-                waiting_tasks_count BIGINT NOT NULL,
-                wait_time_ms BIGINT NOT NULL,
-                max_wait_time_ms BIGINT NOT NULL,
-                signal_wait_time_ms BIGINT NOT NULL,
-                login_name NVARCHAR(128) NULL,
-                program_name NVARCHAR(128) NULL,
-                host_name NVARCHAR(128) NULL,
-                database_id INTEGER NULL,
-                database_name NVARCHAR(128) NULL,
-                CONSTRAINT pk_session_wait_stats PRIMARY KEY CLUSTERED (collection_id, session_id, wait_type)
-            );
-            
-            IF @debug = 1
-            BEGIN
-                RAISERROR(N'Created collection.session_wait_stats table', 0, 1) WITH NOWAIT;
-            END;
+            EXECUTE system.create_collector_table
+                @table_name = 'detailed_waits',
+                @debug = @debug;
         END;
         
         /*
@@ -117,57 +60,30 @@ BEGIN
         IF @collect_waiting_tasks = 1
         BEGIN
             INSERT
-                collection.waiting_tasks
+                collection.detailed_waits
             (
                 collection_time,
                 session_id,
-                waiting_task_address,
-                blocking_session_id,
-                blocking_task_address,
-                blocking_exec_context_id,
                 wait_type,
                 wait_duration_ms,
                 resource_description,
-                wait_resource,
-                wait_duration_seconds,
-                database_id,
+                blocking_session_id,
+                blocking_exec_context_id,
+                resource_address,
+                sql_text,
                 database_name,
-                login_name,
-                program_name,
-                host_name,
-                transaction_name,
-                transaction_isolation_level,
-                wait_query_text
+                wait_resource_type
             )
             SELECT
                 collection_time = SYSDATETIME(),
                 wt.session_id,
-                wt.waiting_task_address,
-                wt.blocking_session_id,
-                wt.blocking_task_address,
-                wt.blocking_exec_context_id,
                 wt.wait_type,
                 wt.wait_duration_ms,
                 resource_description = SUBSTRING(wt.resource_description, 1, 3072),
-                wait_resource = COALESCE(DB_NAME(ase.wait_resource), ase.wait_resource),
-                wait_duration_seconds = wt.wait_duration_ms / 1000.0,
-                es.database_id,
-                database_name = DB_NAME(es.database_id),
-                es.login_name,
-                es.program_name,
-                es.host_name,
-                at.name,
-                transaction_isolation_level = 
-                    CASE dt.database_transaction_isolation_level
-                        WHEN 0 THEN 'Unspecified'
-                        WHEN 1 THEN 'ReadUncommitted'
-                        WHEN 2 THEN 'ReadCommitted'
-                        WHEN 3 THEN 'Repeatable'
-                        WHEN 4 THEN 'Serializable'
-                        WHEN 5 THEN 'Snapshot'
-                        ELSE 'Unknown'
-                    END,
-                wait_query_text = 
+                wt.blocking_session_id,
+                wt.blocking_exec_context_id,
+                wt.waiting_task_address,
+                sql_text = 
                     CASE WHEN @include_query_text = 1 
                         THEN 
                             SUBSTRING(
@@ -179,7 +95,9 @@ BEGIN
                                   END - er.statement_start_offset)/2) + 1
                             )
                         ELSE NULL 
-                    END
+                    END,
+                database_name = DB_NAME(es.database_id),
+                wait_resource_type = COALESCE(DB_NAME(ase.wait_resource), ase.wait_resource)
             FROM sys.dm_os_waiting_tasks AS wt
             LEFT JOIN sys.dm_exec_sessions AS es
                 ON wt.session_id = es.session_id
@@ -212,34 +130,24 @@ BEGIN
         IF @collect_session_waits = 1
         BEGIN
             INSERT
-                collection.session_wait_stats
+                collection.detailed_waits
             (
                 collection_time,
                 session_id,
                 wait_type,
-                waiting_tasks_count,
-                wait_time_ms,
-                max_wait_time_ms,
-                signal_wait_time_ms,
-                login_name,
-                program_name,
-                host_name,
-                database_id,
-                database_name
+                wait_duration_ms,
+                database_name,
+                sql_text
             )
             SELECT
                 collection_time = SYSDATETIME(),
                 sws.session_id,
                 sws.wait_type,
-                sws.waiting_tasks_count,
                 sws.wait_time_ms,
-                sws.max_wait_time_ms,
-                sws.signal_wait_time_ms,
-                es.login_name,
-                es.program_name,
-                es.host_name,
-                es.database_id,
-                database_name = DB_NAME(es.database_id)
+                database_name = DB_NAME(es.database_id),
+                sql_text = CONCAT('Session wait stat: ', sws.waiting_tasks_count, ' waiting tasks, ',
+                                 sws.max_wait_time_ms, ' ms max wait, ',
+                                 sws.signal_wait_time_ms, ' ms signal wait')
             FROM sys.dm_exec_session_wait_stats AS sws
             LEFT JOIN sys.dm_exec_sessions AS es
                 ON sws.session_id = es.session_id

@@ -39,6 +39,16 @@ BEGIN
     
     BEGIN TRY
         /*
+        Create the collection table if it doesn't exist
+        */
+        IF OBJECT_ID('collection.memory_clerks') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'memory_clerks',
+                @debug = @debug;
+        END;
+        
+        /*
         Collect memory clerks information
         */
         INSERT

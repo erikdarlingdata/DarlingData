@@ -39,6 +39,16 @@ BEGIN
     
     BEGIN TRY
         /*
+        Create the collection table if it doesn't exist
+        */
+        IF OBJECT_ID('collection.buffer_pool') IS NULL
+        BEGIN
+            EXECUTE system.create_collector_table
+                @table_name = 'buffer_pool',
+                @debug = @debug;
+        END;
+        
+        /*
         Collect buffer pool information
         */
         INSERT
