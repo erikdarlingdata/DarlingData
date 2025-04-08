@@ -1418,27 +1418,40 @@ END;
 GO
 
 /*
-Now include all the collector files
+Now include all the collector files in logical order:
+1. Core metrics (wait stats, memory, buffer pool)
+2. I/O and resource monitoring
+3. Query and index monitoring
+4. Session and blocking monitoring
+5. Advanced data collection
 */
-:r ./numbered_files/01_collection.collect_wait_stats.sql
-:r ./numbered_files/02_collection.collect_memory_clerks.sql
-:r ./numbered_files/03_collection.collect_buffer_pool.sql
-:r ./numbered_files/04_collection.collect_io_stats.sql
-:r ./numbered_files/05_collection.collect_index_usage_stats.sql
-:r ./numbered_files/06_collection.collect_query_stats.sql
-:r ./numbered_files/07_collection.collect_connections.sql
-:r ./numbered_files/08_collection.collect_blocking.sql
-:r ./numbered_files/09_collection.collect_deadlocks.sql
-:r ./numbered_files/10_collection.collect_query_store.sql
-:r ./numbered_files/11_collection.collect_memory_grants.sql
-:r ./numbered_files/12_collection.collect_process_memory.sql
-:r ./numbered_files/13_collection.collect_schedulers.sql
-:r ./numbered_files/14_collection.collect_perf_counters.sql
-:r ./numbered_files/15_collection.collect_file_space.sql
-:r ./numbered_files/16_collection.collect_procedure_stats.sql
-:r ./numbered_files/17_collection.collect_missing_indexes.sql
-:r ./numbered_files/18_collection.collect_transactions.sql
-:r ./numbered_files/19_collection.collect_detailed_waits.sql
+
+-- Core metrics
+:r ./01_collection.collect_wait_stats.sql
+:r ./02_collection.collect_memory_clerks.sql
+:r ./03_collection.collect_buffer_pool.sql
+
+-- I/O and resource monitoring
+:r ./17_collection.collect_io_stats.sql
+:r ./05_collection.collect_process_memory.sql
+:r ./04_collection.collect_memory_grants.sql
+:r ./06_collection.collect_schedulers.sql
+:r ./07_collection.collect_perf_counters.sql
+:r ./08_collection.collect_file_space.sql
+
+-- Query and index monitoring
+:r ./18_collection.collect_query_stats.sql
+:r ./09_collection.collect_procedure_stats.sql
+:r ./19_collection.collect_query_store.sql
+:r ./16_collection.collect_index_usage_stats.sql
+:r ./10_collection.collect_missing_indexes.sql
+
+-- Session and blocking monitoring
+:r ./14_collection.collect_connections.sql
+:r ./13_collection.collect_blocking.sql
+:r ./12_collection.collect_detailed_waits.sql
+:r ./11_collection.collect_transactions.sql
+:r ./15_collection.collect_deadlocks.sql
 GO
 
 /*
