@@ -627,7 +627,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CONVERT
         (
             nvarchar(30),
-            DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())
+            DATEDIFF
+            (
+                DAY, 
+                osi.sqlserver_start_time, 
+                SYSDATETIME()
+            )
         ) +
         N' days, ' +
         CONVERT
@@ -643,7 +648,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     (
                         SECOND,
                         osi.sqlserver_start_time,
-                        GETDATE()
+                        SYSDATETIME()
                     ) % 86400,
                     '00:00:00'
                 )
@@ -759,6 +764,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'. Check the SQL Server error log and Windows event logs.',
                 url = N'https://erikdarling.com/sp_PerfCheck#MemoryDumps'
             FROM sys.dm_server_memory_dumps AS dsmd
+            WHERE dsmd.creation_time >= DATEADD(DAY, -90, SYSDATETIME())
             HAVING
                 COUNT_BIG(*) > 0; /* Only if there are memory dumps */
         END;
@@ -779,9 +785,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         check_id = 4103,
         priority =
             CASE
-                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 100
+                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()), 0)) > 100
                 THEN 20 /* Very high priority */
-                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0)) > 50
+                WHEN (1.0 * p.cntr_value / NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()), 0)) > 50
                 THEN 30 /* High priority */
                 ELSE 40 /* Medium-high priority */
             END,
@@ -790,10 +796,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         details =
             N'Server is averaging ' +
             CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value /
-              NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE()), 0))) +
+              NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()), 0))) +
             N' deadlocks per day since startup (' +
             CONVERT(nvarchar(20), p.cntr_value) + ' total deadlocks over ' +
-            CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, GETDATE())) +
+            CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME())) +
             N' days). ' +
             N'High deadlock rates indicate concurrency issues that should be investigated.',
         url = N'https://erikdarling.com/sp_PerfCheck#Deadlocks'
@@ -811,7 +817,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 DAY,
                 osi.sqlserver_start_time,
-                GETDATE()
+                SYSDATETIME()
             ),
             0
         )
@@ -1131,7 +1137,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* Deadlock events - typically not in default trace but including for completeness */
                 OR t.EventClass = 148
                 /* Look back at the past 7 days of events at most */
-                AND t.StartTime > DATEADD(DAY, -7, GETDATE());
+                AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
 
             /* Update event names from map */
             UPDATE
@@ -1358,7 +1364,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Get uptime */
         SELECT
             @uptime_ms =
-                DATEDIFF(MILLISECOND, osi.sqlserver_start_time, GETDATE())
+                CASE
+                    WHEN DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()) >= 24
+                    THEN DATEDIFF(SECOND, osi.sqlserver_start_time, SYSDATETIME()) * 1000
+                    ELSE DATEDIFF(MILLISECOND, osi.sqlserver_start_time, SYSDATETIME())
+                END
         FROM sys.dm_os_sys_info AS osi;
 
         /* Get total wait time */
@@ -2123,7 +2133,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes))
                     END,
                 total_size_mb = CONVERT(decimal(18, 2), SUM(df.size) * 8 / 1024.0)
-            FROM sys.dm_io_virtual_file_stats(DB_ID(), NULL) AS fs
+            FROM sys.dm_io_virtual_file_stats
+                 (
+                     DB_ID(), 
+                     NULL
+                 ) AS fs
             JOIN sys.database_files AS df
               ON fs.file_id = df.file_id;
         END;
@@ -2167,8 +2181,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (' + 
             CASE 
                 WHEN @azure_sql_db = 1 
-                THEN N'DB_ID()' 
-                ELSE N'NULL' 
+                THEN N'
+                DB_ID()' 
+                ELSE N'
+                NULL' 
             END + N',
                 NULL
             ) AS fs
@@ -2390,8 +2406,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (' + 
         CASE 
             WHEN @azure_sql_db = 1 
-            THEN N'DB_ID()' 
-            ELSE N'NULL' 
+            THEN N'
+            DB_ID()' 
+            ELSE N'
+            NULL' 
         END + N', 
             NULL
         ) AS fs
@@ -2790,12 +2808,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CASE 
             WHEN @azure_sql_db = 1
             THEN N'sys.database_files AS mf
-            WHERE DB_NAME() = N''tempdb'';'
+        WHERE DB_NAME() = N''tempdb'';'
             ELSE N'sys.master_files AS mf
-            WHERE mf.database_id = 2;'
+        WHERE mf.database_id = 2;'
         END;
 
-        IF @db_size_sql = 1
+        IF @debug = 1
         BEGIN
             PRINT @tempdb_files_sql;
         END;
@@ -4150,7 +4168,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 priority = 40, /* Medium-high priority */
                 category = N''Database Files'',
                 finding = N''Percentage Auto-Growth Setting on Data File'',
-                database_name = DB_NAME(),
+                database_name = @current_database_name,
                 object_name = mf.name,
                 details =
                     ''Database data file is using percentage growth setting ('' +
@@ -4169,7 +4187,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END;
 
             EXECUTE sys.sp_executesql
-                @sql;
+                @sql,
+              N'@current_database_name sysname',
+                @current_database_name;
 
             /* Check for percentage growth settings on log files */
             SET @sql = N'
@@ -4209,7 +4229,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END;
 
             EXECUTE sys.sp_executesql
-                @sql;
+                @sql,
+              N'@current_database_name sysname',
+                @current_database_name;
 
             /* Check for non-optimal log growth increments in SQL Server 2022, Azure SQL DB, or Azure MI */
             IF @product_version_major >= 16 OR @azure_sql_db = 1 OR @azure_managed_instance = 1

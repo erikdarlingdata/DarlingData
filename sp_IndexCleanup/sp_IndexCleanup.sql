@@ -782,7 +782,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF  @get_all_databases = 1
     AND @include_databases IS NOT NULL
     BEGIN
-        INSERT
+        INSERT INTO
             #include_databases
         WITH
             (TABLOCK)
@@ -825,7 +825,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF  @get_all_databases = 1
     AND @include_databases IS NOT NULL
     BEGIN
-        INSERT
+        INSERT INTO
             #requested_but_skipped_databases
         WITH
             (TABLOCK)
@@ -875,7 +875,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF  @get_all_databases = 1
     AND @exclude_databases IS NOT NULL
     BEGIN
-        INSERT
+        INSERT INTO
             #exclude_databases
         WITH
             (TABLOCK)
@@ -980,7 +980,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Single database mode */
         IF @database_name IS NOT NULL
         BEGIN
-            INSERT
+            INSERT INTO
                 #databases
             WITH
                 (TABLOCK)
@@ -1008,7 +1008,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ELSE
     BEGIN
         /* Multi-database mode */
-        INSERT
+        INSERT INTO
             #databases
         WITH
             (TABLOCK)
@@ -1309,7 +1309,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRINT @sql;
     END;
 
-    INSERT
+    INSERT INTO
         #filtered_objects
     WITH
         (TABLOCK)
@@ -1523,23 +1523,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-    INSERT
-        #computed_columns_analysis
-    WITH
-        (TABLOCK)
-    (
-        database_id,
-        database_name,
-        schema_id,
-        schema_name,
-        object_id,
-        table_name,
-        column_id,
-        column_name,
-        definition,
-        contains_udf,
-        udf_names
-    )
     SELECT DISTINCT
         fo.database_id,
         fo.database_name,
@@ -1591,6 +1574,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRINT @sql;
     END;
 
+    INSERT INTO
+        #computed_columns_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        object_id,
+        table_name,
+        column_id,
+        column_name,
+        definition,
+        contains_udf,
+        udf_names
+    )
     EXECUTE sys.sp_executesql
         @sql;
 
@@ -1610,23 +1610,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-    INSERT
-        #check_constraints_analysis
-    WITH
-        (TABLOCK)
-    (
-        database_id,
-        database_name,
-        schema_id,
-        schema_name,
-        object_id,
-        table_name,
-        constraint_id,
-        constraint_name,
-        definition,
-        contains_udf,
-        udf_names
-    )
     SELECT DISTINCT
         fo.database_id,
         fo.database_name,
@@ -1675,6 +1658,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRINT @sql;
     END;
 
+    INSERT INTO
+        #check_constraints_analysis
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        database_name,
+        schema_id,
+        schema_name,
+        object_id,
+        table_name,
+        constraint_id,
+        constraint_name,
+        definition,
+        contains_udf,
+        udf_names
+    )
     EXECUTE sys.sp_executesql
         @sql;
 
@@ -1773,7 +1773,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRINT @sql;
     END;
 
-    INSERT
+    INSERT INTO
         #operational_stats
     WITH
         (TABLOCK)
@@ -2031,7 +2031,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRINT SUBSTRING(@sql, 4000, 8000);
     END;
 
-    INSERT
+    INSERT INTO
         #index_details
     WITH
         (TABLOCK)
@@ -2247,7 +2247,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRINT SUBSTRING(@sql, 4000, 8000);
     END;
 
-    INSERT
+    INSERT INTO
         #partition_stats WITH(TABLOCK)
     (
         database_id,
@@ -2531,7 +2531,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Analyze filtered indexes to identify columns used in filters that should be included */
-    INSERT
+    INSERT INTO
         #filtered_index_columns_analysis
     WITH
         (TABLOCK)
@@ -2548,7 +2548,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         missing_included_columns,
         should_include_filter_columns
     )
-    SELECT
+    SELECT DISTINCT
         ia.database_id,
         ia.database_name,
         ia.schema_id,
