@@ -1109,6 +1109,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             #key_duplicate_dedupe;
         TRUNCATE TABLE
             #include_subset_dedupe;
+        TRUNCATE TABLE
+            #computed_columns_analysis;
+        TRUNCATE TABLE
+            #check_constraints_analysis;
+        TRUNCATE TABLE
+            #filtered_index_columns_analysis;
 
          /*Validate searched objects per-database*/
          IF  @schema_name IS NOT NULL
