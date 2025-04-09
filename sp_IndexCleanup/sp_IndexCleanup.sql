@@ -2617,6 +2617,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #index_analysis AS ia
     WHERE ia.filter_definition IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM #filtered_index_columns_analysis fica 
+				   WHERE fica.database_id = ia.database_id
+				   AND   fica.schema_id = ia.schema_id
+				   AND   fica.object_id = ia.object_id
+				   AND   fica.index_id = ia.index_id)
     OPTION(RECOMPILE);
 
     IF @debug = 1
