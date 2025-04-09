@@ -775,7 +775,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
         should_include_filter_columns bit NOT NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX c CLUSTERED(database_id, schema_id, object_id, index_id)
     );
 
     /* Parse @include_databases comma-separated list */
