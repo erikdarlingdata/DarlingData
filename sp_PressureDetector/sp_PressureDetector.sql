@@ -1492,7 +1492,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             N''
                         ),
                     sample_seconds =
-                        DATEDIFF(SECOND, w.sample_time, w2.sample_time)
+                        DATEDIFF
+                        (
+                            SECOND, 
+                            w.sample_time, 
+                            w2.sample_time
+                        )
                 FROM @waits AS w
                 JOIN @waits AS w2
                   ON  w.wait_type = w2.wait_type
@@ -1546,8 +1551,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 EXECUTE sys.sp_executesql
                     @insert_sql;
 
-                DROP TABLE IF EXISTS
-                    #waits;
+                IF OBJECT_ID(N'tempdb..#waits', N'U') IS NOT NULL
+                BEGIN
+                    DROP TABLE #waits;
+                END;
             END;
     END; /*End wait stats*/
     /*
@@ -2001,7 +2008,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             N''
                         ),
                     sample_seconds =
-                        DATEDIFF(SECOND, f.sample_time_o, f.sample_time_t)
+                        DATEDIFF
+                        (
+                            SECOND, 
+                            f.sample_time_o, 
+                            f.sample_time_t
+                        )
                 FROM f
                 WHERE
                 (
@@ -2070,8 +2082,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
            EXECUTE sys.sp_executesql
                @insert_sql;
 
-           DROP TABLE IF EXISTS
-                #file_metrics;
+           IF OBJECT_ID(N'tempdb..#file_metrics', N'U') IS NOT NULL
+           BEGIN
+               DROP TABLE #file_metrics;
+           END;
         END;
     END; /*End file stats*/
 
@@ -2230,7 +2244,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             FORMAT((dopc2.cntr_value - dopc.cntr_value), 'N0'),
                         total_difference_per_second =
                             FORMAT((dopc2.cntr_value - dopc.cntr_value) /
-                             DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 'N0'),
+                            DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 'N0'),
                         sample_seconds =
                             DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
                         first_sample_time =
@@ -2303,8 +2317,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
            EXECUTE sys.sp_executesql
                @insert_sql;
 
-           DROP TABLE IF EXISTS
-               #dm_os_performance_counters;
+
+           IF OBJECT_ID(N'tempdb..#dm_os_performance_counters', N'U') IS NOT NULL
+           BEGIN
+               DROP TABLE #dm_os_performance_counters;
+           END;
        END;
     END; /*End Perfmon*/
 
