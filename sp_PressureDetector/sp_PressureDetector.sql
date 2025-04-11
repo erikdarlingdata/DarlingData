@@ -2154,7 +2154,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         WHERE p.object_name LIKE @prefix
         AND   p.instance_name NOT IN
         (
-            N'internal', N'master', N'model', N'msdb', N'model_msdb', N'model_replicatedmaster', N'mssqlsystemresource'
+            N'internal', N'master', N'model', N'msdb', N'model_msdb', 
+            N'model_replicatedmaster', N'mssqlsystemresource'
         )
         AND   p.counter_name IN
         (
