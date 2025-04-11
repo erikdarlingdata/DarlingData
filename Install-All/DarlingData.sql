@@ -1,4 +1,4 @@
--- Compile Date: 04/04/2025 17:55:21 UTC
+-- Compile Date: 04/07/2025 19:57:50 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -6509,39 +6509,6 @@ BEGIN
             );
 END;
 
-/*
-If we're writing to a table, we don't want to do anything else
-Or anything else after this, really
-We want the session to get set up
-*/
-IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and log tables?', 0, 1) WITH NOWAIT; END;
-IF
-(
-        @output_database_name <> N''
-    AND @output_schema_name <> N''
-    AND @cleanup = 0
-)
-BEGIN
-    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT; END;
-    GOTO output_results;
-    RETURN;
-END;
-
-
-/* just finishing up the second coat now */
-IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and cleanup?', 0, 1) WITH NOWAIT; END;
-IF
-(
-        @output_database_name <> N''
-    AND @output_schema_name <> N''
-    AND @cleanup = 1
-)
-BEGIN
-    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to cleanup', 0, 1) WITH NOWAIT; END;
-    GOTO cleanup;
-    RETURN;
-END;
-
 
 /* Start setting up individual filters */
 IF @debug = 1 BEGIN RAISERROR(N'Setting up individual filters', 0, 1) WITH NOWAIT; END;
@@ -6987,8 +6954,10 @@ EXECUTE (@session_sql);
 IF @debug = 1 BEGIN RAISERROR(@start_sql, 0, 1) WITH NOWAIT; END;
 EXECUTE (@start_sql);
 
-/* bail out here if we want to keep the session */
-IF @keep_alive = 1
+/* bail out here if we want to keep the session and not log to tables*/
+IF  @keep_alive = 1
+AND @output_database_name = N''
+AND @output_schema_name IN (N'', N'dbo')
 BEGIN
     IF @debug = 1
     BEGIN
@@ -7000,6 +6969,38 @@ BEGIN
     RETURN;
 END;
 
+/*
+If we're writing to a table, we don't want to do anything else
+Or anything else after this, really
+We want the session to get set up
+*/
+IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and log tables?', 0, 1) WITH NOWAIT; END;
+IF
+(
+        @output_database_name <> N''
+    AND @output_schema_name <> N''
+    AND @cleanup = 0
+)
+BEGIN
+    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to data logging', 0, 1) WITH NOWAIT; END;
+    GOTO output_results;
+    RETURN;
+END;
+
+
+/* just finishing up the second coat now */
+IF @debug = 1 BEGIN RAISERROR(N'Do we skip to the GOTO and cleanup?', 0, 1) WITH NOWAIT; END;
+IF
+(
+        @output_database_name <> N''
+    AND @output_schema_name <> N''
+    AND @cleanup = 1
+)
+BEGIN
+    IF @debug = 1 BEGIN RAISERROR(N'Skipping all the other stuff and going to cleanup', 0, 1) WITH NOWAIT; END;
+    GOTO cleanup;
+    RETURN;
+END;
 
 /* NOW WE WAIT, MR. BOND */
 WAITFOR DELAY @waitfor;
@@ -13710,6 +13711,40 @@ SET NUMERIC_ROUNDABORT OFF;
 SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;
 GO
+
+
+/*
+██╗███╗   ██╗██████╗ ███████╗██╗  ██╗
+██║████╗  ██║██╔══██╗██╔════╝╚██╗██╔╝
+██║██╔██╗ ██║██║  ██║█████╗   ╚███╔╝
+██║██║╚██╗██║██║  ██║██╔══╝   ██╔██╗
+██║██║ ╚████║██████╔╝███████╗██╔╝ ██╗
+╚═╝╚═╝  ╚═══╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+
+ ██████╗██╗     ███████╗ █████╗ ███╗   ██╗██╗   ██╗██████╗
+██╔════╝██║     ██╔════╝██╔══██╗████╗  ██║██║   ██║██╔══██╗
+██║     ██║     █████╗  ███████║██╔██╗ ██║██║   ██║██████╔╝
+██║     ██║     ██╔══╝  ██╔══██║██║╚██╗██║██║   ██║██╔═══╝
+╚██████╗███████╗███████╗██║  ██║██║ ╚████║╚██████╔╝██║
+ ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝
+
+
+Copyright 2025 Darling Data, LLC
+https://www.erikdarling.com/
+
+For usage and licensing details, run:
+EXECUTE sp_IndexCleanup
+    @help = 1;
+
+For working through errors:
+EXECUTE sp_IndexCleanup
+    @debug = 1;
+
+For support, head over to GitHub:
+https://code.erikdarling.com
+
+*/
+
 
 IF OBJECT_ID('dbo.sp_IndexCleanup', 'P') IS NULL
 BEGIN
@@ -20929,9 +20964,45 @@ BEGIN
     END;
 END;
 GO
-SET ANSI_NULLS ON;
+SET ANSI_WARNINGS ON;
+SET ARITHABORT ON;
+SET CONCAT_NULL_YIELDS_NULL ON;
 SET QUOTED_IDENTIFIER ON;
+SET NUMERIC_ROUNDABORT OFF;
+SET IMPLICIT_TRANSACTIONS OFF;
+SET STATISTICS TIME, IO OFF;
 GO
+
+/*
+██████╗ ███████╗██████╗ ███████╗
+██╔══██╗██╔════╝██╔══██╗██╔════╝
+██████╔╝█████╗  ██████╔╝█████╗
+██╔═══╝ ██╔══╝  ██╔══██╗██╔══╝
+██║     ███████╗██║  ██║██║
+╚═╝     ╚══════╝╚═╝  ╚═╝╚═╝
+
+ ██████╗██╗  ██╗███████╗ ██████╗██╗  ██╗
+██╔════╝██║  ██║██╔════╝██╔════╝██║ ██╔╝
+██║     ███████║█████╗  ██║     █████╔╝
+██║     ██╔══██║██╔══╝  ██║     ██╔═██╗
+╚██████╗██║  ██║███████╗╚██████╗██║  ██╗
+ ╚═════╝╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝
+
+Copyright 2025 Darling Data, LLC
+https://www.erikdarling.com/
+
+For usage and licensing details, run:
+EXECUTE sp_PerfCheck
+    @help = 1;
+
+For working through errors:
+EXECUTE sp_PerfCheck
+    @debug = 1;
+
+For support, head over to GitHub:
+https://code.erikdarling.com
+
+*/
 
 IF OBJECT_ID(N'dbo.sp_PerfCheck', N'P') IS NULL
 BEGIN
@@ -20943,6 +21014,7 @@ ALTER PROCEDURE
     dbo.sp_PerfCheck
 (
     @database_name sysname = NULL, /* Database to check, NULL for all user databases */
+    @help bit = 0, /*For helpfulness*/
     @debug bit = 0, /* Print diagnostic messages */
     @version varchar(30) = NULL OUTPUT, /* Returns version */
     @version_date datetime = NULL OUTPUT /* Returns version date */
@@ -20959,6 +21031,102 @@ BEGIN
     SELECT
         @version = N'1.0.4',
         @version_date = N'20250404';
+
+    /*
+    Help section, for help.
+    Will become more helpful when out of beta.
+    */
+    IF @help = 1
+    BEGIN
+        SELECT
+            help = N'hello, i am sp_PerfCheck'
+          UNION ALL
+        SELECT
+            help = N'i look at important performance settings and metrics'
+          UNION ALL
+        SELECT
+            help = N'don''t hate me because i''m beautiful.'
+          UNION ALL
+        SELECT
+            help = N'brought to you by erikdarling.com / code.erikdarling.com';
+
+        /*
+        Parameters
+        */
+        SELECT
+            parameter_name =
+                ap.name,
+            data_type =
+                t.name,
+            description =
+                CASE
+                    ap.name
+                    WHEN N'@database_name' THEN 'the name of the database you wish to analyze'
+                    WHEN N'@help' THEN 'displays this help information'
+                    WHEN N'@debug' THEN 'prints debug information during execution'
+                    WHEN N'@version' THEN 'returns the version number of the procedure'
+                    WHEN N'@version_date' THEN 'returns the date this version was released'
+                    ELSE NULL
+                END,
+            valid_inputs =
+                CASE
+                    ap.name
+                    WHEN N'@database_name' THEN 'the name of a database you care about indexes in'
+                    WHEN N'@help' THEN '0 or 1'
+                    WHEN N'@debug' THEN '0 or 1'
+                    WHEN N'@version' THEN 'OUTPUT parameter'
+                    WHEN N'@version_date' THEN 'OUTPUT parameter'
+                    ELSE NULL
+                END,
+            defaults =
+                CASE
+                    ap.name
+                    WHEN N'@database_name' THEN 'NULL'
+                    WHEN N'@help' THEN 'false'
+                    WHEN N'@debug' THEN 'true'
+                    WHEN N'@version' THEN 'NULL'
+                    WHEN N'@version_date' THEN 'NULL'
+                    ELSE NULL
+                END
+        FROM sys.all_parameters AS ap
+        JOIN sys.all_objects AS o
+          ON ap.object_id = o.object_id
+        JOIN sys.types AS t
+          ON  ap.system_type_id = t.system_type_id
+          AND ap.user_type_id = t.user_type_id
+        WHERE o.name = N'sp_PerfCheck'
+        OPTION(MAXDOP 1, RECOMPILE);
+
+        SELECT
+            mit_license_yo = 'i am MIT licensed, so like, do whatever'
+
+        UNION ALL
+
+        SELECT
+            mit_license_yo = 'see printed messages for full license';
+
+        RAISERROR('
+MIT License
+
+Copyright 2025 Darling Data, LLC
+
+https://www.erikdarling.com/
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute,
+sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+', 0, 1) WITH NOWAIT;
+
+        RETURN;
+    END;
 
     /*
     Variable Declarations
@@ -21031,8 +21199,8 @@ BEGIN
         @has_percent_growth bit,
         @has_fixed_growth bit,
         /* Storage performance variables */
-        @slow_read_ms decimal(10, 2) = 20.0, /* Threshold for slow reads (ms) */
-        @slow_write_ms decimal(10, 2) = 20.0, /* Threshold for slow writes (ms) */
+        @slow_read_ms decimal(10, 2) = 100.0, /* Threshold for slow reads (ms) */
+        @slow_write_ms decimal(10, 2) = 100.0, /* Threshold for slow writes (ms) */
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
@@ -21047,7 +21215,7 @@ BEGIN
         @buffer_pool_size_gb decimal(38, 2),
         @stolen_memory_gb decimal(38, 2),
         @stolen_memory_pct decimal(10, 2),
-        @stolen_memory_threshold_pct decimal(10, 2) = 25.0, /* Alert if more than 25% memory is stolen */
+        @stolen_memory_threshold_pct decimal(10, 2) = 15.0, /* Alert if more than 15% memory is stolen */
         /* Format the output properly without XML PATH which causes spacing issues */
         @wait_summary nvarchar(1000) = N'',
         /* CPU scheduling variables */
@@ -21856,12 +22024,12 @@ BEGIN
             INSERT INTO
                 #event_class_map (event_class, event_name, category_name)
             VALUES
-                (92,  N'Data File Auto Grow', N'Database'),
-                (93,  N'Log File Auto Grow', N'Database'),
+                (92,  N'Data File Auto Grow',   N'Database'),
+                (93,  N'Log File Auto Grow',    N'Database'),
                 (94,  N'Data File Auto Shrink', N'Database'),
-                (95,  N'Log File Auto Shrink', N'Database'),
-                (116, N'DBCC Event', N'Database'),
-                (137, N'Server Memory Change', N'Server');
+                (95,  N'Log File Auto Shrink',  N'Database'),
+                (116, N'DBCC Event',            N'Database'),
+                (137, N'Server Memory Change',  N'Server');
 
             /* Get relevant events from default trace */
             INSERT INTO
@@ -21916,6 +22084,7 @@ BEGIN
                       OR t.TextData LIKE N'%DROPCLEANBUFFERS%'
                       OR t.TextData LIKE N'%SHRINKDATABASE%'
                       OR t.TextData LIKE N'%SHRINKFILE%'
+                      OR t.TextData LIKE N'%WRITEPAGE%'
                   )
                 )
                 /* Server memory change events */
@@ -22043,6 +22212,7 @@ BEGIN
                         WHEN dbcc_cmd.dbcc_pattern LIKE N'%FREEPROCCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%FREESYSTEMCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%DROPCLEANBUFFERS%'
+                        OR   dbcc_cmd.dbcc_pattern LIKE N'%WRITEPAGE%'
                         THEN 40 /* Higher priority */
                         ELSE 60 /* Medium priority */
                     END,
@@ -22058,6 +22228,7 @@ BEGIN
                     WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
                     WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
                     WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
+                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
                     ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case */
                 END +
                 N'" between ' +
@@ -22077,6 +22248,7 @@ BEGIN
                         WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
                         WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
                         WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
+                        WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
                         ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just in case*/
                     END
             ) AS dbcc_cmd
@@ -22090,6 +22262,7 @@ BEGIN
                     WHEN te.text_data LIKE N'%DROPCLEANBUFFERS%' THEN N'DBCC DROPCLEANBUFFERS'
                     WHEN te.text_data LIKE N'%SHRINKDATABASE%' THEN N'DBCC SHRINKDATABASE'
                     WHEN te.text_data LIKE N'%SHRINKFILE%' THEN N'DBCC SHRINKFILE'
+                    WHEN te.text_data LIKE N'%WRITEPAGE%' THEN N'DBCC WRITEPAGE'
                     ELSE LEFT(te.text_data, 40) /* Take first 40 chars for other commands just i case*/
                 END
             ORDER BY
@@ -22380,10 +22553,10 @@ BEGIN
             OR dows.wait_type = N'IO_RETRY'
             OR dows.wait_type = N'RESMGR_THROTTLED'
         )
-        /* Only include waits that are significant in terms of total wait percentage or average wait time (>1 second) */
+        /* Only include waits that are significant in terms of percentage of uptime or average wait time (>1 second) */
         AND
         (
-             (dows.wait_time_ms * 1.0 / @total_waits) > (@significant_wait_threshold_pct / 100.0)
+             (dows.wait_time_ms * 100.0 / @uptime_ms) > @significant_wait_threshold_pct
           OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
         );
 
@@ -22439,8 +22612,8 @@ BEGIN
         FROM #wait_stats AS ws
         WHERE
             (
-                ws.wait_time_percent_of_uptime >= 50.0 /* Only include waits that are at least 50% of uptime */
-                OR ws.avg_wait_ms >= 1000.0 /* Or have average wait time > 1 second */
+                 ws.wait_time_percent_of_uptime >= 50.0 /* Only include waits that are at least 50% of uptime */
+              OR ws.avg_wait_ms >= 1000.0 /* Or have average wait time > 1 second */
             )
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
@@ -22613,7 +22786,8 @@ BEGIN
         /* Calculate signal wait ratio (time spent waiting for CPU vs. total wait time) */
         IF @total_wait_time_ms > 0
         BEGIN
-            SET @signal_wait_ratio = (@signal_wait_time_ms * 100.0) / @total_wait_time_ms;
+            SET @signal_wait_ratio =
+                    (@signal_wait_time_ms * 100.0) / @total_wait_time_ms;
 
             /* Calculate SOS_SCHEDULER_YIELD percentage of uptime */
             IF  @uptime_ms > 0
@@ -22632,9 +22806,9 @@ BEGIN
                  CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @signal_wait_ratio)) +
                  N'%' +
                  CASE
-                     WHEN @signal_wait_ratio >= 25.0
+                     WHEN @signal_wait_ratio >= 50.0
                      THEN N' (High - CPU pressure detected)'
-                     WHEN @signal_wait_ratio >= 15.0
+                     WHEN @signal_wait_ratio >= 25.0
                      THEN N' (Moderate - CPU pressure likely)'
                      ELSE N' (Normal)'
                  END
@@ -22669,8 +22843,8 @@ BEGIN
                 (
                     6101,
                     CASE
-                        WHEN @signal_wait_ratio >= 40.0
-                        THEN 20 /* Very high priority if >=40% signal waits */
+                        WHEN @signal_wait_ratio >= 50.0
+                        THEN 20 /* Very high priority if >=50% signal waits */
                         WHEN @signal_wait_ratio >= 30.0
                         THEN 30 /* High priority if >=30% signal waits */
                         ELSE 40 /* Medium-high priority */
@@ -22687,7 +22861,7 @@ BEGIN
             END;
 
             /* Add finding for significant SOS_SCHEDULER_YIELD waits */
-            IF @sos_scheduler_yield_pct_of_uptime >= 10.0
+            IF @sos_scheduler_yield_pct_of_uptime >= 25.0
             BEGIN
                 INSERT INTO
                     #results
@@ -22703,10 +22877,10 @@ BEGIN
                 (
                     6102,
                     CASE
+                        WHEN @sos_scheduler_yield_pct_of_uptime >= 50.0
+                        THEN 30 /* High priority if >=50% of uptime */
                         WHEN @sos_scheduler_yield_pct_of_uptime >= 30.0
-                        THEN 30 /* High priority if >=30% of uptime */
-                        WHEN @sos_scheduler_yield_pct_of_uptime >= 20.0
-                        THEN 40 /* Medium-high priority if >=20% of uptime */
+                        THEN 40 /* Medium-high priority if >=30% of uptime */
                         ELSE 50 /* Medium priority */
                     END,
                     N'CPU Scheduling',
@@ -22788,10 +22962,10 @@ BEGIN
                 (
                     6002,
                     CASE
-                        WHEN @stolen_memory_pct > 40
-                        THEN 30 /* High priority if >40% stolen */
                         WHEN @stolen_memory_pct > 30
-                        THEN 40 /* Medium-high priority if >30% stolen */
+                        THEN 30 /* High priority if >30% stolen */
+                        WHEN @stolen_memory_pct > 15
+                        THEN 40 /* Medium-high priority if >15% stolen */
                         ELSE 50 /* Medium priority */
                     END,
                     N'Memory Usage',
@@ -23164,7 +23338,11 @@ BEGIN
         JOIN sys.master_files AS mf
           ON  fs.database_id = mf.database_id
           AND fs.file_id = mf.file_id
-        WHERE (fs.num_of_reads > 0 OR fs.num_of_writes > 0); /* Only include files with some activity */
+        WHERE
+        (
+             fs.num_of_reads > 0
+          OR fs.num_of_writes > 0
+        ); /* Only include files with some activity */
 
         /* Add results for slow reads */
         INSERT INTO
@@ -23287,7 +23465,7 @@ BEGIN
              i.avg_read_latency_ms > @slow_read_ms
           OR i.avg_write_latency_ms > @slow_write_ms
         )
-        AND i.drive_location IS NOT NULL
+        AND  i.drive_location IS NOT NULL
         GROUP BY
             i.drive_location
         HAVING
@@ -23346,7 +23524,8 @@ BEGIN
 
         /* Get physical memory for comparison */
         SELECT
-            @physical_memory_gb = CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)
+            @physical_memory_gb =
+                CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)
         FROM sys.dm_os_sys_info AS osi;
 
         /* Add min/max server memory info */
@@ -23496,15 +23675,15 @@ BEGIN
             size_mb = CONVERT(decimal(18, 2), mf.size * 8.0 / 1024),
             max_size_mb =
                 CASE
-                   WHEN mf.max_size = -1
-                   THEN -1 -- Unlimited
-                   ELSE CONVERT(decimal(18, 2), mf.max_size * 8.0 / 1024)
+                    WHEN mf.max_size = -1
+                    THEN -1 -- Unlimited
+                    ELSE CONVERT(decimal(18, 2), mf.max_size * 8.0 / 1024)
                 END,
             growth_mb =
                 CASE
-                   WHEN mf.is_percent_growth = 1
-                   THEN CONVERT(decimal(18, 2), mf.growth) -- Percent
-                   ELSE CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024) -- MB
+                    WHEN mf.is_percent_growth = 1
+                    THEN CONVERT(decimal(18, 2), mf.growth) -- Percent
+                    ELSE CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024) -- MB
                 END,
             mf.is_percent_growth
         FROM sys.master_files AS mf
