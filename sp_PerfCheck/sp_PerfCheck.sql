@@ -190,10 +190,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 2
             ),
         @engine_edition integer =
-            CONVERT(integer, SERVERPROPERTY(N'EngineEdition')),
+            CONVERT
+            (
+                integer, 
+                SERVERPROPERTY(N'EngineEdition')
+            ),
         @start_time datetime2(0) = SYSDATETIME(),
         @error_message nvarchar(4000) = N'',
-        @sql nvarchar(MAX) = N'',
+        @sql nvarchar(max) = N'',
         @azure_sql_db bit = 0,
         @azure_managed_instance bit = 0,
         @aws_rds bit = 0,
@@ -204,7 +208,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 0
             ),
         @has_view_server_state bit =
-        /*I'm using this as a shortcut here so I don't have to do anything else later if not sa*/
+        /*
+            I'm using this as a shortcut here so I don't 
+            have to do anything else later if not sa
+        */
             ISNULL
             (
                 IS_SRVROLEMEMBER(N'sysadmin'),
