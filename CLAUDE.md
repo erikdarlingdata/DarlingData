@@ -255,10 +255,11 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
 
 - **INSERT statements**:
   - INSERT on first line
+  - Always use INSERT INTO
   - Schema and table name on next line, indented
   - Column list in parentheses on new lines, indented
   ```sql
-  INSERT
+  INSERT INTO
       dbo.table_name
   (
       column1,
