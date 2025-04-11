@@ -1494,8 +1494,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     sample_seconds =
                         DATEDIFF
                         (
-                            SECOND, 
-                            w.sample_time, 
+                            SECOND,
+                            w.sample_time,
                             w2.sample_time
                         )
                 FROM @waits AS w
@@ -2010,8 +2010,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     sample_seconds =
                         DATEDIFF
                         (
-                            SECOND, 
-                            f.sample_time_o, 
+                            SECOND,
+                            f.sample_time_o,
                             f.sample_time_t
                         )
                 FROM f

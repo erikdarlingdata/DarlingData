@@ -192,7 +192,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @engine_edition integer =
             CONVERT
             (
-                integer, 
+                integer,
                 SERVERPROPERTY(N'EngineEdition')
             ),
         @start_time datetime2(0) = SYSDATETIME(),
@@ -209,7 +209,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ),
         @has_view_server_state bit =
         /*
-            I'm using this as a shortcut here so I don't 
+            I'm using this as a shortcut here so I don't
             have to do anything else later if not sa
         */
             ISNULL
@@ -579,37 +579,37 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Basic server information that works across all platforms */
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     VALUES
         (N'sp_PerfCheck', N'Brought to you by Darling Data');
 
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     VALUES
         (N'https://code.erikdarling.com', N'https://erikdarling.com');
 
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     VALUES
         (
-            N'Version', 
-            @version + 
-            N' (' + 
-            CONVERT(varchar(10), @version_date, 101) + 
+            N'Version',
+            @version +
+            N' (' +
+            CONVERT(varchar(10), @version_date, 101) +
             N')'
         );
 
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     VALUES
         (N'Server Name', CONVERT(sysname, SERVERPROPERTY(N'ServerName')));
 
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     VALUES
         (
@@ -621,30 +621,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         );
 
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     VALUES
         (N'SQL Server Edition', CONVERT(sysname, SERVERPROPERTY(N'Edition')));
 
     /* Environment information - Already detected earlier */
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     SELECT
         N'Environment',
         CASE
-            WHEN @azure_sql_db = 1 
+            WHEN @azure_sql_db = 1
             THEN N'Azure SQL Database'
-            WHEN @azure_managed_instance = 1 
+            WHEN @azure_managed_instance = 1
             THEN N'Azure SQL Managed Instance'
-            WHEN @aws_rds = 1 
+            WHEN @aws_rds = 1
             THEN N'AWS RDS SQL Server'
             ELSE N'On-premises or IaaS SQL Server'
         END;
 
     /* Uptime information - works on all platforms */
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     SELECT
         N'Uptime',
@@ -653,8 +653,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             nvarchar(30),
             DATEDIFF
             (
-                DAY, 
-                osi.sqlserver_start_time, 
+                DAY,
+                osi.sqlserver_start_time,
                 SYSDATETIME()
             )
         ) +
@@ -684,15 +684,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* CPU information - works on all platforms */
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     SELECT
         N'CPU',
-        CONVERT(nvarchar(10), osi.cpu_count) + 
+        CONVERT(nvarchar(10), osi.cpu_count) +
         N' logical processors, ' +
-        CONVERT(nvarchar(10), osi.hyperthread_ratio) + 
+        CONVERT(nvarchar(10), osi.hyperthread_ratio) +
         N' physical cores, ' +
-        CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) + 
+        CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
         N' NUMA node(s)'
     FROM sys.dm_os_sys_info AS osi;
 
@@ -834,34 +834,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         check_id = 4103,
         priority =
             CASE
-                WHEN 
+                WHEN
                 (
-                    1.0 * 
-                    p.cntr_value / 
+                    1.0 *
+                    p.cntr_value /
                     NULLIF
                     (
                         DATEDIFF
                         (
-                            DAY, 
-                            osi.sqlserver_start_time, 
+                            DAY,
+                            osi.sqlserver_start_time,
                             SYSDATETIME()
-                        ), 
+                        ),
                         0
                     )
                 ) > 100
                 THEN 20 /* Very high priority */
-                WHEN 
+                WHEN
                 (
-                    1.0 * 
-                    p.cntr_value / 
+                    1.0 *
+                    p.cntr_value /
                     NULLIF
                     (
                         DATEDIFF
                         (
-                            DAY, 
-                            osi.sqlserver_start_time, 
+                            DAY,
+                            osi.sqlserver_start_time,
                             SYSDATETIME()
-                        ), 
+                        ),
                         0
                     )
                 ) > 50
@@ -875,7 +875,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value /
               NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()), 0))) +
             N' deadlocks per day since startup (' +
-            CONVERT(nvarchar(20), p.cntr_value) + 
+            CONVERT(nvarchar(20), p.cntr_value) +
             ' total deadlocks over ' +
             CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME())) +
             N' days). ' +
@@ -888,7 +888,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND   p.cntr_value > 0
     AND
     (
-        1.0 * 
+        1.0 *
         p.cntr_value /
         NULLIF
         (
@@ -1048,9 +1048,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'/* Resource Governor configuration */' + NCHAR(13) + NCHAR(10) +
                     N'SELECT c.* FROM sys.resource_governor_configuration AS c;' + NCHAR(13) + NCHAR(10) +
                     N'/* Resource pools and their settings */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT p.* FROM sys.dm_resource_governor_resource_pools AS p;' + NCHAR(13) + NCHAR(10) + 
+                    N'SELECT p.* FROM sys.dm_resource_governor_resource_pools AS p;' + NCHAR(13) + NCHAR(10) +
                     N'/* Workload groups and their settings */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT wg.* FROM sys.dm_resource_governor_workload_groups AS wg;' + NCHAR(13) + NCHAR(10) + 
+                    N'SELECT wg.* FROM sys.dm_resource_governor_workload_groups AS wg;' + NCHAR(13) + NCHAR(10) +
                     N'/* Classifier function (if configured) */' + NCHAR(13) + NCHAR(10) +
                     N'SELECT cf.* FROM sys.resource_governor_configuration AS gc' + NCHAR(13) + NCHAR(10) +
                     N'CROSS APPLY (SELECT OBJECT_NAME(gc.classifier_function_id) AS classifier_function_name) AS cf;',
@@ -1163,14 +1163,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 )
             VALUES
             (
-                5001, 
-                50, 
-                N'Default Trace Permissions', 
-                N'Inadequate permissions', 
-                NULL, 
-                NULL, 
-                N'Access to sys.traces is only available to accounts with elevated privileges, or when explicitly granted', 
-                N'GRANT ALTER TRACE TO ' + 
+                5001,
+                50,
+                N'Default Trace Permissions',
+                N'Inadequate permissions',
+                NULL,
+                NULL,
+                N'Access to sys.traces is only available to accounts with elevated privileges, or when explicitly granted',
+                N'GRANT ALTER TRACE TO ' +
                 SUSER_NAME() +
                 N';'
             );
@@ -1180,7 +1180,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             /* Insert common event classes we're interested in */
             INSERT INTO
-                #event_class_map 
+                #event_class_map
                 (event_class, event_name, category_name)
             VALUES
                 (92,  N'Data File Auto Grow',   N'Database'),
@@ -1641,7 +1641,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             wait_time_ms = dows.wait_time_ms,
             waiting_tasks_count = dows.waiting_tasks_count,
             signal_wait_time_ms = dows.signal_wait_time_ms,
-            percentage = 
+            percentage =
                 CONVERT(decimal(5,2), dows.wait_time_ms * 100.0 / @total_waits),
             category =
                 CASE
@@ -1784,11 +1784,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ws.wait_time_percent_of_uptime DESC;
 
         INSERT INTO
-            #wait_summary 
+            #wait_summary
             (category, pct_of_uptime)
         SELECT
             ws.category,
-            pct_of_uptime = 
+            pct_of_uptime =
                 SUM(ws.wait_time_percent_of_uptime)
         FROM #wait_stats AS ws
         WHERE ws.wait_time_percent_of_uptime >= 10.0 /* Only include categories with at least 10% impact on uptime */
@@ -1818,7 +1818,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             /* Replace the result set in the server_info table with a clearer explanation */
             INSERT INTO
-                #server_info 
+                #server_info
                 (info_type, value)
             VALUES
                 (N'Wait Stats Summary', N'See Wait Statistics section in results for details.');
@@ -1885,9 +1885,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         /* Get total and signal wait times */
         SELECT
-            @signal_wait_time_ms = 
+            @signal_wait_time_ms =
                 SUM(osw.signal_wait_time_ms),
-            @total_wait_time_ms = 
+            @total_wait_time_ms =
                 SUM(osw.wait_time_ms),
             @sos_scheduler_yield_ms =
                 SUM
@@ -1968,7 +1968,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             /* Add CPU scheduling info to server_info */
             INSERT INTO
-                #server_info 
+                #server_info
                 (info_type, value)
             VALUES
             (
@@ -1987,7 +1987,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             IF @sos_scheduler_yield_pct_of_uptime > 0
             BEGIN
                 INSERT INTO
-                    #server_info 
+                    #server_info
                     (info_type, value)
                 VALUES
                 (
@@ -2097,7 +2097,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             /* Add buffer pool info to server_info */
             INSERT INTO
-                #server_info 
+                #server_info
                 (info_type, value)
             VALUES
             (
@@ -2107,7 +2107,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             );
 
             INSERT INTO
-                #server_info 
+                #server_info
                 (info_type, value)
             VALUES
             (
@@ -2204,10 +2204,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         TRUNCATE TABLE
             #io_stalls_by_db;
 
-        /* Get database-level I/O stall statistics */             
+        /* Get database-level I/O stall statistics */
         SET @io_sql = N'
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-        
+
         SELECT
             database_name = DB_NAME(fs.database_id),
             database_id = fs.database_id,
@@ -2240,13 +2240,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END,
             total_size_mb = CONVERT(decimal(18, 2), SUM(mf.size) * 8.0 / 1024.0)
         FROM sys.dm_io_virtual_file_stats
-        (' + 
-        CASE 
-            WHEN @azure_sql_db = 1 
+        (' +
+        CASE
+            WHEN @azure_sql_db = 1
             THEN N'
-            DB_ID()' 
+            DB_ID()'
             ELSE N'
-            NULL' 
+            NULL'
         END + N',
             NULL
         ) AS fs
@@ -2262,13 +2262,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END + N'
         WHERE
         (
-            ' + 
-        CASE 
-            WHEN @azure_sql_db = 1 
+            ' +
+        CASE
+            WHEN @azure_sql_db = 1
             THEN N'1 = 1' /* Always true for Azure SQL DB since we only have the current database */
             ELSE N'fs.database_id > 4
-          OR fs.database_id = 2' 
-        END + 
+          OR fs.database_id = 2'
+        END +
         N'
         ) /* User databases or TempDB */
         GROUP BY
@@ -2281,7 +2281,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             PRINT @io_sql;
         END;
-            
+
         INSERT INTO
             #io_stalls_by_db
         (
@@ -2297,12 +2297,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             write_io_mb,
             avg_write_stall_ms,
             total_size_mb
-        )                
-        EXECUTE sys.sp_executesql 
+        )
+        EXECUTE sys.sp_executesql
             @io_sql;
 
         /* Format a summary of the worst databases by I/O stalls */
-        WITH 
+        WITH
             io_stall_summary AS
         (
             SELECT TOP (5)
@@ -2347,22 +2347,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 2,
                 ''
             );
-        
+
         /* Add I/O stall summary to server_info if any significant stalls were found */
         IF  @io_stall_summary IS NOT NULL
         AND LEN(@io_stall_summary) > 0
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
                 (info_type, value)
             VALUES
             (
-                N'Database I/O Stalls', 
-                N'Top databases with high I/O latency: ' + 
+                N'Database I/O Stalls',
+                N'Top databases with high I/O latency: ' +
                 @io_stall_summary
             );
         END;
-        
+
         /* Add findings for significant I/O stalls */
         INSERT INTO
             #results
@@ -2426,7 +2426,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         RAISERROR('Checking storage performance', 0, 1) WITH NOWAIT;
     END;
-    
+
     SET @file_io_sql = N'
     SELECT
         database_name = DB_NAME(fs.database_id),
@@ -2469,14 +2469,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END,
         physical_name = mf.physical_name
     FROM sys.dm_io_virtual_file_stats
-    (' + 
-    CASE 
-        WHEN @azure_sql_db = 1 
+    (' +
+    CASE
+        WHEN @azure_sql_db = 1
         THEN N'
-        DB_ID()' 
+        DB_ID()'
         ELSE N'
-        NULL' 
-    END + N', 
+        NULL'
+    END + N',
         NULL
     ) AS fs
     JOIN ' +
@@ -2489,9 +2489,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  fs.database_id = mf.database_id
       AND fs.file_id = mf.file_id'
     END + N'
-    WHERE 
+    WHERE
     (
-         fs.num_of_reads > 0 
+         fs.num_of_reads > 0
       OR fs.num_of_writes > 0
     ); /* Only include files with some activity */';
 
@@ -2499,7 +2499,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         PRINT @file_io_sql;
     END;
-    
+
     /* Gather IO Stats */
     INSERT INTO
         #io_stats
@@ -2521,7 +2521,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         drive_location,
         physical_name
     )
-    EXECUTE sys.sp_executesql 
+    EXECUTE sys.sp_executesql
         @file_io_sql;
 
     /* Add results for slow reads */
@@ -2653,7 +2653,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Get database sizes - safely handles permissions */
     BEGIN TRY
-        BEGIN                
+        BEGIN
             SET @db_size_sql = N'
             SELECT
                 N''Total Database Size'',
@@ -2661,7 +2661,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(20), CONVERT(decimal(10, 2), SUM(f.size * 8.0 / 1024.0 / 1024.0))) +
                 N'' GB''
             FROM ' +
-            CASE 
+            CASE
                 WHEN @azure_sql_db = 1
                 THEN N'sys.database_files AS f
                 WHERE f.type_desc = N''ROWS'''
@@ -2673,12 +2673,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             BEGIN
                 PRINT @file_io_sql;
             END;
-            
+
             /* For non-Azure SQL DB, get size across all accessible databases */
             INSERT INTO
-                #server_info 
+                #server_info
                 (info_type, value)
-            EXECUTE sys.sp_executesql 
+            EXECUTE sys.sp_executesql
                 @db_size_sql;
         END;
     END TRY
@@ -2712,13 +2712,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         /* Add min/max server memory info */
         INSERT INTO
-            #server_info 
+            #server_info
             (info_type, value)
         VALUES
             (N'Min Server Memory', CONVERT(nvarchar(20), @min_server_memory) + N' MB');
 
         INSERT INTO
-            #server_info 
+            #server_info
             (info_type, value)
         VALUES
             (N'Max Server Memory', CONVERT(nvarchar(20), @max_server_memory) + N' MB');
@@ -2733,13 +2733,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   c2.name = N'cost threshold for parallelism';
 
         INSERT INTO
-            #server_info 
+            #server_info
             (info_type, value)
         VALUES
             (N'MAXDOP', CONVERT(nvarchar(10), @max_dop));
 
         INSERT INTO
-            #server_info 
+            #server_info
             (info_type, value)
         VALUES
             (N'Cost Threshold for Parallelism', CONVERT(nvarchar(10), @cost_threshold));
@@ -2760,7 +2760,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     IF @azure_sql_db = 0 /* Skip these checks for Azure SQL DB */
     BEGIN
         /* Check for non-default configuration values */
-        INSERT INTO 
+        INSERT INTO
             #results
         (
             check_id,
@@ -2842,7 +2842,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             RAISERROR('Checking TempDB configuration', 0, 1) WITH NOWAIT;
         END;
-            
+
         SET @tempdb_files_sql = N'
         SELECT
             mf.file_id,
@@ -2863,7 +2863,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END,
             mf.is_percent_growth
         FROM ' +
-        CASE 
+        CASE
             WHEN @azure_sql_db = 1
             THEN N'sys.database_files AS mf
         WHERE DB_NAME() = N''tempdb'';'
@@ -2875,7 +2875,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             PRINT @tempdb_files_sql;
         END;
-        
+
         /* Get TempDB file information */
         INSERT INTO
             #tempdb_files
@@ -2888,22 +2888,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             growth_mb,
             is_percent_growth
         )
-        EXECUTE sys.sp_executesql 
+        EXECUTE sys.sp_executesql
             @tempdb_files_sql;
 
         /* Get file counts and size range */
         SELECT
-            @tempdb_data_file_count = 
+            @tempdb_data_file_count =
                 SUM(CASE WHEN tf.type_desc = N'ROWS' THEN 1 ELSE 0 END),
-            @tempdb_log_file_count = 
+            @tempdb_log_file_count =
                 SUM(CASE WHEN tf.type_desc = N'LOG' THEN 1 ELSE 0 END),
-            @min_data_file_size = 
+            @min_data_file_size =
                 MIN(CASE WHEN tf.type_desc = N'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
-            @max_data_file_size = 
+            @max_data_file_size =
                 MAX(CASE WHEN tf.type_desc = N'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
-            @has_percent_growth = 
+            @has_percent_growth =
                 MAX(CASE WHEN tf.type_desc = N'ROWS' AND tf.is_percent_growth = 1 THEN 1 ELSE 0 END),
-            @has_fixed_growth = 
+            @has_fixed_growth =
                 MAX(CASE WHEN tf.type_desc = N'ROWS' AND tf.is_percent_growth = 0 THEN 1 ELSE 0 END)
         FROM #tempdb_files AS tf;
 
@@ -2991,7 +2991,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 70, /* Informational */
                 N'TempDB Configuration',
                 N'More TempDB Files Than CPUs',
-                N'TempDB has ' + 
+                N'TempDB has ' +
                 CONVERT(nvarchar(10), @tempdb_data_file_count) +
                 N' data files, which is more than the ' +
                 CONVERT(nvarchar(10), @processors) +
@@ -3566,8 +3566,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
                 IF @debug = 1
                 BEGIN
-                    SET @message = 
-                        N'Cannot access database: ' + 
+                    SET @message =
+                        N'Cannot access database: ' +
                         @current_database_name;
 
                     RAISERROR(@message, 0, 1) WITH NOWAIT;
@@ -3817,7 +3817,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             finding = N'Query Store Not Enabled',
             database_name = d.name,
             details = N'Query Store is not enabled.
-                        Consider enabling Query Store to track query performance 
+                        Consider enabling Query Store to track query performance
                         over time and identify regression issues.',
             url = N'https://erikdarling.com/sp_PerfCheck#QueryStore'
         FROM #databases AS d
@@ -3885,7 +3885,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             /* Check for Query Store with potentially problematic settings */
             SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;            
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
             SELECT
                 check_id = 7012,
@@ -3947,14 +3947,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             /* Check for non-default database scoped configurations */
             /* First check if the sys.database_scoped_configurations view exists */
-            SET @sql = N'            
-            IF EXISTS 
+            SET @sql = N'
+            IF EXISTS
             (
-                SELECT 
-                    1/0 
-                FROM ' + 
-                QUOTENAME(@current_database_name) + 
-                N'.sys.all_objects AS ao 
+                SELECT
+                    1/0
+                FROM ' +
+                QUOTENAME(@current_database_name) +
+                N'.sys.all_objects AS ao
                 WHERE ao.name = N''database_scoped_configurations''
             )
             BEGIN
@@ -4116,10 +4116,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN CATCH
             IF @debug = 1
             BEGIN
-                SET @message = 
-                    N'Error checking database configuration for ' + 
-                    @current_database_name + 
-                    N': ' + 
+                SET @message =
+                    N'Error checking database configuration for ' +
+                    @current_database_name +
+                    N': ' +
                     ERROR_MESSAGE();
 
                 RAISERROR(@message, 0, 1) WITH NOWAIT;
@@ -4423,10 +4423,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN CATCH
             IF @debug = 1
             BEGIN
-                SET @message = 
-                    N'Error checking database file growth settings for ' + 
-                    @current_database_name + 
-                    N': ' + 
+                SET @message =
+                    N'Error checking database file growth settings for ' +
+                    @current_database_name +
+                    N': ' +
                     ERROR_MESSAGE();
 
                 RAISERROR(@message, 0, 1) WITH NOWAIT;
@@ -4445,7 +4445,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Add scan time footer to server info */
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     VALUES
         (N'Run Date', CONVERT(varchar(25), @start_time, 121));
@@ -4454,9 +4454,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     Return Server Info First
     */
     SELECT
-        [Server Information] = 
+        [Server Information] =
             si.info_type,
-        [Details] = 
+        [Details] =
             si.value
     FROM #server_info AS si
     ORDER BY
