@@ -604,19 +604,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Basic server information that works across all platforms */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (N'sp_PerfCheck', N'Brought to you by Darling Data');
 
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (N'https://code.erikdarling.com', N'https://erikdarling.com');
 
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (
             N'Version',
@@ -634,14 +643,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Using server name variable declared earlier */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (N'Server Name', @server_name);
             
     /* Using product version and level variables declared earlier */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (
             N'SQL Server Version',
@@ -654,7 +669,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Using product edition variable declared earlier */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (N'SQL Server Edition', @product_edition);
 
@@ -679,7 +697,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         SELECT
             N'Uptime',
             CONVERT
@@ -720,7 +741,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
             (N'Uptime', N'Information unavailable (requires VIEW SERVER STATE permission)');
     END;
@@ -730,7 +754,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type,
+            value
+        )
         SELECT
             N'CPU',
             CONVERT(nvarchar(10), osi.cpu_count) +
@@ -745,7 +772,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type,
+            value
+        )
         VALUES
             (N'CPU', N'Information unavailable (requires VIEW SERVER STATE permission)');
     END;
@@ -4808,7 +4838,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Add scan time footer to server info */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (N'Run Date', CONVERT(varchar(25), @start_time, 121));
 
