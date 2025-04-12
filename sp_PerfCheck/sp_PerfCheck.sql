@@ -266,7 +266,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @signal_wait_ratio decimal(10, 2),
         @sos_scheduler_yield_pct_of_uptime decimal(10, 2),
         /* I/O stalls variables */
-        @io_stall_summary nvarchar(1000),
+        @io_stall_summary nvarchar(1000) = N'',
+        /* Enhanced wait stats analysis variables */
+        @wait_stats_uptime_hours decimal(18, 2),
+        @signal_wait_pct decimal(18, 2),
+        @resource_wait_pct decimal(18, 2),
+        @cpu_pressure_threshold decimal(5, 2) = 20.0, /* Signal waits > 20% indicate CPU pressure */
+        @io_pressure_threshold decimal(5, 2) = 40.0, /* IO waits > 40% indicate IO subsystem pressure */
+        @lock_pressure_threshold decimal(5, 2) = 20.0, /* Lock waits > 20% indicate concurrency issues */
+        @high_avg_wait_ms decimal(10, 2) = 100.0, /* High average wait threshold in ms */
         /* First check what columns exist in sys.databases to handle version differences */
         @has_is_ledger bit = 0,
         @has_is_accelerated_database_recovery bit = 0,
@@ -342,6 +350,913 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             is_azure = @azure_sql_db,
             is_azure_managed_instance = @azure_managed_instance,
             is_aws_rds = @aws_rds;
+    END;
+    
+    /*
+    Azure SQL DB Resource Utilization Checks
+    Only run these if we're in Azure SQL DB
+    */
+    IF @azure_sql_db = 1
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Running Azure SQL DB specific checks', 0, 1) WITH NOWAIT;
+        END;
+
+        /* Use dynamic SQL to check for Azure SQL DB resource limits being hit */
+        BEGIN TRY
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            /* 
+            Check for DTU/vCore resource limits being hit 
+            Uses sys.dm_db_resource_stats which keeps 1 hour of history at 15-second intervals
+            */
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8001,
+                priority = 
+                    CASE
+                        WHEN MAX(avg_cpu_percent) > 95 THEN 20 /* Critical priority */
+                        WHEN MAX(avg_cpu_percent) > 80 THEN 30 /* High priority */
+                        ELSE 40 /* Medium priority */
+                    END,
+                category = N''Azure SQL DB'',
+                finding = N''Resource Limits Approached or Exceeded'',
+                details = 
+                    N''In the last hour, CPU utilization peaked at '' +
+                    CONVERT(nvarchar(10), MAX(avg_cpu_percent)) + N''%, '' +
+                    N''Data IO at '' +
+                    CONVERT(nvarchar(10), MAX(avg_data_io_percent)) + N''%, '' +
+                    N''Log Write at '' +
+                    CONVERT(nvarchar(10), MAX(avg_log_write_percent)) + N''%. '' +
+                    CASE
+                        WHEN MAX(avg_cpu_percent) > 95 OR MAX(avg_data_io_percent) > 95 OR MAX(avg_log_write_percent) > 95
+                        THEN N''Resources are being throttled. Consider upgrading service tier or optimizing workload.''
+                        WHEN MAX(avg_cpu_percent) > 80 OR MAX(avg_data_io_percent) > 80 OR MAX(avg_log_write_percent) > 80
+                        THEN N''Resources are approaching limits. Monitor closely and plan for potential upgrade.''
+                        ELSE N''Resource utilization is high but within acceptable limits.''
+                    END,
+                url = N''https://erikdarling.com/sp_PerfCheck#AzureResources''
+            FROM sys.dm_db_resource_stats
+            HAVING
+                MAX(avg_cpu_percent) > 70 OR
+                MAX(avg_data_io_percent) > 70 OR
+                MAX(avg_log_write_percent) > 70;';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for throttling events (queries waiting on resources) */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8002,
+                priority = 30, /* High priority */
+                category = N''Azure SQL DB'',
+                finding = N''Resource Throttling Detected'',
+                details =
+                    N''Found '' + CONVERT(nvarchar(10), COUNT_BIG(*)) + 
+                    N'' queries waiting on resource throttling: '' +
+                    STUFF((
+                        SELECT TOP 3 N'', '' + wait_type
+                        FROM sys.dm_exec_requests AS r
+                        WHERE wait_type LIKE ''RESOURCE_%''
+                        AND wait_time_ms > 1000
+                        GROUP BY wait_type
+                        ORDER BY COUNT(*) DESC
+                        FOR XML PATH(''''), TYPE).value(''.'', ''nvarchar(max)''), 1, 2, '''') +
+                    N''. Resource governance is limiting performance.'',
+                url = N''https://erikdarling.com/sp_PerfCheck#AzureThrottling''
+            FROM sys.dm_exec_requests AS r
+            WHERE wait_type LIKE ''RESOURCE_%''
+            AND wait_time_ms > 1000
+            HAVING
+                COUNT_BIG(*) > 0;';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for connection pooling issues */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8003,
+                priority = 40, /* Medium priority */
+                category = N''Azure SQL DB'',
+                finding = N''Connection Pool Inefficiency'',
+                details =
+                    N''There are currently '' + 
+                    CONVERT(nvarchar(10), COUNT_BIG(*)) + 
+                    N'' active connections with '' +
+                    CONVERT(nvarchar(10), 
+                        (SELECT COUNT(*) FROM sys.dm_exec_connections 
+                         WHERE connection_id NOT IN (SELECT connection_id FROM sys.dm_exec_sessions WHERE is_user_process = 1))
+                    ) +
+                    N'' system connections and '' +
+                    CONVERT(nvarchar(10), 
+                        (SELECT COUNT(*) FROM sys.dm_exec_connections 
+                         WHERE connection_id IN (SELECT connection_id FROM sys.dm_exec_sessions WHERE is_user_process = 1))
+                    ) +
+                    N'' user connections. This may indicate connection pooling issues.'',
+                url = N''https://erikdarling.com/sp_PerfCheck#AzureConnections''
+            FROM sys.dm_exec_connections
+            HAVING
+                COUNT_BIG(*) > 100;';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for storage space approaching limits */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8004,
+                priority = 
+                    CASE
+                        WHEN (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.9)
+                        THEN 20 /* Critical priority */
+                        WHEN (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.8)
+                        THEN 30 /* High priority */
+                        ELSE 50 /* Medium priority */
+                    END,
+                category = N''Azure SQL DB'',
+                finding = N''Database Approaching Storage Limit'',
+                details =
+                    N''Database is using '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), (SUM(size) * 8.0 / 1024 / 1024))) +
+                    N'' GB of '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024))) +
+                    N'' GB allowed ('' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), (SUM(size) * 8.0 / 1024 / 1024) / 
+                        (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024) * 100)) +
+                    N''%). '' +
+                    CASE
+                        WHEN (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.9)
+                        THEN N''Critical: Database is nearly at storage limit. Immediate action required.''
+                        WHEN (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.8)
+                        THEN N''Warning: Database is approaching storage limit. Plan for cleanup or tier upgrade.''
+                        ELSE N''Monitor: Space usage is high but not critical.''
+                    END,
+                url = N''https://erikdarling.com/sp_PerfCheck#AzureStorage''
+            FROM sys.database_files
+            WHERE type_desc IN (''ROWS'', ''LOG'')
+            HAVING
+                (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.7);';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_message = N'Error checking Azure SQL DB specific metrics: ' + ERROR_MESSAGE();
+                RAISERROR(@error_message, 0, 1) WITH NOWAIT;
+            END;
+            
+            /* Log error in results */
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details
+            )
+            VALUES
+            (
+                9990,
+                70, /* Medium priority */
+                N'Errors',
+                N'Error Checking Azure SQL DB Metrics',
+                N'Unable to check Azure SQL DB specific metrics: ' + ERROR_MESSAGE()
+            );
+        END CATCH;
+    END;
+    
+    /*
+    Azure Managed Instance specific checks
+    Only run these if we're in Azure Managed Instance
+    */
+    IF @azure_managed_instance = 1
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Running Azure Managed Instance specific checks', 0, 1) WITH NOWAIT;
+        END;
+        
+        /* Use dynamic SQL to check for Azure MI-specific issues */
+        BEGIN TRY
+            /* Check for TempDB usage that might impact performance */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            WITH tempdb_space_usage AS
+            (
+                SELECT
+                    SUM(CASE WHEN f.type_desc = ''ROWS'' THEN f.size ELSE 0 END) * 8.0 / 1024 AS data_size_mb,
+                    SUM(CASE WHEN f.type_desc = ''LOG'' THEN f.size ELSE 0 END) * 8.0 / 1024 AS log_size_mb,
+                    SUM(f.size) * 8.0 / 1024 AS total_size_mb,
+                    SUM(f.max_size) * 8.0 / 1024 AS max_size_mb
+                FROM tempdb.sys.database_files AS f
+            )
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8101,
+                priority = 
+                    CASE
+                        WHEN (tsu.total_size_mb / NULLIF(tsu.max_size_mb, 0)) * 100 > 85 THEN 30 /* High priority */
+                        WHEN (tsu.total_size_mb / NULLIF(tsu.max_size_mb, 0)) * 100 > 70 THEN 40 /* Medium-high priority */
+                        ELSE 50 /* Medium priority */
+                    END,
+                category = N''Azure Managed Instance'',
+                finding = N''High TempDB Usage'',
+                details =
+                    N''TempDB is using '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), tsu.data_size_mb)) +
+                    N'' MB data space, '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), tsu.log_size_mb)) +
+                    N'' MB log space ('' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), (tsu.total_size_mb / NULLIF(tsu.max_size_mb, 0)) * 100)) +
+                    N''% of allowed size). '' +
+                    CASE
+                        WHEN (tsu.total_size_mb / NULLIF(tsu.max_size_mb, 0)) * 100 > 85
+                        THEN N''TempDB is approaching size limits, which may lead to performance problems.''
+                        ELSE N''High TempDB usage may impact performance on Azure MI.''
+                    END,
+                url = N''https://erikdarling.com/sp_PerfCheck#AzureMITempDB''
+            FROM tempdb_space_usage AS tsu
+            WHERE (tsu.total_size_mb / NULLIF(tsu.max_size_mb, 0)) * 100 > 60
+            OR tsu.data_size_mb > 1024 * 10; /* More than 10 GB of TempDB usage */';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for SQL Agent jobs that could be consuming resources */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            WITH long_running_jobs AS
+            (
+                SELECT
+                    job_name = j.name,
+                    average_duration_seconds = AVG(DATEDIFF(SECOND, h.run_requested_date, 
+                        CASE WHEN h.run_status = 1 THEN h.run_date ELSE GETDATE() END)),
+                    max_duration_seconds = MAX(DATEDIFF(SECOND, h.run_requested_date, 
+                        CASE WHEN h.run_status = 1 THEN h.run_date ELSE GETDATE() END)),
+                    failed_count = SUM(CASE WHEN h.run_status = 0 THEN 1 ELSE 0 END),
+                    total_runs = COUNT(*)
+                FROM msdb.dbo.sysjobs AS j
+                JOIN msdb.dbo.sysjobhistory AS h
+                    ON j.job_id = h.job_id
+                WHERE h.step_id = 0 /* Job outcome */
+                AND h.run_date >= DATEADD(DAY, -7, GETDATE()) /* Last 7 days */
+                GROUP BY j.name
+                HAVING 
+                    /* More than 10 minutes average OR more than 30 minute max runtime */
+                    AVG(DATEDIFF(SECOND, h.run_requested_date, 
+                        CASE WHEN h.run_status = 1 THEN h.run_date ELSE GETDATE() END)) > 600
+                    OR
+                    MAX(DATEDIFF(SECOND, h.run_requested_date, 
+                        CASE WHEN h.run_status = 1 THEN h.run_date ELSE GETDATE() END)) > 1800
+            )
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                object_name,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8102,
+                priority = 
+                    CASE
+                        WHEN lrj.failed_count > 0 THEN 40 /* Medium-high priority if failures */
+                        ELSE 50 /* Medium priority */
+                    END,
+                category = N''Azure Managed Instance'',
+                finding = N''Long-Running Agent Job'',
+                object_name = lrj.job_name,
+                details =
+                    N''Job runs for an average of '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), lrj.average_duration_seconds / 60.0)) +
+                    N'' minutes (max: '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), lrj.max_duration_seconds / 60.0)) +
+                    N'' minutes). '' +
+                    CASE
+                        WHEN lrj.failed_count > 0
+                        THEN N''Has failed '' + CONVERT(nvarchar(10), lrj.failed_count) + N'' times out of '' +
+                             CONVERT(nvarchar(10), lrj.total_runs) + N'' runs. ''
+                        ELSE N''No failures in the last 7 days. ''
+                    END +
+                    N''Long-running jobs may consume valuable resources on Azure MI.'',
+                url = N''https://erikdarling.com/sp_PerfCheck#AzureMIJobs''
+            FROM long_running_jobs AS lrj;';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for instance-level resource usage (works for both MI and SQL DB with different thresholds) */
+            IF @azure_managed_instance = 1 OR @azure_sql_db = 1
+            BEGIN
+                SET @sql = N'
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                
+                WITH resource_usage AS
+                (
+                    SELECT
+                        -- Memory metrics
+                        physical_memory_kb = osi.physical_memory_kb,
+                        committed_kb = 
+                            (SELECT SUM(CONVERT(bigint, cntr_value))
+                             FROM sys.dm_os_performance_counters
+                             WHERE counter_name = ''SQL Server Memory Manager: Total Server Memory (KB)''),
+                        committed_target_kb = 
+                            (SELECT SUM(CONVERT(bigint, cntr_value))
+                             FROM sys.dm_os_performance_counters
+                             WHERE counter_name = ''SQL Server Memory Manager: Target Server Memory (KB)''),
+                        available_physical_memory_kb = osi.available_physical_memory_kb,
+                        system_memory_state_desc = osi.system_memory_state_desc,
+                        -- CPU metrics 
+                        average_cpu_percent = 
+                            AVG(CONVERT(decimal(5,2), r.avg_cpu_percent))
+                    FROM sys.dm_os_sys_info AS osi
+                    CROSS JOIN
+                    (
+                        SELECT
+                            AVG(avg_cpu_percent) AS avg_cpu_percent
+                        FROM ' + 
+                        CASE 
+                            WHEN @azure_sql_db = 1 
+                            THEN N'sys.dm_db_resource_stats' 
+                            ELSE N'sys.server_resource_stats' 
+                        END + N'
+                        WHERE 
+                            end_time >= DATEADD(HOUR, -1, GETDATE())
+                    ) AS r
+                    GROUP BY
+                        osi.physical_memory_kb,
+                        osi.available_physical_memory_kb,
+                        osi.system_memory_state_desc
+                )
+                INSERT INTO
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    details,
+                    url
+                )
+                SELECT
+                    check_id = 8103,
+                    priority = 
+                        CASE
+                            WHEN ru.system_memory_state_desc = N''Available physical memory is low'' 
+                                 OR (ru.physical_memory_kb - ru.available_physical_memory_kb) * 100.0 / ru.physical_memory_kb > 90
+                                 OR ru.average_cpu_percent > 90
+                            THEN 20 /* Critical priority */
+                            
+                            WHEN ru.system_memory_state_desc = N''Physical memory usage is steady''
+                                 OR (ru.physical_memory_kb - ru.available_physical_memory_kb) * 100.0 / ru.physical_memory_kb > 80
+                                 OR ru.average_cpu_percent > 80
+                            THEN 30 /* High priority */
+                            
+                            ELSE 40 /* Medium-high priority */
+                        END,
+                    category = ' + 
+                        CASE 
+                            WHEN @azure_sql_db = 1 
+                            THEN N'''Azure SQL DB''' 
+                            ELSE N'''Azure Managed Instance''' 
+                        END + N',
+                    finding = N''High Resource Utilization'',
+                    details =
+                        N''Instance memory: '' +
+                        CONVERT(nvarchar(20), CONVERT(decimal(18,2), ru.physical_memory_kb / 1024.0 / 1024.0)) +
+                        N'' GB total, '' +
+                        CONVERT(nvarchar(20), CONVERT(decimal(18,2), ru.available_physical_memory_kb / 1024.0 / 1024.0)) +
+                        N'' GB available. Memory state: '' + ru.system_memory_state_desc +
+                        N''. Average CPU utilization: '' +
+                        CONVERT(nvarchar(10), CONVERT(decimal(5,2), ru.average_cpu_percent)) + N''%. '' +
+                        CASE
+                            WHEN ru.system_memory_state_desc = N''Available physical memory is low''
+                                 OR (ru.physical_memory_kb - ru.available_physical_memory_kb) * 100.0 / ru.physical_memory_kb > 90
+                                 OR ru.average_cpu_percent > 90
+                            THEN N''CRITICAL: Instance is under extreme resource pressure!''
+                            
+                            WHEN ru.system_memory_state_desc = N''Physical memory usage is steady''
+                                 OR (ru.physical_memory_kb - ru.available_physical_memory_kb) * 100.0 / ru.physical_memory_kb > 80
+                                 OR ru.average_cpu_percent > 80
+                            THEN N''WARNING: Instance is experiencing significant resource pressure.''
+                            
+                            ELSE N''Instance is using high resources but may not yet be experiencing performance issues.''
+                        END,
+                    url = ' + 
+                        CASE 
+                            WHEN @azure_sql_db = 1 
+                            THEN N'''https://erikdarling.com/sp_PerfCheck#AzureDBResources''' 
+                            ELSE N'''https://erikdarling.com/sp_PerfCheck#AzureMIResources''' 
+                        END + N'
+                FROM resource_usage AS ru
+                WHERE 
+                    ru.system_memory_state_desc IN (N''Available physical memory is low'', N''Physical memory usage is steady'')
+                    OR (ru.physical_memory_kb - ru.available_physical_memory_kb) * 100.0 / ru.physical_memory_kb > 70 /* Memory usage > 70% */
+                    OR ru.average_cpu_percent > 70; /* CPU usage > 70% */';
+                    
+                IF @debug = 1
+                BEGIN
+                    PRINT @sql;
+                END;
+                
+                EXECUTE sys.sp_executesql @sql;
+            END;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_message = N'Error checking Azure MI specific metrics: ' + ERROR_MESSAGE();
+                RAISERROR(@error_message, 0, 1) WITH NOWAIT;
+            END;
+            
+            /* Log error in results */
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details
+            )
+            VALUES
+            (
+                9991,
+                70, /* Medium priority */
+                N'Errors',
+                N'Error Checking Azure MI Metrics',
+                N'Unable to check Azure MI specific metrics: ' + ERROR_MESSAGE()
+            );
+        END CATCH;
+    END;
+    
+    /*
+    AWS RDS for SQL Server specific checks
+    Only run these if we're on AWS RDS
+    */
+    IF @aws_rds = 1
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Running AWS RDS for SQL Server specific checks', 0, 1) WITH NOWAIT;
+        END;
+        
+        /* Use dynamic SQL to check for AWS RDS-specific issues */
+        BEGIN TRY
+            /* Check for storage usage relative to allocated storage */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            WITH db_size AS
+            (
+                SELECT
+                    total_size_mb = SUM(size) * 8.0 / 1024,
+                    data_size_mb = SUM(CASE WHEN type_desc = ''ROWS'' THEN size ELSE 0 END) * 8.0 / 1024,
+                    log_size_mb = SUM(CASE WHEN type_desc = ''LOG'' THEN size ELSE 0 END) * 8.0 / 1024
+                FROM sys.master_files
+            ),
+            instance_info AS
+            (
+                SELECT
+                    -- RDS does not expose allocated size directly via T-SQL
+                    -- We can estimate from max_size of master database
+                    estimated_allocated_storage_gb = 
+                        (SELECT MAX(max_size) * 8.0 / 1024 / 1024
+                         FROM sys.master_files 
+                         WHERE database_id = 1 AND type_desc = ''ROWS'')
+                FROM sys.databases
+                WHERE database_id = 1
+            )
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8201,
+                priority = 
+                    CASE
+                        WHEN (db.total_size_mb / 1024) > (i.estimated_allocated_storage_gb * 0.9) THEN 20 /* Critical priority */
+                        WHEN (db.total_size_mb / 1024) > (i.estimated_allocated_storage_gb * 0.8) THEN 30 /* High priority */
+                        ELSE 40 /* Medium-high priority */
+                    END,
+                category = N''AWS RDS SQL Server'',
+                finding = N''High Storage Utilization'',
+                details =
+                    N''Instance is using approximately '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), db.total_size_mb / 1024)) +
+                    N'' GB of an estimated '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), i.estimated_allocated_storage_gb)) +
+                    N'' GB allocated storage ('' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), (db.total_size_mb / 1024) / i.estimated_allocated_storage_gb * 100)) +
+                    N''%). '' +
+                    CASE
+                        WHEN (db.total_size_mb / 1024) > (i.estimated_allocated_storage_gb * 0.9)
+                        THEN N''CRITICAL: Instance is approaching storage limits. Immediate action required.''
+                        WHEN (db.total_size_mb / 1024) > (i.estimated_allocated_storage_gb * 0.8)
+                        THEN N''WARNING: Instance is approaching storage limits. Plan for storage increase or cleanup.''
+                        ELSE N''Instance has high storage utilization. Monitor growth and plan accordingly.''
+                    END,
+                url = N''https://erikdarling.com/sp_PerfCheck#AWSRDS''
+            FROM db_size AS db
+            CROSS JOIN instance_info AS i
+            WHERE (db.total_size_mb / 1024) > (i.estimated_allocated_storage_gb * 0.7);
+            ';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for missing native backup features */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                8202,
+                60, /* Informational priority */
+                N''AWS RDS SQL Server'',
+                N''Limited Native Backup Options'',
+                N''AWS RDS for SQL Server uses RDS-specific backup procedures instead of native SQL Server commands. '' +
+                N''To perform database backups, use the AWS RDS console, AWS CLI, or native BACKUP TO URL for S3. '' +
+                N''BACKUP DATABASE and BACKUP LOG commands to local disk are not supported.'',
+                N''https://erikdarling.com/sp_PerfCheck#AWSRDSBackup''
+            );';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for IOPS utilization - have to infer from wait stats since AWS doesn't expose directly */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            WITH io_waits AS
+            (
+                SELECT
+                    io_wait_ms = 
+                        SUM(CASE 
+                            WHEN wait_type IN (''IO_COMPLETION'', ''WRITE_COMPLETION'', ''ASYNC_IO_COMPLETION'') THEN wait_time_ms
+                            WHEN wait_type LIKE ''PAGEIOLATCH_%'' THEN wait_time_ms
+                            ELSE 0 
+                        END),
+                    log_wait_ms = 
+                        SUM(CASE 
+                            WHEN wait_type IN (''WRITELOG'') THEN wait_time_ms
+                            ELSE 0 
+                        END),
+                    total_wait_ms = SUM(wait_time_ms),
+                    sample_ms = DATEDIFF(ms, MIN(wait_time_ms), MAX(wait_time_ms))
+                FROM sys.dm_os_wait_stats
+            )
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8203,
+                priority = 
+                    CASE
+                        WHEN (iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 60 
+                             OR (iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 30
+                        THEN 30 /* High priority */
+                        WHEN (iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 40 
+                             OR (iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 20
+                        THEN 40 /* Medium-high priority */
+                        ELSE 50 /* Medium priority */
+                    END,
+                category = N''AWS RDS SQL Server'',
+                finding = N''High I/O Wait Times'',
+                details =
+                    N''Instance is experiencing significant I/O wait times: '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0))) +
+                    N''% of all waits are I/O related, with log waits accounting for '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0))) +
+                    N''%. '' +
+                    CASE
+                        WHEN (iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 60 
+                             OR (iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 30
+                        THEN N''This indicates that your RDS instance may be IOPS-constrained. Consider increasing provisioned IOPS or upgrading storage type.''
+                        ELSE N''Monitor these values to ensure they don''t increase further, which could indicate IOPS constraints on your RDS instance.''
+                    END,
+                url = N''https://erikdarling.com/sp_PerfCheck#AWSRDSIOPS''
+            FROM io_waits AS iw
+            WHERE (iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 40 
+               OR (iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 20;';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for multi-AZ configuration */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            /* RDS doesn''t expose multi-AZ status directly via T-SQL, but we can look for indicators */
+            WITH mirroring_indicators AS
+            (
+                SELECT 
+                    mirroring_enabled = 
+                        CASE 
+                            WHEN EXISTS (
+                                SELECT 1 
+                                FROM sys.database_mirroring 
+                                WHERE mirroring_guid IS NOT NULL
+                                AND mirroring_role = 1 /* Principal */
+                            )
+                            THEN 1
+                            ELSE 0
+                        END
+            )
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8204,
+                priority = 50, /* Medium priority */
+                category = N''AWS RDS SQL Server'',
+                finding = N''Possible Multi-AZ Configuration'',
+                details =
+                    CASE 
+                        WHEN mi.mirroring_enabled = 1
+                        THEN N''Instance appears to be using database mirroring for Multi-AZ deployment, which is good for availability but may impact performance.''
+                        ELSE N''Instance may not be using Multi-AZ deployment. This reduces availability but may offer better performance.''
+                    END +
+                    N'' On AWS RDS, Multi-AZ uses database mirroring to maintain a hot standby.'',
+                url = N''https://erikdarling.com/sp_PerfCheck#AWSRDSMultiAZ''
+            FROM mirroring_indicators AS mi;';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+            /* Check for potentially misconfigured instance class */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
+            WITH perf_metrics AS
+            (
+                SELECT
+                    -- CPU metrics
+                    cpu_count = osi.cpu_count,
+                    -- Memory metrics
+                    memory_gb = CAST(osi.physical_memory_kb / 1024.0 / 1024.0 AS decimal(18,2)),
+                    -- Database size metrics
+                    total_db_size_gb = (SELECT SUM(size) * 8.0 / 1024 / 1024 FROM sys.master_files),
+                    -- Performance metrics
+                    page_life_expectancy = (
+                        SELECT cntr_value
+                        FROM sys.dm_os_performance_counters
+                        WHERE counter_name = ''Page life expectancy''
+                        AND object_name LIKE ''%:Buffer Manager%''
+                    ),
+                    -- Buffer pool metrics
+                    buffer_pool_size_gb = (
+                        SELECT CAST(cntr_value / 1024.0 / 1024.0 / 128.0 AS decimal(18,2))
+                        FROM sys.dm_os_performance_counters
+                        WHERE counter_name = ''Database pages''
+                        AND object_name LIKE ''%:Buffer Manager%''
+                    ),
+                    -- Signal waits - indication of CPU pressure
+                    signal_wait_pct = (
+                        SELECT CAST(100.0 * SUM(signal_wait_time_ms) / SUM(wait_time_ms) AS decimal(18,2))
+                        FROM sys.dm_os_wait_stats
+                        WHERE wait_time_ms > 0
+                    ),
+                    -- Compile:Execute Ratio
+                    compile_ratio = (
+                        SELECT CAST((1.0 * c1.cntr_value / NULLIF(c2.cntr_value, 0)) * 100 AS decimal(18,2))
+                        FROM sys.dm_os_performance_counters c1
+                        CROSS JOIN sys.dm_os_performance_counters c2
+                        WHERE c1.counter_name = ''SQL Compilations/sec''
+                        AND c2.counter_name = ''Batch Requests/sec''
+                        AND c1.object_name LIKE ''%:SQL Statistics%''
+                        AND c2.object_name LIKE ''%:SQL Statistics%''
+                    )
+                FROM sys.dm_os_sys_info AS osi
+            )
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            SELECT
+                check_id = 8205,
+                priority = 
+                    CASE
+                        WHEN (pm.page_life_expectancy < 300 OR pm.signal_wait_pct > 25) THEN 30 /* High priority */
+                        WHEN (pm.buffer_pool_size_gb / NULLIF(pm.total_db_size_gb, 0) < 0.2
+                              OR pm.page_life_expectancy < 900
+                              OR pm.signal_wait_pct > 15) THEN 40 /* Medium-high priority */
+                        ELSE 50 /* Medium priority */
+                    END,
+                category = N''AWS RDS SQL Server'',
+                finding = N''Potential Instance Class Mismatch'',
+                details =
+                    N''RDS instance has '' +
+                    CONVERT(nvarchar(10), pm.cpu_count) + N'' vCPUs, '' +
+                    CONVERT(nvarchar(20), pm.memory_gb) + N'' GB memory, and '' +
+                    CONVERT(nvarchar(20), pm.buffer_pool_size_gb) + N'' GB buffer pool for '' +
+                    CONVERT(nvarchar(20), pm.total_db_size_gb) + N'' GB of databases. '' +
+                    CASE
+                        WHEN pm.buffer_pool_size_gb / NULLIF(pm.total_db_size_gb, 0) < 0.2
+                        THEN N''Buffer pool is less than 20% of total database size. ''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN pm.page_life_expectancy < 300
+                        THEN N''Page life expectancy is critically low at '' + CONVERT(nvarchar(20), pm.page_life_expectancy) + N'' seconds. ''
+                        WHEN pm.page_life_expectancy < 900
+                        THEN N''Page life expectancy is low at '' + CONVERT(nvarchar(20), pm.page_life_expectancy) + N'' seconds. ''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN pm.signal_wait_pct > 25
+                        THEN N''CPU pressure is high with signal waits at '' + CONVERT(nvarchar(20), pm.signal_wait_pct) + N''%. ''
+                        WHEN pm.signal_wait_pct > 15
+                        THEN N''CPU pressure is moderate with signal waits at '' + CONVERT(nvarchar(20), pm.signal_wait_pct) + N''%. ''
+                        ELSE N''''
+                    END +
+                    CASE
+                        WHEN pm.compile_ratio > 15
+                        THEN N''High compilation ratio of '' + CONVERT(nvarchar(20), pm.compile_ratio) + N''% indicates frequent recompilations. ''
+                        ELSE N''''
+                    END +
+                    N''Consider whether your instance class provides adequate resources for your workload.'',
+                url = N''https://erikdarling.com/sp_PerfCheck#AWSRDSInstance''
+            FROM perf_metrics AS pm
+            WHERE pm.buffer_pool_size_gb / NULLIF(pm.total_db_size_gb, 0) < 0.2
+               OR pm.page_life_expectancy < 900
+               OR pm.signal_wait_pct > 15
+               OR pm.compile_ratio > 15;';
+                
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+            
+            EXECUTE sys.sp_executesql @sql;
+            
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_message = N'Error checking AWS RDS specific metrics: ' + ERROR_MESSAGE();
+                RAISERROR(@error_message, 0, 1) WITH NOWAIT;
+            END;
+            
+            /* Log error in results */
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details
+            )
+            VALUES
+            (
+                9992,
+                70, /* Medium priority */
+                N'Errors',
+                N'Error Checking AWS RDS Metrics',
+                N'Unable to check AWS RDS specific metrics: ' + ERROR_MESSAGE()
+            );
+        END CATCH;
     END;
 
     /*
@@ -490,6 +1405,36 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         session integer NOT NULL
     );
 
+    /* Create temp table for wait stats analysis */
+    CREATE TABLE
+        #wait_stats
+    (
+        wait_type nvarchar(60) NOT NULL,
+        waiting_tasks_count bigint NOT NULL,
+        wait_time_ms bigint NOT NULL,
+        max_wait_time_ms bigint NOT NULL,
+        signal_wait_time_ms bigint NOT NULL,
+        wait_time_minutes AS CAST(wait_time_ms / 1000.0 / 60.0 AS decimal(18, 2)),
+        wait_time_hours AS CAST(wait_time_ms / 1000.0 / 60.0 / 60.0 AS decimal(18, 2)),
+        wait_pct decimal(18, 2) NOT NULL,
+        signal_wait_pct decimal(18, 2) NOT NULL,
+        resource_wait_ms AS wait_time_ms - signal_wait_time_ms,
+        avg_wait_ms AS CASE WHEN waiting_tasks_count = 0 THEN 0 ELSE wait_time_ms / waiting_tasks_count END,
+        category nvarchar(30) NOT NULL
+    );
+    
+    /* Create temp table for wait category summary */
+    CREATE TABLE
+        #wait_summary
+    (
+        category nvarchar(30) NOT NULL,
+        total_waits bigint NOT NULL,
+        total_wait_time_ms bigint NOT NULL,
+        wait_pct decimal(18, 2) NOT NULL,
+        avg_wait_ms decimal(18, 2) NOT NULL,
+        signal_wait_pct decimal(18, 2) NOT NULL
+    );
+    
     /* Create temp table for trace events */
     CREATE TABLE
         #trace_events
@@ -720,7 +1665,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(10), (SELECT cpu_count FROM sys.dm_os_sys_info)) +
                 N' logical processors. This reduces available processing power. ' +
                 N'Check affinity mask configuration, licensing, or VM CPU cores/sockets',
-            url = N'https://erikdarling.com/sp_perfcheck/#OfflineCPU'
+            url = N'https://erikdarling.com/sp_PerfCheck#OfflineCPU'
         FROM sys.dm_os_schedulers AS dos
         WHERE dos.is_online = 0
         HAVING
@@ -754,7 +1699,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     HAVING
         MAX(ders.forced_grant_count) > 0; /* Only if there are actually forced grants */
 
-    /* Check for memory-starved queries */
+    /* Check for memory grant timeouts */
     INSERT INTO
         #results
     (
@@ -766,20 +1711,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         url
     )
     SELECT
-        check_id = 4101,
+        check_id = 4103,
         priority = 30, /* High priority */
         category = N'Memory Pressure',
-        finding = N'Memory-Starved Queries Detected',
+        finding = N'Memory Grant Timeouts Detected',
         details =
             N'dm_exec_query_resource_semaphores has ' +
-            CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
-            N' grants timeouts ' +
+            CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
+            N' grants timeouts. ' +
             N'Queries are waiting for memory for a long time and giving up.',
         url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
     FROM sys.dm_exec_query_resource_semaphores AS ders
     WHERE ders.timeout_error_count > 0
     HAVING
-        MAX(ders.timeout_error_count) > 0; /* Only if there are actually forced grants */
+        MAX(ders.timeout_error_count) > 0; /* Only if there are actually timeout errors */
 
     /* Check for SQL Server memory dumps (on-prem only) */
     IF  @azure_sql_db = 0
@@ -1074,10 +2019,37 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND @aws_rds = 0
     BEGIN
         /* Capture trace flags */
-        INSERT INTO
-            #trace_flags
-        EXECUTE sys.sp_executesql
-            N'DBCC TRACESTATUS WITH NO_INFOMSGS';
+        BEGIN TRY
+            INSERT INTO
+                #trace_flags
+            EXECUTE sys.sp_executesql
+                N'DBCC TRACESTATUS WITH NO_INFOMSGS';
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_message = N'Error capturing trace flags: ' + ERROR_MESSAGE();
+                PRINT @error_message;
+            END;
+            
+            /* Log error in results */
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details
+            )
+            VALUES
+            (
+                9998,
+                90, /* Low priority informational */
+                N'Errors',
+                N'Error Capturing Trace Flags',
+                N'Unable to capture trace flags: ' + ERROR_MESSAGE()
+            );
+        END CATCH;
 
         /* Add trace flags to server info */
         IF EXISTS (SELECT 1/0 FROM #trace_flags AS tf WHERE tf.global = 1)
@@ -2282,24 +3254,51 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             PRINT @io_sql;
         END;
             
-        INSERT INTO
-            #io_stalls_by_db
-        (
-            database_name,
-            database_id,
-            total_io_stall_ms,
-            total_io_mb,
-            avg_io_stall_ms,
-            read_io_stall_ms,
-            read_io_mb,
-            avg_read_stall_ms,
-            write_io_stall_ms,
-            write_io_mb,
-            avg_write_stall_ms,
-            total_size_mb
-        )                
-        EXECUTE sys.sp_executesql 
-            @io_sql;
+        BEGIN TRY
+            INSERT INTO
+                #io_stalls_by_db
+            (
+                database_name,
+                database_id,
+                total_io_stall_ms,
+                total_io_mb,
+                avg_io_stall_ms,
+                read_io_stall_ms,
+                read_io_mb,
+                avg_read_stall_ms,
+                write_io_stall_ms,
+                write_io_mb,
+                avg_write_stall_ms,
+                total_size_mb
+            )                
+            EXECUTE sys.sp_executesql 
+                @io_sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_message = N'Error collecting IO stall stats: ' + ERROR_MESSAGE();
+                PRINT @error_message;
+            END;
+            
+            /* Log error in results */
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details
+            )
+            VALUES
+            (
+                9997,
+                70, /* Medium priority */
+                N'Errors',
+                N'Error Collecting IO Statistics',
+                N'Unable to collect IO stall statistics: ' + ERROR_MESSAGE()
+            );
+        END CATCH;
 
         /* Format a summary of the worst databases by I/O stalls */
         WITH 
@@ -2501,28 +3500,55 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
     
     /* Gather IO Stats */
-    INSERT INTO
-        #io_stats
-    (
-        database_name,
-        database_id,
-        file_name,
-        type_desc,
-        io_stall_read_ms,
-        num_of_reads,
-        avg_read_latency_ms,
-        io_stall_write_ms,
-        num_of_writes,
-        avg_write_latency_ms,
-        io_stall_ms,
-        total_io,
-        avg_io_latency_ms,
-        size_mb,
-        drive_location,
-        physical_name
-    )
-    EXECUTE sys.sp_executesql 
-        @file_io_sql;
+    BEGIN TRY
+        INSERT INTO
+            #io_stats
+        (
+            database_name,
+            database_id,
+            file_name,
+            type_desc,
+            io_stall_read_ms,
+            num_of_reads,
+            avg_read_latency_ms,
+            io_stall_write_ms,
+            num_of_writes,
+            avg_write_latency_ms,
+            io_stall_ms,
+            total_io,
+            avg_io_latency_ms,
+            size_mb,
+            drive_location,
+            physical_name
+        )
+        EXECUTE sys.sp_executesql 
+            @file_io_sql;
+    END TRY
+    BEGIN CATCH
+        IF @debug = 1
+        BEGIN
+            SET @error_message = N'Error collecting file IO stats: ' + ERROR_MESSAGE();
+            PRINT @error_message;
+        END;
+        
+        /* Log error in results */
+        INSERT INTO #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details
+        )
+        VALUES
+        (
+            9996,
+            70, /* Medium priority */
+            N'Errors',
+            N'Error Collecting File IO Statistics',
+            N'Unable to collect file IO statistics: ' + ERROR_MESSAGE()
+        );
+    END CATCH;
 
     /* Add results for slow reads */
     INSERT INTO
@@ -2877,19 +3903,46 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
         
         /* Get TempDB file information */
-        INSERT INTO
-            #tempdb_files
-        (
-            file_id,
-            file_name,
-            type_desc,
-            size_mb,
-            max_size_mb,
-            growth_mb,
-            is_percent_growth
-        )
-        EXECUTE sys.sp_executesql 
-            @tempdb_files_sql;
+        BEGIN TRY
+            INSERT INTO
+                #tempdb_files
+            (
+                file_id,
+                file_name,
+                type_desc,
+                size_mb,
+                max_size_mb,
+                growth_mb,
+                is_percent_growth
+            )
+            EXECUTE sys.sp_executesql 
+                @tempdb_files_sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_message = N'Error collecting TempDB file information: ' + ERROR_MESSAGE();
+                PRINT @error_message;
+            END;
+            
+            /* Log error in results */
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details
+            )
+            VALUES
+            (
+                9995,
+                70, /* Medium priority */
+                N'Errors',
+                N'Error Collecting TempDB File Information',
+                N'Unable to collect TempDB file information: ' + ERROR_MESSAGE()
+            );
+        END CATCH;
 
         /* Get file counts and size range */
         SELECT
@@ -3775,13 +4828,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             details =
                 N'Database has non-standard ANSI settings: ' +
                       CASE WHEN d.is_ansi_null_default_on = 1 THEN N'ANSI_NULL_DEFAULT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_nulls_on = 1 THEN N'ANSI_NULLS OFF, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_padding_on = 1 THEN N'ANSI_PADDING OFF, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_warnings_on = 1 THEN N'ANSI_WARNINGS OFF, ' ELSE N'' END +
-                      CASE WHEN d.is_arithabort_on = 1 THEN N'ARITHABORT OFF, ' ELSE N'' END +
-                      CASE WHEN d.is_concat_null_yields_null_on = 1 THEN N'CONCAT_NULL_YIELDS_NULL OFF, ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_nulls_on = 1 THEN N'ANSI_NULLS ON, ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_padding_on = 1 THEN N'ANSI_PADDING ON, ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_warnings_on = 1 THEN N'ANSI_WARNINGS ON, ' ELSE N'' END +
+                      CASE WHEN d.is_arithabort_on = 1 THEN N'ARITHABORT ON, ' ELSE N'' END +
+                      CASE WHEN d.is_concat_null_yields_null_on = 1 THEN N'CONCAT_NULL_YIELDS_NULL ON, ' ELSE N'' END +
                       CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_quoted_identifier_on = 1 THEN N'QUOTED_IDENTIFIER OFF, ' ELSE N'' END +
+                      CASE WHEN d.is_quoted_identifier_on = 1 THEN N'QUOTED_IDENTIFIER ON, ' ELSE N'' END +
                 N'which can cause unexpected application behavior and compatibility issues.',
             url = N'https://erikdarling.com/sp_PerfCheck#ANSISettings'
         FROM #databases AS d
@@ -4449,6 +5502,467 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (info_type, value)
     VALUES
         (N'Run Date', CONVERT(varchar(25), @start_time, 121));
+
+    /*
+    Enhanced Wait Statistics Analysis
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Analyzing wait statistics patterns', 0, 1) WITH NOWAIT;
+    END;
+    
+    /* Get server uptime in milliseconds for wait stats analysis */
+    SELECT
+        @uptime_ms = 
+            DATEDIFF(MILLISECOND, osi.sqlserver_start_time, GETDATE())
+    FROM sys.dm_os_sys_info AS osi;
+    
+    /* Convert to hours for human-readable output */
+    SET @wait_stats_uptime_hours = @uptime_ms / 1000.0 / 60.0 / 60.0;
+    
+    /* Populate wait stats table */
+    INSERT INTO #wait_stats
+    (
+        wait_type,
+        waiting_tasks_count,
+        wait_time_ms,
+        max_wait_time_ms,
+        signal_wait_time_ms,
+        wait_pct,
+        signal_wait_pct,
+        category
+    )
+    SELECT
+        wait_type = ws.wait_type,
+        waiting_tasks_count = ws.waiting_tasks_count,
+        wait_time_ms = ws.wait_time_ms,
+        max_wait_time_ms = ws.max_wait_time_ms,
+        signal_wait_time_ms = ws.signal_wait_time_ms,
+        wait_pct = 
+            CONVERT(decimal(18, 2), 
+                100.0 * ws.wait_time_ms / NULLIF(SUM(ws.wait_time_ms) OVER(), 0)),
+        signal_wait_pct = 
+            CONVERT(decimal(18, 2), 
+                100.0 * ws.signal_wait_time_ms / NULLIF(ws.wait_time_ms, 0)),
+        category = 
+            CASE
+                /* CPU waits */
+                WHEN ws.wait_type IN ('SOS_SCHEDULER_YIELD', 'THREADPOOL', 'CPU_USAGE_EXCEEDED') OR 
+                     ws.wait_type LIKE 'CX%' THEN 'CPU'
+                     
+                /* Lock waits */
+                WHEN ws.wait_type IN ('LCK_M_%', 'LOCK_MANAGER', 'DEADLOCK_ENUM_SEARCH',
+                     'ASYNC_NETWORK_IO', 'OLEDB', 'SQLSORT_SORTMUTEX') OR 
+                     ws.wait_type LIKE 'LCK[_]%' OR
+                     ws.wait_type LIKE 'HADR_SYNC_COMMIT' THEN 'Lock'
+                     
+                /* I/O waits */
+                WHEN ws.wait_type IN ('ASYNC_IO_COMPLETION', 'IO_COMPLETION',
+                     'WRITE_COMPLETION', 'IO_QUEUE_LIMIT', 'LOGMGR', 'CHECKPOINT_QUEUE',
+                     'CHKPT', 'WRITELOG') OR
+                     ws.wait_type LIKE 'PAGEIOLATCH_%' OR 
+                     ws.wait_type LIKE 'PAGIOLATCH_%' OR
+                     ws.wait_type LIKE 'IO_RETRY%' THEN 'I/O'
+                     
+                /* Memory waits */ 
+                WHEN ws.wait_type IN ('RESOURCE_SEMAPHORE', 'CMEMTHREAD', 'RESOURCE_SEMAPHORE_QUERY_COMPILE',
+                     'RESOURCE_QUEUE', 'DBMIRROR_DBM_MUTEX', 'DBMIRROR_EVENTS_QUEUE',
+                     'XACT_OWNING_TRANSACTION', 'XACT_STATE_MUTEX') OR
+                     ws.wait_type LIKE 'RESOURCE_SEMAPHORE%' OR
+                     ws.wait_type LIKE 'PAGELATCH%' OR 
+                     ws.wait_type LIKE 'ACCESS_METHODS%' OR
+                     ws.wait_type LIKE 'MEMORY_ALLOCATION%' THEN 'Memory'
+                     
+                /* Network waits */
+                WHEN ws.wait_type IN ('NETWORK_IO', 'EXTERNAL_SCRIPT_NETWORK_IOF') OR
+                     ws.wait_type LIKE 'DTC_%' OR
+                     ws.wait_type LIKE 'SNI_HTTP%' OR
+                     ws.wait_type LIKE 'NETWORK_%' THEN 'Network'
+                     
+                /* CLR waits */
+                WHEN ws.wait_type LIKE 'CLR_%' THEN 'CLR'
+                
+                /* SQLOS waits */
+                WHEN ws.wait_type LIKE 'SOSHOST_%' OR 
+                     ws.wait_type LIKE 'VDI_CLIENT_%' OR
+                     ws.wait_type LIKE 'BACKUP_%' OR 
+                     ws.wait_type LIKE 'BACKUPTHREAD%' OR
+                     ws.wait_type LIKE 'DISKIO_%' THEN 'SQLOS'
+                     
+                /* Idle waits - typically ignore these */
+                WHEN ws.wait_type IN ('BROKER_TASK_STOP', 'BROKER_EVENTHANDLER', 'BROKER_TRANSMITTER',
+                     'BROKER_TO_FLUSH', 'CHECKPOINT_QUEUE', 'CHECPOINT', 'CLOSE_ITERATOR',
+                     'DREAMLINER_PROFILER_FLUSH', 'FSAGENT', 'FT_IFTS_SCHEDULER_IDLE_WAIT',
+                     'FT_IFTSHC_MUTEX', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
+                     'IMPPROV_IOWAIT', 'INTERNAL_PERIODIC_MAINTENANCE', 'LAZYWRITER_SLEEP',
+                     'LOGMGR_QUEUE', 'ONDEMAND_TASK_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH',
+                     'RESOURCE_QUEUE', 'SERVER_IDLE_CHECK', 'SLEEP_BPOOL_FLUSH',
+                     'SLEEP_DBSTARTUP', 'SLEEP_DCOMSTARTUP', 'SLEEP_MSDBSTARTUP',
+                     'SLEEP_SYSTEMTASK', 'SLEEP_TASK', 'SLEEP_TEMPDBSTARTUP',
+                     'SNI_HTTP_ACCEPT', 'SQLTRACE_BUFFER_FLUSH', 'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
+                     'SQLTRACE_WAIT_ENTRIES', 'WAIT_FOR_RESULTS', 'WAITFOR',
+                     'WAITFOR_TASKSHUTDOWN', 'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', 'WAITFOR_CKPT_NEW_LOG',
+                     'XE_DISPATCHER_WAIT', 'XE_LIVE_TARGET_TVF', 'XE_TIMER_EVENT', 'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
+                     'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP') OR
+                     ws.wait_type LIKE 'WAIT_FOR%' OR
+                     ws.wait_type LIKE 'WAITFOR%' OR 
+                     ws.wait_type LIKE 'PREEMPTIVE%' OR
+                     ws.wait_type LIKE 'BROKER%' OR
+                     ws.wait_type LIKE 'SLEEP%' OR
+                     ws.wait_type LIKE 'IDLE%' THEN 'Idle'
+                     
+                ELSE 'Other'
+            END
+    FROM sys.dm_os_wait_stats AS ws
+    WHERE ws.wait_type NOT IN (
+        'RESOURCE_QUEUE', 'SQLTRACE_INCREMENTAL_FLUSH_SLEEP', 'LOGMGR_QUEUE', 
+        'CHECKPOINT_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH', 'XE_TIMER_EVENT',
+        'BROKER_TASK_STOP', 'CLR_AUTO_EVENT', 'CLR_MANUAL_EVENT', 'LAZYWRITER_SLEEP',
+        'SLEEP_TASK', 'SLEEP_SYSTEMTASK', 'SQLTRACE_BUFFER_FLUSH', 'WAITFOR_TASKSHUTDOWN',
+        'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP', 'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
+        'RBPEX_PAUSED_WAIT', 'XE_LIVE_TARGET_TVF', 'XE_DISPATCHER_WAIT'
+    )
+    ORDER BY 
+        ws.wait_time_ms DESC;
+    
+    /* Calculate category-based summary */
+    INSERT INTO #wait_summary
+    (
+        category,
+        total_waits,
+        total_wait_time_ms,
+        wait_pct,
+        avg_wait_ms,
+        signal_wait_pct
+    )
+    SELECT
+        category = ws.category,
+        total_waits = SUM(ws.waiting_tasks_count),
+        total_wait_time_ms = SUM(ws.wait_time_ms),
+        wait_pct = 
+            CONVERT(decimal(18, 2), 
+                100.0 * SUM(ws.wait_time_ms) / NULLIF((SELECT SUM(wait_time_ms) FROM #wait_stats), 0)),
+        avg_wait_ms = 
+            CONVERT(decimal(18, 2), 
+                SUM(ws.wait_time_ms) * 1.0 / NULLIF(SUM(ws.waiting_tasks_count), 0)),
+        signal_wait_pct = 
+            CONVERT(decimal(18, 2), 
+                100.0 * SUM(ws.signal_wait_time_ms) / NULLIF(SUM(ws.wait_time_ms), 0))
+    FROM #wait_stats AS ws
+    WHERE ws.category <> 'Idle' /* Exclude idle waits from summary */
+    GROUP BY 
+        ws.category
+    ORDER BY 
+        SUM(ws.wait_time_ms) DESC;
+    
+    /* Calculate overall signal wait percentage for CPU pressure check */
+    SELECT
+        @signal_wait_pct =
+            CONVERT(decimal(18, 2), 
+                100.0 * SUM(ws.signal_wait_time_ms) / NULLIF(SUM(ws.wait_time_ms), 0))
+    FROM #wait_stats AS ws
+    WHERE ws.category <> 'Idle';
+    
+    /* Calculate overall resource wait percentage */
+    SET @resource_wait_pct = 100.0 - @signal_wait_pct;
+    
+    /* Add wait_stats summary to server_info */
+    INSERT INTO #server_info
+    (
+        info_type,
+        value
+    )
+    SELECT
+        info_type = N'Wait Stats Last Reset',
+        value = 
+            CASE
+                WHEN @wait_stats_uptime_hours < 2 THEN N'DMV data may be unreliable - recently reset'
+                ELSE N'Uptime: ' + CONVERT(nvarchar(10), CONVERT(decimal(18, 2), @wait_stats_uptime_hours)) + N' hours'
+            END;
+    
+    /* Add wait patterns to results when significant */
+    
+    /* CPU Pressure Detection - High signal wait percentage */
+    IF @signal_wait_pct >= @cpu_pressure_threshold
+    BEGIN
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        VALUES
+        (
+            5001,
+            CASE
+                WHEN @signal_wait_pct >= 30 THEN 20 /* Critical */
+                WHEN @signal_wait_pct >= 25 THEN 30 /* High */
+                ELSE 40 /* Medium */
+            END,
+            N'Wait Statistics',
+            N'CPU Pressure Detected',
+            N'Signal wait percentage is ' + CONVERT(nvarchar(10), @signal_wait_pct) + 
+            N'% of all waits. Signal waits represent time spent waiting to get on the CPU after resources are available. ' +
+            N'High signal wait percentage indicates CPU pressure. ' +
+            CASE
+                WHEN @signal_wait_pct >= 30 THEN N'CRITICAL: Severe CPU pressure is affecting performance.'
+                WHEN @signal_wait_pct >= 25 THEN N'WARNING: Significant CPU pressure may be affecting performance.'
+                ELSE N'MONITOR: CPU pressure is higher than optimal but may not be severely impacting performance yet.'
+            END,
+            N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
+        );
+    END;
+    
+    /* Check for dominant wait categories */
+    INSERT INTO
+        #results
+    (
+        check_id,
+        priority,
+        category,
+        finding,
+        details,
+        url
+    )
+    SELECT
+        check_id = 
+            CASE 
+                WHEN ws.category = 'I/O' THEN 5002
+                WHEN ws.category = 'Lock' THEN 5003
+                WHEN ws.category = 'Memory' THEN 5004
+                WHEN ws.category = 'Network' THEN 5005
+                ELSE 5006
+            END,
+        priority = 
+            CASE
+                WHEN ws.wait_pct >= 60 THEN 30 /* Critical */
+                WHEN ws.wait_pct >= 40 THEN 40 /* High */
+                ELSE 50 /* Medium */
+            END,
+        category = N'Wait Statistics',
+        finding = ws.category + N' Bottleneck Detected',
+        details =
+            ws.category + N' related waits account for ' + 
+            CONVERT(nvarchar(10), ws.wait_pct) + N'% of all non-idle waits ' +
+            N'with an average duration of ' + CONVERT(nvarchar(10), ws.avg_wait_ms) + N' ms per wait. ' +
+            CASE ws.category
+                WHEN 'I/O' THEN 
+                    CASE 
+                        WHEN ws.wait_pct >= 60 THEN N'CRITICAL: Severe I/O bottleneck. Check storage subsystem performance and database file layout.'
+                        ELSE N'Optimize I/O configuration, database file layout and index strategy to reduce I/O pressure.'
+                    END
+                WHEN 'Lock' THEN 
+                    CASE 
+                        WHEN ws.wait_pct >= 60 THEN N'CRITICAL: Severe locking or blocking issues may be causing performance problems.'
+                        ELSE N'Review long-running transactions, isolation levels, and lock escalation settings.'
+                    END
+                WHEN 'Memory' THEN 
+                    CASE 
+                        WHEN ws.wait_pct >= 60 THEN N'CRITICAL: Memory pressure is severe. Check for memory-intensive queries and optimize memory configuration.'
+                        ELSE N'Review memory configuration, query memory grants, and plan cache efficiency.'
+                    END
+                WHEN 'Network' THEN 
+                    CASE 
+                        WHEN ws.wait_pct >= 60 THEN N'CRITICAL: Network bottleneck detected. Check for network configuration issues or app design problems.'
+                        ELSE N'Review network configuration, client connectivity patterns, and data transfer volumes.'
+                    END
+                ELSE 
+                    CASE 
+                        WHEN ws.wait_pct >= 60 THEN N'CRITICAL: Review wait types within this category for specific bottlenecks.'
+                        ELSE N'Monitor these waits for patterns to identify specific bottlenecks.'
+                    END
+            END,
+        url = N'https://erikdarling.com/sp_PerfCheck#WaitStats'
+    FROM #wait_summary AS ws
+    WHERE ws.wait_pct >= @io_pressure_threshold
+    AND ws.category <> 'Idle'
+    AND ws.category <> 'Other';
+    
+    /* Check for specific problematic wait types with high average duration */
+    INSERT INTO
+        #results
+    (
+        check_id,
+        priority,
+        category,
+        finding,
+        object_name,
+        details,
+        url
+    )
+    SELECT TOP 5 /* Focus on top 5 highest impact waits */
+        check_id = 5007,
+        priority = 
+            CASE
+                WHEN ws.avg_wait_ms >= 500 THEN 30 /* Critical */
+                WHEN ws.avg_wait_ms >= 100 THEN 40 /* High */
+                ELSE 50 /* Medium */
+            END,
+        category = N'Wait Statistics',
+        finding = N'High Duration Waits Detected',
+        object_name = ws.wait_type,
+        details =
+            N'Wait type ' + ws.wait_type + N' has an unusually high average wait time of ' +
+            CONVERT(nvarchar(10), ws.avg_wait_ms) + N' ms (' +
+            CONVERT(nvarchar(10), ws.wait_pct) + N'% of total wait time). ' +
+            CASE
+                WHEN ws.category = 'I/O' THEN N'This indicates potential I/O subsystem performance issues.'
+                WHEN ws.category = 'Lock' THEN N'This indicates potential locking or blocking issues.'
+                WHEN ws.category = 'Memory' THEN N'This indicates potential memory pressure or configuration issues.'
+                WHEN ws.category = 'CPU' THEN N'This indicates potential CPU pressure or parallelism issues.'
+                WHEN ws.category = 'Network' THEN N'This indicates potential network or client connectivity issues.'
+                ELSE N'Review this wait type for potential bottlenecks.'
+            END +
+            CASE
+                WHEN ws.avg_wait_ms >= 500 THEN N' CRITICAL: Extremely high wait durations severely impact performance.'
+                WHEN ws.avg_wait_ms >= 100 THEN N' WARNING: High wait durations impact performance.'
+                ELSE N' MONITOR: Moderate wait durations - monitor for changes.'
+            END,
+        url = N'https://erikdarling.com/sp_PerfCheck#WaitTypes'
+    FROM #wait_stats AS ws
+    WHERE ws.category <> 'Idle'
+    AND ws.avg_wait_ms >= @high_avg_wait_ms
+    AND ws.wait_pct >= 1.0 /* Only significant waits */
+    ORDER BY 
+        ws.avg_wait_ms * ws.wait_pct DESC; /* Order by impact (duration * percentage) */
+    
+    /* Check for abnormal wait relationships */
+    
+    /* I/O waits distribution - PAGEIOLATCH vs WRITELOG */
+    WITH io_waits AS 
+    (
+        SELECT
+            pageio_pct = 
+                100.0 * SUM(CASE WHEN wait_type LIKE 'PAGEIOLATCH_%' THEN wait_time_ms ELSE 0 END) / 
+                NULLIF(SUM(CASE WHEN category = 'I/O' THEN wait_time_ms ELSE 0 END), 0),
+            writelog_pct = 
+                100.0 * SUM(CASE WHEN wait_type = 'WRITELOG' THEN wait_time_ms ELSE 0 END) / 
+                NULLIF(SUM(CASE WHEN category = 'I/O' THEN wait_time_ms ELSE 0 END), 0)
+        FROM #wait_stats
+        WHERE category = 'I/O'
+    )
+    INSERT INTO
+        #results
+    (
+        check_id,
+        priority,
+        category,
+        finding,
+        details,
+        url
+    )
+    SELECT
+        check_id = 5008,
+        priority = 40, /* High */
+        category = N'Wait Statistics',
+        finding = N'Unbalanced I/O Wait Pattern',
+        details =
+            N'I/O wait patterns show ' +
+            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), iow.pageio_pct)) + N'% for data reads/writes and ' +
+            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), iow.writelog_pct)) + N'% for log writes. ' +
+            CASE
+                WHEN iow.writelog_pct > 40 THEN N'High log write waits indicate potential transaction log bottlenecks. Check log file configuration and heavy write workloads.'
+                WHEN iow.pageio_pct > 90 THEN N'Almost all I/O waits are for data files. Check data file configuration and read-heavy workloads.'
+                ELSE N'The I/O wait distribution indicates potential I/O subsystem imbalance or configuration issues.'
+            END,
+        url = N'https://erikdarling.com/sp_PerfCheck#IOWaits'
+    FROM io_waits AS iow
+    WHERE iow.writelog_pct > 40 OR iow.pageio_pct > 90;
+    
+    /* Parallelism waits pattern - CXPACKET vs CXCONSUMER vs SOS_SCHEDULER_YIELD */
+    WITH parallelism_waits AS
+    (
+        SELECT
+            cxpacket_pct = 
+                100.0 * SUM(CASE WHEN wait_type = 'CXPACKET' THEN wait_time_ms ELSE 0 END) / 
+                NULLIF(SUM(CASE WHEN category = 'CPU' THEN wait_time_ms ELSE 0 END), 0),
+            cxconsumer_pct = 
+                100.0 * SUM(CASE WHEN wait_type = 'CXCONSUMER' THEN wait_time_ms ELSE 0 END) / 
+                NULLIF(SUM(CASE WHEN category = 'CPU' THEN wait_time_ms ELSE 0 END), 0),
+            cxpacket_to_cxconsumer_ratio = 
+                NULLIF(SUM(CASE WHEN wait_type = 'CXPACKET' THEN wait_time_ms ELSE 0 END), 0) / 
+                NULLIF(SUM(CASE WHEN wait_type = 'CXCONSUMER' THEN wait_time_ms ELSE 0 END), 0),
+            scheduler_yield_pct = 
+                100.0 * SUM(CASE WHEN wait_type = 'SOS_SCHEDULER_YIELD' THEN wait_time_ms ELSE 0 END) / 
+                NULLIF(SUM(CASE WHEN category = 'CPU' THEN wait_time_ms ELSE 0 END), 0),
+            signal_pct = AVG(signal_wait_pct)
+        FROM #wait_stats
+        WHERE category = 'CPU'
+    )
+    INSERT INTO
+        #results
+    (
+        check_id,
+        priority,
+        category,
+        finding,
+        details,
+        url
+    )
+    SELECT
+        check_id = 5009,
+        priority = 40, /* High */
+        category = N'Wait Statistics',
+        finding = N'Parallelism Configuration Issues',
+        details =
+            N'Parallelism-related waits show: ' +
+            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), pw.cxpacket_pct)) + N'% CXPACKET, ' +
+            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), pw.cxconsumer_pct)) + N'% CXCONSUMER, and ' +
+            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), pw.scheduler_yield_pct)) + N'% SOS_SCHEDULER_YIELD. ' +
+            CASE
+                WHEN pw.cxconsumer_pct > 40 THEN 
+                    N'High CXCONSUMER waits indicate unbalanced parallelism where some threads finish work before others. ' +
+                    N'This suggests skewed data distribution or non-uniform CPU performance. '
+                WHEN pw.cxpacket_pct > 40 AND ISNULL(pw.cxpacket_to_cxconsumer_ratio, 999) > 5 THEN
+                    N'High CXPACKET waits with low CXCONSUMER waits indicate thread synchronization issues. ' +
+                    N'This is common on older SQL versions, but on newer versions may indicate inefficient parallelism. '
+                WHEN pw.scheduler_yield_pct > 25 THEN 
+                    N'High SOS_SCHEDULER_YIELD waits indicate CPU pressure or MAXDOP settings that do not match workload. '
+                ELSE N''
+            END +
+            CASE
+                WHEN (@product_version_major >= 13 OR (@product_version_major = 12 AND @product_version_minor >= 50)) 
+                     AND ISNULL(pw.cxpacket_to_cxconsumer_ratio, 999) > 5 AND pw.cxpacket_pct > 20
+                THEN N'Your SQL Server version should show more CXCONSUMER waits relative to CXPACKET. ' +
+                     N'The imbalance may indicate outdated trace flags (like 8649) or other parallelism issues. '
+                ELSE N''
+            END +
+            CASE
+                WHEN pw.cxpacket_pct > 40 AND @max_dop > 4 
+                THEN N'Consider reducing MAXDOP from ' + CONVERT(nvarchar(10), @max_dop) + 
+                     N' and/or increasing cost threshold for parallelism from ' + CONVERT(nvarchar(10), @cost_threshold) + N'. '
+                ELSE N''
+            END,
+        url = N'https://erikdarling.com/sp_PerfCheck#Parallelism'
+    FROM parallelism_waits AS pw
+    WHERE pw.cxpacket_pct > 30 OR pw.cxconsumer_pct > 30 OR pw.scheduler_yield_pct > 25 OR 
+         (ISNULL(pw.cxpacket_to_cxconsumer_ratio, 999) > 5 AND pw.cxpacket_pct > 20 AND 
+          (@product_version_major >= 13 OR (@product_version_major = 12 AND @product_version_minor >= 50)));
+    
+    /* Add wait stats analysis summary to server_info */
+    INSERT INTO
+        #server_info
+    (
+        info_type,
+        value
+    )
+    SELECT
+        info_type = N'Wait Stats Pattern',
+        value = 
+            N'Signal waits: ' + CONVERT(nvarchar(10), @signal_wait_pct) + 
+            N'%, Resource waits: ' + CONVERT(nvarchar(10), @resource_wait_pct) + N'% ' +
+            N'(Top waits: ' + 
+            (SELECT TOP 3 wait_type + ' (' + CONVERT(nvarchar(10), CONVERT(decimal(18, 1), wait_pct)) + '%), ' 
+             FROM #wait_stats 
+             WHERE category <> 'Idle'
+             ORDER BY wait_pct DESC
+             FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)') +
+            N')'
+    WHERE @signal_wait_pct IS NOT NULL;
 
     /*
     Return Server Info First
