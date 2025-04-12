@@ -674,62 +674,85 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE N'On-premises or IaaS SQL Server'
         END;
 
-    /* Uptime information - works on all platforms */
-    INSERT INTO
-        #server_info
-        (info_type, value)
-    SELECT
-        N'Uptime',
-        CONVERT
-        (
-            nvarchar(30),
-            DATEDIFF
-            (
-                DAY,
-                osi.sqlserver_start_time,
-                SYSDATETIME()
-            )
-        ) +
-        N' days, ' +
-        CONVERT
-        (
-            nvarchar(8),
+    /* Uptime information - works on all platforms if permissions allow */
+    IF @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #server_info
+            (info_type, value)
+        SELECT
+            N'Uptime',
             CONVERT
             (
-                time,
-                DATEADD
+                nvarchar(30),
+                DATEDIFF
                 (
-                    SECOND,
-                    DATEDIFF
+                    DAY,
+                    osi.sqlserver_start_time,
+                    SYSDATETIME()
+                )
+            ) +
+            N' days, ' +
+            CONVERT
+            (
+                nvarchar(8),
+                CONVERT
+                (
+                    time,
+                    DATEADD
                     (
                         SECOND,
-                        osi.sqlserver_start_time,
-                        SYSDATETIME()
-                    ) % 86400,
-                    '00:00:00'
-                )
-            ),
-            108
-        ) +
-        N' (hh:mm:ss)'
-    FROM sys.dm_os_sys_info AS osi;
+                        DATEDIFF
+                        (
+                            SECOND,
+                            osi.sqlserver_start_time,
+                            SYSDATETIME()
+                        ) % 86400,
+                        '00:00:00'
+                    )
+                ),
+                108
+            ) +
+            N' (hh:mm:ss)'
+        FROM sys.dm_os_sys_info AS osi;
+    END
+    ELSE
+    BEGIN
+        INSERT INTO
+            #server_info
+            (info_type, value)
+        VALUES
+            (N'Uptime', N'Information unavailable (requires VIEW SERVER STATE permission)');
+    END;
 
-    /* CPU information - works on all platforms */
-    INSERT INTO
-        #server_info
-        (info_type, value)
-    SELECT
-        N'CPU',
-        CONVERT(nvarchar(10), osi.cpu_count) +
-        N' logical processors, ' +
-        CONVERT(nvarchar(10), osi.hyperthread_ratio) +
-        N' physical cores, ' +
-        CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
-        N' NUMA node(s)'
-    FROM sys.dm_os_sys_info AS osi;
+    /* CPU information - works on all platforms if permissions allow */
+    IF @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #server_info
+            (info_type, value)
+        SELECT
+            N'CPU',
+            CONVERT(nvarchar(10), osi.cpu_count) +
+            N' logical processors, ' +
+            CONVERT(nvarchar(10), osi.hyperthread_ratio) +
+            N' physical cores, ' +
+            CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
+            N' NUMA node(s)'
+        FROM sys.dm_os_sys_info AS osi;
+    END
+    ELSE
+    BEGIN
+        INSERT INTO
+            #server_info
+            (info_type, value)
+        VALUES
+            (N'CPU', N'Information unavailable (requires VIEW SERVER STATE permission)');
+    END;
 
     /* Check for offline schedulers */
     IF @azure_sql_db = 0 /* Not applicable to Azure SQL DB */
+    AND @has_view_server_state = 1 /* Requires VIEW SERVER STATE permission */
     BEGIN
         INSERT INTO
             #results
@@ -759,63 +782,70 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             COUNT_BIG(*) > 0; /* Only if there are offline schedulers */
     END;
 
-    /* Check for forced grants */
-    INSERT INTO
-        #results
-    (
-        check_id,
-        priority,
-        category,
-        finding,
-        details,
-        url
-    )
-    SELECT
-        check_id = 4101,
-        priority = 30, /* High priority */
-        category = N'Memory Pressure',
-        finding = N'Memory-Starved Queries Detected',
-        details =
-            N'dm_exec_query_resource_semaphores has ' +
-            CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
-            N' forced memory grants. ' +
-            N'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
-        url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
-    FROM sys.dm_exec_query_resource_semaphores AS ders
-    WHERE ders.forced_grant_count > 0
-    HAVING
-        MAX(ders.forced_grant_count) > 0; /* Only if there are actually forced grants */
+    /* Check for forced grants - requires VIEW SERVER STATE permission */
+    IF @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT
+            check_id = 4101,
+            priority = 30, /* High priority */
+            category = N'Memory Pressure',
+            finding = N'Memory-Starved Queries Detected',
+            details =
+                N'dm_exec_query_resource_semaphores has ' +
+                CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
+                N' forced memory grants. ' +
+                N'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
+            url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+        FROM sys.dm_exec_query_resource_semaphores AS ders
+        WHERE ders.forced_grant_count > 0
+        HAVING
+            MAX(ders.forced_grant_count) > 0; /* Only if there are actually forced grants */
+    END;
 
-    /* Check for memory grant timeouts */
-    INSERT INTO
-        #results
-    (
-        check_id,
-        priority,
-        category,
-        finding,
-        details,
-        url
-    )
-    SELECT
-        check_id = 4103,
-        priority = 30, /* High priority */
-        category = N'Memory Pressure',
-        finding = N'Memory-Starved Queries Detected',
-        details =
-            N'dm_exec_query_resource_semaphores has ' +
-            CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
-            N' memory grant timeouts. ' +
-            N'Queries are waiting for memory for a long time and giving up.',
-        url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
-    FROM sys.dm_exec_query_resource_semaphores AS ders
-    WHERE ders.timeout_error_count > 0
-    HAVING
-        MAX(ders.timeout_error_count) > 0; /* Only if there are actually forced grants */
+    /* Check for memory grant timeouts - requires VIEW SERVER STATE permission */
+    IF @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT
+            check_id = 4103,
+            priority = 30, /* High priority */
+            category = N'Memory Pressure',
+            finding = N'Memory-Starved Queries Detected',
+            details =
+                N'dm_exec_query_resource_semaphores has ' +
+                CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
+                N' memory grant timeouts. ' +
+                N'Queries are waiting for memory for a long time and giving up.',
+            url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+        FROM sys.dm_exec_query_resource_semaphores AS ders
+        WHERE ders.timeout_error_count > 0
+        HAVING
+            MAX(ders.timeout_error_count) > 0; /* Only if there are actually forced grants */
+    END;
 
     /* Check for SQL Server memory dumps (on-prem only) */
     IF  @azure_sql_db = 0
     AND @azure_managed_instance = 0
+    AND @has_view_server_state = 1 /* Requires sysadmin permission */
     BEGIN
         /* First check if the DMV exists (SQL 2008+) */
         IF OBJECT_ID('sys.dm_server_memory_dumps') IS NOT NULL
