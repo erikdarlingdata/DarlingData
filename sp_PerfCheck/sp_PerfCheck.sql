@@ -498,40 +498,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         session integer NOT NULL
     );
 
-    /* Create temp table for wait stats analysis */
+    /* Create temp table for wait stats */
     CREATE TABLE
         #wait_stats
     (
+        id integer IDENTITY PRIMARY KEY CLUSTERED,
         wait_type nvarchar(60) NOT NULL,
-        waiting_tasks_count bigint NOT NULL,
+        description nvarchar(100) NOT NULL,
         wait_time_ms bigint NOT NULL,
-        max_wait_time_ms bigint NOT NULL,
+        wait_time_minutes AS (wait_time_ms / 1000.0 / 60.0),
+        wait_time_hours AS (wait_time_ms / 1000.0 / 60.0 / 60.0),
+        waiting_tasks_count bigint NOT NULL,
+        avg_wait_ms AS (wait_time_ms / NULLIF(waiting_tasks_count, 0)),
+        percentage decimal(5, 2) NOT NULL,
         signal_wait_time_ms bigint NOT NULL,
-        wait_time_minutes AS CAST(wait_time_ms / 1000.0 / 60.0 AS decimal(18, 2)),
-        wait_time_hours AS CAST(wait_time_ms / 1000.0 / 60.0 / 60.0 AS decimal(18, 2)),
-        wait_pct decimal(18, 2) NOT NULL,
-        signal_wait_pct decimal(18, 2) NOT NULL,
-        resource_wait_ms AS 
-            wait_time_ms - signal_wait_time_ms,
-        avg_wait_ms AS 
-            CASE 
-                WHEN waiting_tasks_count = 0 
-                THEN 0 
-                ELSE wait_time_ms / waiting_tasks_count 
-            END,
-        category nvarchar(30) NOT NULL
+        wait_time_percent_of_uptime decimal(5, 2) NULL,
+        category nvarchar(50) NOT NULL
     );
-    
-    /* Create temp table for wait category summary */
+
+    /* Add wait stats summary to server info - focus on uptime impact */
+    /* First get top wait categories in a temp table to format properly */
     CREATE TABLE
         #wait_summary
     (
-        category nvarchar(30) NOT NULL,
-        total_waits bigint NOT NULL,
-        total_wait_time_ms bigint NOT NULL,
-        wait_pct decimal(18, 2) NOT NULL,
-        avg_wait_ms decimal(18, 2) NOT NULL,
-        signal_wait_pct decimal(18, 2) NOT NULL
+        category nvarchar(60) NOT NULL,
+        pct_of_uptime decimal(10, 2) NOT NULL
     );
     
     /* Create temp table for trace events */
@@ -566,33 +557,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         event_class integer PRIMARY KEY CLUSTERED,
         event_name sysname NOT NULL,
         category_name sysname NOT NULL
-    );
-
-    /* Create temp table for wait stats */
-    CREATE TABLE
-        #wait_stats
-    (
-        id integer IDENTITY PRIMARY KEY CLUSTERED,
-        wait_type nvarchar(60) NOT NULL,
-        description nvarchar(100) NOT NULL,
-        wait_time_ms bigint NOT NULL,
-        wait_time_minutes AS (wait_time_ms / 1000.0 / 60.0),
-        wait_time_hours AS (wait_time_ms / 1000.0 / 60.0 / 60.0),
-        waiting_tasks_count bigint NOT NULL,
-        avg_wait_ms AS (wait_time_ms / NULLIF(waiting_tasks_count, 0)),
-        percentage decimal(5, 2) NOT NULL,
-        signal_wait_time_ms bigint NOT NULL,
-        wait_time_percent_of_uptime decimal(5, 2) NULL,
-        category nvarchar(50) NOT NULL
-    );
-
-    /* Add wait stats summary to server info - focus on uptime impact */
-    /* First get top wait categories in a temp table to format properly */
-    CREATE TABLE
-        #wait_summary
-    (
-        category nvarchar(60) NOT NULL,
-        pct_of_uptime decimal(10, 2) NOT NULL
     );
 
     /* Create temp table for database I/O stalls */
@@ -4732,17 +4696,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         category
     )
     SELECT
-        wait_type,
-        waiting_tasks_count,
-        wait_time_ms,
-        max_wait_time_ms,
-        signal_wait_time_ms,
-        wait_pct,
-        signal_wait_pct,
-        category
+        categorized_waits.wait_type,
+        categorized_waits.waiting_tasks_count,
+        categorized_waits.wait_time_ms,
+        categorized_waits.max_wait_time_ms,
+        categorized_waits.signal_wait_time_ms,
+        categorized_waits.wait_pct,
+        categorized_waits.signal_wait_pct,
+        categorized_waits.category
     FROM categorized_waits
     ORDER BY 
-        wait_time_ms DESC;
+        categorized_waits.wait_time_ms DESC;
     
     /* Calculate category-based summary */
     INSERT INTO #wait_summary
@@ -4949,118 +4913,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ORDER BY 
         ws.avg_wait_ms * ws.wait_pct DESC; /* Order by impact (duration * percentage) */
     
-    /* Check for abnormal wait relationships */
-    
-    /* I/O waits distribution - PAGEIOLATCH vs WRITELOG */
-    WITH io_waits AS 
-    (
-        SELECT
-            pageio_pct = 
-                100.0 * SUM(CASE WHEN wait_type LIKE 'PAGEIOLATCH_%' THEN wait_time_ms ELSE 0 END) / 
-                NULLIF(SUM(CASE WHEN category = 'I/O' THEN wait_time_ms ELSE 0 END), 0),
-            writelog_pct = 
-                100.0 * SUM(CASE WHEN wait_type = 'WRITELOG' THEN wait_time_ms ELSE 0 END) / 
-                NULLIF(SUM(CASE WHEN category = 'I/O' THEN wait_time_ms ELSE 0 END), 0)
-        FROM #wait_stats
-        WHERE category = 'I/O'
-    )
-    INSERT INTO
-        #results
-    (
-        check_id,
-        priority,
-        category,
-        finding,
-        details,
-        url
-    )
-    SELECT
-        check_id = 5008,
-        priority = 40, /* High */
-        category = N'Wait Statistics',
-        finding = N'Unbalanced I/O Wait Pattern',
-        details =
-            N'I/O wait patterns show ' +
-            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), iow.pageio_pct)) + N'% for data reads/writes and ' +
-            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), iow.writelog_pct)) + N'% for log writes. ' +
-            CASE
-                WHEN iow.writelog_pct > 40 THEN N'High log write waits indicate potential transaction log bottlenecks. Check log file configuration and heavy write workloads.'
-                WHEN iow.pageio_pct > 90 THEN N'Almost all I/O waits are for data files. Check data file configuration and read-heavy workloads.'
-                ELSE N'The I/O wait distribution indicates potential I/O subsystem imbalance or configuration issues.'
-            END,
-        url = N'https://erikdarling.com/sp_PerfCheck#IOWaits'
-    FROM io_waits AS iow
-    WHERE iow.writelog_pct > 40 OR iow.pageio_pct > 90;
-    
-    /* Parallelism waits pattern - CXPACKET vs CXCONSUMER vs SOS_SCHEDULER_YIELD */
-    WITH parallelism_waits AS
-    (
-        SELECT
-            cxpacket_pct = 
-                100.0 * SUM(CASE WHEN wait_type = 'CXPACKET' THEN wait_time_ms ELSE 0 END) / 
-                NULLIF(SUM(CASE WHEN category = 'CPU' THEN wait_time_ms ELSE 0 END), 0),
-            cxconsumer_pct = 
-                100.0 * SUM(CASE WHEN wait_type = 'CXCONSUMER' THEN wait_time_ms ELSE 0 END) / 
-                NULLIF(SUM(CASE WHEN category = 'CPU' THEN wait_time_ms ELSE 0 END), 0),
-            cxpacket_to_cxconsumer_ratio = 
-                NULLIF(SUM(CASE WHEN wait_type = 'CXPACKET' THEN wait_time_ms ELSE 0 END), 0) / 
-                NULLIF(SUM(CASE WHEN wait_type = 'CXCONSUMER' THEN wait_time_ms ELSE 0 END), 0),
-            scheduler_yield_pct = 
-                100.0 * SUM(CASE WHEN wait_type = 'SOS_SCHEDULER_YIELD' THEN wait_time_ms ELSE 0 END) / 
-                NULLIF(SUM(CASE WHEN category = 'CPU' THEN wait_time_ms ELSE 0 END), 0),
-            signal_pct = AVG(signal_wait_pct)
-        FROM #wait_stats
-        WHERE category = 'CPU'
-    )
-    INSERT INTO
-        #results
-    (
-        check_id,
-        priority,
-        category,
-        finding,
-        details,
-        url
-    )
-    SELECT
-        check_id = 5009,
-        priority = 40, /* High */
-        category = N'Wait Statistics',
-        finding = N'Parallelism Configuration Issues',
-        details =
-            N'Parallelism-related waits show: ' +
-            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), pw.cxpacket_pct)) + N'% CXPACKET, ' +
-            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), pw.cxconsumer_pct)) + N'% CXCONSUMER, and ' +
-            CONVERT(nvarchar(10), CONVERT(decimal(18, 2), pw.scheduler_yield_pct)) + N'% SOS_SCHEDULER_YIELD. ' +
-            CASE
-                WHEN pw.cxconsumer_pct > 40 THEN 
-                    N'High CXCONSUMER waits indicate unbalanced parallelism where some threads finish work before others. ' +
-                    N'This suggests skewed data distribution or non-uniform CPU performance. '
-                WHEN pw.cxpacket_pct > 40 AND ISNULL(pw.cxpacket_to_cxconsumer_ratio, 999) > 5 THEN
-                    N'High CXPACKET waits with low CXCONSUMER waits indicate thread synchronization issues. ' +
-                    N'This is common on older SQL versions, but on newer versions may indicate inefficient parallelism. '
-                WHEN pw.scheduler_yield_pct > 25 THEN 
-                    N'High SOS_SCHEDULER_YIELD waits indicate CPU pressure or MAXDOP settings that do not match workload. '
-                ELSE N''
-            END +
-            CASE
-                WHEN (@product_version_major >= 13 OR (@product_version_major = 12 AND @product_version_minor >= 50)) 
-                     AND ISNULL(pw.cxpacket_to_cxconsumer_ratio, 999) > 5 AND pw.cxpacket_pct > 20
-                THEN N'Your SQL Server version should show more CXCONSUMER waits relative to CXPACKET. ' +
-                     N'The imbalance may indicate outdated trace flags (like 8649) or other parallelism issues. '
-                ELSE N''
-            END +
-            CASE
-                WHEN pw.cxpacket_pct > 40 AND @max_dop > 4 
-                THEN N'Consider reducing MAXDOP from ' + CONVERT(nvarchar(10), @max_dop) + 
-                     N' and/or increasing cost threshold for parallelism from ' + CONVERT(nvarchar(10), @cost_threshold) + N'. '
-                ELSE N''
-            END,
-        url = N'https://erikdarling.com/sp_PerfCheck#Parallelism'
-    FROM parallelism_waits AS pw
-    WHERE pw.cxpacket_pct > 30 OR pw.cxconsumer_pct > 30 OR pw.scheduler_yield_pct > 25 OR 
-         (ISNULL(pw.cxpacket_to_cxconsumer_ratio, 999) > 5 AND pw.cxpacket_pct > 20 AND 
-          (@product_version_major >= 13 OR (@product_version_major = 12 AND @product_version_minor >= 50)));
     
     /* Add wait stats analysis summary to server_info */
     INSERT INTO
@@ -5075,169 +4927,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'Signal waits: ' + CONVERT(nvarchar(10), @signal_wait_pct) + 
             N'%, Resource waits: ' + CONVERT(nvarchar(10), @resource_wait_pct) + N'% ' +
             N'(Top waits: ' + 
-            (SELECT TOP 3 wait_type + ' (' + CONVERT(nvarchar(10), CONVERT(decimal(18, 1), wait_pct)) + '%), ' 
-             FROM #wait_stats 
-             WHERE category <> 'Idle'
-             ORDER BY wait_pct DESC
-             FOR XML PATH(''), TYPE).value('.', 'nvarchar(max)') +
+            (
+                SELECT TOP (3) 
+                    w.wait_type + 
+                    N' (' + 
+                    CONVERT(nvarchar(10), CONVERT(decimal(18, 1), wait_pct)) + 
+                    N'%), ' 
+                FROM #wait_stats as w
+                WHERE w.category <> 'Idle'
+                ORDER BY 
+                    w.wait_pct DESC
+                FOR 
+                    XML 
+                    PATH(''), 
+                    TYPE
+            ).value('.', 'nvarchar(max)') +
             N')'
     WHERE @signal_wait_pct IS NOT NULL;
 
-    /*
-    Azure SQL DB Resource Utilization Checks
-    Only run these if we're in Azure SQL DB
-    */
-    IF @azure_sql_db = 1
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Running Azure SQL DB specific checks', 0, 1) WITH NOWAIT;
-        END;
-
-        /* Use dynamic SQL to check for Azure SQL DB resource limits being hit */
-        BEGIN TRY
-            SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;            
-            /* 
-            Check for DTU/vCore resource limits being hit 
-            Uses sys.dm_db_resource_stats which keeps 1 hour of history at 15-second intervals
-            */
-            SELECT
-                check_id = 8001,
-                priority = 
-                    CASE
-                        WHEN MAX(avg_cpu_percent) > 95 THEN 20 /* Critical priority */
-                        WHEN MAX(avg_cpu_percent) > 80 THEN 30 /* High priority */
-                        ELSE 40 /* Medium priority */
-                    END,
-                category = N''Azure SQL DB'',
-                finding = N''Resource Limits Approached or Exceeded'',
-                details = 
-                    N''In the last hour, CPU utilization peaked at '' +
-                    CONVERT(nvarchar(10), MAX(avg_cpu_percent)) + N''%, '' +
-                    N''Data IO at '' +
-                    CONVERT(nvarchar(10), MAX(avg_data_io_percent)) + N''%, '' +
-                    N''Log Write at '' +
-                    CONVERT(nvarchar(10), MAX(avg_log_write_percent)) + N''%. '' +
-                    CASE
-                        WHEN MAX(avg_cpu_percent) > 95 OR MAX(avg_data_io_percent) > 95 OR MAX(avg_log_write_percent) > 95
-                        THEN N''Resources are being throttled. Consider upgrading service tier or optimizing workload.''
-                        WHEN MAX(avg_cpu_percent) > 80 OR MAX(avg_data_io_percent) > 80 OR MAX(avg_log_write_percent) > 80
-                        THEN N''Resources are approaching limits. Monitor closely and plan for potential upgrade.''
-                        ELSE N''Resource utilization is high but within acceptable limits.''
-                    END,
-                url = N''https://erikdarling.com/sp_PerfCheck#AzureResources''
-            FROM sys.dm_db_resource_stats
-            HAVING
-                MAX(avg_cpu_percent) > 70 OR
-                MAX(avg_data_io_percent) > 70 OR
-                MAX(avg_log_write_percent) > 70;';
-                
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-            END;
-            
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            EXECUTE sys.sp_executesql 
-                @sql;
-            
-            /* Check for throttling events (queries waiting on resources) */
-            SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
-            SELECT
-                check_id = 8002,
-                priority = 30, /* High priority */
-                category = N''Azure SQL DB'',
-                finding = N''Resource Throttling Detected'',
-                details =
-                    N''Found '' + CONVERT(nvarchar(10), COUNT_BIG(*)) + 
-                    N'' queries waiting on resource throttling: '' +
-                    STUFF
-                    (
-                      (
-                        SELECT TOP (3) 
-                            N'', '' + 
-                            wait_type
-                        FROM sys.dm_exec_requests AS r
-                        WHERE r.wait_type LIKE ''RESOURCE_%''
-                        AND   r.wait_time_ms > 1000
-                        GROUP BY 
-                            r.wait_type
-                        ORDER BY 
-                            COUNT_BIG(*) DESC
-                        FOR 
-                            XML 
-                            PATH(''''), 
-                            TYPE
-                       ).value(''.'', ''nvarchar(max)''), 
-                            1, 
-                            2, 
-                            ''''
-                    ) +
-                    N''. Resource governance is limiting performance.'',
-                url = N''https://erikdarling.com/sp_PerfCheck#AzureThrottling''
-            FROM sys.dm_exec_requests AS r
-            WHERE wait_type LIKE ''RESOURCE_%''
-            AND wait_time_ms > 1000
-            HAVING
-                COUNT_BIG(*) > 0;';
-                
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-            END;
-            
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            EXECUTE sys.sp_executesql 
-                @sql;
-        END TRY
-        BEGIN CATCH
-            IF @debug = 1
-            BEGIN
-                SET @error_message = N'Error checking Azure SQL DB specific metrics: ' + ERROR_MESSAGE();
-                RAISERROR(@error_message, 0, 1) WITH NOWAIT;
-            END;
-            
-            /* Log error in results */
-            INSERT INTO #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details
-            )
-            VALUES
-            (
-                9990,
-                70, /* Medium priority */
-                N'Errors',
-                N'Error Checking Azure SQL DB Metrics',
-                N'Unable to check Azure SQL DB specific metrics: ' + ERROR_MESSAGE()
-            );
-        END CATCH;
-    END;
-    
 
     /*
     Return Server Info First
