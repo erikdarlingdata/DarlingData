@@ -247,6 +247,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Other configuration variables */
         @priority_boost bit,
         @lightweight_pooling bit,
+        @affinity_mask bigint,
+        @affinity_io_mask bigint,
+        @affinity64_mask bigint,
+        @affinity64_io_mask bigint,
         /* TempDB configuration variables */
         @tempdb_data_file_count integer,
         @tempdb_log_file_count integer,
@@ -2960,6 +2964,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CROSS JOIN sys.configurations AS c2
         WHERE c1.name = N'priority boost'
         AND   c2.name = N'lightweight pooling';
+        
+        /* Collect affinity mask settings */
+        SELECT 
+            @affinity_mask = 
+                CONVERT(bigint, c1.value_in_use),
+            @affinity_io_mask = 
+                CONVERT(bigint, c2.value_in_use),
+            @affinity64_mask = 
+                CONVERT(bigint, c3.value_in_use),
+            @affinity64_io_mask = 
+                CONVERT(bigint, c4.value_in_use)
+        FROM sys.configurations AS c1
+        CROSS JOIN sys.configurations AS c2
+        CROSS JOIN sys.configurations AS c3
+        CROSS JOIN sys.configurations AS c4
+        WHERE c1.name = N'affinity mask'
+        AND   c2.name = N'affinity I/O mask'
+        AND   c3.name = N'affinity64 mask'
+        AND   c4.name = N'affinity64 I/O mask';
     END;
 
     /*
@@ -3495,6 +3518,110 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Lightweight pooling (fiber mode) is enabled.
                   This is rarely beneficial and can cause issues with OLEDB providers and other components.',
                 N'https://erikdarling.com/sp_PerfCheck/#LightweightPooling'
+            );
+        END;
+
+        /* Affinity Mask check */
+        IF @affinity_mask <> 0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                1008,
+                50, /* Medium priority */
+                N'Server Configuration',
+                N'Affinity Mask Configured',
+                N'Affinity mask has been manually configured to ' +
+                CONVERT(nvarchar(20), @affinity_mask) +
+                N'. This can limit SQL Server CPU usage and should only be used when necessary for specific CPU binding scenarios.',
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+            );
+        END;
+
+        /* Affinity I/O Mask check */
+        IF @affinity_io_mask <> 0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                1009,
+                50, /* Medium priority */
+                N'Server Configuration',
+                N'Affinity I/O Mask Configured',
+                N'Affinity I/O mask has been manually configured to ' +
+                CONVERT(nvarchar(20), @affinity_io_mask) +
+                N'. This binds I/O completion to specific CPUs and should only be used for specialized workloads.',
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+            );
+        END;
+
+        /* Affinity64 Mask check */
+        IF @affinity64_mask <> 0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                1010,
+                50, /* Medium priority */
+                N'Server Configuration',
+                N'Affinity64 Mask Configured',
+                N'Affinity64 mask has been manually configured to ' +
+                CONVERT(nvarchar(20), @affinity64_mask) +
+                N'. This can limit SQL Server CPU usage on high-CPU systems and should be carefully evaluated.',
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+            );
+        END;
+
+        /* Affinity64 I/O Mask check */
+        IF @affinity64_io_mask <> 0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                1011,
+                50, /* Medium priority */
+                N'Server Configuration',
+                N'Affinity64 I/O Mask Configured',
+                N'Affinity64 I/O mask has been manually configured to ' +
+                CONVERT(nvarchar(20), @affinity64_io_mask) +
+                N'. This binds I/O completion on high-CPU systems and should be carefully evaluated.',
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
             );
         END;
 
