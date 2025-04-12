@@ -5084,22 +5084,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Use dynamic SQL to check for Azure SQL DB resource limits being hit */
         BEGIN TRY
             SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;            
             /* 
             Check for DTU/vCore resource limits being hit 
             Uses sys.dm_db_resource_stats which keeps 1 hour of history at 15-second intervals
             */
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
             SELECT
                 check_id = 8001,
                 priority = 
@@ -5136,12 +5125,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 PRINT @sql;
             END;
             
-            EXECUTE sys.sp_executesql @sql;
-            
-            /* Check for throttling events (queries waiting on resources) */
-            SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
             INSERT INTO
                 #results
             (
@@ -5152,6 +5135,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 details,
                 url
             )
+            EXECUTE sys.sp_executesql 
+                @sql;
+            
+            /* Check for throttling events (queries waiting on resources) */
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+            
             SELECT
                 check_id = 8002,
                 priority = 30, /* High priority */
@@ -5160,14 +5150,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 details =
                     N''Found '' + CONVERT(nvarchar(10), COUNT_BIG(*)) + 
                     N'' queries waiting on resource throttling: '' +
-                    STUFF((
-                        SELECT TOP 3 N'', '' + wait_type
+                    STUFF
+                    (
+                      (
+                        SELECT TOP (3) 
+                            N'', '' + 
+                            wait_type
                         FROM sys.dm_exec_requests AS r
-                        WHERE wait_type LIKE ''RESOURCE_%''
-                        AND wait_time_ms > 1000
-                        GROUP BY wait_type
-                        ORDER BY COUNT(*) DESC
-                        FOR XML PATH(''''), TYPE).value(''.'', ''nvarchar(max)''), 1, 2, '''') +
+                        WHERE r.wait_type LIKE ''RESOURCE_%''
+                        AND   r.wait_time_ms > 1000
+                        GROUP BY 
+                            r.wait_type
+                        ORDER BY 
+                            COUNT_BIG(*) DESC
+                        FOR 
+                            XML 
+                            PATH(''''), 
+                            TYPE
+                       ).value(''.'', ''nvarchar(max)''), 
+                            1, 
+                            2, 
+                            ''''
+                    ) +
                     N''. Resource governance is limiting performance.'',
                 url = N''https://erikdarling.com/sp_PerfCheck#AzureThrottling''
             FROM sys.dm_exec_requests AS r
@@ -5181,12 +5185,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 PRINT @sql;
             END;
             
-            EXECUTE sys.sp_executesql @sql;
-            
-            /* Check for connection pooling issues */
-            SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
             INSERT INTO
                 #results
             (
@@ -5197,91 +5195,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 details,
                 url
             )
-            SELECT
-                check_id = 8003,
-                priority = 40, /* Medium priority */
-                category = N''Azure SQL DB'',
-                finding = N''Connection Pool Inefficiency'',
-                details =
-                    N''There are currently '' + 
-                    CONVERT(nvarchar(10), COUNT_BIG(*)) + 
-                    N'' active connections with '' +
-                    CONVERT(nvarchar(10), 
-                        (SELECT COUNT(*) FROM sys.dm_exec_connections 
-                         WHERE connection_id NOT IN (SELECT connection_id FROM sys.dm_exec_sessions WHERE is_user_process = 1))
-                    ) +
-                    N'' system connections and '' +
-                    CONVERT(nvarchar(10), 
-                        (SELECT COUNT(*) FROM sys.dm_exec_connections 
-                         WHERE connection_id IN (SELECT connection_id FROM sys.dm_exec_sessions WHERE is_user_process = 1))
-                    ) +
-                    N'' user connections. This may indicate connection pooling issues.'',
-                url = N''https://erikdarling.com/sp_PerfCheck#AzureConnections''
-            FROM sys.dm_exec_connections
-            HAVING
-                COUNT_BIG(*) > 100;';
-                
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-            END;
-            
-            EXECUTE sys.sp_executesql @sql;
-            
-            /* Check for storage space approaching limits */
-            SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            SELECT
-                check_id = 8004,
-                priority = 
-                    CASE
-                        WHEN (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.9)
-                        THEN 20 /* Critical priority */
-                        WHEN (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.8)
-                        THEN 30 /* High priority */
-                        ELSE 50 /* Medium priority */
-                    END,
-                category = N''Azure SQL DB'',
-                finding = N''Database Approaching Storage Limit'',
-                details =
-                    N''Database is using '' +
-                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), (SUM(size) * 8.0 / 1024 / 1024))) +
-                    N'' GB of '' +
-                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024))) +
-                    N'' GB allowed ('' +
-                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), (SUM(size) * 8.0 / 1024 / 1024) / 
-                        (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024) * 100)) +
-                    N''%). '' +
-                    CASE
-                        WHEN (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.9)
-                        THEN N''Critical: Database is nearly at storage limit. Immediate action required.''
-                        WHEN (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.8)
-                        THEN N''Warning: Database is approaching storage limit. Plan for cleanup or tier upgrade.''
-                        ELSE N''Monitor: Space usage is high but not critical.''
-                    END,
-                url = N''https://erikdarling.com/sp_PerfCheck#AzureStorage''
-            FROM sys.database_files
-            WHERE type_desc IN (''ROWS'', ''LOG'')
-            HAVING
-                (SUM(size) * 8.0 / 1024 / 1024) > (SELECT CAST(DATABASEPROPERTYEX(DB_NAME(), ''MaxSizeInBytes'') AS decimal(18,2)) / 1024 / 1024 / 1024 * 0.7);';
-                
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-            END;
-            
-            EXECUTE sys.sp_executesql @sql;
+            EXECUTE sys.sp_executesql 
+                @sql;
         END TRY
         BEGIN CATCH
             IF @debug = 1
@@ -5310,288 +5225,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END CATCH;
     END;
     
-    /*
-    AWS RDS for SQL Server specific checks
-    Only run these if we're on AWS RDS
-    */
-    IF @aws_rds = 1
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Running AWS RDS for SQL Server specific checks', 0, 1) WITH NOWAIT;
-        END;
-        
-        /* Use dynamic SQL to check for AWS RDS-specific issues */
-        BEGIN TRY
-                
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-            END;
-            
-            EXECUTE sys.sp_executesql @sql;
-            
-            /* Check for IOPS utilization - have to infer from wait stats since AWS doesn't expose directly */
-            SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
-            WITH io_waits AS
-            (
-                SELECT
-                    io_wait_ms = 
-                        SUM(CASE 
-                            WHEN wait_type IN (''IO_COMPLETION'', ''WRITE_COMPLETION'', ''ASYNC_IO_COMPLETION'') THEN wait_time_ms
-                            WHEN wait_type LIKE ''PAGEIOLATCH_%'' THEN wait_time_ms
-                            ELSE 0 
-                        END),
-                    log_wait_ms = 
-                        SUM(CASE 
-                            WHEN wait_type IN (''WRITELOG'') THEN wait_time_ms
-                            ELSE 0 
-                        END),
-                    total_wait_ms = SUM(wait_time_ms),
-                    sample_ms = DATEDIFF(ms, MIN(wait_time_ms), MAX(wait_time_ms))
-                FROM sys.dm_os_wait_stats
-            )
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            SELECT
-                check_id = 8203,
-                priority = 
-                    CASE
-                        WHEN (iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 60 
-                             OR (iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 30
-                        THEN 30 /* High priority */
-                        WHEN (iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 40 
-                             OR (iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 20
-                        THEN 40 /* Medium-high priority */
-                        ELSE 50 /* Medium priority */
-                    END,
-                category = N''AWS RDS SQL Server'',
-                finding = N''High I/O Wait Times'',
-                details =
-                    N''Instance is experiencing significant I/O wait times: '' +
-                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0))) +
-                    N''% of all waits are I/O related, with log waits accounting for '' +
-                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0))) +
-                    N''%. '' +
-                    CASE
-                        WHEN (iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 60 
-                             OR (iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 30
-                        THEN N''This indicates that your RDS instance may be IOPS-constrained. Consider increasing provisioned IOPS or upgrading storage type.''
-                        ELSE N''Monitor these values to ensure they don''t increase further, which could indicate IOPS constraints on your RDS instance.''
-                    END,
-                url = N''https://erikdarling.com/sp_PerfCheck#AWSRDSIOPS''
-            FROM io_waits AS iw
-            WHERE (iw.io_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 40 
-               OR (iw.log_wait_ms * 100.0 / NULLIF(iw.total_wait_ms, 0)) > 20;';
-                
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-            END;
-            
-            EXECUTE sys.sp_executesql @sql;
-            
-            /* Check for multi-AZ configuration */
-            SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
-            /* RDS doesn''t expose multi-AZ status directly via T-SQL, but we can look for indicators */
-            WITH mirroring_indicators AS
-            (
-                SELECT 
-                    mirroring_enabled = 
-                        CASE 
-                            WHEN EXISTS (
-                                SELECT 1 
-                                FROM sys.database_mirroring 
-                                WHERE mirroring_guid IS NOT NULL
-                                AND mirroring_role = 1 /* Principal */
-                            )
-                            THEN 1
-                            ELSE 0
-                        END
-            )
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            SELECT
-                check_id = 8204,
-                priority = 50, /* Medium priority */
-                category = N''AWS RDS SQL Server'',
-                finding = N''Possible Multi-AZ Configuration'',
-                details =
-                    CASE 
-                        WHEN mi.mirroring_enabled = 1
-                        THEN N''Instance appears to be using database mirroring for Multi-AZ deployment, which is good for availability but may impact performance.''
-                        ELSE N''Instance may not be using Multi-AZ deployment. This reduces availability but may offer better performance.''
-                    END +
-                    N'' On AWS RDS, Multi-AZ uses database mirroring to maintain a hot standby.'',
-                url = N''https://erikdarling.com/sp_PerfCheck#AWSRDSMultiAZ''
-            FROM mirroring_indicators AS mi;';
-                
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-            END;
-            
-            EXECUTE sys.sp_executesql @sql;
-            
-            /* Check for potentially misconfigured instance class */
-            SET @sql = N'
-            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-            
-            WITH perf_metrics AS
-            (
-                SELECT
-                    -- CPU metrics
-                    cpu_count = osi.cpu_count,
-                    -- Memory metrics
-                    memory_gb = CAST(osi.physical_memory_kb / 1024.0 / 1024.0 AS decimal(18,2)),
-                    -- Database size metrics
-                    total_db_size_gb = (SELECT SUM(size) * 8.0 / 1024 / 1024 FROM sys.master_files),
-                    -- Performance metrics
-                    page_life_expectancy = (
-                        SELECT cntr_value
-                        FROM sys.dm_os_performance_counters
-                        WHERE counter_name = ''Page life expectancy''
-                        AND object_name LIKE ''%:Buffer Manager%''
-                    ),
-                    -- Buffer pool metrics
-                    buffer_pool_size_gb = (
-                        SELECT CAST(cntr_value / 1024.0 / 1024.0 / 128.0 AS decimal(18,2))
-                        FROM sys.dm_os_performance_counters
-                        WHERE counter_name = ''Database pages''
-                        AND object_name LIKE ''%:Buffer Manager%''
-                    ),
-                    -- Signal waits - indication of CPU pressure
-                    signal_wait_pct = (
-                        SELECT CAST(100.0 * SUM(signal_wait_time_ms) / SUM(wait_time_ms) AS decimal(18,2))
-                        FROM sys.dm_os_wait_stats
-                        WHERE wait_time_ms > 0
-                    ),
-                    -- Compile:Execute Ratio
-                    compile_ratio = (
-                        SELECT CAST((1.0 * c1.cntr_value / NULLIF(c2.cntr_value, 0)) * 100 AS decimal(18,2))
-                        FROM sys.dm_os_performance_counters c1
-                        CROSS JOIN sys.dm_os_performance_counters c2
-                        WHERE c1.counter_name = ''SQL Compilations/sec''
-                        AND c2.counter_name = ''Batch Requests/sec''
-                        AND c1.object_name LIKE ''%:SQL Statistics%''
-                        AND c2.object_name LIKE ''%:SQL Statistics%''
-                    )
-                FROM sys.dm_os_sys_info AS osi
-            )
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            SELECT
-                check_id = 8205,
-                priority = 
-                    CASE
-                        WHEN (pm.page_life_expectancy < 300 OR pm.signal_wait_pct > 25) THEN 30 /* High priority */
-                        WHEN (pm.buffer_pool_size_gb / NULLIF(pm.total_db_size_gb, 0) < 0.2
-                              OR pm.page_life_expectancy < 900
-                              OR pm.signal_wait_pct > 15) THEN 40 /* Medium-high priority */
-                        ELSE 50 /* Medium priority */
-                    END,
-                category = N''AWS RDS SQL Server'',
-                finding = N''Potential Instance Class Mismatch'',
-                details =
-                    N''RDS instance has '' +
-                    CONVERT(nvarchar(10), pm.cpu_count) + N'' vCPUs, '' +
-                    CONVERT(nvarchar(20), pm.memory_gb) + N'' GB memory, and '' +
-                    CONVERT(nvarchar(20), pm.buffer_pool_size_gb) + N'' GB buffer pool for '' +
-                    CONVERT(nvarchar(20), pm.total_db_size_gb) + N'' GB of databases. '' +
-                    CASE
-                        WHEN pm.buffer_pool_size_gb / NULLIF(pm.total_db_size_gb, 0) < 0.2
-                        THEN N''Buffer pool is less than 20% of total database size. ''
-                        ELSE N''''
-                    END +
-                    CASE
-                        WHEN pm.page_life_expectancy < 300
-                        THEN N''Page life expectancy is critically low at '' + CONVERT(nvarchar(20), pm.page_life_expectancy) + N'' seconds. ''
-                        WHEN pm.page_life_expectancy < 900
-                        THEN N''Page life expectancy is low at '' + CONVERT(nvarchar(20), pm.page_life_expectancy) + N'' seconds. ''
-                        ELSE N''''
-                    END +
-                    CASE
-                        WHEN pm.signal_wait_pct > 25
-                        THEN N''CPU pressure is high with signal waits at '' + CONVERT(nvarchar(20), pm.signal_wait_pct) + N''%. ''
-                        WHEN pm.signal_wait_pct > 15
-                        THEN N''CPU pressure is moderate with signal waits at '' + CONVERT(nvarchar(20), pm.signal_wait_pct) + N''%. ''
-                        ELSE N''''
-                    END +
-                    CASE
-                        WHEN pm.compile_ratio > 15
-                        THEN N''High compilation ratio of '' + CONVERT(nvarchar(20), pm.compile_ratio) + N''% indicates frequent recompilations. ''
-                        ELSE N''''
-                    END +
-                    N''Consider whether your instance class provides adequate resources for your workload.'',
-                url = N''https://erikdarling.com/sp_PerfCheck#AWSRDSInstance''
-            FROM perf_metrics AS pm
-            WHERE pm.buffer_pool_size_gb / NULLIF(pm.total_db_size_gb, 0) < 0.2
-               OR pm.page_life_expectancy < 900
-               OR pm.signal_wait_pct > 15
-               OR pm.compile_ratio > 15;';
-                
-            IF @debug = 1
-            BEGIN
-                PRINT @sql;
-            END;
-            
-            EXECUTE sys.sp_executesql @sql;
-            
-        END TRY
-        BEGIN CATCH
-            IF @debug = 1
-            BEGIN
-                SET @error_message = N'Error checking AWS RDS specific metrics: ' + ERROR_MESSAGE();
-                RAISERROR(@error_message, 0, 1) WITH NOWAIT;
-            END;
-            
-            /* Log error in results */
-            INSERT INTO #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details
-            )
-            VALUES
-            (
-                9992,
-                70, /* Medium priority */
-                N'Errors',
-                N'Error Checking AWS RDS Metrics',
-                N'Unable to check AWS RDS specific metrics: ' + ERROR_MESSAGE()
-            );
-        END CATCH;
-    END;
 
     /*
     Return Server Info First
