@@ -3160,7 +3160,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Single TempDB Data File',
                 N'TempDB has only one data file. Multiple files can reduce allocation page contention. ' +
                 N'Recommendation: Use multiple files (equal to number of logical processors up to 8).',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3188,7 +3188,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' data files. This is an odd number and not equal to the ' +
                 CONVERT(nvarchar(10), @processors) + ' logical processors. ' +
                 N'Consider using an even number of files for better performance.',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3216,7 +3216,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' data files, which is more than the ' +
                 CONVERT(nvarchar(10), @processors) +
                 N' logical processors. ',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3246,7 +3246,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' GB, Largest: ' +
                 CONVERT(nvarchar(10), CONVERT(integer, @max_data_file_size)) +
                 N' GB. For best performance, TempDB data files should be the same size.',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3272,7 +3272,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Mixed TempDB Autogrowth Settings',
                 N'TempDB data files have inconsistent autogrowth settings - some use percentage growth and others use fixed size growth. ' +
                 N'This can lead to uneven file sizes over time. Use consistent settings for all files.',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3483,7 +3483,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Affinity I/O mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity_io_mask) +
                 N'. This binds I/O completion to specific CPUs and should only be used for specialized workloads.',
-                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityIOMask'
             );
         END;
 
@@ -3509,7 +3509,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Affinity64 mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity64_mask) +
                 N'. This can limit SQL Server CPU usage on high-CPU systems and should be carefully evaluated.',
-                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+                N'https://erikdarling.com/sp_PerfCheck/#Affinity64Mask'
             );
         END;
 
@@ -3535,7 +3535,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Affinity64 I/O mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity64_io_mask) +
                 N'. This binds I/O completion on high-CPU systems and should be carefully evaluated.',
-                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+                N'https://erikdarling.com/sp_PerfCheck/#Affinity64Mask'
             );
         END;
 
