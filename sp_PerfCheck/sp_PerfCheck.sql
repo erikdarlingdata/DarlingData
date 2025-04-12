@@ -167,16 +167,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     DECLARE
         @product_version sysname =
-            CONVERT(sysname, SERVERPROPERTY(N'ProductVersion')),
+            CONVERT
+            (
+                sysname, 
+                SERVERPROPERTY(N'ProductVersion')
+            ),
         @product_version_major decimal(10, 2) =
             SUBSTRING
             (
-                CONVERT(sysname, SERVERPROPERTY(N'ProductVersion')),
+                CONVERT
+                (
+                    sysname, 
+                    SERVERPROPERTY(N'ProductVersion')
+                ),
                 1,
                 CHARINDEX
                 (
                     '.',
-                    CONVERT(sysname, SERVERPROPERTY(N'ProductVersion'))
+                    CONVERT
+                    (
+                        sysname, 
+                        SERVERPROPERTY(N'ProductVersion')
+                    )
                 ) + 1
             ),
         @product_version_minor decimal(10, 2) =
@@ -185,7 +197,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT
                 (
                     varchar(32),
-                    CONVERT(sysname, SERVERPROPERTY(N'ProductVersion'))
+                    CONVERT
+                    (
+                        sysname, 
+                        SERVERPROPERTY(N'ProductVersion')
+                    )
                 ),
                 2
             ),
@@ -231,6 +247,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Other configuration variables */
         @priority_boost bit,
         @lightweight_pooling bit,
+        @affinity_mask bigint,
+        @affinity_io_mask bigint,
+        @affinity64_mask bigint,
+        @affinity64_io_mask bigint,
         /* TempDB configuration variables */
         @tempdb_data_file_count integer,
         @tempdb_log_file_count integer,
@@ -245,7 +265,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
-        @autogrow_summary nvarchar(max),
+        @autogrow_summary nvarchar(max) = N'',
         @has_tables bit = 0,
         /* Determine total waits, uptime, and significant waits */
         @total_waits bigint,
@@ -598,7 +618,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'Version',
             @version +
             N' (' +
-            CONVERT(varchar(10), @version_date, 101) +
+            CONVERT
+            (
+                varchar(10), 
+                @version_date, 
+                101
+            ) +
             N')'
         );
 
@@ -720,14 +745,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(10), (SELECT cpu_count FROM sys.dm_os_sys_info)) +
                 N' logical processors. This reduces available processing power. ' +
                 N'Check affinity mask configuration, licensing, or VM CPU cores/sockets',
-            url = N'https://erikdarling.com/sp_perfcheck/#OfflineCPU'
+            url = N'https://erikdarling.com/sp_PerfCheck/#OfflineCPU'
         FROM sys.dm_os_schedulers AS dos
         WHERE dos.is_online = 0
         HAVING
             COUNT_BIG(*) > 0; /* Only if there are offline schedulers */
     END;
 
-    /* Check for memory-starved queries */
+    /* Check for forced grants */
     INSERT INTO
         #results
     (
@@ -754,7 +779,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     HAVING
         MAX(ders.forced_grant_count) > 0; /* Only if there are actually forced grants */
 
-    /* Check for memory-starved queries */
+    /* Check for memory grant timeouts */
     INSERT INTO
         #results
     (
@@ -766,14 +791,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         url
     )
     SELECT
-        check_id = 4101,
+        check_id = 4103,
         priority = 30, /* High priority */
         category = N'Memory Pressure',
         finding = N'Memory-Starved Queries Detected',
         details =
             N'dm_exec_query_resource_semaphores has ' +
-            CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
-            N' grants timeouts ' +
+            CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
+            N' memory grant timeouts. ' +
             N'Queries are waiting for memory for a long time and giving up.',
         url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
     FROM sys.dm_exec_query_resource_semaphores AS ders
@@ -975,7 +1000,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND @has_view_server_state = 1
     BEGIN
         INSERT INTO
-            #server_info (info_type, value)
+            #server_info 
+            (info_type, value)
         SELECT
             N'Instant File Initialization',
             CASE
@@ -1020,7 +1046,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM sys.resource_governor_configuration AS rgc WHERE rgc.is_enabled = 1)
         BEGIN
             INSERT INTO
-                #server_info (info_type, value)
+                #server_info 
+                (info_type, value)
             SELECT
                 N'Resource Governor',
                 N'Enabled';
@@ -1061,7 +1088,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ELSE
         BEGIN
             INSERT INTO
-                #server_info (info_type, value)
+                #server_info 
+                (info_type, value)
             SELECT
                 N'Resource Governor',
                 N'Disabled';
@@ -1074,16 +1102,44 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND @aws_rds = 0
     BEGIN
         /* Capture trace flags */
-        INSERT INTO
-            #trace_flags
-        EXECUTE sys.sp_executesql
-            N'DBCC TRACESTATUS WITH NO_INFOMSGS';
+        BEGIN TRY
+            INSERT INTO
+                #trace_flags
+            EXECUTE sys.sp_executesql
+                N'DBCC TRACESTATUS WITH NO_INFOMSGS';
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_message = N'Error capturing trace flags: ' + ERROR_MESSAGE();
+                PRINT @error_message;
+            END;
+            
+            /* Log error in results */
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details
+            )
+            VALUES
+            (
+                9998,
+                90, /* Low priority informational */
+                N'Errors',
+                N'Error Capturing Trace Flags',
+                N'Unable to capture trace flags: ' + ERROR_MESSAGE()
+            );
+        END CATCH;
 
         /* Add trace flags to server info */
         IF EXISTS (SELECT 1/0 FROM #trace_flags AS tf WHERE tf.global = 1)
         BEGIN
             INSERT INTO
-                #server_info (info_type, value)
+                #server_info 
+                (info_type, value)
             SELECT
                 N'Global Trace Flags',
                 STUFF
@@ -1109,14 +1165,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Memory information - works on all platforms */
     INSERT INTO
-        #server_info (info_type, value)
+        #server_info 
+        (info_type, value)
     SELECT
         N'Memory',
         N'Total: ' +
-        CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)) +
+        CONVERT
+        (
+            nvarchar(20), 
+            CONVERT
+            (
+                decimal(10, 2), 
+                osi.physical_memory_kb / 1024.0 / 1024.0
+            )
+        ) +
         N' GB, ' +
         N'Target: ' +
-        CONVERT(nvarchar(20), CONVERT(decimal(10, 2), osi.committed_target_kb / 1024.0 / 1024.0)) +
+        CONVERT
+        (
+            nvarchar(20), 
+            CONVERT
+            (
+                decimal(10, 2), 
+                osi.committed_target_kb / 1024.0 / 1024.0
+            )
+        ) +
         N' GB' +
         N', ' +
         osi.sql_memory_model_desc +
@@ -1151,16 +1224,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             INSERT
                 #results
-                (
-                    check_id,
-                    priority,
-                    category,
-                    finding,
-                    database_name,
-                    object_name,
-                    details,
-                    url
-                )
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                object_name,
+                details,
+                url
+            )
             VALUES
             (
                 5001,
@@ -1181,7 +1254,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             /* Insert common event classes we're interested in */
             INSERT INTO
                 #event_class_map
-                (event_class, event_name, category_name)
+            (
+                event_class, 
+                event_name, 
+                category_name
+            )
             VALUES
                 (92,  N'Data File Auto Grow',   N'Database'),
                 (93,  N'Log File Auto Grow',    N'Database'),
@@ -1396,7 +1473,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(30), MAX(te.event_time), 120) +
                 N'. These commands can impact server performance or database integrity. ' +
                 N'Review why these commands are being executed, especially if on a production system.',
-                N'https://erikdarling.com/sp_perfcheck/#DisruptiveDBCC'
+                N'https://erikdarling.com/sp_PerfCheck/#DisruptiveDBCC'
             FROM #trace_events AS te
             CROSS APPLY
             (
@@ -1432,9 +1509,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 STUFF
                 (
                     (
-                        SELECT
+                        SELECT TOP (5)
                             N', ' +
-                            CONVERT(nvarchar(50), COUNT_BIG(*)) +
+                            CONVERT
+                            (
+                                nvarchar(50), 
+                                COUNT_BIG(*)
+                            ) +
                             N' slow ' +
                             CASE
                                 WHEN te.event_class = 92
@@ -1444,7 +1525,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             END +
                             N' autogrows' +
                             N' (avg ' +
-                            CONVERT(nvarchar(20), AVG(te.duration_ms) / 1000.0) +
+                            CONVERT
+                            (
+                                nvarchar(20), 
+                                AVG(te.duration_ms) / 1000.0
+                            ) +
                             N' sec)'
                         FROM #trace_events AS te
                         WHERE te.event_class IN (92, 93) /* Auto-grow events */
@@ -1465,7 +1550,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             IF @autogrow_summary IS NOT NULL
             BEGIN
                 INSERT INTO
-                    #server_info (info_type, value)
+                    #server_info 
+                    (info_type, value)
                 VALUES
                     (N'Slow Autogrow Events (7 days)', @autogrow_summary);
             END;
@@ -1480,14 +1566,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @uptime_ms =
                 CASE
                     WHEN DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()) >= 24
-                    THEN DATEDIFF(SECOND, osi.sqlserver_start_time, SYSDATETIME()) * 1000
+                    THEN DATEDIFF(SECOND, osi.sqlserver_start_time, SYSDATETIME()) * 1000.
                     ELSE DATEDIFF(MILLISECOND, osi.sqlserver_start_time, SYSDATETIME())
                 END
         FROM sys.dm_os_sys_info AS osi;
 
         /* Get total wait time */
         SELECT
-            @total_waits = SUM(osw.wait_time_ms)
+            @total_waits = 
+                SUM
+                (
+                    CONVERT
+                    (
+                        bigint, 
+                        osw.wait_time_ms
+                    )
+                )
         FROM sys.dm_os_wait_stats AS osw
         WHERE osw.wait_type NOT IN
         (
@@ -1642,7 +1736,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             waiting_tasks_count = dows.waiting_tasks_count,
             signal_wait_time_ms = dows.signal_wait_time_ms,
             percentage =
-                CONVERT(decimal(5,2), dows.wait_time_ms * 100.0 / @total_waits),
+                CONVERT
+                (
+                    decimal(5,2), 
+                    dows.wait_time_ms * 100.0 / @total_waits
+                ),
             category =
                 CASE
                     WHEN dows.wait_type IN (N'PAGEIOLATCH_SH', N'PAGEIOLATCH_EX', N'IO_COMPLETION', N'IO_RETRY')
@@ -1786,7 +1884,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #wait_summary
             (category, pct_of_uptime)
-        SELECT
+        SELECT TOP (5)
             ws.category,
             pct_of_uptime =
                 SUM(ws.wait_time_percent_of_uptime)
@@ -1886,16 +1984,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Get total and signal wait times */
         SELECT
             @signal_wait_time_ms =
-                SUM(osw.signal_wait_time_ms),
+                SUM(CONVERT(bigint, osw.signal_wait_time_ms)),
             @total_wait_time_ms =
-                SUM(osw.wait_time_ms),
+                SUM(CONVERT(bigint, osw.wait_time_ms)),
             @sos_scheduler_yield_ms =
                 SUM
                 (
                     CASE
                         WHEN osw.wait_type = N'SOS_SCHEDULER_YIELD'
-                        THEN osw.wait_time_ms
-                        ELSE 0
+                        THEN CONVERT(bigint, osw.wait_time_ms)
+                        ELSE CONVERT(bigint, 0)
                     END
                 )
         FROM sys.dm_os_wait_stats AS osw
@@ -1992,7 +2090,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 VALUES
                 (
                     N'SOS_SCHEDULER_YIELD',
-                    CONVERT(nvarchar(10), CONVERT(decimal(10, 2), @sos_scheduler_yield_pct_of_uptime)) +
+                    CONVERT
+                    (
+                        nvarchar(10), 
+                        CONVERT
+                        (
+                            decimal(10, 2), 
+                            @sos_scheduler_yield_pct_of_uptime
+                        )
+                    ) +
                     N'% of server uptime'
                 );
             END;
@@ -2079,13 +2185,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM(domc.pages_kb) / 1024.0 / 1024.0
                 )
         FROM sys.dm_os_memory_clerks AS domc
-        WHERE domc.type = N'MEMORYCLERK_SQLBUFFERPOOL'
-        AND   domc.memory_node_id < 64;
+        WHERE domc.type = N'MEMORYCLERK_SQLBUFFERPOOL';
 
         /* Get stolen memory */
         SELECT
             @stolen_memory_gb =
-                CONVERT(decimal(38, 2), dopc.cntr_value / 1024.0 / 1024.0)
+                CONVERT
+                (
+                    decimal(38, 2), 
+                    dopc.cntr_value / 1024.0 / 1024.0
+                )
         FROM sys.dm_os_performance_counters AS dopc
         WHERE dopc.counter_name LIKE N'Stolen Server%';
 
@@ -2102,7 +2211,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 N'Buffer Pool Size',
-                CONVERT(nvarchar(20), @buffer_pool_size_gb) +
+                CONVERT
+                (
+                    nvarchar(20), 
+                    @buffer_pool_size_gb
+                ) +
                 N' GB'
             );
 
@@ -2112,9 +2225,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 N'Stolen Memory',
-                CONVERT(nvarchar(20), @stolen_memory_gb) +
+                CONVERT
+                (
+                    nvarchar(20), 
+                    @stolen_memory_gb
+                ) +
                 N' GB (' +
-                CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) +
+                CONVERT
+                (
+                    nvarchar(10), 
+                    CONVERT
+                    (
+                        decimal(10, 1), 
+                        @stolen_memory_pct
+                    )
+                ) +
                 N'%)'
             );
 
@@ -2190,7 +2315,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 GROUP BY
                     domc.type
                 HAVING
-                    SUM(domc.pages_kb) / 1024.0 / 1024.0 > 1.0 /* Only show clerks using more than 1 GB */
+                    SUM(domc.pages_kb) / 1024.0 / 1024.0 >= 1.0 /* Only show clerks using more than 1 GB */
                 ORDER BY
                     SUM(domc.pages_kb) DESC;
             END;
@@ -2282,24 +2407,51 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             PRINT @io_sql;
         END;
 
-        INSERT INTO
-            #io_stalls_by_db
-        (
-            database_name,
-            database_id,
-            total_io_stall_ms,
-            total_io_mb,
-            avg_io_stall_ms,
-            read_io_stall_ms,
-            read_io_mb,
-            avg_read_stall_ms,
-            write_io_stall_ms,
-            write_io_mb,
-            avg_write_stall_ms,
-            total_size_mb
-        )
-        EXECUTE sys.sp_executesql
-            @io_sql;
+        BEGIN TRY
+            INSERT INTO
+                #io_stalls_by_db
+            (
+                database_name,
+                database_id,
+                total_io_stall_ms,
+                total_io_mb,
+                avg_io_stall_ms,
+                read_io_stall_ms,
+                read_io_mb,
+                avg_read_stall_ms,
+                write_io_stall_ms,
+                write_io_mb,
+                avg_write_stall_ms,
+                total_size_mb
+            )                
+            EXECUTE sys.sp_executesql 
+                @io_sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_message = N'Error collecting IO stall stats: ' + ERROR_MESSAGE();
+                PRINT @error_message;
+            END;
+            
+            /* Log error in results */
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details
+            )
+            VALUES
+            (
+                9997,
+                70, /* Medium priority */
+                N'Errors',
+                N'Error Collecting IO Statistics',
+                N'Unable to collect IO stall statistics: ' + ERROR_MESSAGE()
+            );
+        END CATCH;
 
         /* Format a summary of the worst databases by I/O stalls */
         WITH
@@ -2330,11 +2482,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             STUFF
             (
                 (
-                    SELECT
+                    SELECT TOP (5)
                         N', ' +
                         db.database_name +
                         N' (' +
-                        CONVERT(nvarchar(10), CONVERT(decimal(10, 2), db.avg_io_stall_ms)) +
+                        CONVERT
+                        (
+                            nvarchar(10), 
+                            CONVERT
+                            (
+                                decimal(10, 2), 
+                                db.avg_io_stall_ms
+                            )
+                        ) +
                         N' ms)'
                     FROM io_stall_summary AS db
                     ORDER BY
@@ -2501,28 +2661,55 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Gather IO Stats */
-    INSERT INTO
-        #io_stats
-    (
-        database_name,
-        database_id,
-        file_name,
-        type_desc,
-        io_stall_read_ms,
-        num_of_reads,
-        avg_read_latency_ms,
-        io_stall_write_ms,
-        num_of_writes,
-        avg_write_latency_ms,
-        io_stall_ms,
-        total_io,
-        avg_io_latency_ms,
-        size_mb,
-        drive_location,
-        physical_name
-    )
-    EXECUTE sys.sp_executesql
-        @file_io_sql;
+    BEGIN TRY
+        INSERT INTO
+            #io_stats
+        (
+            database_name,
+            database_id,
+            file_name,
+            type_desc,
+            io_stall_read_ms,
+            num_of_reads,
+            avg_read_latency_ms,
+            io_stall_write_ms,
+            num_of_writes,
+            avg_write_latency_ms,
+            io_stall_ms,
+            total_io,
+            avg_io_latency_ms,
+            size_mb,
+            drive_location,
+            physical_name
+        )
+        EXECUTE sys.sp_executesql 
+            @file_io_sql;
+    END TRY
+    BEGIN CATCH
+        IF @debug = 1
+        BEGIN
+            SET @error_message = N'Error collecting file IO stats: ' + ERROR_MESSAGE();
+            PRINT @error_message;
+        END;
+        
+        /* Log error in results */
+        INSERT INTO #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details
+        )
+        VALUES
+        (
+            9996,
+            70, /* Medium priority */
+            N'Errors',
+            N'Error Collecting File IO Statistics',
+            N'Unable to collect file IO statistics: ' + ERROR_MESSAGE()
+        );
+    END CATCH;
 
     /* Add results for slow reads */
     INSERT INTO
@@ -2664,9 +2851,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN @azure_sql_db = 1
                 THEN N'sys.database_files AS f
-                WHERE f.type_desc = N''ROWS'''
+            WHERE f.type_desc = N''ROWS'''
                 ELSE N'sys.master_files AS f
-                WHERE f.type_desc = N''ROWS'''
+            WHERE f.type_desc = N''ROWS'''
             END;
 
             IF @debug = 1
@@ -2685,7 +2872,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN CATCH
         /* If we can't access the files due to permissions */
         INSERT INTO
-            #server_info (info_type, value)
+            #server_info 
+            (info_type, value)
         VALUES
             (N'Database Size', N'Unable to determine (permission error)');
     END CATCH;
@@ -2697,8 +2885,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         /* Collect memory settings */
         SELECT
-            @min_server_memory = CONVERT(bigint, c1.value_in_use),
-            @max_server_memory = CONVERT(bigint, c2.value_in_use)
+            @min_server_memory = 
+                CONVERT(bigint, c1.value_in_use),
+            @max_server_memory = 
+                CONVERT(bigint, c2.value_in_use)
         FROM sys.configurations AS c1
         CROSS JOIN sys.configurations AS c2
         WHERE c1.name = N'min server memory (MB)'
@@ -2707,7 +2897,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Get physical memory for comparison */
         SELECT
             @physical_memory_gb =
-                CONVERT(decimal(10, 2), osi.physical_memory_kb / 1024.0 / 1024.0)
+                CONVERT
+                (
+                    decimal(10, 2), 
+                    osi.physical_memory_kb / 1024.0 / 1024.0
+                )
         FROM sys.dm_os_sys_info AS osi;
 
         /* Add min/max server memory info */
@@ -2715,18 +2909,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             #server_info
             (info_type, value)
         VALUES
-            (N'Min Server Memory', CONVERT(nvarchar(20), @min_server_memory) + N' MB');
+        (
+            N'Min Server Memory', 
+            CONVERT(nvarchar(20), @min_server_memory) + 
+            N' MB'
+        );
 
         INSERT INTO
             #server_info
             (info_type, value)
         VALUES
-            (N'Max Server Memory', CONVERT(nvarchar(20), @max_server_memory) + N' MB');
+        (
+            N'Max Server Memory', 
+            CONVERT(nvarchar(20), @max_server_memory) + 
+            N' MB'
+        );
 
         /* Collect MAXDOP and CTFP settings */
         SELECT
-            @max_dop = CONVERT(integer, c1.value_in_use),
-            @cost_threshold = CONVERT(integer, c2.value_in_use)
+            @max_dop = 
+                CONVERT(integer, c1.value_in_use),
+            @cost_threshold = 
+                CONVERT(integer, c2.value_in_use)
         FROM sys.configurations AS c1
         CROSS JOIN sys.configurations AS c2
         WHERE c1.name = N'max degree of parallelism'
@@ -2736,22 +2940,49 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             #server_info
             (info_type, value)
         VALUES
-            (N'MAXDOP', CONVERT(nvarchar(10), @max_dop));
+        (
+            N'MAXDOP', 
+            CONVERT(nvarchar(10), @max_dop)
+        );
 
         INSERT INTO
             #server_info
             (info_type, value)
         VALUES
-            (N'Cost Threshold for Parallelism', CONVERT(nvarchar(10), @cost_threshold));
+        (
+            N'Cost Threshold for Parallelism', 
+            CONVERT(nvarchar(10), @cost_threshold)
+        );
 
         /* Collect other significant configuration values */
         SELECT
-            @priority_boost = CONVERT(bit, c1.value_in_use),
-            @lightweight_pooling = CONVERT(bit, c2.value_in_use)
+            @priority_boost = 
+                CONVERT(bit, c1.value_in_use),
+            @lightweight_pooling = 
+                CONVERT(bit, c2.value_in_use)
         FROM sys.configurations AS c1
         CROSS JOIN sys.configurations AS c2
         WHERE c1.name = N'priority boost'
         AND   c2.name = N'lightweight pooling';
+        
+        /* Collect affinity mask settings */
+        SELECT 
+            @affinity_mask = 
+                CONVERT(bigint, c1.value_in_use),
+            @affinity_io_mask = 
+                CONVERT(bigint, c2.value_in_use),
+            @affinity64_mask = 
+                CONVERT(bigint, c3.value_in_use),
+            @affinity64_io_mask = 
+                CONVERT(bigint, c4.value_in_use)
+        FROM sys.configurations AS c1
+        CROSS JOIN sys.configurations AS c2
+        CROSS JOIN sys.configurations AS c3
+        CROSS JOIN sys.configurations AS c4
+        WHERE c1.name = N'affinity mask'
+        AND   c2.name = N'affinity I/O mask'
+        AND   c3.name = N'affinity64 mask'
+        AND   c4.name = N'affinity64 I/O mask';
     END;
 
     /*
@@ -2877,34 +3108,106 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /* Get TempDB file information */
-        INSERT INTO
-            #tempdb_files
-        (
-            file_id,
-            file_name,
-            type_desc,
-            size_mb,
-            max_size_mb,
-            growth_mb,
-            is_percent_growth
-        )
-        EXECUTE sys.sp_executesql
-            @tempdb_files_sql;
+        BEGIN TRY
+            INSERT INTO
+                #tempdb_files
+            (
+                file_id,
+                file_name,
+                type_desc,
+                size_mb,
+                max_size_mb,
+                growth_mb,
+                is_percent_growth
+            )
+            EXECUTE sys.sp_executesql 
+                @tempdb_files_sql;
+        END TRY
+        BEGIN CATCH
+            IF @debug = 1
+            BEGIN
+                SET @error_message = N'Error collecting TempDB file information: ' + ERROR_MESSAGE();
+                PRINT @error_message;
+            END;
+            
+            /* Log error in results */
+            INSERT INTO #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details
+            )
+            VALUES
+            (
+                9995,
+                70, /* Medium priority */
+                N'Errors',
+                N'Error Collecting TempDB File Information',
+                N'Unable to collect TempDB file information: ' + 
+                ERROR_MESSAGE()
+            );
+        END CATCH;
 
         /* Get file counts and size range */
         SELECT
             @tempdb_data_file_count =
-                SUM(CASE WHEN tf.type_desc = N'ROWS' THEN 1 ELSE 0 END),
+                SUM
+                (
+                    CASE 
+                        WHEN tf.type_desc = N'ROWS' 
+                        THEN 1 
+                        ELSE 0 
+                    END
+                ),
             @tempdb_log_file_count =
-                SUM(CASE WHEN tf.type_desc = N'LOG' THEN 1 ELSE 0 END),
+                SUM
+                (
+                    CASE 
+                        WHEN tf.type_desc = N'LOG' 
+                        THEN 1 
+                        ELSE 0 
+                    END
+                ),
             @min_data_file_size =
-                MIN(CASE WHEN tf.type_desc = N'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
+                MIN
+                (
+                    CASE 
+                        WHEN tf.type_desc = N'ROWS' 
+                        THEN tf.size_mb / 1024 
+                        ELSE NULL 
+                    END
+                ),
             @max_data_file_size =
-                MAX(CASE WHEN tf.type_desc = N'ROWS' THEN tf.size_mb / 1024 ELSE NULL END),
+                MAX
+                (
+                    CASE 
+                        WHEN tf.type_desc = N'ROWS' 
+                        THEN tf.size_mb / 1024 
+                        ELSE NULL 
+                    END
+                ),
             @has_percent_growth =
-                MAX(CASE WHEN tf.type_desc = N'ROWS' AND tf.is_percent_growth = 1 THEN 1 ELSE 0 END),
+                MAX
+                (
+                    CASE 
+                        WHEN tf.type_desc = N'ROWS' 
+                        AND  tf.is_percent_growth = 1 
+                        THEN 1 
+                        ELSE 0 
+                    END
+                ),
             @has_fixed_growth =
-                MAX(CASE WHEN tf.type_desc = N'ROWS' AND tf.is_percent_growth = 0 THEN 1 ELSE 0 END)
+                MAX
+                (
+                    CASE 
+                        WHEN tf.type_desc = N'ROWS' 
+                        AND  tf.is_percent_growth = 0 
+                        THEN 1 
+                        ELSE 0 
+                    END
+                )
         FROM #tempdb_files AS tf;
 
         /* Calculate size difference percentage */
@@ -2912,7 +3215,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND @min_data_file_size > 0
         BEGIN
             SET @size_difference_pct =
-                    ((@max_data_file_size - @min_data_file_size) / @min_data_file_size) * 100;
+                    (
+                      (@max_data_file_size - @min_data_file_size) / 
+                       @min_data_file_size
+                    ) * 100;
         END;
         ELSE
         BEGIN
@@ -3080,7 +3386,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' MB) is >= 90% of max server memory (' +
                 CONVERT(nvarchar(20), @max_server_memory) +
                 N' MB). This prevents SQL Server from dynamically adjusting memory.',
-                N'https://erikdarling.com/sp_perfcheck/#MinMaxMemory'
+                N'https://erikdarling.com/sp_PerfCheck/#MinMaxMemory'
             );
         END;
 
@@ -3108,7 +3414,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' MB) is >= 95% of physical memory (' +
                 CONVERT(nvarchar(20), CONVERT(bigint, @physical_memory_gb * 1024)) +
                 N' MB). This may not leave enough memory for the OS and other processes.',
-                N'https://erikdarling.com/sp_perfcheck/#MinMaxMemory'
+                N'https://erikdarling.com/sp_PerfCheck/#MinMaxMemory'
             );
         END;
 
@@ -3135,7 +3441,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Max degree of parallelism is set to 0 (default) on a server with ' +
                 CONVERT(nvarchar(10), @processors) +
                 N' logical processors. This can lead to excessive parallelism.',
-                N'https://erikdarling.com/sp_perfcheck/#MAXDOP'
+                N'https://erikdarling.com/sp_PerfCheck/#MAXDOP'
             );
         END;
 
@@ -3161,7 +3467,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Cost threshold for parallelism is set to ' +
                 CONVERT(nvarchar(10), @cost_threshold) +
                 N'. Low values can cause excessive parallelism for small queries.',
-                N'https://erikdarling.com/sp_perfcheck/#CostThreshold'
+                N'https://erikdarling.com/sp_PerfCheck/#CostThreshold'
             );
         END;
 
@@ -3186,7 +3492,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Priority Boost Enabled',
                 N'Priority boost is enabled.
                   This can cause issues with Windows scheduling priorities and is not recommended.',
-                N'https://erikdarling.com/sp_perfcheck/#PriorityBoost'
+                N'https://erikdarling.com/sp_PerfCheck/#PriorityBoost'
             );
         END;
 
@@ -3211,7 +3517,111 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Lightweight Pooling Enabled',
                 N'Lightweight pooling (fiber mode) is enabled.
                   This is rarely beneficial and can cause issues with OLEDB providers and other components.',
-                N'https://erikdarling.com/sp_perfcheck/#LightweightPooling'
+                N'https://erikdarling.com/sp_PerfCheck/#LightweightPooling'
+            );
+        END;
+
+        /* Affinity Mask check */
+        IF @affinity_mask <> 0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                1008,
+                50, /* Medium priority */
+                N'Server Configuration',
+                N'Affinity Mask Configured',
+                N'Affinity mask has been manually configured to ' +
+                CONVERT(nvarchar(20), @affinity_mask) +
+                N'. This can limit SQL Server CPU usage and should only be used when necessary for specific CPU binding scenarios.',
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+            );
+        END;
+
+        /* Affinity I/O Mask check */
+        IF @affinity_io_mask <> 0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                1009,
+                50, /* Medium priority */
+                N'Server Configuration',
+                N'Affinity I/O Mask Configured',
+                N'Affinity I/O mask has been manually configured to ' +
+                CONVERT(nvarchar(20), @affinity_io_mask) +
+                N'. This binds I/O completion to specific CPUs and should only be used for specialized workloads.',
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+            );
+        END;
+
+        /* Affinity64 Mask check */
+        IF @affinity64_mask <> 0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                1010,
+                50, /* Medium priority */
+                N'Server Configuration',
+                N'Affinity64 Mask Configured',
+                N'Affinity64 mask has been manually configured to ' +
+                CONVERT(nvarchar(20), @affinity64_mask) +
+                N'. This can limit SQL Server CPU usage on high-CPU systems and should be carefully evaluated.',
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+            );
+        END;
+
+        /* Affinity64 I/O Mask check */
+        IF @affinity64_io_mask <> 0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                1011,
+                50, /* Medium priority */
+                N'Server Configuration',
+                N'Affinity64 I/O Mask Configured',
+                N'Affinity64 I/O mask has been manually configured to ' +
+                CONVERT(nvarchar(20), @affinity64_io_mask) +
+                N'. This binds I/O completion on high-CPU systems and should be carefully evaluated.',
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
             );
         END;
 
@@ -3541,7 +3951,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SELECT
                     @has_tables =
                         CASE
-                            WHEN EXISTS (SELECT 1/0 FROM ' + QUOTENAME(@current_database_name) + '.sys.tables AS t)
+                            WHEN EXISTS 
+                            (
+                                SELECT 
+                                    1/0 
+                                FROM ' + 
+                                QUOTENAME(@current_database_name) + 
+                                N'.sys.tables AS t
+                            )
                             THEN 1
                             ELSE 0
                         END;';
@@ -3741,8 +4158,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND  d.is_auto_update_stats_on = 0
                     THEN N'Both auto create and auto update statistics are disabled. This can lead to poor query performance due to outdated or missing statistics.'
                     WHEN d.is_auto_create_stats_on = 0
+                    AND  d.is_auto_update_stats_on = 1
                     THEN N'Auto create statistics is disabled. This can lead to suboptimal query plans for columns without statistics.'
                     WHEN d.is_auto_update_stats_on = 0
+                    AND  d.is_auto_create_stats_on = 1
                     THEN N'Auto update statistics is disabled. This can lead to poor query performance due to outdated statistics.'
                 END,
             url = N'https://erikdarling.com/sp_PerfCheck#Statistics'
@@ -3775,13 +4194,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             details =
                 N'Database has non-standard ANSI settings: ' +
                       CASE WHEN d.is_ansi_null_default_on = 1 THEN N'ANSI_NULL_DEFAULT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_nulls_on = 1 THEN N'ANSI_NULLS OFF, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_padding_on = 1 THEN N'ANSI_PADDING OFF, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_warnings_on = 1 THEN N'ANSI_WARNINGS OFF, ' ELSE N'' END +
-                      CASE WHEN d.is_arithabort_on = 1 THEN N'ARITHABORT OFF, ' ELSE N'' END +
-                      CASE WHEN d.is_concat_null_yields_null_on = 1 THEN N'CONCAT_NULL_YIELDS_NULL OFF, ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_nulls_on = 1 THEN N'ANSI_NULLS ON, ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_padding_on = 1 THEN N'ANSI_PADDING ON, ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_warnings_on = 1 THEN N'ANSI_WARNINGS ON, ' ELSE N'' END +
+                      CASE WHEN d.is_arithabort_on = 1 THEN N'ARITHABORT ON, ' ELSE N'' END +
+                      CASE WHEN d.is_concat_null_yields_null_on = 1 THEN N'CONCAT_NULL_YIELDS_NULL ON, ' ELSE N'' END +
                       CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_quoted_identifier_on = 1 THEN N'QUOTED_IDENTIFIER OFF, ' ELSE N'' END +
+                      CASE WHEN d.is_quoted_identifier_on = 1 THEN N'QUOTED_IDENTIFIER ON, ' ELSE N'' END +
                 N'which can cause unexpected application behavior and compatibility issues.',
             url = N'https://erikdarling.com/sp_PerfCheck#ANSISettings'
         FROM #databases AS d
@@ -3881,7 +4300,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             EXECUTE sys.sp_executesql
                 @sql,
               N'@current_database_name sysname',
-                @current_database_id;
+                @current_database_name;
 
             /* Check for Query Store with potentially problematic settings */
             SET @sql = N'
@@ -3943,7 +4362,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             EXECUTE sys.sp_executesql
                 @sql,
               N'@current_database_name sysname',
-                @current_database_id;
+                @current_database_name;
 
             /* Check for non-default database scoped configurations */
             /* First check if the sys.database_scoped_configurations view exists */
@@ -4063,7 +4482,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
                 PRINT @current_database_id;
                 PRINT @current_database_name;
-                PRINT REPLICATE('=', 128);
+                PRINT REPLICATE('=', 64);
                 PRINT SUBSTRING(@sql, 1, 4000);
                 PRINT SUBSTRING(@sql, 4001, 8000);
             END;
@@ -4390,8 +4809,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024 / 1024)) +
                     '' GB. Very large growth increments can lead to excessive space allocation. '' +
                     CASE
-                        WHEN mf.type_desc = N''ROWS'' THEN N''Even with instant file initialization, consider using smaller increments for more controlled growth.''
-                        WHEN mf.type_desc = N''LOG'' THEN N''This can cause significant stalls as log files must be zeroed out during growth operations.''
+                        WHEN mf.type_desc = N''ROWS'' 
+                        THEN N''Even with instant file initialization, consider using smaller increments for more controlled growth.''
+                        WHEN mf.type_desc = N''LOG'' 
+                        THEN N''This can cause significant stalls as log files must be zeroed out during growth operations.''
                     END,
                 url = N''https://erikdarling.com/sp_PerfCheck#LargeGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
