@@ -295,8 +295,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @stolen_memory_gb decimal(38, 2),
         @stolen_memory_pct decimal(10, 2),
         @stolen_memory_threshold_pct decimal(10, 2) = 15.0, /* Alert if more than 15% memory is stolen */
-        /* Format the output properly without XML PATH which causes spacing issues */
-        @wait_summary nvarchar(1000) = N'',
         /* CPU scheduling variables */
         @signal_wait_time_ms bigint,
         @total_wait_time_ms bigint,
@@ -578,15 +576,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         signal_wait_time_ms bigint NOT NULL,
         wait_time_percent_of_uptime decimal(5, 2) NULL,
         category nvarchar(50) NOT NULL
-    );
-
-    /* Add wait stats summary to server info - focus on uptime impact */
-    /* First get top wait categories in a temp table to format properly */
-    CREATE TABLE
-        #wait_summary
-    (
-        category nvarchar(60) NOT NULL,
-        pct_of_uptime decimal(10, 2) NOT NULL
     );
 
     /* Create temp table for database I/O stalls */
@@ -1901,102 +1890,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
-
-        INSERT INTO
-            #wait_summary
-            (category, pct_of_uptime)
-        SELECT TOP (5)
-            ws.category,
-            pct_of_uptime =
-                SUM(ws.wait_time_percent_of_uptime)
-        FROM #wait_stats AS ws
-        WHERE ws.wait_time_percent_of_uptime >= 10.0 /* Only include categories with at least 10% impact on uptime */
-        GROUP BY
-            ws.category
-        ORDER BY
-            SUM(ws.wait_time_percent_of_uptime) DESC;
-
-        SELECT @wait_summary =
-            CASE
-                WHEN @wait_summary = N''
-                THEN ws.category +
-                     N' (' +
-                     CONVERT(nvarchar(10), ws.pct_of_uptime) +
-                     N'% of uptime)'
-                ELSE @wait_summary +
-                     N', ' +
-                     ws.category +
-                     N' (' +
-                     CONVERT(nvarchar(10), ws.pct_of_uptime) +
-                     N'% of uptime)'
-            END
-        FROM #wait_summary AS ws;
-
-        /* Add wait summary to server info if any significant waits were found */
-        IF @wait_summary <> N''
-        BEGIN
-            /* Replace the result set in the server_info table with a clearer explanation */
-            INSERT INTO
-                #server_info
-                (info_type, value)
-            VALUES
-                (N'Wait Stats Summary', N'See Wait Statistics section in results for details.');
-
-            /* Add the detailed wait categories as separate entries in the results table */
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            SELECT TOP (10)
-                6000,
-                priority =
-                    CASE
-                        WHEN ws.pct_of_uptime > 100
-                        THEN 40 /* Medium-high priority */
-                        WHEN ws.pct_of_uptime > 50
-                        THEN 50 /* Medium priority */
-                        ELSE 60 /* Lower priority */
-                    END,
-                category = N'Wait Statistics Summary',
-                finding = N'Wait Category: ' + ws.category,
-                details =
-                    N'This category represents ' +
-                    CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.pct_of_uptime)) +
-                    N'% of server uptime. ' +
-                    CASE
-                        WHEN ws.category = N'Query Execution'
-                        THEN N'This includes various query processing waits and can indicate poorly optimized queries or procedure cache issues.'
-                        WHEN ws.category = N'Parallelism'
-                        THEN N'This indicates time spent coordinating parallel query execution. Consider reviewing MAXDOP settings.'
-                        WHEN ws.category = N'CPU'
-                        THEN N'This indicates CPU pressure. Server may benefit from more CPU resources or query optimization.'
-                        WHEN ws.category = N'Memory'
-                        THEN N'This indicates memory pressure. Consider increasing server memory or optimizing memory-intensive queries.'
-                        WHEN ws.category = N'I/O'
-                        THEN N'This indicates storage performance issues. Check for slow disks or I/O-intensive queries.'
-                        WHEN ws.category = N'TempDB Contention'
-                        THEN N'This indicates contention in TempDB. Consider adding more TempDB files or optimizing queries that use TempDB.'
-                        WHEN ws.category = N'Transaction Log'
-                        THEN N'This indicates log write pressure. Check for long-running transactions or log file performance issues.'
-                        WHEN ws.category = N'Locking'
-                        THEN N'This indicates contention from locks. Look for blocking chains or query isolation level issues.'
-                        WHEN ws.category = N'Network'
-                        THEN N'This indicates network bottlenecks or slow client applications not consuming results quickly.'
-                        WHEN ws.category = N'Azure SQL Throttling'
-                        THEN N'This indicates resource limits imposed by Azure SQL DB. Consider upgrading to a higher service tier.'
-                        ELSE N'This category may require further investigation.'
-                    END,
-                url = N'https://erikdarling.com/sp_PerfCheck#WaitStats'
-            FROM #wait_summary AS ws
-            ORDER BY
-                ws.pct_of_uptime DESC;
-        END;
     END;
 
     /* Check for CPU scheduling pressure (signal wait ratio) */
