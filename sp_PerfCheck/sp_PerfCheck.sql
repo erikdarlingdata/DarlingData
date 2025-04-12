@@ -205,6 +205,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ),
                 2
             ),
+        @product_level sysname =
+            CONVERT
+            (
+                sysname,
+                SERVERPROPERTY(N'ProductLevel')
+            ),
+        @product_edition sysname =
+            CONVERT
+            (
+                sysname,
+                SERVERPROPERTY(N'Edition')
+            ),
+        @server_name sysname =
+            CONVERT
+            (
+                sysname,
+                SERVERPROPERTY(N'ServerName')
+            ),
         @engine_edition integer =
             CONVERT
             (
@@ -627,29 +645,32 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N')'
         );
 
+    /* Using server name variable declared earlier */
     INSERT INTO
         #server_info
         (info_type, value)
     VALUES
-        (N'Server Name', CONVERT(sysname, SERVERPROPERTY(N'ServerName')));
-
+        (N'Server Name', @server_name);
+            
+    /* Using product version and level variables declared earlier */
     INSERT INTO
         #server_info
         (info_type, value)
     VALUES
         (
             N'SQL Server Version',
-            CONVERT(sysname, SERVERPROPERTY(N'ProductVersion')) +
+            @product_version +
             N' (' +
-            CONVERT(sysname, SERVERPROPERTY(N'ProductLevel')) +
+            @product_level +
             N')'
         );
-
+            
+    /* Using product edition variable declared earlier */
     INSERT INTO
         #server_info
         (info_type, value)
     VALUES
-        (N'SQL Server Edition', CONVERT(sysname, SERVERPROPERTY(N'Edition')));
+        (N'SQL Server Edition', @product_edition);
 
     /* Environment information - Already detected earlier */
     INSERT INTO
