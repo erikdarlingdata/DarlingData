@@ -5527,7 +5527,100 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Convert to hours for human-readable output */
     SET @wait_stats_uptime_hours = @uptime_ms / 1000.0 / 60.0 / 60.0;
     
-    /* Populate wait stats table */
+    /* Populate wait stats table with categorized data from sys.dm_os_wait_stats */
+    WITH categorized_waits AS
+    (
+        SELECT
+            wait_type = ws.wait_type,
+            waiting_tasks_count = ws.waiting_tasks_count,
+            wait_time_ms = ws.wait_time_ms,
+            max_wait_time_ms = ws.max_wait_time_ms,
+            signal_wait_time_ms = ws.signal_wait_time_ms,
+            wait_pct = 
+                CONVERT(decimal(18, 2), 
+                    100.0 * ws.wait_time_ms / NULLIF(SUM(ws.wait_time_ms) OVER(), 0)),
+            signal_wait_pct = 
+                CONVERT(decimal(18, 2), 
+                    100.0 * ws.signal_wait_time_ms / NULLIF(ws.wait_time_ms, 0)),
+            category = 
+                CASE
+                    /* CPU waits */
+                    WHEN ws.wait_type IN ('SOS_SCHEDULER_YIELD', 'THREADPOOL', 'CPU_USAGE_EXCEEDED') OR 
+                         ws.wait_type LIKE 'CX%' THEN 'CPU'
+                         
+                    /* Lock waits */
+                    WHEN ws.wait_type IN ('LCK_M_%', 'LOCK_MANAGER', 'DEADLOCK_ENUM_SEARCH',
+                         'ASYNC_NETWORK_IO', 'OLEDB', 'SQLSORT_SORTMUTEX') OR 
+                         ws.wait_type LIKE 'LCK[_]%' OR
+                         ws.wait_type LIKE 'HADR_SYNC_COMMIT' THEN 'Lock'
+                         
+                    /* I/O waits */
+                    WHEN ws.wait_type IN ('ASYNC_IO_COMPLETION', 'IO_COMPLETION',
+                         'WRITE_COMPLETION', 'IO_QUEUE_LIMIT', 'LOGMGR', 'CHECKPOINT_QUEUE',
+                         'CHKPT', 'WRITELOG') OR
+                         ws.wait_type LIKE 'PAGEIOLATCH_%' OR 
+                         ws.wait_type LIKE 'PAGIOLATCH_%' OR
+                         ws.wait_type LIKE 'IO_RETRY%' THEN 'I/O'
+                         
+                    /* Memory waits */ 
+                    WHEN ws.wait_type IN ('RESOURCE_SEMAPHORE', 'CMEMTHREAD', 'RESOURCE_SEMAPHORE_QUERY_COMPILE',
+                         'RESOURCE_QUEUE', 'DBMIRROR_DBM_MUTEX', 'DBMIRROR_EVENTS_QUEUE',
+                         'XACT_OWNING_TRANSACTION', 'XACT_STATE_MUTEX') OR
+                         ws.wait_type LIKE 'RESOURCE_SEMAPHORE%' OR
+                         ws.wait_type LIKE 'PAGELATCH%' OR 
+                         ws.wait_type LIKE 'ACCESS_METHODS%' OR
+                         ws.wait_type LIKE 'MEMORY_ALLOCATION%' THEN 'Memory'
+                         
+                    /* Network waits */
+                    WHEN ws.wait_type IN ('NETWORK_IO', 'EXTERNAL_SCRIPT_NETWORK_IOF') OR
+                         ws.wait_type LIKE 'DTC_%' OR
+                         ws.wait_type LIKE 'SNI_HTTP%' OR
+                         ws.wait_type LIKE 'NETWORK_%' THEN 'Network'
+                         
+                    /* CLR waits */
+                    WHEN ws.wait_type LIKE 'CLR_%' THEN 'CLR'
+                    
+                    /* SQLOS waits */
+                    WHEN ws.wait_type LIKE 'SOSHOST_%' OR 
+                         ws.wait_type LIKE 'VDI_CLIENT_%' OR
+                         ws.wait_type LIKE 'BACKUP_%' OR 
+                         ws.wait_type LIKE 'BACKUPTHREAD%' OR
+                         ws.wait_type LIKE 'DISKIO_%' THEN 'SQLOS'
+                         
+                    /* Idle waits - typically ignore these */
+                    WHEN ws.wait_type IN ('BROKER_TASK_STOP', 'BROKER_EVENTHANDLER', 'BROKER_TRANSMITTER',
+                         'BROKER_TO_FLUSH', 'CHECKPOINT_QUEUE', 'CHECPOINT', 'CLOSE_ITERATOR',
+                         'DREAMLINER_PROFILER_FLUSH', 'FSAGENT', 'FT_IFTS_SCHEDULER_IDLE_WAIT',
+                         'FT_IFTSHC_MUTEX', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
+                         'IMPPROV_IOWAIT', 'INTERNAL_PERIODIC_MAINTENANCE', 'LAZYWRITER_SLEEP',
+                         'LOGMGR_QUEUE', 'ONDEMAND_TASK_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH',
+                         'RESOURCE_QUEUE', 'SERVER_IDLE_CHECK', 'SLEEP_BPOOL_FLUSH',
+                         'SLEEP_DBSTARTUP', 'SLEEP_DCOMSTARTUP', 'SLEEP_MSDBSTARTUP',
+                         'SLEEP_SYSTEMTASK', 'SLEEP_TASK', 'SLEEP_TEMPDBSTARTUP',
+                         'SNI_HTTP_ACCEPT', 'SQLTRACE_BUFFER_FLUSH', 'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
+                         'SQLTRACE_WAIT_ENTRIES', 'WAIT_FOR_RESULTS', 'WAITFOR',
+                         'WAITFOR_TASKSHUTDOWN', 'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', 'WAITFOR_CKPT_NEW_LOG',
+                         'XE_DISPATCHER_WAIT', 'XE_LIVE_TARGET_TVF', 'XE_TIMER_EVENT', 'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
+                         'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP') OR
+                         ws.wait_type LIKE 'WAIT_FOR%' OR
+                         ws.wait_type LIKE 'WAITFOR%' OR 
+                         ws.wait_type LIKE 'PREEMPTIVE%' OR
+                         ws.wait_type LIKE 'BROKER%' OR
+                         ws.wait_type LIKE 'SLEEP%' OR
+                         ws.wait_type LIKE 'IDLE%' THEN 'Idle'
+                         
+                    ELSE 'Other'
+                END
+        FROM sys.dm_os_wait_stats AS ws
+        WHERE ws.wait_type NOT IN (
+            'RESOURCE_QUEUE', 'SQLTRACE_INCREMENTAL_FLUSH_SLEEP', 'LOGMGR_QUEUE', 
+            'CHECKPOINT_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH', 'XE_TIMER_EVENT',
+            'BROKER_TASK_STOP', 'CLR_AUTO_EVENT', 'CLR_MANUAL_EVENT', 'LAZYWRITER_SLEEP',
+            'SLEEP_TASK', 'SLEEP_SYSTEMTASK', 'SQLTRACE_BUFFER_FLUSH', 'WAITFOR_TASKSHUTDOWN',
+            'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP', 'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
+            'RBPEX_PAUSED_WAIT', 'XE_LIVE_TARGET_TVF', 'XE_DISPATCHER_WAIT'
+        )
+    )
     INSERT INTO #wait_stats
     (
         wait_type,
@@ -5540,97 +5633,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         category
     )
     SELECT
-        wait_type = ws.wait_type,
-        waiting_tasks_count = ws.waiting_tasks_count,
-        wait_time_ms = ws.wait_time_ms,
-        max_wait_time_ms = ws.max_wait_time_ms,
-        signal_wait_time_ms = ws.signal_wait_time_ms,
-        wait_pct = 
-            CONVERT(decimal(18, 2), 
-                100.0 * ws.wait_time_ms / NULLIF(SUM(ws.wait_time_ms) OVER(), 0)),
-        signal_wait_pct = 
-            CONVERT(decimal(18, 2), 
-                100.0 * ws.signal_wait_time_ms / NULLIF(ws.wait_time_ms, 0)),
-        category = 
-            CASE
-                /* CPU waits */
-                WHEN ws.wait_type IN ('SOS_SCHEDULER_YIELD', 'THREADPOOL', 'CPU_USAGE_EXCEEDED') OR 
-                     ws.wait_type LIKE 'CX%' THEN 'CPU'
-                     
-                /* Lock waits */
-                WHEN ws.wait_type IN ('LCK_M_%', 'LOCK_MANAGER', 'DEADLOCK_ENUM_SEARCH',
-                     'ASYNC_NETWORK_IO', 'OLEDB', 'SQLSORT_SORTMUTEX') OR 
-                     ws.wait_type LIKE 'LCK[_]%' OR
-                     ws.wait_type LIKE 'HADR_SYNC_COMMIT' THEN 'Lock'
-                     
-                /* I/O waits */
-                WHEN ws.wait_type IN ('ASYNC_IO_COMPLETION', 'IO_COMPLETION',
-                     'WRITE_COMPLETION', 'IO_QUEUE_LIMIT', 'LOGMGR', 'CHECKPOINT_QUEUE',
-                     'CHKPT', 'WRITELOG') OR
-                     ws.wait_type LIKE 'PAGEIOLATCH_%' OR 
-                     ws.wait_type LIKE 'PAGIOLATCH_%' OR
-                     ws.wait_type LIKE 'IO_RETRY%' THEN 'I/O'
-                     
-                /* Memory waits */ 
-                WHEN ws.wait_type IN ('RESOURCE_SEMAPHORE', 'CMEMTHREAD', 'RESOURCE_SEMAPHORE_QUERY_COMPILE',
-                     'RESOURCE_QUEUE', 'DBMIRROR_DBM_MUTEX', 'DBMIRROR_EVENTS_QUEUE',
-                     'XACT_OWNING_TRANSACTION', 'XACT_STATE_MUTEX') OR
-                     ws.wait_type LIKE 'RESOURCE_SEMAPHORE%' OR
-                     ws.wait_type LIKE 'PAGELATCH%' OR 
-                     ws.wait_type LIKE 'ACCESS_METHODS%' OR
-                     ws.wait_type LIKE 'MEMORY_ALLOCATION%' THEN 'Memory'
-                     
-                /* Network waits */
-                WHEN ws.wait_type IN ('NETWORK_IO', 'EXTERNAL_SCRIPT_NETWORK_IOF') OR
-                     ws.wait_type LIKE 'DTC_%' OR
-                     ws.wait_type LIKE 'SNI_HTTP%' OR
-                     ws.wait_type LIKE 'NETWORK_%' THEN 'Network'
-                     
-                /* CLR waits */
-                WHEN ws.wait_type LIKE 'CLR_%' THEN 'CLR'
-                
-                /* SQLOS waits */
-                WHEN ws.wait_type LIKE 'SOSHOST_%' OR 
-                     ws.wait_type LIKE 'VDI_CLIENT_%' OR
-                     ws.wait_type LIKE 'BACKUP_%' OR 
-                     ws.wait_type LIKE 'BACKUPTHREAD%' OR
-                     ws.wait_type LIKE 'DISKIO_%' THEN 'SQLOS'
-                     
-                /* Idle waits - typically ignore these */
-                WHEN ws.wait_type IN ('BROKER_TASK_STOP', 'BROKER_EVENTHANDLER', 'BROKER_TRANSMITTER',
-                     'BROKER_TO_FLUSH', 'CHECKPOINT_QUEUE', 'CHECPOINT', 'CLOSE_ITERATOR',
-                     'DREAMLINER_PROFILER_FLUSH', 'FSAGENT', 'FT_IFTS_SCHEDULER_IDLE_WAIT',
-                     'FT_IFTSHC_MUTEX', 'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
-                     'IMPPROV_IOWAIT', 'INTERNAL_PERIODIC_MAINTENANCE', 'LAZYWRITER_SLEEP',
-                     'LOGMGR_QUEUE', 'ONDEMAND_TASK_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH',
-                     'RESOURCE_QUEUE', 'SERVER_IDLE_CHECK', 'SLEEP_BPOOL_FLUSH',
-                     'SLEEP_DBSTARTUP', 'SLEEP_DCOMSTARTUP', 'SLEEP_MSDBSTARTUP',
-                     'SLEEP_SYSTEMTASK', 'SLEEP_TASK', 'SLEEP_TEMPDBSTARTUP',
-                     'SNI_HTTP_ACCEPT', 'SQLTRACE_BUFFER_FLUSH', 'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
-                     'SQLTRACE_WAIT_ENTRIES', 'WAIT_FOR_RESULTS', 'WAITFOR',
-                     'WAITFOR_TASKSHUTDOWN', 'WAIT_XTP_OFFLINE_CKPT_NEW_LOG', 'WAITFOR_CKPT_NEW_LOG',
-                     'XE_DISPATCHER_WAIT', 'XE_LIVE_TARGET_TVF', 'XE_TIMER_EVENT', 'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
-                     'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP') OR
-                     ws.wait_type LIKE 'WAIT_FOR%' OR
-                     ws.wait_type LIKE 'WAITFOR%' OR 
-                     ws.wait_type LIKE 'PREEMPTIVE%' OR
-                     ws.wait_type LIKE 'BROKER%' OR
-                     ws.wait_type LIKE 'SLEEP%' OR
-                     ws.wait_type LIKE 'IDLE%' THEN 'Idle'
-                     
-                ELSE 'Other'
-            END
-    FROM sys.dm_os_wait_stats AS ws
-    WHERE ws.wait_type NOT IN (
-        'RESOURCE_QUEUE', 'SQLTRACE_INCREMENTAL_FLUSH_SLEEP', 'LOGMGR_QUEUE', 
-        'CHECKPOINT_QUEUE', 'REQUEST_FOR_DEADLOCK_SEARCH', 'XE_TIMER_EVENT',
-        'BROKER_TASK_STOP', 'CLR_AUTO_EVENT', 'CLR_MANUAL_EVENT', 'LAZYWRITER_SLEEP',
-        'SLEEP_TASK', 'SLEEP_SYSTEMTASK', 'SQLTRACE_BUFFER_FLUSH', 'WAITFOR_TASKSHUTDOWN',
-        'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP', 'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
-        'RBPEX_PAUSED_WAIT', 'XE_LIVE_TARGET_TVF', 'XE_DISPATCHER_WAIT'
-    )
+        wait_type,
+        waiting_tasks_count,
+        wait_time_ms,
+        max_wait_time_ms,
+        signal_wait_time_ms,
+        wait_pct,
+        signal_wait_pct,
+        category
+    FROM categorized_waits
     ORDER BY 
-        ws.wait_time_ms DESC;
+        wait_time_ms DESC;
     
     /* Calculate category-based summary */
     INSERT INTO #wait_summary
