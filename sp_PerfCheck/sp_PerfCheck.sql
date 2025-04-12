@@ -169,7 +169,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @product_version sysname =
             CONVERT
             (
-                sysname, 
+                sysname,
                 SERVERPROPERTY(N'ProductVersion')
             ),
         @product_version_major decimal(10, 2) =
@@ -177,7 +177,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 CONVERT
                 (
-                    sysname, 
+                    sysname,
                     SERVERPROPERTY(N'ProductVersion')
                 ),
                 1,
@@ -186,7 +186,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     '.',
                     CONVERT
                     (
-                        sysname, 
+                        sysname,
                         SERVERPROPERTY(N'ProductVersion')
                     )
                 ) + 1
@@ -199,7 +199,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     varchar(32),
                     CONVERT
                     (
-                        sysname, 
+                        sysname,
                         SERVERPROPERTY(N'ProductVersion')
                     )
                 ),
@@ -620,8 +620,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N' (' +
             CONVERT
             (
-                varchar(10), 
-                @version_date, 
+                varchar(10),
+                @version_date,
                 101
             ) +
             N')'
@@ -1000,7 +1000,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND @has_view_server_state = 1
     BEGIN
         INSERT INTO
-            #server_info 
+            #server_info
             (info_type, value)
         SELECT
             N'Instant File Initialization',
@@ -1046,7 +1046,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM sys.resource_governor_configuration AS rgc WHERE rgc.is_enabled = 1)
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
                 (info_type, value)
             SELECT
                 N'Resource Governor',
@@ -1088,7 +1088,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ELSE
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
                 (info_type, value)
             SELECT
                 N'Resource Governor',
@@ -1114,7 +1114,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SET @error_message = N'Error capturing trace flags: ' + ERROR_MESSAGE();
                 PRINT @error_message;
             END;
-            
+
             /* Log error in results */
             INSERT INTO #results
             (
@@ -1138,7 +1138,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM #trace_flags AS tf WHERE tf.global = 1)
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
                 (info_type, value)
             SELECT
                 N'Global Trace Flags',
@@ -1165,17 +1165,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Memory information - works on all platforms */
     INSERT INTO
-        #server_info 
+        #server_info
         (info_type, value)
     SELECT
         N'Memory',
         N'Total: ' +
         CONVERT
         (
-            nvarchar(20), 
+            nvarchar(20),
             CONVERT
             (
-                decimal(10, 2), 
+                decimal(10, 2),
                 osi.physical_memory_kb / 1024.0 / 1024.0
             )
         ) +
@@ -1183,10 +1183,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         N'Target: ' +
         CONVERT
         (
-            nvarchar(20), 
+            nvarchar(20),
             CONVERT
             (
-                decimal(10, 2), 
+                decimal(10, 2),
                 osi.committed_target_kb / 1024.0 / 1024.0
             )
         ) +
@@ -1255,8 +1255,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #event_class_map
             (
-                event_class, 
-                event_name, 
+                event_class,
+                event_name,
                 category_name
             )
             VALUES
@@ -1513,7 +1513,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             N', ' +
                             CONVERT
                             (
-                                nvarchar(50), 
+                                nvarchar(50),
                                 COUNT_BIG(*)
                             ) +
                             N' slow ' +
@@ -1527,7 +1527,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             N' (avg ' +
                             CONVERT
                             (
-                                nvarchar(20), 
+                                nvarchar(20),
                                 AVG(te.duration_ms) / 1000.0
                             ) +
                             N' sec)'
@@ -1550,7 +1550,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             IF @autogrow_summary IS NOT NULL
             BEGIN
                 INSERT INTO
-                    #server_info 
+                    #server_info
                     (info_type, value)
                 VALUES
                     (N'Slow Autogrow Events (7 days)', @autogrow_summary);
@@ -1573,12 +1573,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         /* Get total wait time */
         SELECT
-            @total_waits = 
+            @total_waits =
                 SUM
                 (
                     CONVERT
                     (
-                        bigint, 
+                        bigint,
                         osw.wait_time_ms
                     )
                 )
@@ -1738,7 +1738,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             percentage =
                 CONVERT
                 (
-                    decimal(5,2), 
+                    decimal(5,2),
                     dows.wait_time_ms * 100.0 / @total_waits
                 ),
             category =
@@ -2092,10 +2092,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'SOS_SCHEDULER_YIELD',
                     CONVERT
                     (
-                        nvarchar(10), 
+                        nvarchar(10),
                         CONVERT
                         (
-                            decimal(10, 2), 
+                            decimal(10, 2),
                             @sos_scheduler_yield_pct_of_uptime
                         )
                     ) +
@@ -2192,7 +2192,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @stolen_memory_gb =
                 CONVERT
                 (
-                    decimal(38, 2), 
+                    decimal(38, 2),
                     dopc.cntr_value / 1024.0 / 1024.0
                 )
         FROM sys.dm_os_performance_counters AS dopc
@@ -2213,7 +2213,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Buffer Pool Size',
                 CONVERT
                 (
-                    nvarchar(20), 
+                    nvarchar(20),
                     @buffer_pool_size_gb
                 ) +
                 N' GB'
@@ -2227,16 +2227,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Stolen Memory',
                 CONVERT
                 (
-                    nvarchar(20), 
+                    nvarchar(20),
                     @stolen_memory_gb
                 ) +
                 N' GB (' +
                 CONVERT
                 (
-                    nvarchar(10), 
+                    nvarchar(10),
                     CONVERT
                     (
-                        decimal(10, 1), 
+                        decimal(10, 1),
                         @stolen_memory_pct
                     )
                 ) +
@@ -2423,8 +2423,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 write_io_mb,
                 avg_write_stall_ms,
                 total_size_mb
-            )                
-            EXECUTE sys.sp_executesql 
+            )
+            EXECUTE sys.sp_executesql
                 @io_sql;
         END TRY
         BEGIN CATCH
@@ -2433,7 +2433,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SET @error_message = N'Error collecting IO stall stats: ' + ERROR_MESSAGE();
                 PRINT @error_message;
             END;
-            
+
             /* Log error in results */
             INSERT INTO #results
             (
@@ -2488,10 +2488,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         N' (' +
                         CONVERT
                         (
-                            nvarchar(10), 
+                            nvarchar(10),
                             CONVERT
                             (
-                                decimal(10, 2), 
+                                decimal(10, 2),
                                 db.avg_io_stall_ms
                             )
                         ) +
@@ -2682,7 +2682,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             drive_location,
             physical_name
         )
-        EXECUTE sys.sp_executesql 
+        EXECUTE sys.sp_executesql
             @file_io_sql;
     END TRY
     BEGIN CATCH
@@ -2691,7 +2691,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SET @error_message = N'Error collecting file IO stats: ' + ERROR_MESSAGE();
             PRINT @error_message;
         END;
-        
+
         /* Log error in results */
         INSERT INTO #results
         (
@@ -2872,7 +2872,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN CATCH
         /* If we can't access the files due to permissions */
         INSERT INTO
-            #server_info 
+            #server_info
             (info_type, value)
         VALUES
             (N'Database Size', N'Unable to determine (permission error)');
@@ -2885,9 +2885,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         /* Collect memory settings */
         SELECT
-            @min_server_memory = 
+            @min_server_memory =
                 CONVERT(bigint, c1.value_in_use),
-            @max_server_memory = 
+            @max_server_memory =
                 CONVERT(bigint, c2.value_in_use)
         FROM sys.configurations AS c1
         CROSS JOIN sys.configurations AS c2
@@ -2899,7 +2899,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @physical_memory_gb =
                 CONVERT
                 (
-                    decimal(10, 2), 
+                    decimal(10, 2),
                     osi.physical_memory_kb / 1024.0 / 1024.0
                 )
         FROM sys.dm_os_sys_info AS osi;
@@ -2910,8 +2910,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (info_type, value)
         VALUES
         (
-            N'Min Server Memory', 
-            CONVERT(nvarchar(20), @min_server_memory) + 
+            N'Min Server Memory',
+            CONVERT(nvarchar(20), @min_server_memory) +
             N' MB'
         );
 
@@ -2920,16 +2920,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (info_type, value)
         VALUES
         (
-            N'Max Server Memory', 
-            CONVERT(nvarchar(20), @max_server_memory) + 
+            N'Max Server Memory',
+            CONVERT(nvarchar(20), @max_server_memory) +
             N' MB'
         );
 
         /* Collect MAXDOP and CTFP settings */
         SELECT
-            @max_dop = 
+            @max_dop =
                 CONVERT(integer, c1.value_in_use),
-            @cost_threshold = 
+            @cost_threshold =
                 CONVERT(integer, c2.value_in_use)
         FROM sys.configurations AS c1
         CROSS JOIN sys.configurations AS c2
@@ -2941,7 +2941,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (info_type, value)
         VALUES
         (
-            N'MAXDOP', 
+            N'MAXDOP',
             CONVERT(nvarchar(10), @max_dop)
         );
 
@@ -2950,30 +2950,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (info_type, value)
         VALUES
         (
-            N'Cost Threshold for Parallelism', 
+            N'Cost Threshold for Parallelism',
             CONVERT(nvarchar(10), @cost_threshold)
         );
 
         /* Collect other significant configuration values */
         SELECT
-            @priority_boost = 
+            @priority_boost =
                 CONVERT(bit, c1.value_in_use),
-            @lightweight_pooling = 
+            @lightweight_pooling =
                 CONVERT(bit, c2.value_in_use)
         FROM sys.configurations AS c1
         CROSS JOIN sys.configurations AS c2
         WHERE c1.name = N'priority boost'
         AND   c2.name = N'lightweight pooling';
-        
+
         /* Collect affinity mask settings */
-        SELECT 
-            @affinity_mask = 
+        SELECT
+            @affinity_mask =
                 CONVERT(bigint, c1.value_in_use),
-            @affinity_io_mask = 
+            @affinity_io_mask =
                 CONVERT(bigint, c2.value_in_use),
-            @affinity64_mask = 
+            @affinity64_mask =
                 CONVERT(bigint, c3.value_in_use),
-            @affinity64_io_mask = 
+            @affinity64_io_mask =
                 CONVERT(bigint, c4.value_in_use)
         FROM sys.configurations AS c1
         CROSS JOIN sys.configurations AS c2
@@ -3120,7 +3120,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 growth_mb,
                 is_percent_growth
             )
-            EXECUTE sys.sp_executesql 
+            EXECUTE sys.sp_executesql
                 @tempdb_files_sql;
         END TRY
         BEGIN CATCH
@@ -3129,7 +3129,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SET @error_message = N'Error collecting TempDB file information: ' + ERROR_MESSAGE();
                 PRINT @error_message;
             END;
-            
+
             /* Log error in results */
             INSERT INTO #results
             (
@@ -3145,7 +3145,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 70, /* Medium priority */
                 N'Errors',
                 N'Error Collecting TempDB File Information',
-                N'Unable to collect TempDB file information: ' + 
+                N'Unable to collect TempDB file information: ' +
                 ERROR_MESSAGE()
             );
         END CATCH;
@@ -3155,57 +3155,57 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @tempdb_data_file_count =
                 SUM
                 (
-                    CASE 
-                        WHEN tf.type_desc = N'ROWS' 
-                        THEN 1 
-                        ELSE 0 
+                    CASE
+                        WHEN tf.type_desc = N'ROWS'
+                        THEN 1
+                        ELSE 0
                     END
                 ),
             @tempdb_log_file_count =
                 SUM
                 (
-                    CASE 
-                        WHEN tf.type_desc = N'LOG' 
-                        THEN 1 
-                        ELSE 0 
+                    CASE
+                        WHEN tf.type_desc = N'LOG'
+                        THEN 1
+                        ELSE 0
                     END
                 ),
             @min_data_file_size =
                 MIN
                 (
-                    CASE 
-                        WHEN tf.type_desc = N'ROWS' 
-                        THEN tf.size_mb / 1024 
-                        ELSE NULL 
+                    CASE
+                        WHEN tf.type_desc = N'ROWS'
+                        THEN tf.size_mb / 1024
+                        ELSE NULL
                     END
                 ),
             @max_data_file_size =
                 MAX
                 (
-                    CASE 
-                        WHEN tf.type_desc = N'ROWS' 
-                        THEN tf.size_mb / 1024 
-                        ELSE NULL 
+                    CASE
+                        WHEN tf.type_desc = N'ROWS'
+                        THEN tf.size_mb / 1024
+                        ELSE NULL
                     END
                 ),
             @has_percent_growth =
                 MAX
                 (
-                    CASE 
-                        WHEN tf.type_desc = N'ROWS' 
-                        AND  tf.is_percent_growth = 1 
-                        THEN 1 
-                        ELSE 0 
+                    CASE
+                        WHEN tf.type_desc = N'ROWS'
+                        AND  tf.is_percent_growth = 1
+                        THEN 1
+                        ELSE 0
                     END
                 ),
             @has_fixed_growth =
                 MAX
                 (
-                    CASE 
-                        WHEN tf.type_desc = N'ROWS' 
-                        AND  tf.is_percent_growth = 0 
-                        THEN 1 
-                        ELSE 0 
+                    CASE
+                        WHEN tf.type_desc = N'ROWS'
+                        AND  tf.is_percent_growth = 0
+                        THEN 1
+                        ELSE 0
                     END
                 )
         FROM #tempdb_files AS tf;
@@ -3216,7 +3216,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             SET @size_difference_pct =
                     (
-                      (@max_data_file_size - @min_data_file_size) / 
+                      (@max_data_file_size - @min_data_file_size) /
                        @min_data_file_size
                     ) * 100;
         END;
@@ -3951,12 +3951,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SELECT
                     @has_tables =
                         CASE
-                            WHEN EXISTS 
+                            WHEN EXISTS
                             (
-                                SELECT 
-                                    1/0 
-                                FROM ' + 
-                                QUOTENAME(@current_database_name) + 
+                                SELECT
+                                    1/0
+                                FROM ' +
+                                QUOTENAME(@current_database_name) +
                                 N'.sys.tables AS t
                             )
                             THEN 1
@@ -4809,9 +4809,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024 / 1024)) +
                     '' GB. Very large growth increments can lead to excessive space allocation. '' +
                     CASE
-                        WHEN mf.type_desc = N''ROWS'' 
+                        WHEN mf.type_desc = N''ROWS''
                         THEN N''Even with instant file initialization, consider using smaller increments for more controlled growth.''
-                        WHEN mf.type_desc = N''LOG'' 
+                        WHEN mf.type_desc = N''LOG''
                         THEN N''This can cause significant stalls as log files must be zeroed out during growth operations.''
                     END,
                 url = N''https://erikdarling.com/sp_PerfCheck#LargeGrowth''
