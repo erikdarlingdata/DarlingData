@@ -319,15 +319,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN TRY
             EXECUTE sys.sp_executesql
                 N'
-                    DECLARE
-                        @c bigint;
-
                     SELECT
-                        @c = 1
+                        @has_view_server_state = 1
                     FROM sys.dm_os_sys_info AS osi;
-                ';
-
-            SET @has_view_server_state = 1;
+                ',
+                N'@has_view_server_state bit OUTPUT',
+                  @has_view_server_state OUTPUT;
         END TRY
         BEGIN CATCH
             SET @has_view_server_state = 0;
