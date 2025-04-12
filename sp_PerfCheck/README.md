@@ -135,6 +135,26 @@ EXEC dbo.sp_PerfCheck
   - Warns about potential compatibility issues with OLEDB providers
   - Explains performance implications and alternatives
 
+- **Affinity Mask** (check_id 1008)
+  - Detects when the affinity mask has been manually configured
+  - Warns about potential limitations on SQL Server CPU usage
+  - Provides guidance for CPU binding scenarios
+
+- **Affinity I/O Mask** (check_id 1009)
+  - Identifies when the affinity I/O mask has been manually configured
+  - Warns about binding I/O completion to specific CPUs
+  - Explains when this specialized configuration might be appropriate
+
+- **Affinity64 Mask** (check_id 1010)
+  - Detects when affinity64 mask has been manually configured
+  - Identifies potential CPU usage limitations on high-CPU systems
+  - Provides guidance for proper configuration
+
+- **Affinity64 I/O Mask** (check_id 1011)
+  - Identifies when affinity64 I/O mask has been manually configured
+  - Warns about binding I/O completion on high-CPU systems
+  - Explains performance implications and alternatives
+
 #### Resource Governor
 - **Resource Governor State** (check_id 4107)
   - Detects if Resource Governor is enabled
