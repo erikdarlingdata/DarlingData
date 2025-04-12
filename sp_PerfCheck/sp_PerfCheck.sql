@@ -1920,7 +1920,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND @has_view_server_state = 1
     BEGIN
         INSERT INTO
-            #server_info (info_type, value)
+            #server_info 
+            (info_type, value)
         SELECT
             N'Instant File Initialization',
             CASE
@@ -1965,7 +1966,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM sys.resource_governor_configuration AS rgc WHERE rgc.is_enabled = 1)
         BEGIN
             INSERT INTO
-                #server_info (info_type, value)
+                #server_info 
+                (info_type, value)
             SELECT
                 N'Resource Governor',
                 N'Enabled';
@@ -2006,7 +2008,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ELSE
         BEGIN
             INSERT INTO
-                #server_info (info_type, value)
+                #server_info 
+                (info_type, value)
             SELECT
                 N'Resource Governor',
                 N'Disabled';
@@ -2055,7 +2058,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM #trace_flags AS tf WHERE tf.global = 1)
         BEGIN
             INSERT INTO
-                #server_info (info_type, value)
+                #server_info 
+                (info_type, value)
             SELECT
                 N'Global Trace Flags',
                 STUFF
@@ -2081,7 +2085,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Memory information - works on all platforms */
     INSERT INTO
-        #server_info (info_type, value)
+        #server_info 
+        (info_type, value)
     SELECT
         N'Memory',
         N'Total: ' +
@@ -2404,7 +2409,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 STUFF
                 (
                     (
-                        SELECT
+                        SELECT TOP (10)
                             N', ' +
                             CONVERT(nvarchar(50), COUNT_BIG(*)) +
                             N' slow ' +
@@ -2437,7 +2442,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             IF @autogrow_summary IS NOT NULL
             BEGIN
                 INSERT INTO
-                    #server_info (info_type, value)
+                    #server_info 
+                    (info_type, value)
                 VALUES
                     (N'Slow Autogrow Events (7 days)', @autogrow_summary);
             END;
@@ -2758,7 +2764,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #wait_summary 
             (category, pct_of_uptime)
-        SELECT
+        SELECT TOP (5)
             ws.category,
             pct_of_uptime = 
                 SUM(ws.wait_time_percent_of_uptime)
@@ -3329,7 +3335,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             STUFF
             (
                 (
-                    SELECT
+                    SELECT TOP (5)
                         N', ' +
                         db.database_name +
                         N' (' +
@@ -3690,9 +3696,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE 
                 WHEN @azure_sql_db = 1
                 THEN N'sys.database_files AS f
-                WHERE f.type_desc = N''ROWS'''
+            WHERE f.type_desc = N''ROWS'''
                 ELSE N'sys.master_files AS f
-                WHERE f.type_desc = N''ROWS'''
+            WHERE f.type_desc = N''ROWS'''
             END;
 
             IF @debug = 1
@@ -3711,7 +3717,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN CATCH
         /* If we can't access the files due to permissions */
         INSERT INTO
-            #server_info (info_type, value)
+            #server_info 
+            (info_type, value)
         VALUES
             (N'Database Size', N'Unable to determine (permission error)');
     END CATCH;
@@ -4891,7 +4898,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 details =
                     ''Query Store desired state ('' +
                     qso.desired_state_desc +
-                    '') does not match actual state ('' +
+                    '') does not match actual state ('' + 
                     qso.actual_state_desc + ''). '' +
                     CASE qso.readonly_reason
                         WHEN 0 THEN N''No specific reason identified.''
@@ -4934,7 +4941,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             EXECUTE sys.sp_executesql
                 @sql,
               N'@current_database_name sysname',
-                @current_database_id;
+                @current_database_name;
 
             /* Check for Query Store with potentially problematic settings */
             SET @sql = N'
@@ -4996,7 +5003,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             EXECUTE sys.sp_executesql
                 @sql,
               N'@current_database_name sysname',
-                @current_database_id;
+                @current_database_name;
 
             /* Check for non-default database scoped configurations */
             /* First check if the sys.database_scoped_configurations view exists */
