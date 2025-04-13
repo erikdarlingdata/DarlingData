@@ -627,18 +627,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         value
     )
     VALUES
+    (
+        N'Version',
+        @version +
+        N' (' +
+        CONVERT
         (
-            N'Version',
-            @version +
-            N' (' +
-            CONVERT
-            (
-                varchar(10), 
-                @version_date, 
-                101
-            ) +
-            N')'
-        );
+            varchar(10), 
+            @version_date, 
+            101
+        ) +
+        N')'
+    );
 
     /* Using server name variable declared earlier */
     INSERT INTO
@@ -658,13 +658,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         value
     )
     VALUES
-        (
-            N'SQL Server Version',
-            @product_version +
-            N' (' +
-            @product_level +
-            N')'
-        );
+    (
+        N'SQL Server Version',
+        @product_version +
+        N' (' +
+        @product_level +
+        N')'
+    );
             
     /* Using product edition variable declared earlier */
     INSERT INTO
@@ -679,7 +679,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Environment information - Already detected earlier */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type, 
+        value
+    )
     SELECT
         N'Environment',
         CASE
@@ -1068,7 +1071,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         INSERT INTO
             #server_info 
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         SELECT
             N'Instant File Initialization',
             CASE
@@ -1114,7 +1120,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             INSERT INTO
                 #server_info 
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             SELECT
                 N'Resource Governor',
                 N'Enabled';
@@ -1156,7 +1165,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             INSERT INTO
                 #server_info 
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             SELECT
                 N'Resource Governor',
                 N'Disabled';
@@ -1172,6 +1184,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN TRY
             INSERT INTO
                 #trace_flags
+            (
+                trace_flag,
+                status,
+                global,
+                session
+            )
             EXECUTE sys.sp_executesql
                 N'DBCC TRACESTATUS WITH NO_INFOMSGS';
         END TRY
@@ -1206,7 +1224,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             INSERT INTO
                 #server_info 
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             SELECT
                 N'Global Trace Flags',
                 STUFF
@@ -1233,7 +1254,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Memory information - works on all platforms */
     INSERT INTO
         #server_info 
-        (info_type, value)
+    (
+        info_type, 
+        value
+    )
     SELECT
         N'Memory',
         N'Total: ' +
@@ -1618,7 +1642,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             BEGIN
                 INSERT INTO
                     #server_info 
-                    (info_type, value)
+                (
+                    info_type, 
+                    value
+                )
                 VALUES
                     (N'Slow Autogrow Events (7 days)', @autogrow_summary);
             END;
@@ -2038,7 +2065,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             /* Add CPU scheduling info to server_info */
             INSERT INTO
                 #server_info
-                (info_type, value)
+             (
+                 info_type, 
+                 value
+             )
             VALUES
             (
                  N'Signal Wait Ratio',
@@ -2057,7 +2087,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             BEGIN
                 INSERT INTO
                     #server_info
-                    (info_type, value)
+                (
+                    info_type, 
+                    value
+                )
                 VALUES
                 (
                     N'SOS_SCHEDULER_YIELD',
@@ -2178,7 +2211,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             /* Add buffer pool info to server_info */
             INSERT INTO
                 #server_info
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             VALUES
             (
                 N'Buffer Pool Size',
@@ -2192,7 +2228,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             INSERT INTO
                 #server_info
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             VALUES
             (
                 N'Stolen Memory',
@@ -2485,7 +2524,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             INSERT INTO
                 #server_info
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             VALUES
             (
                 N'Database I/O Stalls',
@@ -2835,7 +2877,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             /* For non-Azure SQL DB, get size across all accessible databases */
             INSERT INTO
                 #server_info
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             EXECUTE sys.sp_executesql
                 @db_size_sql;
         END;
@@ -2844,7 +2889,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* If we can't access the files due to permissions */
         INSERT INTO
             #server_info 
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
             (N'Database Size', N'Unable to determine (permission error)');
     END CATCH;
@@ -2878,7 +2926,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Add min/max server memory info */
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
         (
             N'Min Server Memory', 
@@ -2888,7 +2939,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
         (
             N'Max Server Memory', 
@@ -2909,7 +2963,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
         (
             N'MAXDOP', 
@@ -2918,7 +2975,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
         (
             N'Cost Threshold for Parallelism', 
