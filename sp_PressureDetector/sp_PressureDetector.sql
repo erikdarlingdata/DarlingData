@@ -1669,7 +1669,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ISNULL
                     (
                         vfs.io_stall_read_ms /
-                          (NULLIF(vfs.num_of_reads, 0)),
+                          CAST((NULLIF(vfs.num_of_reads, 0)) AS decimal(38, 2)),
                         0
                     )
                 ),
@@ -1702,7 +1702,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ISNULL
                     (
                         vfs.io_stall_write_ms /
-                          (NULLIF(vfs.num_of_writes, 0)),
+                          CAST((NULLIF(vfs.num_of_writes, 0)) AS decimal(38, 2)),
                         0
                     )
                 ),
