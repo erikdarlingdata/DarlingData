@@ -1669,8 +1669,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ISNULL
                     (
                         vfs.io_stall_read_ms /
-                          CAST((NULLIF(vfs.num_of_reads, 0)) AS decimal(38, 2)),
-                        0
+                          CONVERT
+                          (
+                              decimal(38, 2),
+                              NULLIF(vfs.num_of_reads, 0.)
+                          ),
+                        0.
                     )
                 ),
             total_gb_written =
@@ -1702,15 +1706,29 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ISNULL
                     (
                         vfs.io_stall_write_ms /
-                          CAST((NULLIF(vfs.num_of_writes, 0)) AS decimal(38, 2)),
-                        0
+                          CONVERT
+                          (
+                              decimal(38, 2),
+                              NULLIF(vfs.num_of_writes, 0.)
+                          ),
+                        0.
                     )
                 ),
             io_stall_read_ms,
             io_stall_write_ms,
             sample_time =
                 SYSDATETIME()
-        FROM sys.dm_io_virtual_file_stats(NULL, NULL) AS vfs
+        FROM sys.dm_io_virtual_file_stats
+        (' +
+        CASE
+            WHEN @azure = 1
+            THEN N'
+            DB_ID()'
+            ELSE N'
+            NULL'
+        END + N',
+            NULL
+        ) AS vfs
         JOIN ' +
         CONVERT
         (
