@@ -633,8 +633,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         N' (' +
         CONVERT
         (
-            varchar(10), 
-            @version_date, 
+            varchar(10),
+            @version_date,
             101
         ) +
         N')'
@@ -649,7 +649,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     VALUES
         (N'Server Name', @server_name);
-            
+
     /* Using product version and level variables declared earlier */
     INSERT INTO
         #server_info
@@ -665,7 +665,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @product_level +
         N')'
     );
-            
+
     /* Using product edition variable declared earlier */
     INSERT INTO
         #server_info
@@ -680,7 +680,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     INSERT INTO
         #server_info
     (
-        info_type, 
+        info_type,
         value
     )
     SELECT
@@ -701,7 +701,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         SELECT
@@ -745,7 +745,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -1071,7 +1071,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             N'Memory Model',
             osi.sql_memory_model_desc
-        FROM sys.dm_os_sys_info AS osi;   
+        FROM sys.dm_os_sys_info AS osi;
     END;
 
     /* Check if Instant File Initialization is enabled (on-prem only) */
@@ -1081,9 +1081,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND @has_view_server_state = 1
     BEGIN
         INSERT INTO
-            #server_info 
+            #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         SELECT
@@ -1130,9 +1130,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM sys.resource_governor_configuration AS rgc WHERE rgc.is_enabled = 1)
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             SELECT
@@ -1175,9 +1175,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ELSE
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             SELECT
@@ -1234,9 +1234,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM #trace_flags AS tf WHERE tf.global = 1)
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             SELECT
@@ -1264,9 +1264,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Memory information - works on all platforms */
     INSERT INTO
-        #server_info 
+        #server_info
     (
-        info_type, 
+        info_type,
         value
     )
     SELECT
@@ -1649,9 +1649,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             IF @autogrow_summary IS NOT NULL
             BEGIN
                 INSERT INTO
-                    #server_info 
+                    #server_info
                 (
-                    info_type, 
+                    info_type,
                     value
                 )
                 VALUES
@@ -2074,7 +2074,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #server_info
              (
-                 info_type, 
+                 info_type,
                  value
              )
             VALUES
@@ -2096,7 +2096,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 INSERT INTO
                     #server_info
                 (
-                    info_type, 
+                    info_type,
                     value
                 )
                 VALUES
@@ -2220,7 +2220,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             VALUES
@@ -2237,7 +2237,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             VALUES
@@ -2533,7 +2533,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             VALUES
@@ -2886,7 +2886,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             EXECUTE sys.sp_executesql
@@ -2896,9 +2896,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN CATCH
         /* If we can't access the files due to permissions */
         INSERT INTO
-            #server_info 
+            #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -2935,7 +2935,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -2948,7 +2948,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -2972,7 +2972,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -2984,7 +2984,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
