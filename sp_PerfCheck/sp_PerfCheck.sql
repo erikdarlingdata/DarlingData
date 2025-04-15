@@ -205,6 +205,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ),
                 2
             ),
+        @product_level sysname =
+            CONVERT
+            (
+                sysname,
+                SERVERPROPERTY(N'ProductLevel')
+            ),
+        @product_edition sysname =
+            CONVERT
+            (
+                sysname,
+                SERVERPROPERTY(N'Edition')
+            ),
+        @server_name sysname =
+            CONVERT
+            (
+                sysname,
+                SERVERPROPERTY(N'ServerName')
+            ),
         @engine_edition integer =
             CONVERT
             (
@@ -277,8 +295,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @stolen_memory_gb decimal(38, 2),
         @stolen_memory_pct decimal(10, 2),
         @stolen_memory_threshold_pct decimal(10, 2) = 15.0, /* Alert if more than 15% memory is stolen */
-        /* Format the output properly without XML PATH which causes spacing issues */
-        @wait_summary nvarchar(1000) = N'',
         /* CPU scheduling variables */
         @signal_wait_time_ms bigint,
         @total_wait_time_ms bigint,
@@ -303,15 +319,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN TRY
             EXECUTE sys.sp_executesql
                 N'
-                    DECLARE
-                        @c bigint;
-
                     SELECT
-                        @c = 1
+                        @has_view_server_state = 1
                     FROM sys.dm_os_sys_info AS osi;
-                ';
-
-            SET @has_view_server_state = 1;
+                ',
+                N'@has_view_server_state bit OUTPUT',
+                  @has_view_server_state OUTPUT;
         END TRY
         BEGIN CATCH
             SET @has_view_server_state = 0;
@@ -562,15 +575,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         category nvarchar(50) NOT NULL
     );
 
-    /* Add wait stats summary to server info - focus on uptime impact */
-    /* First get top wait categories in a temp table to format properly */
-    CREATE TABLE
-        #wait_summary
-    (
-        category nvarchar(60) NOT NULL,
-        pct_of_uptime decimal(10, 2) NOT NULL
-    );
-
     /* Create temp table for database I/O stalls */
     CREATE TABLE
         #io_stalls_by_db
@@ -600,61 +604,85 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Basic server information that works across all platforms */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (N'sp_PerfCheck', N'Brought to you by Darling Data');
 
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (N'https://code.erikdarling.com', N'https://erikdarling.com');
 
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
+    (
+        N'Version',
+        @version +
+        N' (' +
+        CONVERT
         (
-            N'Version',
-            @version +
-            N' (' +
-            CONVERT
-            (
-                varchar(10),
-                @version_date,
-                101
-            ) +
-            N')'
-        );
+            varchar(10), 
+            @version_date, 
+            101
+        ) +
+        N')'
+    );
 
+    /* Using server name variable declared earlier */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
-        (N'Server Name', CONVERT(sysname, SERVERPROPERTY(N'ServerName')));
-
+        (N'Server Name', @server_name);
+            
+    /* Using product version and level variables declared earlier */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
-        (
-            N'SQL Server Version',
-            CONVERT(sysname, SERVERPROPERTY(N'ProductVersion')) +
-            N' (' +
-            CONVERT(sysname, SERVERPROPERTY(N'ProductLevel')) +
-            N')'
-        );
-
+    (
+        N'SQL Server Version',
+        @product_version +
+        N' (' +
+        @product_level +
+        N')'
+    );
+            
+    /* Using product edition variable declared earlier */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
-        (N'SQL Server Edition', CONVERT(sysname, SERVERPROPERTY(N'Edition')));
+        (N'SQL Server Edition', @product_edition);
 
     /* Environment information - Already detected earlier */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type, 
+        value
+    )
     SELECT
         N'Environment',
         CASE
@@ -667,62 +695,97 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE N'On-premises or IaaS SQL Server'
         END;
 
-    /* Uptime information - works on all platforms */
-    INSERT INTO
-        #server_info
-        (info_type, value)
-    SELECT
-        N'Uptime',
-        CONVERT
+    /* Uptime information - works on all platforms if permissions allow */
+    IF @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #server_info
         (
-            nvarchar(30),
-            DATEDIFF
-            (
-                DAY,
-                osi.sqlserver_start_time,
-                SYSDATETIME()
-            )
-        ) +
-        N' days, ' +
-        CONVERT
-        (
-            nvarchar(8),
+            info_type, 
+            value
+        )
+        SELECT
+            N'Uptime',
             CONVERT
             (
-                time,
-                DATEADD
+                nvarchar(30),
+                DATEDIFF
                 (
-                    SECOND,
-                    DATEDIFF
+                    DAY,
+                    osi.sqlserver_start_time,
+                    SYSDATETIME()
+                )
+            ) +
+            N' days, ' +
+            CONVERT
+            (
+                nvarchar(8),
+                CONVERT
+                (
+                    time,
+                    DATEADD
                     (
                         SECOND,
-                        osi.sqlserver_start_time,
-                        SYSDATETIME()
-                    ) % 86400,
-                    '00:00:00'
-                )
-            ),
-            108
-        ) +
-        N' (hh:mm:ss)'
-    FROM sys.dm_os_sys_info AS osi;
+                        DATEDIFF
+                        (
+                            SECOND,
+                            osi.sqlserver_start_time,
+                            SYSDATETIME()
+                        ) % 86400,
+                        '00:00:00'
+                    )
+                ),
+                108
+            ) +
+            N' (hh:mm:ss)'
+        FROM sys.dm_os_sys_info AS osi;
+    END
+    ELSE
+    BEGIN
+        INSERT INTO
+            #server_info
+        (
+            info_type, 
+            value
+        )
+        VALUES
+            (N'Uptime', N'Information unavailable (requires VIEW SERVER STATE permission)');
+    END;
 
-    /* CPU information - works on all platforms */
-    INSERT INTO
-        #server_info
-        (info_type, value)
-    SELECT
-        N'CPU',
-        CONVERT(nvarchar(10), osi.cpu_count) +
-        N' logical processors, ' +
-        CONVERT(nvarchar(10), osi.hyperthread_ratio) +
-        N' physical cores, ' +
-        CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
-        N' NUMA node(s)'
-    FROM sys.dm_os_sys_info AS osi;
+    /* CPU information - works on all platforms if permissions allow */
+    IF @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #server_info
+        (
+            info_type,
+            value
+        )
+        SELECT
+            N'CPU',
+            CONVERT(nvarchar(10), osi.cpu_count) +
+            N' logical processors, ' +
+            CONVERT(nvarchar(10), osi.hyperthread_ratio) +
+            N' physical cores, ' +
+            CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
+            N' NUMA node(s)'
+        FROM sys.dm_os_sys_info AS osi;
+    END
+    ELSE
+    BEGIN
+        INSERT INTO
+            #server_info
+        (
+            info_type,
+            value
+        )
+        VALUES
+            (N'CPU', N'Information unavailable (requires VIEW SERVER STATE permission)');
+    END;
 
     /* Check for offline schedulers */
     IF @azure_sql_db = 0 /* Not applicable to Azure SQL DB */
+    AND @has_view_server_state = 1 /* Requires VIEW SERVER STATE permission */
     BEGIN
         INSERT INTO
             #results
@@ -752,63 +815,70 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             COUNT_BIG(*) > 0; /* Only if there are offline schedulers */
     END;
 
-    /* Check for forced grants */
-    INSERT INTO
-        #results
-    (
-        check_id,
-        priority,
-        category,
-        finding,
-        details,
-        url
-    )
-    SELECT
-        check_id = 4101,
-        priority = 30, /* High priority */
-        category = N'Memory Pressure',
-        finding = N'Memory-Starved Queries Detected',
-        details =
-            N'dm_exec_query_resource_semaphores has ' +
-            CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
-            N' forced memory grants. ' +
-            N'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
-        url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
-    FROM sys.dm_exec_query_resource_semaphores AS ders
-    WHERE ders.forced_grant_count > 0
-    HAVING
-        MAX(ders.forced_grant_count) > 0; /* Only if there are actually forced grants */
+    /* Check for forced grants - requires VIEW SERVER STATE permission */
+    IF @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT
+            check_id = 4101,
+            priority = 30, /* High priority */
+            category = N'Memory Pressure',
+            finding = N'Memory-Starved Queries Detected',
+            details =
+                N'dm_exec_query_resource_semaphores has ' +
+                CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
+                N' forced memory grants. ' +
+                N'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
+            url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+        FROM sys.dm_exec_query_resource_semaphores AS ders
+        WHERE ders.forced_grant_count > 0
+        HAVING
+            MAX(ders.forced_grant_count) > 0; /* Only if there are actually forced grants */
+    END;
 
-    /* Check for memory grant timeouts */
-    INSERT INTO
-        #results
-    (
-        check_id,
-        priority,
-        category,
-        finding,
-        details,
-        url
-    )
-    SELECT
-        check_id = 4103,
-        priority = 30, /* High priority */
-        category = N'Memory Pressure',
-        finding = N'Memory-Starved Queries Detected',
-        details =
-            N'dm_exec_query_resource_semaphores has ' +
-            CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
-            N' memory grant timeouts. ' +
-            N'Queries are waiting for memory for a long time and giving up.',
-        url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
-    FROM sys.dm_exec_query_resource_semaphores AS ders
-    WHERE ders.timeout_error_count > 0
-    HAVING
-        MAX(ders.timeout_error_count) > 0; /* Only if there are actually forced grants */
+    /* Check for memory grant timeouts - requires VIEW SERVER STATE permission */
+    IF @has_view_server_state = 1
+    BEGIN
+        INSERT INTO
+            #results
+        (
+            check_id,
+            priority,
+            category,
+            finding,
+            details,
+            url
+        )
+        SELECT
+            check_id = 4103,
+            priority = 30, /* High priority */
+            category = N'Memory Pressure',
+            finding = N'Memory-Starved Queries Detected',
+            details =
+                N'dm_exec_query_resource_semaphores has ' +
+                CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
+                N' memory grant timeouts. ' +
+                N'Queries are waiting for memory for a long time and giving up.',
+            url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+        FROM sys.dm_exec_query_resource_semaphores AS ders
+        WHERE ders.timeout_error_count > 0
+        HAVING
+            MAX(ders.timeout_error_count) > 0; /* Only if there are actually forced grants */
+    END;
 
     /* Check for SQL Server memory dumps (on-prem only) */
     IF  @azure_sql_db = 0
     AND @azure_managed_instance = 0
+    AND @has_view_server_state = 1 /* Requires sysadmin permission */
     BEGIN
         /* First check if the DMV exists (SQL 2008+) */
         IF OBJECT_ID('sys.dm_server_memory_dumps') IS NOT NULL
@@ -991,6 +1061,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_os_sys_info AS osi
         WHERE osi.sql_memory_model_desc = N'CONVENTIONAL' /* Conventional means not using LPIM */
         AND   @physical_memory_gb >= 32 /* Only recommend for servers with >=32GB RAM */;
+
+        INSERT
+            #server_info
+        (
+            info_type,
+            value
+        )
+        SELECT
+            N'Memory Model',
+            osi.sql_memory_model_desc
+        FROM sys.dm_os_sys_info AS osi;   
     END;
 
     /* Check if Instant File Initialization is enabled (on-prem only) */
@@ -1000,8 +1081,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND @has_view_server_state = 1
     BEGIN
         INSERT INTO
-            #server_info
-            (info_type, value)
+            #server_info 
+        (
+            info_type, 
+            value
+        )
         SELECT
             N'Instant File Initialization',
             CASE
@@ -1046,8 +1130,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM sys.resource_governor_configuration AS rgc WHERE rgc.is_enabled = 1)
         BEGIN
             INSERT INTO
-                #server_info
-                (info_type, value)
+                #server_info 
+            (
+                info_type, 
+                value
+            )
             SELECT
                 N'Resource Governor',
                 N'Enabled';
@@ -1088,8 +1175,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ELSE
         BEGIN
             INSERT INTO
-                #server_info
-                (info_type, value)
+                #server_info 
+            (
+                info_type, 
+                value
+            )
             SELECT
                 N'Resource Governor',
                 N'Disabled';
@@ -1105,6 +1195,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN TRY
             INSERT INTO
                 #trace_flags
+            (
+                trace_flag,
+                status,
+                global,
+                session
+            )
             EXECUTE sys.sp_executesql
                 N'DBCC TRACESTATUS WITH NO_INFOMSGS';
         END TRY
@@ -1138,8 +1234,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM #trace_flags AS tf WHERE tf.global = 1)
         BEGIN
             INSERT INTO
-                #server_info
-                (info_type, value)
+                #server_info 
+            (
+                info_type, 
+                value
+            )
             SELECT
                 N'Global Trace Flags',
                 STUFF
@@ -1165,8 +1264,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Memory information - works on all platforms */
     INSERT INTO
-        #server_info
-        (info_type, value)
+        #server_info 
+    (
+        info_type, 
+        value
+    )
     SELECT
         N'Memory',
         N'Total: ' +
@@ -1190,10 +1292,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 osi.committed_target_kb / 1024.0 / 1024.0
             )
         ) +
-        N' GB' +
-        N', ' +
-        osi.sql_memory_model_desc +
-        N' enabled'
+        N' GB'
     FROM sys.dm_os_sys_info AS osi;
 
     /* Check for important events in default trace (Windows only for now) */
@@ -1550,8 +1649,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             IF @autogrow_summary IS NOT NULL
             BEGIN
                 INSERT INTO
-                    #server_info
-                    (info_type, value)
+                    #server_info 
+                (
+                    info_type, 
+                    value
+                )
                 VALUES
                     (N'Slow Autogrow Events (7 days)', @autogrow_summary);
             END;
@@ -1880,102 +1982,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
-
-        INSERT INTO
-            #wait_summary
-            (category, pct_of_uptime)
-        SELECT TOP (5)
-            ws.category,
-            pct_of_uptime =
-                SUM(ws.wait_time_percent_of_uptime)
-        FROM #wait_stats AS ws
-        WHERE ws.wait_time_percent_of_uptime >= 10.0 /* Only include categories with at least 10% impact on uptime */
-        GROUP BY
-            ws.category
-        ORDER BY
-            SUM(ws.wait_time_percent_of_uptime) DESC;
-
-        SELECT @wait_summary =
-            CASE
-                WHEN @wait_summary = N''
-                THEN ws.category +
-                     N' (' +
-                     CONVERT(nvarchar(10), ws.pct_of_uptime) +
-                     N'% of uptime)'
-                ELSE @wait_summary +
-                     N', ' +
-                     ws.category +
-                     N' (' +
-                     CONVERT(nvarchar(10), ws.pct_of_uptime) +
-                     N'% of uptime)'
-            END
-        FROM #wait_summary AS ws;
-
-        /* Add wait summary to server info if any significant waits were found */
-        IF @wait_summary <> N''
-        BEGIN
-            /* Replace the result set in the server_info table with a clearer explanation */
-            INSERT INTO
-                #server_info
-                (info_type, value)
-            VALUES
-                (N'Wait Stats Summary', N'See Wait Statistics section in results for details.');
-
-            /* Add the detailed wait categories as separate entries in the results table */
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            SELECT TOP (10)
-                6000,
-                priority =
-                    CASE
-                        WHEN ws.pct_of_uptime > 100
-                        THEN 40 /* Medium-high priority */
-                        WHEN ws.pct_of_uptime > 50
-                        THEN 50 /* Medium priority */
-                        ELSE 60 /* Lower priority */
-                    END,
-                category = N'Wait Statistics Summary',
-                finding = N'Wait Category: ' + ws.category,
-                details =
-                    N'This category represents ' +
-                    CONVERT(nvarchar(10), CONVERT(decimal(10, 2), ws.pct_of_uptime)) +
-                    N'% of server uptime. ' +
-                    CASE
-                        WHEN ws.category = N'Query Execution'
-                        THEN N'This includes various query processing waits and can indicate poorly optimized queries or procedure cache issues.'
-                        WHEN ws.category = N'Parallelism'
-                        THEN N'This indicates time spent coordinating parallel query execution. Consider reviewing MAXDOP settings.'
-                        WHEN ws.category = N'CPU'
-                        THEN N'This indicates CPU pressure. Server may benefit from more CPU resources or query optimization.'
-                        WHEN ws.category = N'Memory'
-                        THEN N'This indicates memory pressure. Consider increasing server memory or optimizing memory-intensive queries.'
-                        WHEN ws.category = N'I/O'
-                        THEN N'This indicates storage performance issues. Check for slow disks or I/O-intensive queries.'
-                        WHEN ws.category = N'TempDB Contention'
-                        THEN N'This indicates contention in TempDB. Consider adding more TempDB files or optimizing queries that use TempDB.'
-                        WHEN ws.category = N'Transaction Log'
-                        THEN N'This indicates log write pressure. Check for long-running transactions or log file performance issues.'
-                        WHEN ws.category = N'Locking'
-                        THEN N'This indicates contention from locks. Look for blocking chains or query isolation level issues.'
-                        WHEN ws.category = N'Network'
-                        THEN N'This indicates network bottlenecks or slow client applications not consuming results quickly.'
-                        WHEN ws.category = N'Azure SQL Throttling'
-                        THEN N'This indicates resource limits imposed by Azure SQL DB. Consider upgrading to a higher service tier.'
-                        ELSE N'This category may require further investigation.'
-                    END,
-                url = N'https://erikdarling.com/sp_PerfCheck#WaitStats'
-            FROM #wait_summary AS ws
-            ORDER BY
-                ws.pct_of_uptime DESC;
-        END;
     END;
 
     /* Check for CPU scheduling pressure (signal wait ratio) */
@@ -2067,7 +2073,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             /* Add CPU scheduling info to server_info */
             INSERT INTO
                 #server_info
-                (info_type, value)
+             (
+                 info_type, 
+                 value
+             )
             VALUES
             (
                  N'Signal Wait Ratio',
@@ -2086,7 +2095,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             BEGIN
                 INSERT INTO
                     #server_info
-                    (info_type, value)
+                (
+                    info_type, 
+                    value
+                )
                 VALUES
                 (
                     N'SOS_SCHEDULER_YIELD',
@@ -2207,7 +2219,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             /* Add buffer pool info to server_info */
             INSERT INTO
                 #server_info
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             VALUES
             (
                 N'Buffer Pool Size',
@@ -2221,7 +2236,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             INSERT INTO
                 #server_info
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             VALUES
             (
                 N'Stolen Memory',
@@ -2514,7 +2532,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             INSERT INTO
                 #server_info
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             VALUES
             (
                 N'Database I/O Stalls',
@@ -2864,7 +2885,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             /* For non-Azure SQL DB, get size across all accessible databases */
             INSERT INTO
                 #server_info
-                (info_type, value)
+            (
+                info_type, 
+                value
+            )
             EXECUTE sys.sp_executesql
                 @db_size_sql;
         END;
@@ -2872,8 +2896,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN CATCH
         /* If we can't access the files due to permissions */
         INSERT INTO
-            #server_info
-            (info_type, value)
+            #server_info 
+        (
+            info_type, 
+            value
+        )
         VALUES
             (N'Database Size', N'Unable to determine (permission error)');
     END CATCH;
@@ -2907,7 +2934,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Add min/max server memory info */
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
         (
             N'Min Server Memory',
@@ -2917,7 +2947,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
         (
             N'Max Server Memory',
@@ -2938,7 +2971,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
         (
             N'MAXDOP',
@@ -2947,7 +2983,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         INSERT INTO
             #server_info
-            (info_type, value)
+        (
+            info_type, 
+            value
+        )
         VALUES
         (
             N'Cost Threshold for Parallelism',
@@ -3246,7 +3285,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Single TempDB Data File',
                 N'TempDB has only one data file. Multiple files can reduce allocation page contention. ' +
                 N'Recommendation: Use multiple files (equal to number of logical processors up to 8).',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3274,7 +3313,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' data files. This is an odd number and not equal to the ' +
                 CONVERT(nvarchar(10), @processors) + ' logical processors. ' +
                 N'Consider using an even number of files for better performance.',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3302,7 +3341,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' data files, which is more than the ' +
                 CONVERT(nvarchar(10), @processors) +
                 N' logical processors. ',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3332,7 +3371,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' GB, Largest: ' +
                 CONVERT(nvarchar(10), CONVERT(integer, @max_data_file_size)) +
                 N' GB. For best performance, TempDB data files should be the same size.',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3358,7 +3397,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Mixed TempDB Autogrowth Settings',
                 N'TempDB data files have inconsistent autogrowth settings - some use percentage growth and others use fixed size growth. ' +
                 N'This can lead to uneven file sizes over time. Use consistent settings for all files.',
-                N'https://erikdarling.com/sp_PerfCheck#TempDB'
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
 
@@ -3569,7 +3608,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Affinity I/O mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity_io_mask) +
                 N'. This binds I/O completion to specific CPUs and should only be used for specialized workloads.',
-                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+                N'https://erikdarling.com/sp_PerfCheck/#AffinityIOMask'
             );
         END;
 
@@ -3595,7 +3634,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Affinity64 mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity64_mask) +
                 N'. This can limit SQL Server CPU usage on high-CPU systems and should be carefully evaluated.',
-                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+                N'https://erikdarling.com/sp_PerfCheck/#Affinity64Mask'
             );
         END;
 
@@ -3621,7 +3660,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Affinity64 I/O mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity64_io_mask) +
                 N'. This binds I/O completion on high-CPU systems and should be carefully evaluated.',
-                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+                N'https://erikdarling.com/sp_PerfCheck/#Affinity64Mask'
             );
         END;
 
@@ -4867,7 +4906,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Add scan time footer to server info */
     INSERT INTO
         #server_info
-        (info_type, value)
+    (
+        info_type,
+        value
+    )
     VALUES
         (N'Run Date', CONVERT(varchar(25), @start_time, 121));
 
