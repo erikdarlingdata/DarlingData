@@ -1061,6 +1061,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_os_sys_info AS osi
         WHERE osi.sql_memory_model_desc = N'CONVENTIONAL' /* Conventional means not using LPIM */
         AND   @physical_memory_gb >= 32 /* Only recommend for servers with >=32GB RAM */;
+
+        INSERT
+            #server_info
+        (
+            info_type,
+            value
+        )
+        SELECT
+            N'Memory Model',
+            osi.sql_memory_model_desc
+        FROM sys.dm_os_sys_info AS osi;   
     END;
 
     /* Check if Instant File Initialization is enabled (on-prem only) */
@@ -1281,10 +1292,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 osi.committed_target_kb / 1024.0 / 1024.0
             )
         ) +
-        N' GB' +
-        N', ' +
-        osi.sql_memory_model_desc +
-        N' enabled'
+        N' GB'
     FROM sys.dm_os_sys_info AS osi;
 
     /* Check for important events in default trace (Windows only for now) */
