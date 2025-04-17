@@ -3400,7 +3400,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
-        
+
         /* Check for percentage growth in tempdb */
         IF @has_percent_growth = 1
         BEGIN
@@ -4872,10 +4872,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 object_name = mf.name,
                 details =
                     ''Database file is using a very large fixed growth increment of '' +
-                    CONVERT(nvarchar(20), 
-                    CONVERT(decimal(18, 2), mf.growth * 
-                    CONVERT(decimal(18, 2), 8.0) / 
-                    CONVERT(decimal(18, 2), 1024.0) / 
+                    CONVERT(nvarchar(20),
+                    CONVERT(decimal(18, 2), mf.growth *
+                    CONVERT(decimal(18, 2), 8.0) /
+                    CONVERT(decimal(18, 2), 1024.0) /
                     CONVERT(decimal(18, 2), 1024.0))) +
                     '' GB. Very large growth increments can lead to excessive space allocation. '' +
                     CASE
@@ -4887,8 +4887,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url = N''https://erikdarling.com/sp_PerfCheck#LargeGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 0
-            AND   mf.growth * CONVERT(decimal(18, 2), 8.0) / 
-                  CONVERT(decimal(18, 2), 1024.0) / 
+            AND   mf.growth * CONVERT(decimal(18, 2), 8.0) /
+                  CONVERT(decimal(18, 2), 1024.0) /
                   CONVERT(decimal(18, 2), 1024.0) > 10.0; /* Growth > 10GB */';
 
             IF @debug = 1

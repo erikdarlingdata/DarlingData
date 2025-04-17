@@ -1,4 +1,4 @@
--- Compile Date: 04/15/2025 00:27:51 UTC
+-- Compile Date: 04/17/2025 18:31:39 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -24373,6 +24373,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             );
         END;
 
+        /* Check for percentage growth in tempdb */
+        IF @has_percent_growth = 1
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                2006,
+                50, /* High-medium priority */
+                N'TempDB Configuration',
+                N'Percentage Auto-Growth Setting in TempDB',
+                N'TempDB data files are using percentage growth settings. This can lead to increasingly larger growth events as files grow. ' +
+                N'TempDB is recreated on server restart, so using predictable fixed-size growth is recommended for better performance.',
+                N'https://erikdarling.com/sp_PerfCheck#tempdb'
+            );
+        END;
+
         /* Memory configuration checks */
         IF @min_server_memory >= (@max_server_memory * 0.9) /* Within 10% */
         BEGIN
@@ -25683,7 +25708,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 details =
                     ''Database data file is using percentage growth setting ('' +
                     CONVERT(nvarchar(20), mf.growth) +
-                    ''%). This can lead to increasingly larger growth events as the file grows,
+                    ''%). Current file size is '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.size * 8.0 / 1024 / 1024)) +
+                    '' GB. This can lead to increasingly larger growth events as the file grows,
                     potentially causing larger file sizes than intended. Even with instant file initialization enabled,
                     consider using a fixed size instead for more predictable growth.'',
                 url = N''https://erikdarling.com/sp_PerfCheck#DataFileGrowth''
@@ -25817,7 +25844,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 object_name = mf.name,
                 details =
                     ''Database file is using a very large fixed growth increment of '' +
-                    CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024 / 1024)) +
+                    CONVERT(nvarchar(20),
+                    CONVERT(decimal(18, 2), mf.growth *
+                    CONVERT(decimal(18, 2), 8.0) /
+                    CONVERT(decimal(18, 2), 1024.0) /
+                    CONVERT(decimal(18, 2), 1024.0))) +
                     '' GB. Very large growth increments can lead to excessive space allocation. '' +
                     CASE
                         WHEN mf.type_desc = N''ROWS''
@@ -25828,7 +25859,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url = N''https://erikdarling.com/sp_PerfCheck#LargeGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 0
-            AND   mf.growth * 8.0 / 1024 / 1024 > 10; /* Growth > 10GB */';
+            AND   mf.growth * CONVERT(decimal(18, 2), 8.0) /
+                  CONVERT(decimal(18, 2), 1024.0) /
+                  CONVERT(decimal(18, 2), 1024.0) > 10.0; /* Growth > 10GB */';
 
             IF @debug = 1
             BEGIN
@@ -29572,7 +29605,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                               @reserved_worker_count_out,
                               N'0'
                           )
-                     ELSE N'N/A'
+                     ELSE N'''N/A'''
                 END + N',
             threads_waiting_for_cpu =
                 SUM(dos.runnable_tasks_count),
@@ -29597,10 +29630,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
         CROSS JOIN
         (
             SELECT
-                active_request_count = SUM(wg.active_request_count),
-                queued_request_count = SUM(wg.queued_request_count),
-                blocked_task_count = SUM(wg.blocked_task_count),
-                active_parallel_thread_count = SUM(wg.active_parallel_thread_count)
+                active_request_count =
+                    SUM(wg.active_request_count),
+                queued_request_count =
+                    SUM(wg.queued_request_count),
+                blocked_task_count =
+                    SUM(wg.blocked_task_count),
+                active_parallel_thread_count =
+                    SUM(wg.active_parallel_thread_count)
             FROM sys.dm_resource_governor_workload_groups AS wg
         ) AS wg
         OUTER APPLY

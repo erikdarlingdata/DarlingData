@@ -3677,13 +3677,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
         CROSS JOIN
         (
             SELECT
-                active_request_count = 
+                active_request_count =
                     SUM(wg.active_request_count),
-                queued_request_count = 
+                queued_request_count =
                     SUM(wg.queued_request_count),
-                blocked_task_count = 
+                blocked_task_count =
                     SUM(wg.blocked_task_count),
-                active_parallel_thread_count = 
+                active_parallel_thread_count =
                     SUM(wg.active_parallel_thread_count)
             FROM sys.dm_resource_governor_workload_groups AS wg
         ) AS wg
