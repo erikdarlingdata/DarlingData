@@ -4025,7 +4025,8 @@ END;
             error_number
         )
         VALUES
-            (17830);
+            (17830),
+            (18056);
 
         SELECT
             event_time =
