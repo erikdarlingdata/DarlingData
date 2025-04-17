@@ -1,4 +1,4 @@
--- Compile Date: 04/17/2025 18:31:39 UTC
+-- Compile Date: 04/17/2025 21:22:01 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -4026,7 +4026,8 @@ END;
             error_number
         )
         VALUES
-            (17830);
+            (17830),
+            (18056);
 
         SELECT
             event_time =
