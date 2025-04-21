@@ -782,7 +782,7 @@ Hold plan_ids for matching wait filter
 CREATE TABLE
     #wait_filter
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -1276,19 +1276,19 @@ CREATE TABLE
 CREATE TABLE
     #include_databases
 (
-    database_name sysname PRIMARY KEY
+    database_name sysname PRIMARY KEY CLUSTERED
 );
 
 CREATE TABLE
     #exclude_databases
 (
-    database_name sysname PRIMARY KEY
+    database_name sysname PRIMARY KEY CLUSTERED
 );
 
 CREATE TABLE
     #requested_but_skipped_databases
 (
-    database_name sysname PRIMARY KEY,
+    database_name sysname PRIMARY KEY CLUSTERED,
     reason varchar(100) NOT NULL
 );
 
