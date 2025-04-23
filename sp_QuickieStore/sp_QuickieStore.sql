@@ -100,6 +100,7 @@ ALTER PROCEDURE
     @regression_comparator varchar(20) = NULL, /*what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with the regression time period.*/
     @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, want do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
     @include_query_hash_totals bit = 0, /*will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
+    @include_maintenance bit = 0, /*Set this bit to 1 to add maintenance operations such as index creation to the result set*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
@@ -215,6 +216,7 @@ BEGIN
                 WHEN N'@regression_comparator' THEN 'what difference to use (''relative'' or ''absolute'') when comparing @sort_order''s metric for the normal time period with any regression time period.'
                 WHEN N'@regression_direction' THEN 'when comparing against any regression baseline, what do you want the results sorted by (''magnitude'', ''improved'', or ''regressed'')?'
                 WHEN N'@include_query_hash_totals' THEN N'will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
+                WHEN N'@include_maintenance' THEN N'Set this bit to 1 to add maintenance operations such as index creation to the result set'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
@@ -270,6 +272,7 @@ BEGIN
                 WHEN N'@regression_comparator' THEN 'relative, absolute'
                 WHEN N'@regression_direction' THEN 'regressed, worse, improved, better, magnitude, absolute, whatever'
                 WHEN N'@include_query_hash_totals' THEN N'0 or 1'
+                WHEN N'@include_maintenance' THEN N'0 or 1'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
                 WHEN N'@troubleshoot_performance' THEN '0 or 1'
@@ -325,6 +328,7 @@ BEGIN
                 WHEN N'@regression_comparator' THEN 'NULL; absolute if @regression_baseline_start_date is specified'
                 WHEN N'@regression_direction' THEN 'NULL; regressed if @regression_baseline_start_date is specified'
                 WHEN N'@include_query_hash_totals' THEN N'0'
+                WHEN N'@include_maintenance' THEN N'0'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
                 WHEN N'@troubleshoot_performance' THEN '0'
@@ -782,7 +786,7 @@ Hold plan_ids for matching wait filter
 CREATE TABLE
     #wait_filter
 (
-    plan_id bigint PRIMARY KEY
+    plan_id bigint PRIMARY KEY CLUSTERED
 );
 
 /*
@@ -1276,19 +1280,19 @@ CREATE TABLE
 CREATE TABLE
     #include_databases
 (
-    database_name sysname PRIMARY KEY
+    database_name sysname PRIMARY KEY CLUSTERED
 );
 
 CREATE TABLE
     #exclude_databases
 (
-    database_name sysname PRIMARY KEY
+    database_name sysname PRIMARY KEY CLUSTERED
 );
 
 CREATE TABLE
     #requested_but_skipped_databases
 (
-    database_name sysname PRIMARY KEY,
+    database_name sysname PRIMARY KEY CLUSTERED,
     reason varchar(100) NOT NULL
 );
 
@@ -2716,6 +2720,8 @@ SELECT
         ISNULL(@workdays, 0),
     @include_query_hash_totals =
         ISNULL(@include_query_hash_totals, 0),
+    @include_maintenance =
+        ISNULL(@include_maintenance, 0),
     /*
         doing start and end date last because they're more complicated
         if start or end date is null,
@@ -5145,7 +5151,8 @@ END;
 /*
 This section screens out index create and alter statements because who cares
 */
-
+IF @include_maintenance = 0
+BEGIN
 SELECT
     @current_table = 'inserting #maintenance_plans',
     @sql = @isolation_level;
@@ -5225,6 +5232,7 @@ SELECT
           FROM #maintenance_plans AS mp
           WHERE mp.plan_id = qsrs.plan_id
       )' + @nc10;
+END;
 
 /*
 Tidy up the where clause a bit
@@ -10208,6 +10216,8 @@ BEGIN
             @regression_direction,
         include_query_hash_totals =
             @include_query_hash_totals,
+        include_maintenance =
+            @include_maintenance,
         help =
             @help,
         debug =
