@@ -2381,7 +2381,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN 0
                     ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes))
                 END,
-            total_size_mb = CONVERT(decimal(18, 2), SUM(mf.size) * 8.0 / 1024.0)
+            total_size_mb = CONVERT(decimal(18, 2), SUM(CONVERT(bigint, mf.size)) * 8.0 / 1024.0)
         FROM sys.dm_io_virtual_file_stats
         (' +
         CASE
