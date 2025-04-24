@@ -571,7 +571,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         avg_wait_ms AS (wait_time_ms / NULLIF(waiting_tasks_count, 0)),
         percentage decimal(5, 2) NOT NULL,
         signal_wait_time_ms bigint NOT NULL,
-        wait_time_percent_of_uptime decimal(5, 2) NULL,
+        wait_time_percent_of_uptime decimal(6, 2) NULL,
         category nvarchar(50) NOT NULL
     );
 
