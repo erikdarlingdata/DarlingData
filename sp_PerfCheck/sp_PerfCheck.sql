@@ -387,7 +387,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         name sysname NOT NULL,
         database_id integer NOT NULL,
         compatibility_level tinyint NOT NULL,
-        collation_name sysname NOT NULL,
+        collation_name sysname NULL,
         user_access_desc nvarchar(60) NOT NULL,
         is_read_only bit NOT NULL,
         is_auto_close_on bit NOT NULL,
