@@ -2581,9 +2581,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_write_stall_ms)) +
                 N' ms. ' +
                 N'Total read: ' +
-                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), io.read_io_mb)) +
+                CONVERT(nvarchar(20), CONVERT(decimal(18, 2), io.read_io_mb)) +
                 N' MB, Total write: ' +
-                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), io.write_io_mb)) +
+                CONVERT(nvarchar(20), CONVERT(decimal(18, 2), io.write_io_mb)) +
                 N' MB. ' +
                 N'This indicates slow I/O subsystem performance for this database.',
             url = N'https://erikdarling.com/sp_PerfCheck#IOStalls'
