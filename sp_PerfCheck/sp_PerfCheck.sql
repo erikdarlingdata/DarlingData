@@ -387,7 +387,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         name sysname NOT NULL,
         database_id integer NOT NULL,
         compatibility_level tinyint NOT NULL,
-        collation_name sysname NOT NULL,
+        collation_name sysname NULL,
         user_access_desc nvarchar(60) NOT NULL,
         is_read_only bit NOT NULL,
         is_auto_close_on bit NOT NULL,
@@ -411,8 +411,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_query_store_on bit NOT NULL,
         is_distributor bit NOT NULL,
         is_cdc_enabled bit NOT NULL,
-        target_recovery_time_in_seconds integer NOT NULL,
-        delayed_durability_desc nvarchar(60) NOT NULL,
+        target_recovery_time_in_seconds integer NULL,
+        delayed_durability_desc nvarchar(60) NULL,
         is_accelerated_database_recovery_on bit NOT NULL,
         is_ledger_on bit NULL
     );
@@ -571,7 +571,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         avg_wait_ms AS (wait_time_ms / NULLIF(waiting_tasks_count, 0)),
         percentage decimal(5, 2) NOT NULL,
         signal_wait_time_ms bigint NOT NULL,
-        wait_time_percent_of_uptime decimal(5, 2) NULL,
+        wait_time_percent_of_uptime decimal(6, 2) NULL,
         category nvarchar(50) NOT NULL
     );
 
@@ -2381,7 +2381,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN 0
                     ELSE CONVERT(decimal(18, 2), SUM(fs.io_stall_write_ms) * 1.0 / SUM(fs.num_of_writes))
                 END,
-            total_size_mb = CONVERT(decimal(18, 2), SUM(mf.size) * 8.0 / 1024.0)
+            total_size_mb = CONVERT(decimal(18, 2), SUM(CONVERT(bigint, mf.size)) * 8.0 / 1024.0)
         FROM sys.dm_io_virtual_file_stats
         (' +
         CASE
@@ -2581,9 +2581,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_write_stall_ms)) +
                 N' ms. ' +
                 N'Total read: ' +
-                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), io.read_io_mb)) +
+                CONVERT(nvarchar(20), CONVERT(decimal(18, 2), io.read_io_mb)) +
                 N' MB, Total write: ' +
-                CONVERT(nvarchar(20), CONVERT(decimal(10, 2), io.write_io_mb)) +
+                CONVERT(nvarchar(20), CONVERT(decimal(18, 2), io.write_io_mb)) +
                 N' MB. ' +
                 N'This indicates slow I/O subsystem performance for this database.',
             url = N'https://erikdarling.com/sp_PerfCheck#IOStalls'
