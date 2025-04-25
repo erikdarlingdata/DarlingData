@@ -411,8 +411,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_query_store_on bit NOT NULL,
         is_distributor bit NOT NULL,
         is_cdc_enabled bit NOT NULL,
-        target_recovery_time_in_seconds integer NOT NULL,
-        delayed_durability_desc nvarchar(60) NOT NULL,
+        target_recovery_time_in_seconds integer NULL,
+        delayed_durability_desc nvarchar(60) NULL,
         is_accelerated_database_recovery_on bit NOT NULL,
         is_ledger_on bit NULL
     );
