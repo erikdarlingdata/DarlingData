@@ -3577,12 +3577,44 @@ BEGIN
 END;
 
 /*
-One last check: wait stat capture can be enabled or disabled in settings
+These columns are only available in 2017+.
+This is an instance-level check.
+We do it before the database-level checks because the relevant DMVs may not exist on old versions.
+@wait_filter has already been checked.
 */
 IF
 (
-   @wait_filter IS NOT NULL
-OR @new = 1
+  (
+      @sort_order = 'tempdb'
+   OR @sort_order_is_a_wait = 1
+  )
+  AND
+  (
+      @new = 0
+  )
+)
+BEGIN
+   RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to sorting by cpu.', 10, 1, @sort_order, @product_version) WITH NOWAIT;
+
+   SELECT
+       @sort_order = N'cpu',
+       @sort_order_is_a_wait = 0;
+
+   DELETE FROM @ColumnDefinitions
+   WHERE metric_type IN ('wait_time', 'top waits');
+
+   UPDATE @ColumnDefinitions
+   SET column_source = 'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+   WHERE metric_type = 'n';
+END;
+
+/*
+Wait stat capture can be enabled or disabled in settings.
+This is a database-level check.
+*/
+IF
+(
+  @new = 1
 )
 BEGIN
     SELECT
@@ -3644,36 +3676,66 @@ OPTION(RECOMPILE);' + @nc10;
             @sql,
             @current_table;
     END;
-
-    IF @query_store_waits_enabled = 0
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
-        END;
-    END;
-END; /*End wait stats checks*/
+END;
 
 /*
-These columns are only available in 2017+
+To avoid mixing sort orders in the @get_all_databases = 1 case, we skip the
+database if something wait related is requested on a database that does not capture waits.
+
+There is an edge case.
+If you have capturing wait stats disabled, your database can still hold wait stats.
+This happens if you turned capturing off after having it on.
+We make no attempt to handle this.
+Instead, we assume that anyone with capturing wait stats turned off does not want to see them.
 */
 IF
 (
   (
-      @sort_order = 'tempdb'
+      @wait_filter IS NOT NULL
    OR @sort_order_is_a_wait = 1
   )
   AND
   (
-       @new = 0
-    OR @query_store_waits_enabled = 0
+      @query_store_waits_enabled = 0
   )
 )
 BEGIN
-   RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
+    IF @get_all_databases = 1
+    BEGIN
+        RAISERROR('Query Store wait stats are not enabled for database %s, but you have requested them. We are skipping this database and continuing with any that remain.', 10, 1, @database_name_quoted) WITH NOWAIT;
+        FETCH NEXT
+        FROM @database_cursor
+        INTO @database_name;
 
-   SELECT
-       @sort_order = N'cpu';
+        CONTINUE;
+    END;
+    ELSE
+    BEGIN
+        RAISERROR('Query Store wait stats are not enabled for database %s, but you have requested them. We are reverting to sorting by cpu without respect for any wait filters.', 10, 1, @database_name_quoted) WITH NOWAIT;
+
+        SELECT
+            @sort_order = N'cpu',
+            @sort_order_is_a_wait = 0,
+            @wait_filter = NULL;
+
+        DELETE FROM @ColumnDefinitions
+        WHERE metric_type IN ('wait_time');
+
+        UPDATE @ColumnDefinitions
+        SET column_source = 'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+        WHERE metric_type = 'n';
+    END;
+END;
+
+/* There is no reason to show the top_waits column if we know it is NULL. */
+IF
+(
+        @query_store_waits_enabled = 0
+    AND @get_all_databases = 0
+)
+BEGIN
+    DELETE FROM @ColumnDefinitions
+    WHERE metric_type IN ('top_waits');
 END;
 
 /*Check that the selected @timezone is valid*/
@@ -7478,8 +7540,10 @@ BEGIN
 END; /*End updating runtime stats*/
 
 /*
-Let's check on settings, etc.
-We do this first so we can see if wait stats capture mode is true more easily
+Check on settings, etc.
+We do this first so we can see if wait stats capture mode is true more easily.
+We do not truncate this table as part of the looping over databases.
+Not truncating it makes it easier to show all set options when hitting multiple databases in expert mode.
 */
 SELECT
     @current_table = 'inserting #database_query_store_options',
@@ -7625,12 +7689,17 @@ If wait stats are available, we'll grab them here
 IF
 (
     @new = 1
-    AND EXISTS
+    /*
+    Recall that we do not care about the edge case of a database holding
+    wait stats despite capturing wait stats being turned off.
+    */
+    AND @database_id IN
         (
             SELECT
-                1/0
+                dqso.database_id
             FROM #database_query_store_options AS dqso
             WHERE dqso.wait_stats_capture_mode_desc = N'ON'
+            AND dqso.database_id = @database_id
         )
 )
 BEGIN
@@ -9794,7 +9863,22 @@ BEGIN
                                     FROM #database_query_store_options AS dqso
                                     WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
                                 )
-                            THEN ' because you have it disabled in your Query Store options'
+                            AND EXISTS
+                                (
+                                    SELECT
+                                        1/0
+                                    FROM #database_query_store_options AS dqso
+                                    WHERE dqso.wait_stats_capture_mode_desc = 'ON'
+                                )
+                            THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options and everywhere that had it enabled had no data'
+                            WHEN EXISTS
+                                (
+                                    SELECT
+                                        1/0
+                                    FROM #database_query_store_options AS dqso
+                                    WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                                )
+                            THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options'
                             ELSE ' for the queries in the results'
                         END;
             END;
@@ -11142,13 +11226,28 @@ BEGIN
                          )
                     THEN ' because it''s not available < 2017'
                     WHEN EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #database_query_store_options AS dqso
+                            WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                        )
+                    AND EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #database_query_store_options AS dqso
+                            WHERE dqso.wait_stats_capture_mode_desc = 'ON'
+                        )
+                    THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options and everywhere that had it enabled had no data'
+                    WHEN EXISTS
                          (
                              SELECT
                                  1/0
                              FROM #database_query_store_options AS dqso
                              WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
                          )
-                    THEN ' because you have it disabled in your Query Store options'
+                    THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options'
                     ELSE ' for the queries in the results'
                 END;
     END;
