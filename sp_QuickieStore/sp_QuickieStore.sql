@@ -3600,12 +3600,15 @@ BEGIN
        @sort_order = N'cpu',
        @sort_order_is_a_wait = 0;
 
-   DELETE FROM @ColumnDefinitions
-   WHERE metric_type IN ('wait_time', 'top waits');
+   DELETE 
+   FROM @ColumnDefinitions
+   WHERE metric_type IN (N'wait_time', N'top waits');
 
-   UPDATE @ColumnDefinitions
-   SET column_source = 'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
-   WHERE metric_type = 'n';
+   UPDATE 
+       @ColumnDefinitions
+   SET 
+       column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+   WHERE metric_type = N'n';
 END;
 
 /*
@@ -3718,12 +3721,15 @@ BEGIN
             @sort_order_is_a_wait = 0,
             @wait_filter = NULL;
 
-        DELETE FROM @ColumnDefinitions
-        WHERE metric_type IN ('wait_time');
+        DELETE 
+        FROM @ColumnDefinitions
+        WHERE metric_type IN (N'wait_time');
 
-        UPDATE @ColumnDefinitions
-        SET column_source = 'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
-        WHERE metric_type = 'n';
+        UPDATE 
+            @ColumnDefinitions
+        SET 
+            column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+        WHERE metric_type = N'n';
     END;
 END;
 
@@ -3734,8 +3740,9 @@ IF
     AND @get_all_databases = 0
 )
 BEGIN
-    DELETE FROM @ColumnDefinitions
-    WHERE metric_type IN ('top_waits');
+    DELETE 
+    FROM @ColumnDefinitions
+    WHERE metric_type IN (N'top_waits');
 END;
 
 /*Check that the selected @timezone is valid*/
@@ -7699,7 +7706,7 @@ IF
                 dqso.database_id
             FROM #database_query_store_options AS dqso
             WHERE dqso.wait_stats_capture_mode_desc = N'ON'
-            AND dqso.database_id = @database_id
+            AND   dqso.database_id = @database_id
         )
 )
 BEGIN
@@ -9852,32 +9859,32 @@ BEGIN
                         CASE
                             WHEN
                             (
-                                    @product_version = 13
-                                AND @azure = 0
+                                  @product_version = 13
+                              AND @azure = 0
                             )
                             THEN ' because it''s not available < 2017'
                             WHEN EXISTS
-                                (
-                                    SELECT
-                                        1/0
-                                    FROM #database_query_store_options AS dqso
-                                    WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
-                                )
+                                 (
+                                     SELECT
+                                         1/0
+                                     FROM #database_query_store_options AS dqso
+                                     WHERE dqso.wait_stats_capture_mode_desc <> N'ON'
+                                 )
                             AND EXISTS
                                 (
                                     SELECT
                                         1/0
                                     FROM #database_query_store_options AS dqso
-                                    WHERE dqso.wait_stats_capture_mode_desc = 'ON'
+                                    WHERE dqso.wait_stats_capture_mode_desc = N'ON'
                                 )
                             THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options and everywhere that had it enabled had no data'
                             WHEN EXISTS
-                                (
-                                    SELECT
-                                        1/0
-                                    FROM #database_query_store_options AS dqso
-                                    WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
-                                )
+                                 (
+                                     SELECT
+                                         1/0
+                                     FROM #database_query_store_options AS dqso
+                                     WHERE dqso.wait_stats_capture_mode_desc <> N'ON'
+                                 )
                             THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options'
                             ELSE ' for the queries in the results'
                         END;
@@ -11221,23 +11228,23 @@ BEGIN
                 '#query_store_wait_stats is empty' +
                 CASE
                     WHEN (
-                                @product_version = 13
-                            AND @azure = 0
+                              @product_version = 13
+                          AND @azure = 0
                          )
                     THEN ' because it''s not available < 2017'
                     WHEN EXISTS
-                        (
-                            SELECT
-                                1/0
-                            FROM #database_query_store_options AS dqso
-                            WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
-                        )
+                         (
+                             SELECT
+                                 1/0
+                             FROM #database_query_store_options AS dqso
+                             WHERE dqso.wait_stats_capture_mode_desc <> N'ON'
+                         )
                     AND EXISTS
                         (
                             SELECT
                                 1/0
                             FROM #database_query_store_options AS dqso
-                            WHERE dqso.wait_stats_capture_mode_desc = 'ON'
+                            WHERE dqso.wait_stats_capture_mode_desc = N'ON'
                         )
                     THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options and everywhere that had it enabled had no data'
                     WHEN EXISTS
@@ -11245,7 +11252,7 @@ BEGIN
                              SELECT
                                  1/0
                              FROM #database_query_store_options AS dqso
-                             WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                             WHERE dqso.wait_stats_capture_mode_desc <> N'ON'
                          )
                     THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options'
                     ELSE ' for the queries in the results'
