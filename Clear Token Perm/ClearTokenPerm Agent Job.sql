@@ -73,7 +73,7 @@ EXECUTE @ReturnCode = msdb.dbo.sp_add_job
     @description = N'For background on why you need this:
 https://www.erikdarling.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/
 
-Copyright 2022 Darling Data, LLC
+Copyright 2025 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -119,7 +119,7 @@ EXECUTE @ReturnCode = msdb.dbo.sp_add_jobschedule
     @enabled = 1,
     @freq_type = 4,
     @freq_interval = 1,
-    @freq_subday_type = 8,
+    @freq_subday_type = 4,
     @freq_subday_interval = 30,
     @freq_relative_interval = 0,
     @freq_recurrence_factor = 0,
