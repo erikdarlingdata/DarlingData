@@ -4305,8 +4305,52 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             url = N'https://erikdarling.com/sp_PerfCheck#QueryStore'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
-        AND   d.is_query_store_on = 0;
+        AND   d.is_query_store_on = 0
+        /* Skip this check for Azure SQL DB since Query Store is typically always enabled
+           and Azure might be reporting is_query_store_on incorrectly */
+        AND   @azure_sql_db = 0;
 
+        /* For Azure SQL DB, explicitly check Query Store status since is_query_store_on might be incorrect */
+        IF @azure_sql_db = 1
+        BEGIN
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+            SELECT
+                check_id = 7006,
+                priority = 60, /* Informational priority */
+                category = N''Database Configuration'',
+                finding = N''Query Store Not Enabled'',
+                database_name = @current_database_name,
+                details = N''Query Store is not enabled.
+                          Consider enabling Query Store to track query performance
+                          over time and identify regression issues.'',
+                url = N''https://erikdarling.com/sp_PerfCheck#QueryStore''
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_query_store_options AS qso
+            WHERE qso.actual_state = 0 /* OFF */;';
+
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                details,
+                url
+            )
+            EXECUTE sys.sp_executesql
+                @sql,
+              N'@current_database_name sysname',
+                @current_database_name;
+        END;
+        
         /* Check for Query Store in problematic state */
         BEGIN TRY
             SET @sql = N'
