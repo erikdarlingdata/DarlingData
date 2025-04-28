@@ -438,7 +438,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         can_compress bit NOT NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX filtered_objects CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -482,7 +483,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_io_latch_wait_in_ms bigint NULL,
         page_compression_attempt_count bigint NULL,
         page_compression_success_count bigint NULL,
-        PRIMARY KEY CLUSTERED (database_id, schema_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED 
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -506,7 +508,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         built_on sysname NULL,
         partition_function_name sysname NULL,
         partition_columns nvarchar(max)
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id, partition_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, partition_id)
     );
 
     CREATE TABLE
@@ -544,7 +547,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_lookup datetime NULL,
         last_user_update datetime NULL,
         is_eligible_for_dedupe bit NOT NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id, column_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, column_id)
     );
 
     CREATE TABLE
@@ -596,7 +600,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
         reason nvarchar(200) NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX index_analysis CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -704,26 +709,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE
         #include_databases
     (
-        database_name sysname NOT NULL PRIMARY KEY
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
         #exclude_databases
     (
-        database_name sysname NOT NULL PRIMARY KEY
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
         #databases
     (
-        database_name sysname NOT NULL PRIMARY KEY,
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
         database_id int NOT NULL
     );
 
     CREATE TABLE
         #requested_but_skipped_databases
     (
-        database_name sysname NOT NULL PRIMARY KEY,
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
         reason nvarchar(100) NOT NULL
     );
 
@@ -741,7 +746,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         definition nvarchar(max) NULL,
         contains_udf bit NOT NULL,
         udf_names nvarchar(max) NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, column_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, column_id)
     );
 
     CREATE TABLE
@@ -758,7 +764,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         definition nvarchar(max) NULL,
         contains_udf bit NOT NULL,
         udf_names nvarchar(max) NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, constraint_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, constraint_id)
     );
 
     CREATE TABLE
@@ -775,7 +782,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
         should_include_filter_columns bit NOT NULL,
-        INDEX c CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX c CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     /* Parse @include_databases comma-separated list */
