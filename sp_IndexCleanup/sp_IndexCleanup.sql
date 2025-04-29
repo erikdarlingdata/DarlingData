@@ -584,7 +584,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by nvarchar(4000) NULL,
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
         index_priority decimal(10,6) NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX index_analysis CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -600,8 +601,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
         reason nvarchar(200) NULL,
-        INDEX index_analysis CLUSTERED
-            (database_id, schema_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, can_compress)
     );
 
     CREATE TABLE
