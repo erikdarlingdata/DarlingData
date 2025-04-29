@@ -2569,7 +2569,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 c.name
                             FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
                             WHERE c.object_id = ia.object_id
-                            AND   ia.filter_definition LIKE N''%[['' + c.name + N'']]%'' COLLATE DATABASE_DEFAULT
+                            AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
                             AND   NOT EXISTS
                             (
                                 SELECT
@@ -2600,7 +2600,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         1/0
                     FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
                     WHERE c.object_id = ia.object_id
-                    AND   ia.filter_definition LIKE N''%[['' + c.name + N'']]%'' COLLATE DATABASE_DEFAULT
+                    AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
                     AND   NOT EXISTS
                     (
                         SELECT
@@ -2644,7 +2644,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         should_include_filter_columns
     )
     EXECUTE sys.sp_executesql
-        @sql;
+        @sql,
+      N'@current_database_id integer',
+        @current_database_id;
 
     IF @debug = 1
     BEGIN
@@ -6429,30 +6431,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.table_name
     OPTION(RECOMPILE);
 
-    /* Check for databases that were processed but had no objects to analyze */
-    WITH empty_databases AS
-    (
-        SELECT
-            database_name
-        FROM #databases AS d
-        WHERE NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM #index_reporting_stats AS irs
-            WHERE irs.database_name = d.database_name
-        )
-    )
-
-    SELECT
-        finding_type = 'DATABASES WITH NO QUALIFYING OBJECTS',
-        database_name = d.database_name + N' - Nothing Found',
-        recommendation = 'Database was processed but no objects met the analysis criteria'
-    FROM empty_databases AS d
-    ORDER BY
-        d.database_name
-    OPTION(RECOMPILE);
-
     /* Output message for dedupe_only mode */
     IF @dedupe_only = 1
     BEGIN
@@ -6530,15 +6508,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             fica.table_name,
             fica.index_name,
             fica.filter_definition,
+            ia.original_index_definition,
             fica.missing_included_columns,
             recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
         FROM #filtered_index_columns_analysis AS fica
+        JOIN #index_analysis AS ia
+          ON  ia.database_id = fica.database_id
+          AND ia.schema_id = fica.schema_id
+          AND ia.object_id = fica.object_id
+          AND ia.index_id = fica.index_id
         WHERE fica.should_include_filter_columns = 1
         ORDER BY
             fica.database_name,
             fica.schema_name,
             fica.table_name,
             fica.index_name;
+    END;
+
+    /* Check for databases that were processed but had no objects to analyze */
+    IF EXISTS
+    (
+        SELECT
+            1/0
+        FROM #databases AS d
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #index_reporting_stats AS irs
+            WHERE irs.database_name = d.database_name
+        )
+    )
+    BEGIN
+        WITH 
+            empty_databases AS
+        (
+            SELECT
+                database_name
+            FROM #databases AS d
+            WHERE NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #index_reporting_stats AS irs
+                WHERE irs.database_name = d.database_name
+            )
+        )
+        SELECT
+            finding_type = 'DATABASES WITH NO QUALIFYING OBJECTS',
+            database_name = d.database_name + N' - Nothing Found',
+            recommendation = 'Database was processed but no objects met the analysis criteria'
+        FROM empty_databases AS d
+        ORDER BY
+            database_name
+        OPTION(RECOMPILE);
     END;
 
 END TRY
