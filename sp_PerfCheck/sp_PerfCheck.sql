@@ -3083,9 +3083,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OR (c.name = N'access check cache quota' AND c.value_in_use <> 0)
             OR (c.name = N'Ad Hoc Distributed Queries' AND c.value_in_use <> 0)
             /* ADR settings */
-            OR (c.name = N'ADR cleaner retry timeout (min)' AND c.value_in_use NOT IN (15, 120))
+            OR (c.name = N'ADR cleaner retry timeout (min)' AND c.value_in_use NOT IN (0, 15, 120))
             OR (c.name = N'ADR Cleaner Thread Count' AND c.value_in_use <> 1)
-            OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use <> 4)
+            OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use NOT IN (0, 4))
             /* Affinity settings */
             OR (c.name = N'affinity mask' AND c.value_in_use <> 0)
             OR (c.name = N'affinity I/O mask' AND c.value_in_use <> 0)
