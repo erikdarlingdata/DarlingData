@@ -2545,6 +2545,86 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Analyze filtered indexes to identify columns used in filters that should be included */
+    SET @sql = N'
+    SELECT DISTINCT
+        ia.database_id,
+        ia.database_name,
+        ia.schema_id,
+        ia.schema_name,
+        ia.object_id,
+        ia.table_name,
+        ia.index_id,
+        ia.index_name,
+        ia.filter_definition,
+        missing_included_columns =
+            (
+                SELECT
+                    STUFF
+                    (
+                        (
+                            /* Find column names mentioned in filter_definition that aren''t already key or included columns */
+                            SELECT
+                                N'', '' +
+                                c.name
+                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                            WHERE c.object_id = ia.object_id
+                            AND   ia.filter_definition LIKE N''%[['' + c.name + N'']]%'' COLLATE DATABASE_DEFAULT
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_details AS id
+                                WHERE id.object_id = ia.object_id
+                                AND   id.index_id = ia.index_id
+                                AND   id.column_id = c.column_id
+                            )
+                            GROUP BY
+                                c.name
+                            FOR
+                                XML
+                                PATH(''''),
+                                TYPE
+                        ).value(''text()[1]'',''nvarchar(max)''),
+                        1,
+                        2,
+                        N''''
+                    )
+            ),
+        should_include_filter_columns =
+            CASE
+                WHEN EXISTS
+                (
+                    /* Check if any columns mentioned in filter_definition aren''t already in the index */
+                    SELECT
+                        1/0
+                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                    WHERE c.object_id = ia.object_id
+                    AND   ia.filter_definition LIKE N''%[['' + c.name + N'']]%'' COLLATE DATABASE_DEFAULT
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id
+                        WHERE id.object_id = ia.object_id
+                        AND   id.index_id = ia.index_id
+                        AND   id.column_id = c.column_id
+                    )
+                )
+                THEN 1
+                ELSE 0
+            END
+    FROM #index_analysis AS ia
+    WHERE ia.filter_definition IS NOT NULL
+    AND   ia.database_id = @current_database_id
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
+        PRINT @sql;
+    END;
+
+    /* The correct pattern: INSERT ... EXECUTE */
     INSERT INTO
         #filtered_index_columns_analysis
     WITH
@@ -2562,76 +2642,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         missing_included_columns,
         should_include_filter_columns
     )
-    SELECT DISTINCT
-        ia.database_id,
-        ia.database_name,
-        ia.schema_id,
-        ia.schema_name,
-        ia.object_id,
-        ia.table_name,
-        ia.index_id,
-        ia.index_name,
-        ia.filter_definition,
-        missing_included_columns =
-            (
-                SELECT
-                    STUFF
-                    (
-                        (
-                            /* Find column names mentioned in filter_definition that aren't already key or included columns */
-                            SELECT
-                                N', ' +
-                                c.name
-                            FROM sys.columns AS c
-                            WHERE c.object_id = ia.object_id
-                            AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
-                            AND   NOT EXISTS
-                            (
-                                SELECT
-                                    1/0
-                                FROM #index_details AS id
-                                WHERE id.object_id = ia.object_id
-                                AND   id.index_id = ia.index_id
-                                AND   id.column_id = c.column_id
-                            )
-                            GROUP BY
-                                c.name
-                            FOR
-                                XML
-                                PATH(''),
-                                TYPE
-                        ).value('text()[1]','nvarchar(max)'),
-                        1,
-                        2,
-                        N''
-                    )
-            ),
-        should_include_filter_columns =
-            CASE
-                WHEN EXISTS
-                (
-                    /* Check if any columns mentioned in filter_definition aren't already in the index */
-                    SELECT
-                        1/0
-                    FROM sys.columns AS c
-                    WHERE c.object_id = ia.object_id
-                    AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
-                    AND   NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id
-                        WHERE id.object_id = ia.object_id
-                        AND   id.index_id = ia.index_id
-                        AND   id.column_id = c.column_id
-                    )
-                )
-                THEN 1
-                ELSE 0
-            END
-    FROM #index_analysis AS ia
-    WHERE ia.filter_definition IS NOT NULL
-    OPTION(RECOMPILE);
+    EXECUTE sys.sp_executesql
+        @sql;
 
     IF @debug = 1
     BEGIN
