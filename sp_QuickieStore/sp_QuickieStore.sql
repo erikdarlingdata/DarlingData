@@ -540,6 +540,16 @@ CREATE TABLE
 );
 
 /*
+For filtering by @execution_count.
+This is only used for filtering, so it only needs one column.
+*/
+CREATE TABLE
+    #plan_ids_having_enough_executions
+(
+    plan_id bigint PRIMARY KEY CLUSTERED,
+);
+
+/*
 The following two tables are for adding extra columns
 on to our output. We need these for sorting by anything
 that isn't in #query_store_runtime_stats.
@@ -1650,7 +1660,6 @@ DECLARE
     @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(max),
-    @having_clause nvarchar(max),
     @query_text_search_original_value nvarchar(4000),
     @query_text_search_not_original_value nvarchar(4000),
     @procedure_exists bit,
@@ -2338,6 +2347,9 @@ TRUNCATE TABLE
     #forced_plans_failures;
 
 TRUNCATE TABLE
+    #plan_ids_having_enough_executions;
+
+TRUNCATE TABLE
     #include_plan_ids;
 
 TRUNCATE TABLE
@@ -2474,7 +2486,6 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         9223372036854775807,
     @nc10 = NCHAR(10),
     @where_clause = N'',
-    @having_clause = N'',
     @query_text_search =
         CASE
             WHEN @get_all_databases = 1
@@ -3816,13 +3827,6 @@ BEGIN
 END;
 
 /*Other filters*/
-IF @execution_count IS NOT NULL
-BEGIN
-    SELECT
-        @having_clause += N'HAVING
-        SUM(qsrs.count_executions) >= @execution_count';
-END;
-
 IF @duration_ms IS NOT NULL
 BEGIN
     SELECT
@@ -5304,6 +5308,121 @@ SELECT
 END;
 
 /*
+Filtering by @execution_count is non-trivial.
+In the Query Store DMVs, execution counts only exist in
+sys.query_store_runtime_stats.
+That DMV has no query_id column (or anything similar),
+but we promised that @execution_count would filter by the
+number of executions of the query.
+The best column for us in the DMV is plan_id, so we need
+to get from there to query_id.
+Because we do most of our filtering work in #distinct_plans,
+we must also make what we do here compatible with that.
+
+In conclusion, we want produce a temp table holding the
+plan_ids for the queries with @execution_count or more executions.
+
+This is similar to the sort-helping tables that you are
+about to see, but easier because we do not need to return or sort
+by the execution count.
+We just need to know that these plans have enough executions.
+*/
+IF @execution_count > 0
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_having_enough_executions',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    SELECT DISTINCT
+        unfiltered_execution_counts.plan_id
+    FROM
+    (
+       SELECT
+           qsp.plan_id,
+           total_executions_for_query_of_plan =
+               SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_id)
+       FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+       JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+         ON qsq.query_id = qsp.query_id
+       JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+         ON qsp.plan_id = qsrs.plan_id
+       WHERE 1 = 1
+       ' + @where_clause
+         + N'
+    ) AS unfiltered_execution_counts
+    WHERE
+        unfiltered_execution_counts.total_executions_for_query_of_plan >= @execution_count
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #plan_ids_having_enough_executions
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+SELECT
+    @where_clause += N'    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #plan_ids_having_enough_executions AS enough_executions
+        WHERE enough_executions.plan_id = qsrs.plan_id
+    )' + @nc10;
+END;
+
+/*
 Tidy up the where clause a bit
 */
 SELECT
@@ -5371,8 +5490,8 @@ columns that wouldn't normally be in scope.
 However, they're also quite helpful for the next
 temp table, #distinct_plans.
 
-Note that this block must come after #maintenance_plans
-because that edits @where_clause and we want to use
+Note that this block must come after we are done with
+anything that edits @where_clause because we want to use
 that here.
 
 Regression mode complicates this process considerably.
@@ -6260,8 +6379,6 @@ BEGIN
       + N'
     GROUP BY
         qsrs.plan_id
-    ' + @having_clause
-      + N'
     ORDER BY
         MAX(' +
     CASE @sort_order
@@ -6721,14 +6838,6 @@ CASE @regression_mode
    ELSE N' '
 END
 +
-N'
-' +
-REPLACE
-(
-    @having_clause,
-    'qsrs.',
-    'qsrs_with_lasts.'
-) +
 N'
 OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 
@@ -10696,6 +10805,29 @@ BEGIN
         SELECT
             result =
                 '#include_query_hashes is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
+           FROM #plan_ids_having_enough_executions AS plans
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#plan_ids_having_enough_executions',
+            plans.*
+        FROM #plan_ids_having_enough_executions AS plans
+        ORDER BY
+            plans.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#plan_ids_having_enough_executions is empty';
     END;
 
     IF EXISTS
