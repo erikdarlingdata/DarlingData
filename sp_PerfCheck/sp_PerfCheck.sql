@@ -4350,7 +4350,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               N'@current_database_name sysname',
                 @current_database_name;
         END;
-        
+
         /* Check for Query Store in problematic state */
         BEGIN TRY
             SET @sql = N'
