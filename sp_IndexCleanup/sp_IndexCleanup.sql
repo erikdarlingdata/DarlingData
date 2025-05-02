@@ -483,7 +483,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_io_latch_wait_in_ms bigint NULL,
         page_compression_attempt_count bigint NULL,
         page_compression_success_count bigint NULL,
-        PRIMARY KEY CLUSTERED 
+        PRIMARY KEY CLUSTERED
             (database_id, schema_id, object_id, index_id)
     );
 
@@ -6540,7 +6540,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     )
     BEGIN
-        WITH 
+        WITH
             empty_databases AS
         (
             SELECT

@@ -1,4 +1,4 @@
--- Compile Date: 04/25/2025 15:13:54 UTC
+-- Compile Date: 05/02/2025 17:08:36 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -71,8 +71,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '2.4.4',
-        @version_date = '20250404';
+        @version = '2.5',
+        @version_date = '20250501';
 
     IF @help = 1
     BEGIN
@@ -203,9 +203,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     DECLARE
-        @sql nvarchar(max) =
+        @sql nvarchar(MAX) =
             N'',
-        @params nvarchar(max) =
+        @params nvarchar(MAX) =
             N'@start_date datetimeoffset(7),
               @end_date datetimeoffset(7)',
         @azure bit  =
@@ -4204,7 +4204,8 @@ END;
             END;
 
             /* For ignored errors, only display to client */
-            IF @log_to_table = 0
+            IF  @log_to_table = 0
+            AND @debug = 1
             BEGIN
                 SELECT
                     error_numbers_ignored =
@@ -5370,8 +5371,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '6.4.4',
-    @version_date = '20250404';
+    @version = '6.5',
+    @version_date = '20250501';
 
 IF @help = 1
 BEGIN
@@ -10166,8 +10167,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.4.4',
-    @version_date = '20250404';
+    @version = '4.5',
+    @version_date = '20250501';
 
 IF @help = 1
 BEGIN
@@ -13778,8 +13779,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '1.4.4',
-        @version_date = '20250404';
+        @version = '1.5',
+        @version_date = '20250501';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -14144,7 +14145,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         can_compress bit NOT NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX filtered_objects CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -14188,7 +14190,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_io_latch_wait_in_ms bigint NULL,
         page_compression_attempt_count bigint NULL,
         page_compression_success_count bigint NULL,
-        PRIMARY KEY CLUSTERED (database_id, schema_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -14212,7 +14215,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         built_on sysname NULL,
         partition_function_name sysname NULL,
         partition_columns nvarchar(max)
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id, partition_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, partition_id)
     );
 
     CREATE TABLE
@@ -14250,7 +14254,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_lookup datetime NULL,
         last_user_update datetime NULL,
         is_eligible_for_dedupe bit NOT NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id, column_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, column_id)
     );
 
     CREATE TABLE
@@ -14286,7 +14291,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by nvarchar(4000) NULL,
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
         index_priority decimal(10,6) NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX index_analysis CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -14302,7 +14308,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
         reason nvarchar(200) NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, can_compress)
     );
 
     CREATE TABLE
@@ -14410,26 +14417,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE
         #include_databases
     (
-        database_name sysname NOT NULL PRIMARY KEY
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
         #exclude_databases
     (
-        database_name sysname NOT NULL PRIMARY KEY
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
         #databases
     (
-        database_name sysname NOT NULL PRIMARY KEY,
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
         database_id int NOT NULL
     );
 
     CREATE TABLE
         #requested_but_skipped_databases
     (
-        database_name sysname NOT NULL PRIMARY KEY,
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
         reason nvarchar(100) NOT NULL
     );
 
@@ -14447,7 +14454,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         definition nvarchar(max) NULL,
         contains_udf bit NOT NULL,
         udf_names nvarchar(max) NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, column_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, column_id)
     );
 
     CREATE TABLE
@@ -14464,7 +14472,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         definition nvarchar(max) NULL,
         contains_udf bit NOT NULL,
         udf_names nvarchar(max) NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, constraint_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, constraint_id)
     );
 
     CREATE TABLE
@@ -14481,7 +14490,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
         should_include_filter_columns bit NOT NULL,
-        INDEX c CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX c CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     /* Parse @include_databases comma-separated list */
@@ -16243,6 +16253,86 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Analyze filtered indexes to identify columns used in filters that should be included */
+    SET @sql = N'
+    SELECT DISTINCT
+        ia.database_id,
+        ia.database_name,
+        ia.schema_id,
+        ia.schema_name,
+        ia.object_id,
+        ia.table_name,
+        ia.index_id,
+        ia.index_name,
+        ia.filter_definition,
+        missing_included_columns =
+            (
+                SELECT
+                    STUFF
+                    (
+                        (
+                            /* Find column names mentioned in filter_definition that aren''t already key or included columns */
+                            SELECT
+                                N'', '' +
+                                c.name
+                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                            WHERE c.object_id = ia.object_id
+                            AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_details AS id
+                                WHERE id.object_id = ia.object_id
+                                AND   id.index_id = ia.index_id
+                                AND   id.column_id = c.column_id
+                            )
+                            GROUP BY
+                                c.name
+                            FOR
+                                XML
+                                PATH(''''),
+                                TYPE
+                        ).value(''text()[1]'',''nvarchar(max)''),
+                        1,
+                        2,
+                        N''''
+                    )
+            ),
+        should_include_filter_columns =
+            CASE
+                WHEN EXISTS
+                (
+                    /* Check if any columns mentioned in filter_definition aren''t already in the index */
+                    SELECT
+                        1/0
+                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                    WHERE c.object_id = ia.object_id
+                    AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id
+                        WHERE id.object_id = ia.object_id
+                        AND   id.index_id = ia.index_id
+                        AND   id.column_id = c.column_id
+                    )
+                )
+                THEN 1
+                ELSE 0
+            END
+    FROM #index_analysis AS ia
+    WHERE ia.filter_definition IS NOT NULL
+    AND   ia.database_id = @current_database_id
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
+        PRINT @sql;
+    END;
+
+    /* The correct pattern: INSERT ... EXECUTE */
     INSERT INTO
         #filtered_index_columns_analysis
     WITH
@@ -16260,76 +16350,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         missing_included_columns,
         should_include_filter_columns
     )
-    SELECT DISTINCT
-        ia.database_id,
-        ia.database_name,
-        ia.schema_id,
-        ia.schema_name,
-        ia.object_id,
-        ia.table_name,
-        ia.index_id,
-        ia.index_name,
-        ia.filter_definition,
-        missing_included_columns =
-            (
-                SELECT
-                    STUFF
-                    (
-                        (
-                            /* Find column names mentioned in filter_definition that aren't already key or included columns */
-                            SELECT
-                                N', ' +
-                                c.name
-                            FROM sys.columns AS c
-                            WHERE c.object_id = ia.object_id
-                            AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
-                            AND   NOT EXISTS
-                            (
-                                SELECT
-                                    1/0
-                                FROM #index_details AS id
-                                WHERE id.object_id = ia.object_id
-                                AND   id.index_id = ia.index_id
-                                AND   id.column_id = c.column_id
-                            )
-                            GROUP BY
-                                c.name
-                            FOR
-                                XML
-                                PATH(''),
-                                TYPE
-                        ).value('text()[1]','nvarchar(max)'),
-                        1,
-                        2,
-                        N''
-                    )
-            ),
-        should_include_filter_columns =
-            CASE
-                WHEN EXISTS
-                (
-                    /* Check if any columns mentioned in filter_definition aren't already in the index */
-                    SELECT
-                        1/0
-                    FROM sys.columns AS c
-                    WHERE c.object_id = ia.object_id
-                    AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
-                    AND   NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id
-                        WHERE id.object_id = ia.object_id
-                        AND   id.index_id = ia.index_id
-                        AND   id.column_id = c.column_id
-                    )
-                )
-                THEN 1
-                ELSE 0
-            END
-    FROM #index_analysis AS ia
-    WHERE ia.filter_definition IS NOT NULL
-    OPTION(RECOMPILE);
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@current_database_id integer',
+        @current_database_id;
 
     IF @debug = 1
     BEGIN
@@ -20114,30 +20138,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.table_name
     OPTION(RECOMPILE);
 
-    /* Check for databases that were processed but had no objects to analyze */
-    WITH empty_databases AS
-    (
-        SELECT
-            database_name
-        FROM #databases AS d
-        WHERE NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM #index_reporting_stats AS irs
-            WHERE irs.database_name = d.database_name
-        )
-    )
-
-    SELECT
-        finding_type = 'DATABASES WITH NO QUALIFYING OBJECTS',
-        database_name = d.database_name + N' - Nothing Found',
-        recommendation = 'Database was processed but no objects met the analysis criteria'
-    FROM empty_databases AS d
-    ORDER BY
-        d.database_name
-    OPTION(RECOMPILE);
-
     /* Output message for dedupe_only mode */
     IF @dedupe_only = 1
     BEGIN
@@ -20215,15 +20215,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             fica.table_name,
             fica.index_name,
             fica.filter_definition,
+            ia.original_index_definition,
             fica.missing_included_columns,
             recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
         FROM #filtered_index_columns_analysis AS fica
+        JOIN #index_analysis AS ia
+          ON  ia.database_id = fica.database_id
+          AND ia.schema_id = fica.schema_id
+          AND ia.object_id = fica.object_id
+          AND ia.index_id = fica.index_id
         WHERE fica.should_include_filter_columns = 1
         ORDER BY
             fica.database_name,
             fica.schema_name,
             fica.table_name,
             fica.index_name;
+    END;
+
+    /* Check for databases that were processed but had no objects to analyze */
+    IF EXISTS
+    (
+        SELECT
+            1/0
+        FROM #databases AS d
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #index_reporting_stats AS irs
+            WHERE irs.database_name = d.database_name
+        )
+    )
+    BEGIN
+        WITH
+            empty_databases AS
+        (
+            SELECT
+                database_name
+            FROM #databases AS d
+            WHERE NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #index_reporting_stats AS irs
+                WHERE irs.database_name = d.database_name
+            )
+        )
+        SELECT
+            finding_type = 'DATABASES WITH NO QUALIFYING OBJECTS',
+            database_name = d.database_name + N' - Nothing Found',
+            recommendation = 'Database was processed but no objects met the analysis criteria'
+        FROM empty_databases AS d
+        ORDER BY
+            database_name
+        OPTION(RECOMPILE);
     END;
 
 END TRY
@@ -20306,8 +20351,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
     SELECT
-        @version = '2.4.4',
-        @version_date = '20250404';
+        @version = '2.5',
+        @version_date = '20250501';
 
     IF @help = 1
     BEGIN
@@ -21036,8 +21081,8 @@ BEGIN
     Set version information
     */
     SELECT
-        @version = N'1.0.4',
-        @version_date = N'20250404';
+        @version = N'1.5',
+        @version_date = N'20250501';
 
     /*
     Help section, for help.
@@ -22312,8 +22357,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 50,
                 N'Default Trace Permissions',
                 N'Inadequate permissions',
-                NULL,
-                NULL,
+                N'N/A',
+                N'System Trace',
                 N'Access to sys.traces is only available to accounts with elevated privileges, or when explicitly granted',
                 N'GRANT ALTER TRACE TO ' +
                 SUSER_NAME() +
@@ -24056,9 +24101,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OR (c.name = N'access check cache quota' AND c.value_in_use <> 0)
             OR (c.name = N'Ad Hoc Distributed Queries' AND c.value_in_use <> 0)
             /* ADR settings */
-            OR (c.name = N'ADR cleaner retry timeout (min)' AND c.value_in_use NOT IN (15, 120))
+            OR (c.name = N'ADR cleaner retry timeout (min)' AND c.value_in_use NOT IN (0, 15, 120))
             OR (c.name = N'ADR Cleaner Thread Count' AND c.value_in_use <> 1)
-            OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use <> 4)
+            OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use NOT IN (0, 4))
             /* Affinity settings */
             OR (c.name = N'affinity mask' AND c.value_in_use <> 0)
             OR (c.name = N'affinity I/O mask' AND c.value_in_use <> 0)
@@ -25278,7 +25323,51 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             url = N'https://erikdarling.com/sp_PerfCheck#QueryStore'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
-        AND   d.is_query_store_on = 0;
+        AND   d.is_query_store_on = 0
+        /* Skip this check for Azure SQL DB since Query Store is typically always enabled
+           and Azure might be reporting is_query_store_on incorrectly */
+        AND   @azure_sql_db = 0;
+
+        /* For Azure SQL DB, explicitly check Query Store status since is_query_store_on might be incorrect */
+        IF @azure_sql_db = 1
+        BEGIN
+            SET @sql = N'
+            SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+            SELECT
+                check_id = 7006,
+                priority = 60, /* Informational priority */
+                category = N''Database Configuration'',
+                finding = N''Query Store Not Enabled'',
+                database_name = @current_database_name,
+                details = N''Query Store is not enabled.
+                          Consider enabling Query Store to track query performance
+                          over time and identify regression issues.'',
+                url = N''https://erikdarling.com/sp_PerfCheck#QueryStore''
+            FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_query_store_options AS qso
+            WHERE qso.actual_state = 0 /* OFF */;';
+
+            IF @debug = 1
+            BEGIN
+                PRINT @sql;
+            END;
+
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                database_name,
+                details,
+                url
+            )
+            EXECUTE sys.sp_executesql
+                @sql,
+              N'@current_database_name sysname',
+                @current_database_name;
+        END;
 
         /* Check for Query Store in problematic state */
         BEGIN TRY
@@ -26030,8 +26119,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.4.4',
-    @version_date = '20250404';
+    @version = '5.5',
+    @version_date = '20250501';
 
 
 IF @help = 1
@@ -30421,8 +30510,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '5.4.4',
-    @version_date = '20250404';
+    @version = '5.5',
+    @version_date = '20250501';
 
 /*
 Helpful section! For help.
@@ -30818,6 +30907,16 @@ CREATE TABLE
             1
         ) PERSISTED NOT NULL
           PRIMARY KEY CLUSTERED
+);
+
+/*
+For filtering by @execution_count.
+This is only used for filtering, so it only needs one column.
+*/
+CREATE TABLE
+    #plan_ids_having_enough_executions
+(
+    plan_id bigint PRIMARY KEY CLUSTERED,
 );
 
 /*
@@ -31931,7 +32030,6 @@ DECLARE
     @queries_top bigint,
     @nc10 nvarchar(2),
     @where_clause nvarchar(max),
-    @having_clause nvarchar(max),
     @query_text_search_original_value nvarchar(4000),
     @query_text_search_not_original_value nvarchar(4000),
     @procedure_exists bit,
@@ -32619,6 +32717,9 @@ TRUNCATE TABLE
     #forced_plans_failures;
 
 TRUNCATE TABLE
+    #plan_ids_having_enough_executions;
+
+TRUNCATE TABLE
     #include_plan_ids;
 
 TRUNCATE TABLE
@@ -32755,7 +32856,6 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
         9223372036854775807,
     @nc10 = NCHAR(10),
     @where_clause = N'',
-    @having_clause = N'',
     @query_text_search =
         CASE
             WHEN @get_all_databases = 1
@@ -33858,12 +33958,47 @@ BEGIN
 END;
 
 /*
-One last check: wait stat capture can be enabled or disabled in settings
+These columns are only available in 2017+.
+This is an instance-level check.
+We do it before the database-level checks because the relevant DMVs may not exist on old versions.
+@wait_filter has already been checked.
 */
 IF
 (
-   @wait_filter IS NOT NULL
-OR @new = 1
+  (
+      @sort_order = 'tempdb'
+   OR @sort_order_is_a_wait = 1
+  )
+  AND
+  (
+      @new = 0
+  )
+)
+BEGIN
+   RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to sorting by cpu.', 10, 1, @sort_order, @product_version) WITH NOWAIT;
+
+   SELECT
+       @sort_order = N'cpu',
+       @sort_order_is_a_wait = 0;
+
+   DELETE
+   FROM @ColumnDefinitions
+   WHERE metric_type IN (N'wait_time', N'top waits');
+
+   UPDATE
+       @ColumnDefinitions
+   SET
+       column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+   WHERE metric_type = N'n';
+END;
+
+/*
+Wait stat capture can be enabled or disabled in settings.
+This is a database-level check.
+*/
+IF
+(
+  @new = 1
 )
 BEGIN
     SELECT
@@ -33925,36 +34060,70 @@ OPTION(RECOMPILE);' + @nc10;
             @sql,
             @current_table;
     END;
-
-    IF @query_store_waits_enabled = 0
-    BEGIN
-        IF @debug = 1
-        BEGIN
-            RAISERROR('Query Store wait stats are not enabled for database %s', 10, 1, @database_name_quoted) WITH NOWAIT;
-        END;
-    END;
-END; /*End wait stats checks*/
+END;
 
 /*
-These columns are only available in 2017+
+To avoid mixing sort orders in the @get_all_databases = 1 case, we skip the
+database if something wait related is requested on a database that does not capture waits.
+
+There is an edge case.
+If you have capturing wait stats disabled, your database can still hold wait stats.
+This happens if you turned capturing off after having it on.
+We make no attempt to handle this.
+Instead, we assume that anyone with capturing wait stats turned off does not want to see them.
 */
 IF
 (
   (
-      @sort_order = 'tempdb'
+      @wait_filter IS NOT NULL
    OR @sort_order_is_a_wait = 1
   )
   AND
   (
-       @new = 0
-    OR @query_store_waits_enabled = 0
+      @query_store_waits_enabled = 0
   )
 )
 BEGIN
-   RAISERROR('The sort order (%s) you chose is invalid in product version %i, reverting to cpu', 10, 1, @sort_order, @product_version) WITH NOWAIT;
+    IF @get_all_databases = 1
+    BEGIN
+        RAISERROR('Query Store wait stats are not enabled for database %s, but you have requested them. We are skipping this database and continuing with any that remain.', 10, 1, @database_name_quoted) WITH NOWAIT;
+        FETCH NEXT
+        FROM @database_cursor
+        INTO @database_name;
 
-   SELECT
-       @sort_order = N'cpu';
+        CONTINUE;
+    END;
+    ELSE
+    BEGIN
+        RAISERROR('Query Store wait stats are not enabled for database %s, but you have requested them. We are reverting to sorting by cpu without respect for any wait filters.', 10, 1, @database_name_quoted) WITH NOWAIT;
+
+        SELECT
+            @sort_order = N'cpu',
+            @sort_order_is_a_wait = 0,
+            @wait_filter = NULL;
+
+        DELETE
+        FROM @ColumnDefinitions
+        WHERE metric_type IN (N'wait_time');
+
+        UPDATE
+            @ColumnDefinitions
+        SET
+            column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
+        WHERE metric_type = N'n';
+    END;
+END;
+
+/* There is no reason to show the top_waits column if we know it is NULL. */
+IF
+(
+        @query_store_waits_enabled = 0
+    AND @get_all_databases = 0
+)
+BEGIN
+    DELETE
+    FROM @ColumnDefinitions
+    WHERE metric_type IN (N'top_waits');
 END;
 
 /*Check that the selected @timezone is valid*/
@@ -34028,13 +34197,6 @@ BEGIN
 END;
 
 /*Other filters*/
-IF @execution_count IS NOT NULL
-BEGIN
-    SELECT
-        @having_clause += N'HAVING
-        SUM(qsrs.count_executions) >= @execution_count';
-END;
-
 IF @duration_ms IS NOT NULL
 BEGIN
     SELECT
@@ -35516,6 +35678,121 @@ SELECT
 END;
 
 /*
+Filtering by @execution_count is non-trivial.
+In the Query Store DMVs, execution counts only exist in
+sys.query_store_runtime_stats.
+That DMV has no query_id column (or anything similar),
+but we promised that @execution_count would filter by the
+number of executions of the query.
+The best column for us in the DMV is plan_id, so we need
+to get from there to query_id.
+Because we do most of our filtering work in #distinct_plans,
+we must also make what we do here compatible with that.
+
+In conclusion, we want produce a temp table holding the
+plan_ids for the queries with @execution_count or more executions.
+
+This is similar to the sort-helping tables that you are
+about to see, but easier because we do not need to return or sort
+by the execution count.
+We just need to know that these plans have enough executions.
+*/
+IF @execution_count > 0
+BEGIN
+    SELECT
+        @current_table = 'inserting #plan_ids_having_enough_executions',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+    SELECT DISTINCT
+        unfiltered_execution_counts.plan_id
+    FROM
+    (
+       SELECT
+           qsp.plan_id,
+           total_executions_for_query_of_plan =
+               SUM(qsrs.count_executions) OVER (PARTITION BY qsq.query_id)
+       FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+       JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+         ON qsq.query_id = qsp.query_id
+       JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+         ON qsp.plan_id = qsrs.plan_id
+       WHERE 1 = 1
+       ' + @where_clause
+         + N'
+    ) AS unfiltered_execution_counts
+    WHERE
+        unfiltered_execution_counts.total_executions_for_query_of_plan >= @execution_count
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #plan_ids_having_enough_executions
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+        @parameters,
+        @top,
+        @start_date,
+        @end_date,
+        @execution_count,
+        @duration_ms,
+        @execution_type_desc,
+        @database_id,
+        @queries_top,
+        @work_start_utc,
+        @work_end_utc,
+        @regression_baseline_start_date,
+        @regression_baseline_end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+SELECT
+    @where_clause += N'    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #plan_ids_having_enough_executions AS enough_executions
+        WHERE enough_executions.plan_id = qsrs.plan_id
+    )' + @nc10;
+END;
+
+/*
 Tidy up the where clause a bit
 */
 SELECT
@@ -35583,8 +35860,8 @@ columns that wouldn't normally be in scope.
 However, they're also quite helpful for the next
 temp table, #distinct_plans.
 
-Note that this block must come after #maintenance_plans
-because that edits @where_clause and we want to use
+Note that this block must come after we are done with
+anything that edits @where_clause because we want to use
 that here.
 
 Regression mode complicates this process considerably.
@@ -36472,8 +36749,6 @@ BEGIN
       + N'
     GROUP BY
         qsrs.plan_id
-    ' + @having_clause
-      + N'
     ORDER BY
         MAX(' +
     CASE @sort_order
@@ -36933,14 +37208,6 @@ CASE @regression_mode
    ELSE N' '
 END
 +
-N'
-' +
-REPLACE
-(
-    @having_clause,
-    'qsrs.',
-    'qsrs_with_lasts.'
-) +
 N'
 OPTION(RECOMPILE, OPTIMIZE FOR (@queries_top = 9223372036854775807));' + @nc10;
 
@@ -37759,8 +38026,10 @@ BEGIN
 END; /*End updating runtime stats*/
 
 /*
-Let's check on settings, etc.
-We do this first so we can see if wait stats capture mode is true more easily
+Check on settings, etc.
+We do this first so we can see if wait stats capture mode is true more easily.
+We do not truncate this table as part of the looping over databases.
+Not truncating it makes it easier to show all set options when hitting multiple databases in expert mode.
 */
 SELECT
     @current_table = 'inserting #database_query_store_options',
@@ -37906,12 +38175,17 @@ If wait stats are available, we'll grab them here
 IF
 (
     @new = 1
-    AND EXISTS
+    /*
+    Recall that we do not care about the edge case of a database holding
+    wait stats despite capturing wait stats being turned off.
+    */
+    AND @database_id IN
         (
             SELECT
-                1/0
+                dqso.database_id
             FROM #database_query_store_options AS dqso
             WHERE dqso.wait_stats_capture_mode_desc = N'ON'
+            AND   dqso.database_id = @database_id
         )
 )
 BEGIN
@@ -40064,18 +40338,33 @@ BEGIN
                         CASE
                             WHEN
                             (
-                                    @product_version = 13
-                                AND @azure = 0
+                                  @product_version = 13
+                              AND @azure = 0
                             )
                             THEN ' because it''s not available < 2017'
                             WHEN EXISTS
+                                 (
+                                     SELECT
+                                         1/0
+                                     FROM #database_query_store_options AS dqso
+                                     WHERE dqso.wait_stats_capture_mode_desc <> N'ON'
+                                 )
+                            AND EXISTS
                                 (
                                     SELECT
                                         1/0
                                     FROM #database_query_store_options AS dqso
-                                    WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                                    WHERE dqso.wait_stats_capture_mode_desc = N'ON'
                                 )
-                            THEN ' because you have it disabled in your Query Store options'
+                            THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options and everywhere that had it enabled had no data'
+                            WHEN EXISTS
+                                 (
+                                     SELECT
+                                         1/0
+                                     FROM #database_query_store_options AS dqso
+                                     WHERE dqso.wait_stats_capture_mode_desc <> N'ON'
+                                 )
+                            THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options'
                             ELSE ' for the queries in the results'
                         END;
             END;
@@ -40892,6 +41181,29 @@ BEGIN
        (
            SELECT
                1/0
+           FROM #plan_ids_having_enough_executions AS plans
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#plan_ids_having_enough_executions',
+            plans.*
+        FROM #plan_ids_having_enough_executions AS plans
+        ORDER BY
+            plans.plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#plan_ids_having_enough_executions is empty';
+    END;
+
+    IF EXISTS
+       (
+           SELECT
+               1/0
            FROM #plan_ids_with_query_hashes AS hashes
        )
     BEGIN
@@ -41418,8 +41730,8 @@ BEGIN
                 '#query_store_wait_stats is empty' +
                 CASE
                     WHEN (
-                                @product_version = 13
-                            AND @azure = 0
+                              @product_version = 13
+                          AND @azure = 0
                          )
                     THEN ' because it''s not available < 2017'
                     WHEN EXISTS
@@ -41427,9 +41739,24 @@ BEGIN
                              SELECT
                                  1/0
                              FROM #database_query_store_options AS dqso
-                             WHERE dqso.wait_stats_capture_mode_desc <> 'ON'
+                             WHERE dqso.wait_stats_capture_mode_desc <> N'ON'
                          )
-                    THEN ' because you have it disabled in your Query Store options'
+                    AND EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #database_query_store_options AS dqso
+                            WHERE dqso.wait_stats_capture_mode_desc = N'ON'
+                        )
+                    THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options and everywhere that had it enabled had no data'
+                    WHEN EXISTS
+                         (
+                             SELECT
+                                 1/0
+                             FROM #database_query_store_options AS dqso
+                             WHERE dqso.wait_stats_capture_mode_desc <> N'ON'
+                         )
+                    THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options'
                     ELSE ' for the queries in the results'
                 END;
     END;
