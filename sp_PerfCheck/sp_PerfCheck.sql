@@ -1339,8 +1339,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 50,
                 N'Default Trace Permissions',
                 N'Inadequate permissions',
-                NULL,
-                NULL,
+                N'N/A',
+                N'System Trace',
                 N'Access to sys.traces is only available to accounts with elevated privileges, or when explicitly granted',
                 N'GRANT ALTER TRACE TO ' +
                 SUSER_NAME() +
