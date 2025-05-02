@@ -72,8 +72,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '1.4.4',
-        @version_date = '20250404';
+        @version = '1.5',
+        @version_date = '20250501';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -438,7 +438,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         can_compress bit NOT NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX filtered_objects CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -482,7 +483,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_io_latch_wait_in_ms bigint NULL,
         page_compression_attempt_count bigint NULL,
         page_compression_success_count bigint NULL,
-        PRIMARY KEY CLUSTERED (database_id, schema_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED 
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -506,7 +508,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         built_on sysname NULL,
         partition_function_name sysname NULL,
         partition_columns nvarchar(max)
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id, partition_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, partition_id)
     );
 
     CREATE TABLE
@@ -544,7 +547,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_lookup datetime NULL,
         last_user_update datetime NULL,
         is_eligible_for_dedupe bit NOT NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id, column_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, column_id)
     );
 
     CREATE TABLE
@@ -580,7 +584,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by nvarchar(4000) NULL,
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
         index_priority decimal(10,6) NULL
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX index_analysis CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     CREATE TABLE
@@ -596,7 +601,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
         reason nvarchar(200) NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, index_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, can_compress)
     );
 
     CREATE TABLE
@@ -704,26 +710,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     CREATE TABLE
         #include_databases
     (
-        database_name sysname NOT NULL PRIMARY KEY
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
         #exclude_databases
     (
-        database_name sysname NOT NULL PRIMARY KEY
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED
     );
 
     CREATE TABLE
         #databases
     (
-        database_name sysname NOT NULL PRIMARY KEY,
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
         database_id int NOT NULL
     );
 
     CREATE TABLE
         #requested_but_skipped_databases
     (
-        database_name sysname NOT NULL PRIMARY KEY,
+        database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
         reason nvarchar(100) NOT NULL
     );
 
@@ -741,7 +747,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         definition nvarchar(max) NULL,
         contains_udf bit NOT NULL,
         udf_names nvarchar(max) NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, column_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, column_id)
     );
 
     CREATE TABLE
@@ -758,7 +765,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         definition nvarchar(max) NULL,
         contains_udf bit NOT NULL,
         udf_names nvarchar(max) NULL,
-        PRIMARY KEY CLUSTERED(database_id, schema_id, object_id, constraint_id)
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, constraint_id)
     );
 
     CREATE TABLE
@@ -775,7 +783,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
         should_include_filter_columns bit NOT NULL,
-        INDEX c CLUSTERED(database_id, schema_id, object_id, index_id)
+        INDEX c CLUSTERED
+            (database_id, schema_id, object_id, index_id)
     );
 
     /* Parse @include_databases comma-separated list */
@@ -2537,6 +2546,86 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Analyze filtered indexes to identify columns used in filters that should be included */
+    SET @sql = N'
+    SELECT DISTINCT
+        ia.database_id,
+        ia.database_name,
+        ia.schema_id,
+        ia.schema_name,
+        ia.object_id,
+        ia.table_name,
+        ia.index_id,
+        ia.index_name,
+        ia.filter_definition,
+        missing_included_columns =
+            (
+                SELECT
+                    STUFF
+                    (
+                        (
+                            /* Find column names mentioned in filter_definition that aren''t already key or included columns */
+                            SELECT
+                                N'', '' +
+                                c.name
+                            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                            WHERE c.object_id = ia.object_id
+                            AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
+                            AND   NOT EXISTS
+                            (
+                                SELECT
+                                    1/0
+                                FROM #index_details AS id
+                                WHERE id.object_id = ia.object_id
+                                AND   id.index_id = ia.index_id
+                                AND   id.column_id = c.column_id
+                            )
+                            GROUP BY
+                                c.name
+                            FOR
+                                XML
+                                PATH(''''),
+                                TYPE
+                        ).value(''text()[1]'',''nvarchar(max)''),
+                        1,
+                        2,
+                        N''''
+                    )
+            ),
+        should_include_filter_columns =
+            CASE
+                WHEN EXISTS
+                (
+                    /* Check if any columns mentioned in filter_definition aren''t already in the index */
+                    SELECT
+                        1/0
+                    FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+                    WHERE c.object_id = ia.object_id
+                    AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
+                    AND   NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id
+                        WHERE id.object_id = ia.object_id
+                        AND   id.index_id = ia.index_id
+                        AND   id.column_id = c.column_id
+                    )
+                )
+                THEN 1
+                ELSE 0
+            END
+    FROM #index_analysis AS ia
+    WHERE ia.filter_definition IS NOT NULL
+    AND   ia.database_id = @current_database_id
+    OPTION(RECOMPILE);';
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Filtered index analysis SQL:', 0, 1) WITH NOWAIT;
+        PRINT @sql;
+    END;
+
+    /* The correct pattern: INSERT ... EXECUTE */
     INSERT INTO
         #filtered_index_columns_analysis
     WITH
@@ -2554,76 +2643,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         missing_included_columns,
         should_include_filter_columns
     )
-    SELECT DISTINCT
-        ia.database_id,
-        ia.database_name,
-        ia.schema_id,
-        ia.schema_name,
-        ia.object_id,
-        ia.table_name,
-        ia.index_id,
-        ia.index_name,
-        ia.filter_definition,
-        missing_included_columns =
-            (
-                SELECT
-                    STUFF
-                    (
-                        (
-                            /* Find column names mentioned in filter_definition that aren't already key or included columns */
-                            SELECT
-                                N', ' +
-                                c.name
-                            FROM sys.columns AS c
-                            WHERE c.object_id = ia.object_id
-                            AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
-                            AND   NOT EXISTS
-                            (
-                                SELECT
-                                    1/0
-                                FROM #index_details AS id
-                                WHERE id.object_id = ia.object_id
-                                AND   id.index_id = ia.index_id
-                                AND   id.column_id = c.column_id
-                            )
-                            GROUP BY
-                                c.name
-                            FOR
-                                XML
-                                PATH(''),
-                                TYPE
-                        ).value('text()[1]','nvarchar(max)'),
-                        1,
-                        2,
-                        N''
-                    )
-            ),
-        should_include_filter_columns =
-            CASE
-                WHEN EXISTS
-                (
-                    /* Check if any columns mentioned in filter_definition aren't already in the index */
-                    SELECT
-                        1/0
-                    FROM sys.columns AS c
-                    WHERE c.object_id = ia.object_id
-                    AND   ia.filter_definition LIKE N'%[[]' + c.name + N'[]]%'
-                    AND   NOT EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM #index_details AS id
-                        WHERE id.object_id = ia.object_id
-                        AND   id.index_id = ia.index_id
-                        AND   id.column_id = c.column_id
-                    )
-                )
-                THEN 1
-                ELSE 0
-            END
-    FROM #index_analysis AS ia
-    WHERE ia.filter_definition IS NOT NULL
-    OPTION(RECOMPILE);
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@current_database_id integer',
+        @current_database_id;
 
     IF @debug = 1
     BEGIN
@@ -6408,30 +6431,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         irs.table_name
     OPTION(RECOMPILE);
 
-    /* Check for databases that were processed but had no objects to analyze */
-    WITH empty_databases AS
-    (
-        SELECT
-            database_name
-        FROM #databases AS d
-        WHERE NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM #index_reporting_stats AS irs
-            WHERE irs.database_name = d.database_name
-        )
-    )
-
-    SELECT
-        finding_type = 'DATABASES WITH NO QUALIFYING OBJECTS',
-        database_name = d.database_name + N' - Nothing Found',
-        recommendation = 'Database was processed but no objects met the analysis criteria'
-    FROM empty_databases AS d
-    ORDER BY
-        d.database_name
-    OPTION(RECOMPILE);
-
     /* Output message for dedupe_only mode */
     IF @dedupe_only = 1
     BEGIN
@@ -6509,15 +6508,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             fica.table_name,
             fica.index_name,
             fica.filter_definition,
+            ia.original_index_definition,
             fica.missing_included_columns,
             recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
         FROM #filtered_index_columns_analysis AS fica
+        JOIN #index_analysis AS ia
+          ON  ia.database_id = fica.database_id
+          AND ia.schema_id = fica.schema_id
+          AND ia.object_id = fica.object_id
+          AND ia.index_id = fica.index_id
         WHERE fica.should_include_filter_columns = 1
         ORDER BY
             fica.database_name,
             fica.schema_name,
             fica.table_name,
             fica.index_name;
+    END;
+
+    /* Check for databases that were processed but had no objects to analyze */
+    IF EXISTS
+    (
+        SELECT
+            1/0
+        FROM #databases AS d
+        WHERE NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #index_reporting_stats AS irs
+            WHERE irs.database_name = d.database_name
+        )
+    )
+    BEGIN
+        WITH 
+            empty_databases AS
+        (
+            SELECT
+                database_name
+            FROM #databases AS d
+            WHERE NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #index_reporting_stats AS irs
+                WHERE irs.database_name = d.database_name
+            )
+        )
+        SELECT
+            finding_type = 'DATABASES WITH NO QUALIFYING OBJECTS',
+            database_name = d.database_name + N' - Nothing Found',
+            recommendation = 'Database was processed but no objects met the analysis criteria'
+        FROM empty_databases AS d
+        ORDER BY
+            database_name
+        OPTION(RECOMPILE);
     END;
 
 END TRY

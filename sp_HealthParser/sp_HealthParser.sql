@@ -70,8 +70,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '2.4.4',
-        @version_date = '20250404';
+        @version = '2.5',
+        @version_date = '20250501';
 
     IF @help = 1
     BEGIN
@@ -202,9 +202,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     DECLARE
-        @sql nvarchar(max) =
+        @sql nvarchar(MAX) =
             N'',
-        @params nvarchar(max) =
+        @params nvarchar(MAX) =
             N'@start_date datetimeoffset(7),
               @end_date datetimeoffset(7)',
         @azure bit  =
@@ -4203,7 +4203,8 @@ END;
             END;
 
             /* For ignored errors, only display to client */
-            IF @log_to_table = 0
+            IF  @log_to_table = 0
+            AND @debug = 1
             BEGIN
                 SELECT
                     error_numbers_ignored =
