@@ -1537,8 +1537,9 @@ BEGIN
     INSERT INTO
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES
-        (1600, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0'),
-        (1610, 'sort_order', 'query_hash', 'query_hash_from_hash_counting', 'hashes.query_hash', 0, NULL, NULL, 0, NULL);
+        /* 230, so just before avg_query_duration_ms. */
+        (230, 'sort_order', 'query_hash', 'query_hash_from_hash_counting', 'hashes.query_hash', 0, NULL, NULL, 0, NULL),
+        (231, 'sort_order', 'plan_hash_count', 'plan_hash_count_for_query_hash', 'hashes.plan_hash_count_for_query_hash', 0, NULL, NULL, 0, 'N0');
 END;
 
 /* Dynamic regression change column based on formatting and comparator */
@@ -1567,7 +1568,8 @@ BEGIN
     INSERT INTO
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES
-        (1620, 'sort_order', 'wait_time', 'total_wait_time_from_sort_order_ms', 'waits.total_query_wait_time_ms', 0, NULL, NULL, 0, 'N0');
+        /* 240, so just before avg_query_duration_ms. */
+        (240, 'sort_order', 'wait_time', 'total_wait_time_from_sort_order_ms', 'waits.total_query_wait_time_ms', 0, NULL, NULL, 0, 'N0');
 END;
 
 /* ROW_NUMBER window function for sorting */
