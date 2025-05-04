@@ -442,6 +442,82 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     RETURN;
 END; /*End @help section*/
 
+
+/*
+Validate Sort Order.
+We do this super early on, because we care about it even
+when populating the tables that we declare very soon.
+*/
+IF @sort_order NOT IN
+   (
+       'cpu',
+       'logical reads',
+       'physical reads',
+       'writes',
+       'duration',
+       'memory',
+       'tempdb',
+       'executions',
+       'recent',
+       'plan count by hashes',
+       'cpu waits',
+       'lock waits',
+       'locks waits',
+       'latch waits',
+       'latches waits',
+       'buffer latch waits',
+       'buffer latches waits',
+       'buffer io waits',
+       'log waits',
+       'log io waits',
+       'network waits',
+       'network io waits',
+       'parallel waits',
+       'parallelism waits',
+       'memory waits',
+       'total waits',
+       'rows'
+   )
+BEGIN
+   RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
+
+   SELECT
+       @sort_order = 'cpu';
+END;
+
+DECLARE
+    @sort_order_is_a_wait bit;
+
+/*
+Checks if the sort order is for a wait.
+Cuts out a lot of repetition.
+*/
+IF LOWER(@sort_order) IN
+   (
+       'cpu waits',
+       'lock waits',
+       'locks waits',
+       'latch waits',
+       'latches waits',
+       'buffer latch waits',
+       'buffer latches waits',
+       'buffer io waits',
+       'log waits',
+       'log io waits',
+       'network waits',
+       'network io waits',
+       'parallel waits',
+       'parallelism waits',
+       'memory waits',
+       'total waits'
+   )
+BEGIN
+   SELECT
+       @sort_order_is_a_wait = 1;
+END;
+
+
+
 /*
 These are the tables that we'll use to grab data from query store
 It will be fun
@@ -1486,7 +1562,7 @@ BEGIN
 END;
 
 /* Wait time for wait-based sorting */
-IF LOWER(@sort_order) LIKE N'%waits'
+IF @sort_order_is_a_wait = 1
 BEGIN
     INSERT INTO
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
@@ -1527,7 +1603,7 @@ VALUES
                  WHEN 'recent' THEN 'qsrs.last_execution_time'
                  WHEN 'rows' THEN 'qsrs.avg_rowcount'
                  WHEN 'plan count by hashes' THEN 'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
-                 ELSE CASE WHEN LOWER(@sort_order) LIKE N'%waits' THEN 'waits.total_query_wait_time_ms'
+                 ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN 'waits.total_query_wait_time_ms'
                  ELSE 'qsrs.avg_cpu_time_ms' END
             END
         END + ' DESC)',
@@ -1684,7 +1760,6 @@ DECLARE
     @df integer,
     @work_start_utc time(0),
     @work_end_utc time(0),
-    @sort_order_is_a_wait bit,
     @regression_baseline_start_date_original datetimeoffset(7),
     @regression_baseline_end_date_original datetimeoffset(7),
     @regression_mode bit,
@@ -3402,74 +3477,6 @@ OR @engine IN (5, 8)
 BEGIN
    SELECT
        @new = 1;
-END;
-
-/*
-Validate Sort Order
-*/
-IF @sort_order NOT IN
-   (
-       'cpu',
-       'logical reads',
-       'physical reads',
-       'writes',
-       'duration',
-       'memory',
-       'tempdb',
-       'executions',
-       'recent',
-       'plan count by hashes',
-       'cpu waits',
-       'lock waits',
-       'locks waits',
-       'latch waits',
-       'latches waits',
-       'buffer latch waits',
-       'buffer latches waits',
-       'buffer io waits',
-       'log waits',
-       'log io waits',
-       'network waits',
-       'network io waits',
-       'parallel waits',
-       'parallelism waits',
-       'memory waits',
-       'total waits',
-       'rows'
-   )
-BEGIN
-   RAISERROR('The sort order (%s) you chose is so out of this world that I''m using cpu instead', 10, 1, @sort_order) WITH NOWAIT;
-
-   SELECT
-       @sort_order = 'cpu';
-END;
-
-/*
-Checks if the sort order is for a wait.
-Cuts out a lot of repetition.
-*/
-IF LOWER(@sort_order) IN
-   (
-       'cpu waits',
-       'lock waits',
-       'locks waits',
-       'latch waits',
-       'latches waits',
-       'buffer latch waits',
-       'buffer latches waits',
-       'buffer io waits',
-       'log waits',
-       'log io waits',
-       'network waits',
-       'network io waits',
-       'parallel waits',
-       'parallelism waits',
-       'memory waits',
-       'total waits'
-   )
-BEGIN
-   SELECT
-       @sort_order_is_a_wait = 1;
 END;
 
 /*
