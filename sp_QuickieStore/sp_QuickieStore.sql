@@ -1528,7 +1528,7 @@ VALUES
                  WHEN 'rows' THEN 'qsrs.avg_rowcount'
                  WHEN 'plan count by hashes' THEN 'hashes.plan_hash_count_for_query_hash DESC, hashes.query_hash'
                  ELSE CASE WHEN LOWER(@sort_order) LIKE N'%waits' THEN 'waits.total_query_wait_time_ms'
-                 ELSE 'qsrs.avg_cpu_time' END
+                 ELSE 'qsrs.avg_cpu_time_ms' END
             END
         END + ' DESC)',
         0,
@@ -8880,13 +8880,13 @@ ORDER BY
                   WHEN 'writes' THEN N'x.avg_logical_io_writes_mb'
                   WHEN 'duration' THEN N'x.avg_duration_ms'
                   WHEN 'memory' THEN N'x.avg_query_max_used_memory_mb'
-                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time' END
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'x.avg_tempdb_space_used_mb' ELSE N'x.avg_cpu_time_ms' END
                   WHEN 'executions' THEN N'x.count_executions'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'rows' THEN N'x.avg_rowcount'
                   WHEN 'plan count by hashes' THEN N'x.plan_hash_count_for_query_hash DESC,
     x.query_hash_from_hash_counting'
-                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time' END
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'x.total_wait_time_from_sort_order_ms' ELSE N'x.avg_cpu_time_ms' END
              END END
          /*
          The ORDER BY is on the same level as the topmost SELECT, which is just SELECT x.*.
@@ -8917,13 +8917,13 @@ ORDER BY
                   WHEN 'writes' THEN N'TRY_PARSE(x.avg_logical_io_writes_mb AS money)'
                   WHEN 'duration' THEN N'TRY_PARSE(x.avg_duration_ms AS money)'
                   WHEN 'memory' THEN N'TRY_PARSE(x.avg_query_max_used_memory_mb AS money)'
-                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)' END
                   WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
                   WHEN 'recent' THEN N'x.last_execution_time'
                   WHEN 'rows' THEN N'TRY_PARSE(x.avg_rowcount AS money)'
                   WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC,
     x.query_hash_from_hash_counting'
-                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time AS money)' END
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)' END
              END END
     END
              + N' DESC
