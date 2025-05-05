@@ -8543,6 +8543,7 @@ FROM
         CASE
             WHEN @include_plan_hashes IS NOT NULL
             OR   @ignore_plan_hashes IS NOT NULL
+            OR   @sort_order = 'plan count by hashes'
             THEN N'
         qsp.query_plan_hash,'
             ELSE N''
