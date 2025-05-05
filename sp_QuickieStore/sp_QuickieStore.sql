@@ -88,7 +88,7 @@ ALTER PROCEDURE
     @query_type varchar(11) = NULL, /*filter for only ad hoc queries or only from queries from modules*/
     @expert_mode bit = 0, /*returns additional columns and results*/
     @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/
-    @format_output bit = 1, /*returns numbers formatted with commas*/
+    @format_output bit = 1, /*returns numbers formatted with commas and most decimals rounded away*/
     @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them*/
     @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
@@ -204,7 +204,7 @@ BEGIN
                 WHEN N'@query_type' THEN 'filter for only ad hoc queries or only from queries from modules'
                 WHEN N'@expert_mode' THEN 'returns additional columns and results'
                 WHEN N'@hide_help_table' THEN 'hides the "bottom table" that shows help and support information'
-                WHEN N'@format_output' THEN 'returns numbers formatted with commas'
+                WHEN N'@format_output' THEN 'returns numbers formatted with commas and most decimals rounded away'
                 WHEN N'@get_all_databases' THEN 'looks for query store enabled user databases and returns combined results from all of them'
                 WHEN N'@include_databases' THEN 'comma-separated list of databases to include (only when @get_all_databases = 1)'
                 WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude (only when @get_all_databases = 1)'
