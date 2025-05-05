@@ -8542,14 +8542,24 @@ FROM
         qsp.all_plan_ids,' +
         CASE
             WHEN @include_plan_hashes IS NOT NULL
+            OR   @ignore_plan_hashes IS NOT NULL
+            OR   @sort_order = 'plan count by hashes'
             THEN N'
         qsp.query_plan_hash,'
+            ELSE N''
+        END + 
+        CASE
             WHEN @include_query_hashes IS NOT NULL
+            OR   @ignore_query_hashes IS NOT NULL
             OR   @sort_order = 'plan count by hashes'
             OR   @include_query_hash_totals = 1
             THEN N'
         qsq.query_hash,'
+            ELSE N''
+        END + 
+        CASE
             WHEN @include_sql_handles IS NOT NULL
+            OR   @ignore_sql_handles IS NOT NULL
             THEN N'
         qsqt.statement_sql_handle,'
             ELSE N''
