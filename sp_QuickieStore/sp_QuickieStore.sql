@@ -1341,7 +1341,7 @@ CREATE TABLE
     id bigint IDENTITY PRIMARY KEY CLUSTERED,
     current_table nvarchar(100) NOT NULL,
     start_time datetime NOT NULL,
-    end_time datetime NOT NULL,
+    end_time datetime NULL,
     runtime_ms AS
         FORMAT
         (
