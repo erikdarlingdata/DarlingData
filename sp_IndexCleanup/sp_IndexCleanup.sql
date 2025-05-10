@@ -51,8 +51,8 @@ ALTER PROCEDURE
     dbo.sp_IndexCleanup
 (
     @database_name sysname = NULL, /*focus on a single database*/
-    @schema_name sysname = NULL, /*use when focusing on a single table, or to a single schema with no table name*/
-    @table_name sysname = NULL, /*use when focusing on a single table*/
+    @schema_name sysname = NULL, /*use when focusing on a single table/view, or to a single schema with no table name*/
+    @table_name sysname = NULL, /*use when focusing on a single table or view*/
     @min_reads bigint = 0, /*only look at indexes with a minimum number of reads*/
     @min_writes bigint = 0, /*only look at indexes with a minimum number of writes*/
     @min_size_gb decimal(10,2) = 0, /*only look at indexes with a minimum size*/
@@ -139,7 +139,7 @@ BEGIN TRY
                     ap.name
                     WHEN N'@database_name' THEN 'the name of the database you wish to analyze'
                     WHEN N'@schema_name' THEN 'limits analysis to tables in the specified schema when used without @table_name'
-                    WHEN N'@table_name' THEN 'the table name to filter indexes by, requires @schema_name if not dbo'
+                    WHEN N'@table_name' THEN 'the table or view name to filter indexes by, requires @schema_name if not dbo'
                     WHEN N'@min_reads' THEN 'minimum number of reads for an index to be considered used'
                     WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
@@ -159,7 +159,7 @@ BEGIN TRY
                     ap.name
                     WHEN N'@database_name' THEN 'the name of a database you care about indexes in'
                     WHEN N'@schema_name' THEN 'schema name or NULL for all schemas'
-                    WHEN N'@table_name' THEN 'table name or NULL for all tables'
+                    WHEN N'@table_name' THEN 'table (or view) name or NULL for all tables'
                     WHEN N'@min_reads' THEN 'any positive integer or 0'
                     WHEN N'@min_writes' THEN 'any positive integer or 0'
                     WHEN N'@min_size_gb' THEN 'any positive decimal or 0'
@@ -1178,12 +1178,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT DISTINCT
             @database_id,
             database_name = DB_NAME(@database_id),
-            schema_id = t.schema_id,
+            schema_id = s.schema_id,
             schema_name = s.name,
-            object_id = t.object_id,
-            table_name = t.name,
+            object_id = i.object_id,
+            table_name = ISNULL(t.name, v.name),
             index_id = i.index_id,
-            index_name = ISNULL(i.name, t.name + N''.Heap''),
+            index_name = ISNULL(i.name, ISNULL(t.name, v.name) + N''.Heap''),
             can_compress =
                 CASE
                     WHEN p.index_id > 0
@@ -1191,26 +1191,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN 1
                     ELSE 0
                 END
-        FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+        FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
+		LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+          ON i.object_id = t.object_id
+		LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
+          ON i.object_id = v.object_id
         JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
-          ON t.schema_id = s.schema_id
-        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
-          ON t.object_id = i.object_id
+          ON ISNULL(t.schema_id, v.schema_id) = s.schema_id 
         JOIN ' + QUOTENAME(@current_database_name) + N'.sys.partitions AS p
           ON  i.object_id = p.object_id
           AND i.index_id = p.index_id
         LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_index_usage_stats AS us
-          ON  t.object_id = us.object_id
+          ON  i.object_id = us.object_id
           AND us.database_id = @database_id
-        WHERE t.is_ms_shipped = 0
-        AND   t.type <> N''TF''
-        AND   NOT EXISTS
-        (
-            SELECT
-                1/0
-            FROM ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
-            WHERE v.object_id = i.object_id
-        )
+        WHERE (t.object_id IS NULL OR t.is_ms_shipped = 0)
+        AND   (t.object_id IS NULL OR t.type <> N''TF'')
         AND i.is_disabled = 0
         AND i.is_hypothetical = 0';
 
@@ -1261,7 +1256,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SET @sql += N'
-        AND   t.object_id = @object_id';
+        AND   i.object_id = @object_id';
     END;
 
     IF  @schema_name IS NOT NULL
@@ -1284,7 +1279,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
             JOIN ' + QUOTENAME(@current_database_name) + N'.sys.allocation_units AS au
               ON ps.partition_id = au.container_id
-            WHERE ps.object_id = t.object_id
+            WHERE ps.object_id = i.object_id
             GROUP BY
                 ps.object_id
             HAVING
@@ -1295,7 +1290,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 1/0
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
-            WHERE ps.object_id = t.object_id
+            WHERE ps.object_id = i.object_id
             AND   ps.index_id IN (0, 1)
             GROUP BY
                 ps.object_id
@@ -1307,7 +1302,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 1/0
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_index_usage_stats AS ius
-            WHERE ius.object_id = t.object_id
+            WHERE ius.object_id = i.object_id
             AND   ius.database_id = @database_id
             GROUP BY
                 ius.object_id
@@ -1716,9 +1711,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         schema_id = s.schema_id,
         schema_name = s.name,
         os.object_id,
-        table_name = t.name,
+        table_name = ISNULL(t.name, v.name),
         os.index_id,
-        index_name = ISNULL(i.name, t.name + N''.Heap''),
+        index_name = ISNULL(i.name, ISNULL(t.name, v.name) + N''.Heap''),
         range_scan_count = SUM(os.range_scan_count),
         singleton_lookup_count = SUM(os.singleton_lookup_count),
         forwarded_fetch_count = SUM(os.forwarded_fetch_count),
@@ -1756,10 +1751,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         NULL,
         NULL
     ) AS os
-    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+    LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
       ON os.object_id = t.object_id
+	LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
+      ON os.object_id = v.object_id
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
-      ON t.schema_id = s.schema_id
+      ON ISNULL(t.schema_id, v.schema_id) = s.schema_id
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
       ON  os.object_id = i.object_id
       AND os.index_id = i.index_id
@@ -1777,7 +1774,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         s.schema_id,
         s.name,
         os.object_id,
-        t.name,
+        ISNULL(t.name, v.name),
         os.index_id,
         i.name
     OPTION(RECOMPILE);
@@ -1867,12 +1864,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SELECT
         database_id = @database_id,
         database_name = DB_NAME(@database_id),
-        t.object_id,
+        i.object_id,
         i.index_id,
         s.schema_id,
         schema_name = s.name,
-        table_name = t.name,
-        index_name = ISNULL(i.name, t.name + N''.Heap''),
+        table_name = ISNULL(t.name, v.name),
+        index_name = ISNULL(i.name, ISNULL(t.name, v.name) + N''.Heap''),
         column_name = c.name,
         column_id = c.column_id,
         i.is_primary_key,
@@ -1964,11 +1961,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 )
                 THEN 0
             END
-    FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+	FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
+    LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+	  ON i.object_id = t.object_id
+	LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
+	  ON i.object_id = v.object_id
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
-      ON t.schema_id = s.schema_id
-    JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
-      ON t.object_id = i.object_id
+      ON ISNULL(t.schema_id, v.schema_id) = s.schema_id
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.index_columns AS ic
       ON  i.object_id = ic.object_id
       AND i.index_id = ic.index_id
@@ -1983,7 +1982,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  i.object_id = us.object_id
       AND i.index_id = us.index_id
       AND us.database_id = @database_id
-    WHERE t.is_ms_shipped = 0
+    WHERE (t.object_id IS NULL OR t.is_ms_shipped = 0)
     AND   i.type IN (1, 2)
     AND   i.is_disabled = 0
     AND   i.is_hypothetical = 0
@@ -1993,7 +1992,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             1/0
         FROM #filtered_objects AS fo
         WHERE fo.database_id = @database_id
-        AND   fo.object_id = t.object_id
+        AND   fo.object_id = i.object_id
     )
     AND   EXISTS
     (
@@ -2005,7 +2004,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (
             nvarchar(MAX),
             N'.sys.dm_db_partition_stats ps
-        WHERE ps.object_id = t.object_id
+        WHERE ps.object_id = i.object_id
         AND   ps.index_id = 1
         AND   ps.row_count >= @min_rows
     )'
@@ -2019,7 +2018,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT @sql += N'
-    AND   t.object_id = @object_id';
+    AND   i.object_id = @object_id';
     END;
 
     SELECT
@@ -2148,8 +2147,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.index_id,
             s.schema_id,
             schema_name = s.name,
-            table_name = t.name,
-            index_name = ISNULL(i.name, t.name + N''.Heap''),
+            table_name = ISNULL(t.name, v.name),
+            index_name = ISNULL(i.name, ISNULL(t.name, v.name) + N''.Heap''),
             ps.partition_id,
             p.partition_number,
             total_rows = ps.row_count,
@@ -2158,11 +2157,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             reserved_row_overflow_gb = SUM(ps.row_overflow_reserved_page_count) * 8. / 1024. / 1024.0, /* Convert directly to GB */
             p.data_compression_desc,
             i.data_space_id
-        FROM ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
-        JOIN ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
-          ON t.object_id = i.object_id
+		FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
+        LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+		  ON i.object_id = t.object_id
+        LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
+          ON i.object_id = v.object_id
         JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
-          ON t.schema_id = s.schema_id
+          ON ISNULL(t.schema_id, v.schema_id) = s.schema_id
         JOIN ' + QUOTENAME(@current_database_name) + N'.sys.partitions AS p
           ON  i.object_id = p.object_id
           AND i.index_id = p.index_id
@@ -2170,7 +2171,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           ON p.partition_id = a.container_id
         LEFT HASH JOIN ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_partition_stats AS ps
           ON p.partition_id = ps.partition_id
-        WHERE t.type <> N''TF''
+        WHERE (t.object_id IS NULL OR t.type <> N''TF'')
         AND   i.type IN (1, 2)
         AND   EXISTS
         (
@@ -2178,7 +2179,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM #filtered_objects AS fo
             WHERE fo.database_id = @database_id
-            AND   fo.object_id = t.object_id
+            AND   fo.object_id = i.object_id
         )';
 
     IF @object_id IS NOT NULL
@@ -2189,7 +2190,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         SELECT @sql += N'
-        AND   t.object_id = @object_id';
+        AND   i.object_id = @object_id';
     END;
 
     SELECT
@@ -2199,7 +2200,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.index_id,
             s.schema_id,
             s.name,
-            t.name,
+            ISNULL(t.name, v.name),
             i.name,
             ps.partition_id,
             p.partition_number,
