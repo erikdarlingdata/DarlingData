@@ -1683,19 +1683,19 @@ BEGIN
 END;
 
 /* Dynamic regression change column based on formatting and comparator */
-IF @regression_baseline_start_date IS NOT NULL AND @regression_comparator = 'relative' AND @format_output = 1
+IF @regression_mode = 1 AND @regression_comparator = 'relative' AND @format_output = 1
 BEGIN
     INSERT INTO
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, 'P2');
 END;
-ELSE IF @regression_baseline_start_date IS NOT NULL AND @format_output = 1
+ELSE IF @regression_mode = 1 AND @format_output = 1
 BEGIN
     INSERT INTO
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
     VALUES (160, 'regression', 'change', 'change_in_average_for_query_hash_since_regression_time_period', 'regression.change_since_regression_time_period', 1, 'regression_mode', 1, 0, 'N2');
 END;
-ELSE IF @regression_baseline_start_date IS NOT NULL
+ELSE IF @regression_mode = 1
 BEGIN
     INSERT INTO
         @ColumnDefinitions (column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern)
@@ -1722,7 +1722,7 @@ VALUES
         'n',
         'n',
         'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY ' +
-        CASE WHEN @regression_baseline_start_date IS NOT NULL THEN
+        CASE WHEN @regression_mode = 1 THEN
              /* As seen when populating #regression_changes */
              CASE @regression_direction
                   WHEN 'regressed' THEN 'regression.change_since_regression_time_period'
