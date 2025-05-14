@@ -516,7 +516,147 @@ BEGIN
        @sort_order_is_a_wait = 1;
 END;
 
+/*
+We also validate regression mode super early.
+We need to do this here so we can build @ColumnDefinitions correctly.
+It also lets us fail fast, if needed.
+*/
+DECLARE
+    @regression_mode bit;
 
+/*
+Set @regression_mode if the given arguments indicate that
+we are checking for regressed queries.
+Also set any default parameters for regression mode while we're at it.
+*/
+IF @regression_baseline_start_date IS NOT NULL
+BEGIN
+    SELECT
+        @regression_mode = 1,
+        @regression_comparator =
+            ISNULL(@regression_comparator, 'absolute'),
+        @regression_direction =
+            ISNULL(@regression_direction, 'regressed');
+END;
+
+/*
+Error out if the @regression parameters do not make sense.
+*/
+IF
+(
+  @regression_baseline_start_date IS NULL
+  AND
+  (
+      @regression_baseline_end_date IS NOT NULL
+   OR @regression_comparator IS NOT NULL
+   OR @regression_direction IS NOT NULL
+  )
+)
+BEGIN
+    RAISERROR('@regression_baseline_start_date is mandatory if you have specified any other @regression_ parameter.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
+Error out if the @regression_baseline_start_date and
+@regression_baseline_end_date are incompatible.
+We could try and guess a sensible resolution, but
+I do not think that we can know what people want.
+*/
+IF
+(
+    @regression_baseline_start_date IS NOT NULL
+AND @regression_baseline_end_date IS NOT NULL
+AND @regression_baseline_start_date >= @regression_baseline_end_date
+)
+BEGIN
+    RAISERROR('@regression_baseline_start_date has been set greater than or equal to @regression_baseline_end_date.
+This does not make sense. Check that the values of both parameters are as you intended them to be.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
+Validate @regression_comparator.
+*/
+IF
+(
+    @regression_comparator IS NOT NULL
+AND @regression_comparator NOT IN ('relative', 'absolute')
+)
+BEGIN
+   RAISERROR('The regression_comparator (%s) you chose is so out of this world that I''m using ''absolute'' instead', 10, 1, @regression_comparator) WITH NOWAIT;
+
+   SELECT
+       @regression_comparator = 'absolute';
+END;
+
+/*
+Validate @regression_direction.
+*/
+IF
+(
+    @regression_direction IS NOT NULL
+AND @regression_direction NOT IN ('regressed', 'worse', 'improved', 'better', 'magnitude', 'absolute')
+)
+BEGIN
+   RAISERROR('The regression_direction (%s) you chose is so out of this world that I''m using ''regressed'' instead', 10, 1, @regression_direction) WITH NOWAIT;
+
+   SELECT
+       @regression_direction = 'regressed';
+END;
+
+/*
+Error out if we're trying to do regression mode with 'recent'
+as our @sort_order. How could that ever make sense?
+*/
+IF
+(
+    @regression_mode = 1
+AND @sort_order = 'recent'
+)
+BEGIN
+    RAISERROR('Your @sort_order is ''recent'', but you are trying to compare metrics for two time periods.
+If you can imagine a useful way to do that, then make a feature request.
+Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
+Error out if we're trying to do regression mode with 'plan count by hashes'
+as our @sort_order. How could that ever make sense?
+*/
+IF
+(
+    @regression_mode = 1
+AND @sort_order = 'plan count by hashes'
+)
+BEGIN
+    RAISERROR('Your @sort_order is ''plan count by hashes'', but you are trying to compare metrics for two time periods.
+This is probably not useful, since our method of comparing two time period relies on only checking query hashes that are in both time periods.
+If you can imagine a useful way to do that, then make a feature request.
+Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
+Error out if @regression_comparator tells us to use division,
+but @regression_direction tells us to take the modulus.
+It doesn't make sense to specifically ask us to remove the sign
+of something that doesn't care about it.
+*/
+IF
+(
+    @regression_comparator = 'relative'
+AND @regression_direction IN ('absolute', 'magnitude')
+)
+BEGIN
+    RAISERROR('Your @regression_comparator is ''relative'', but you have asked for an ''absolute'' or ''magnitude'' @regression_direction. This is probably a mistake.
+Your @regression_direction tells us to take the absolute value of our result of comparing the metrics in the current time period to the baseline time period,
+but your @regression_comparator is telling us to use division to compare the two time periods. This is unlikely to produce useful results.
+If you can imagine a useful way to do that, then make a feature request. Otherwise, either change @regression_direction to another value
+(e.g. ''better'' or ''worse'') or change @regression_comparator to ''absolute''.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
 
 /*
 These are the tables that we'll use to grab data from query store
@@ -1764,7 +1904,6 @@ DECLARE
     @work_end_utc time(0),
     @regression_baseline_start_date_original datetimeoffset(7),
     @regression_baseline_end_date_original datetimeoffset(7),
-    @regression_mode bit,
     @regression_where_clause nvarchar(max),
     @column_sql nvarchar(max),
     @param_name nvarchar(100),
@@ -1846,138 +1985,6 @@ SELECT
                 )
             )
         );
-
-/*
-Set @regression_mode if the given arguments indicate that
-we are checking for regressed queries.
-*/
-IF @regression_baseline_start_date IS NOT NULL
-BEGIN
-    SELECT
-        @regression_mode = 1;
-END;
-
-/*
-Error out if the @regression parameters do not make sense.
-*/
-IF
-(
-  @regression_baseline_start_date IS NULL
-  AND
-  (
-      @regression_baseline_end_date IS NOT NULL
-   OR @regression_comparator IS NOT NULL
-   OR @regression_direction IS NOT NULL
-  )
-)
-BEGIN
-    RAISERROR('@regression_baseline_start_date is mandatory if you have specified any other @regression_ parameter.', 11, 1) WITH NOWAIT;
-    RETURN;
-END;
-
-/*
-Error out if the @regression_baseline_start_date and
-@regression_baseline_end_date are incompatible.
-We could try and guess a sensible resolution, but
-I do not think that we can know what people want.
-*/
-IF
-(
-    @regression_baseline_start_date IS NOT NULL
-AND @regression_baseline_end_date IS NOT NULL
-AND @regression_baseline_start_date >= @regression_baseline_end_date
-)
-BEGIN
-    RAISERROR('@regression_baseline_start_date has been set greater than or equal to @regression_baseline_end_date.
-This does not make sense. Check that the values of both parameters are as you intended them to be.', 11, 1) WITH NOWAIT;
-    RETURN;
-END;
-
-
-/*
-Validate @regression_comparator.
-*/
-IF
-(
-    @regression_comparator IS NOT NULL
-AND @regression_comparator NOT IN ('relative', 'absolute')
-)
-BEGIN
-   RAISERROR('The regression_comparator (%s) you chose is so out of this world that I''m using ''absolute'' instead', 10, 1, @regression_comparator) WITH NOWAIT;
-
-   SELECT
-       @regression_comparator = 'absolute';
-END;
-
-/*
-Validate @regression_direction.
-*/
-IF
-(
-    @regression_direction IS NOT NULL
-AND @regression_direction NOT IN ('regressed', 'worse', 'improved', 'better', 'magnitude', 'absolute')
-)
-BEGIN
-   RAISERROR('The regression_direction (%s) you chose is so out of this world that I''m using ''regressed'' instead', 10, 1, @regression_direction) WITH NOWAIT;
-
-   SELECT
-       @regression_direction = 'regressed';
-END;
-
-/*
-Error out if we're trying to do regression mode with 'recent'
-as our @sort_order. How could that ever make sense?
-*/
-IF
-(
-    @regression_mode = 1
-AND @sort_order = 'recent'
-)
-BEGIN
-    RAISERROR('Your @sort_order is ''recent'', but you are trying to compare metrics for two time periods.
-If you can imagine a useful way to do that, then make a feature request.
-Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
-    RETURN;
-END;
-
-/*
-Error out if we're trying to do regression mode with 'plan count by hashes'
-as our @sort_order. How could that ever make sense?
-*/
-IF
-(
-    @regression_mode = 1
-AND @sort_order = 'plan count by hashes'
-)
-BEGIN
-    RAISERROR('Your @sort_order is ''plan count by hashes'', but you are trying to compare metrics for two time periods.
-This is probably not useful, since our method of comparing two time period relies on only checking query hashes that are in both time periods.
-If you can imagine a useful way to do that, then make a feature request.
-Otherwise, either stop specifying any @regression_ parameters or specify a different @sort_order.', 11, 1) WITH NOWAIT;
-    RETURN;
-END;
-
-
-/*
-Error out if @regression_comparator tells us to use division,
-but @regression_direction tells us to take the modulus.
-It doesn't make sense to specifically ask us to remove the sign
-of something that doesn't care about it.
-*/
-IF
-(
-    @regression_comparator = 'relative'
-AND @regression_direction IN ('absolute', 'magnitude')
-)
-BEGIN
-    RAISERROR('Your @regression_comparator is ''relative'', but you have asked for an ''absolute'' or ''magnitude'' @regression_direction. This is probably a mistake.
-Your @regression_direction tells us to take the absolute value of our result of comparing the metrics in the current time period to the baseline time period,
-but your @regression_comparator is telling us to use division to compare the two time periods. This is unlikely to produce useful results.
-If you can imagine a useful way to do that, then make a feature request. Otherwise, either change @regression_direction to another value
-(e.g. ''better'' or ''worse'') or change @regression_comparator to ''absolute''.', 11, 1) WITH NOWAIT;
-    RETURN;
-END;
-
 
 /*
 Set the _original variables, as we have
@@ -2893,7 +2900,6 @@ END;
 
 /*
 As above, but for @regression_baseline_start_date and @regression_baseline_end_date.
-We set the other @regression_ variables while we're at it.
 */
 IF @regression_mode = 1
 BEGIN
@@ -2914,11 +2920,7 @@ We set both _date_original variables earlier.
                 MINUTE,
                 @utc_minutes_difference,
                 @regression_baseline_end_date_original
-            ),
-        @regression_comparator =
-            ISNULL(@regression_comparator, 'absolute'),
-        @regression_direction =
-            ISNULL(@regression_direction, 'regressed');
+            );
 END;
 
 /*
