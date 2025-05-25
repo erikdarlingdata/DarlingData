@@ -265,65 +265,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     RETURN;
 END;
 
-IF @debug = 1
-BEGIN
-    RAISERROR('Check if we are using system_health', 0, 1) WITH NOWAIT;
-END;
-DECLARE
-    @is_system_health bit = 0,
-    @is_system_health_msg nchar(1);
-
-SELECT
-    @is_system_health =
-        CASE
-            WHEN @session_name LIKE N'system%health'
-            THEN 1
-            ELSE 0
-        END,
-    @is_system_health_msg =
-        CONVERT(nchar(1), @is_system_health);
-
-IF @debug = 1
-AND @is_system_health = 0
-BEGIN
-    RAISERROR('We are not using system_health', 0, 1) WITH NOWAIT;
-END;
-
-IF @is_system_health = 1
-BEGIN
-    RAISERROR('For best results, consider not using system_health as your target. Re-run with @help = 1 for guidance.', 0, 1) WITH NOWAIT;
-END
-
-/*
-Note: I do not allow logging to a table from system_health, because the set of columns
-and available data is too incomplete, and I don't want to juggle multiple
-table definitions.
-
-Logging to a table is only allowed from a blocked_process_report Extended Event,
-but it can either be ring buffer or file target. I don't care about that.
-*/
-IF @is_system_health = 1
-AND
-(
-  LOWER(@target_type) = N'table'
-  OR @log_to_table = 1
-)
-BEGIN
-    RAISERROR('Logging system_health to a table is not supported.
-Either pick a different session or change both
-@target_type to be ''event_file'' or ''ring_buffer''
-and @log_to_table to be 0.', 11, 0) WITH NOWAIT;
-    RETURN;
-END
-
-IF @is_system_health = 1
-AND @target_type IS NULL
-BEGIN
-    RAISERROR('No @target_type specified, using ''event_file'' for system_health.', 0, 1) WITH NOWAIT;
-    SELECT
-        @target_type = 'event_file';
-END
-
 /*Check if the blocked process report is on at all*/
 IF EXISTS
 (
@@ -332,8 +273,8 @@ IF EXISTS
     FROM sys.configurations AS c
     WHERE c.name = N'blocked process threshold (s)'
     AND   CONVERT(int, c.value_in_use) = 0
-    AND   @is_system_health = 0
 )
+AND @session_name NOT LIKE N'system%health'
 BEGIN
     RAISERROR(N'Unless you want to use the lousy version in system_health, the blocked process report needs to be enabled:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
@@ -351,8 +292,8 @@ IF EXISTS
     FROM sys.configurations AS c
     WHERE c.name = N'blocked process threshold (s)'
     AND   CONVERT(int, c.value_in_use) <> 5
-    AND   @is_system_health = 0
 )
+AND @session_name NOT LIKE N'system%health'
 BEGIN
     RAISERROR(N'For best results, set up the blocked process report like this:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
@@ -381,6 +322,8 @@ DECLARE
     @session_id integer,
     @target_session_id integer,
     @file_name nvarchar(4000),
+    @is_system_health bit = 0,
+    @is_system_health_msg nchar(1),
     @inputbuf_bom nvarchar(1) =
         CONVERT(nvarchar(1), 0x0a00, 0),
     @start_date_original datetime2 = @start_date,
@@ -465,6 +408,12 @@ SELECT
                     @end_date
                 )
         END,
+    @is_system_health =
+        CASE
+            WHEN @session_name LIKE N'system%health'
+            THEN 1
+            ELSE 0
+        END,
     @mdsql = N'
 IF OBJECT_ID(''{table_check}'', ''U'') IS NOT NULL
 BEGIN
@@ -493,9 +442,52 @@ BEGIN
     FROM {table_check};
 END;';
 
+IF @debug = 1
+AND @is_system_health = 0
+BEGIN
+    RAISERROR('We are not using system_health', 0, 1) WITH NOWAIT;
+END;
+
+IF @is_system_health = 1
+BEGIN
+    RAISERROR('For best results, consider not using system_health as your target. Re-run with @help = 1 for guidance.', 0, 1) WITH NOWAIT;
+END
+
+/*
+Note: I do not allow logging to a table from system_health, because the set of columns
+and available data is too incomplete, and I don't want to juggle multiple
+table definitions.
+
+Logging to a table is only allowed from a blocked_process_report Extended Event,
+but it can either be ring buffer or file target. I don't care about that.
+*/
+IF @is_system_health = 1
+AND
+(
+  LOWER(@target_type) = N'table'
+  OR @log_to_table = 1
+)
+BEGIN
+    RAISERROR('Logging system_health to a table is not supported.
+Either pick a different session or change both
+@target_type to be ''event_file'' or ''ring_buffer''
+and @log_to_table to be 0.', 11, 0) WITH NOWAIT;
+    RETURN;
+END
+
+IF @is_system_health = 1
+AND @target_type IS NULL
+BEGIN
+    RAISERROR('No @target_type specified, using the ''event_file'' for system_health.', 0, 1) WITH NOWAIT;
+    SELECT
+        @target_type = 'event_file';
+END
+
 SELECT
     @azure_msg =
-        CONVERT(nchar(1), @azure);
+        CONVERT(nchar(1), @azure),
+    @is_system_health_msg =
+        CONVERT(nchar(1), @is_system_health);
 
 /*Change this here in case someone leave it NULL*/
 IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL
