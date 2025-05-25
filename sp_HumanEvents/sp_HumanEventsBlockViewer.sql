@@ -319,7 +319,7 @@ END
 IF @is_system_health = 1
 AND @target_type IS NULL
 BEGIN
-    RAISERROR('No @target_type specified, using ''event_file''.', 0, 1) WITH NOWAIT;
+    RAISERROR('No @target_type specified, using ''event_file'' for system_health.', 0, 1) WITH NOWAIT;
     SELECT
         @target_type = 'event_file';
 END
