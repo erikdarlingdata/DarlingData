@@ -873,13 +873,18 @@ AND   ca.utc_timestamp < @end_date';
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
                     event_time datetime2(7) NULL,
-                    node_id int NULL,
-                    memory_available_gb nvarchar(30) NULL,
-                    memory_requested_gb nvarchar(30) NULL,
-                    memory_allocator nvarchar(256) NULL,
-                    memory_allocation_type nvarchar(256) NULL,
-                    memory_clerk_name nvarchar(256) NULL,
-                    os_error int NULL,
+                    broker_id integer NULL,
+                    pool_metadata_id integer NULL,
+                    delta_time bigint NULL,
+                    memory_ratio integer NULL,
+                    new_target bigint NULL,
+                    overall bigint NULL,
+                    rate bigint NULL,
+                    currently_predicated bigint NULL,
+                    currently_allocated bigint NULL,
+                    previously_allocated bigint NULL,
+                    broker nvarchar(256) NULL,
+                    notification nvarchar(256) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory broker logging.'', 0, 1, ''' + @log_table_memory_broker + N''') WITH NOWAIT; END;
@@ -912,15 +917,33 @@ AND   ca.utc_timestamp < @end_date';
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
                     event_time datetime2(7) NULL,
-                    node_id int NULL,
-                    memory_available_kb nvarchar(30) NULL,
-                    memory_requested_kb nvarchar(30) NULL,
-                    memory_available_mb nvarchar(30) NULL,
-                    memory_requested_mb nvarchar(30) NULL,
-                    memory_allocator nvarchar(256) NULL,
-                    memory_allocation_type nvarchar(256) NULL,
-                    memory_clerk_name nvarchar(256) NULL,
-                    os_error int NULL,
+                    node_id integer NULL,
+                    memory_node_id integer NULL,
+                    memory_utilization_pct integer NULL,
+                    total_physical_memory_kb bigint NULL,
+                    available_physical_memory_kb bigint NULL,
+                    total_page_file_kb bigint NULL,
+                    available_page_file_kb bigint NULL,
+                    total_virtual_address_space_kb bigint NULL,
+                    available_virtual_address_space_kb bigint NULL,
+                    target_kb bigint NULL,
+                    reserved_kb bigint NULL,
+                    committed_kb bigint NULL,
+                    shared_committed_kb bigint NULL,
+                    awe_kb bigint NULL,
+                    pages_kb bigint NULL,
+                    failure_type nvarchar(256) NULL,
+                    failure_value integer NULL,
+                    resources integer NULL,
+                    factor_text nvarchar(256) NULL,
+                    factor_value integer NULL,
+                    last_error integer NULL,
+                    pool_metadata_id integer NULL,
+                    is_process_in_job nvarchar(10) NULL,
+                    is_system_physical_memory_high nvarchar(10) NULL,
+                    is_system_physical_memory_low nvarchar(10) NULL,
+                    is_process_physical_memory_low nvarchar(10) NULL,
+                    is_process_virtual_memory_low nvarchar(10) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory node OOM logging.'', 0, 1, ''' + @log_table_memory_node_oom + N''') WITH NOWAIT; END;
@@ -3134,19 +3157,23 @@ END;
                     ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
-            notification_type = w.x.value('(data[@name="notification_type"]/text)[1]', 'nvarchar(256)'),
-            reclaim_target_kb = w.x.value('(data[@name="reclaim_target_kb"]/value)[1]', 'bigint'),
-            reclaimed_kb = w.x.value('(data[@name="reclaimed_kb"]/value)[1]', 'bigint'),
-            pressure = w.x.value('(data[@name="pressure"]/value)[1]', 'bigint'),
-            currently_available_kb = w.x.value('(data[@name="currently_available_kb"]/value)[1]', 'bigint'),
-            reserved_kb = w.x.value('(data[@name="reserved_kb"]/value)[1]', 'bigint'),
-            committed_kb = w.x.value('(data[@name="committed_kb"]/value)[1]', 'bigint'),
-            worker_count = w.x.value('(data[@name="worker_count"]/value)[1]', 'integer'),
+            broker_id = w.x.value('(data[@name="id"]/value)[1]', 'integer'),
+            pool_metadata_id = w.x.value('(data[@name="pool_metadata_id"]/value)[1]', 'integer'),
+            delta_time = w.x.value('(data[@name="delta_time"]/value)[1]', 'bigint'),
+            memory_ratio = w.x.value('(data[@name="memory_ratio"]/value)[1]', 'integer'),
+            new_target = w.x.value('(data[@name="new_target"]/value)[1]', 'bigint'),
+            overall = w.x.value('(data[@name="overall"]/value)[1]', 'bigint'),
+            rate = w.x.value('(data[@name="rate"]/value)[1]', 'bigint'),
+            currently_predicated = w.x.value('(data[@name="currently_predicated"]/value)[1]', 'bigint'),
+            currently_allocated = w.x.value('(data[@name="currently_allocated"]/value)[1]', 'bigint'),
+            previously_allocated = w.x.value('(data[@name="previously_allocated"]/value)[1]', 'bigint'),
+            broker = w.x.value('(data[@name="broker"]/value)[1]', 'nvarchar(256)'),
+            notification = w.x.value('(data[@name="notification"]/value)[1]', 'nvarchar(256)'),
             xml = w.x.query('.')
         INTO #memory_broker_info
         FROM #memory_broker AS mb
         CROSS APPLY mb.memory_broker.nodes('//event') AS w(x)
-        WHERE (w.x.exist('(data[@name="notification_type"]/text[.= "RESOURCE_MEMPHYSICAL_LOW"])') = @warnings_only OR @warnings_only = 0)
+        WHERE (w.x.exist('(data[@name="notification"]/value[.= "RESOURCE_MEMPHYSICAL_LOW"])') = @warnings_only OR @warnings_only = 0)
         OPTION(RECOMPILE);
 
         IF @debug = 1
@@ -3192,54 +3219,116 @@ END;
         END;
         ELSE
         BEGIN
-            /* Build the query for memory node OOM events */
+            /* Build the query for memory broker notifications */
             SET @dsql = N'
             SELECT
                 ' + CASE
                         WHEN @log_to_table = 1
-                        THEN N''
-                        ELSE N'finding = ''memory node OOM events'','
+                        THEN N'mbi.event_time,
+                mbi.broker_id,
+                mbi.pool_metadata_id,
+                mbi.delta_time,
+                mbi.memory_ratio,
+                mbi.new_target,
+                mbi.overall,
+                mbi.rate,
+                mbi.currently_predicated,
+                mbi.currently_allocated,
+                mbi.previously_allocated,
+                mbi.broker,
+                mbi.notification'
+                        ELSE N'finding = ''memory broker notifications'',
+                mbi.event_time,
+                mbi.broker_id,
+                mbi.pool_metadata_id,
+                mbi.delta_time,
+                mbi.memory_ratio,
+                new_target_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.new_target / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                overall_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.overall / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                mbi.rate,
+                currently_predicated_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.currently_predicated / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                currently_allocated_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.currently_allocated / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                previously_allocated_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mbi.previously_allocated / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                mbi.broker,
+                mbi.notification'
                     END +
               N'
-                mnoi.event_time,
-                mnoi.node_id,
-                memory_available_gb =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                mnoi.memory_available_kb / 1024.0 / 1024.0
-                            ),
-                            1
-                        ),
-                    N''.00'',
-                    N''''
-                    ),
-                memory_requested_gb =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                mnoi.memory_requested_kb / 1024.0 / 1024.0
-                            ),
-                            1
-                        ),
-                    N''.00'',
-                    N''''
-                    ),
-                mnoi.memory_allocator,
-                mnoi.memory_allocation_type,
-                mnoi.memory_clerk_name,
-                mnoi.os_error
-            FROM #memory_node_oom_info AS mnoi';
+            FROM #memory_broker_info AS mbi';
 
             /* Add the WHERE clause only for table logging */
             IF @log_to_table = 1
@@ -3269,13 +3358,13 @@ END;
                     @max_event_time OUTPUT;
 
                 SET @dsql += N'
-            WHERE mnoi.event_time > @max_event_time';
+            WHERE mbi.event_time > @max_event_time';
             END;
 
             /* Add the ORDER BY clause */
             SET @dsql += N'
             ORDER BY
-                mnoi.event_time DESC
+                mbi.event_time DESC
             OPTION(RECOMPILE);
             ';
 
@@ -3287,13 +3376,18 @@ END;
                 + @log_table_memory_broker + N'
             (
                 event_time,
-                node_id,
-                memory_available_gb,
-                memory_requested_gb,
-                memory_allocator,
-                memory_allocation_type,
-                memory_clerk_name,
-                os_error
+                broker_id,
+                pool_metadata_id,
+                delta_time,
+                memory_ratio,
+                new_target,
+                overall,
+                rate,
+                currently_predicated,
+                currently_allocated,
+                previously_allocated,
+                broker,
+                notification
             )' +
                 @dsql;
 
@@ -3343,13 +3437,33 @@ END;
                     ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
-            node_id = w.x.value('(data[@name="id"]/value)[1]', 'int'),
-            memory_available_kb = w.x.value('(data[@name="availableMemory"]/value)[1]', 'bigint'),
-            memory_requested_kb = w.x.value('(data[@name="requestedMemory"]/value)[1]', 'bigint'),
-            memory_allocator = w.x.value('(data[@name="allocator"]/text)[1]', 'nvarchar(256)'),
-            memory_allocation_type = w.x.value('(data[@name="allocationType"]/text)[1]', 'nvarchar(256)'),
-            memory_clerk_name = w.x.value('(data[@name="memoryClerk"]/text)[1]', 'nvarchar(256)'),
-            os_error = w.x.value('(data[@name="oserror"]/value)[1]', 'integer'),
+            node_id = w.x.value('(data[@name="id"]/value)[1]', 'integer'),
+            memory_node_id = w.x.value('(data[@name="memory_node_id"]/value)[1]', 'integer'),
+            memory_utilization_pct = w.x.value('(data[@name="memory_utilization_pct"]/value)[1]', 'integer'),
+            total_physical_memory_kb = w.x.value('(data[@name="total_physical_memory_kb"]/value)[1]', 'bigint'),
+            available_physical_memory_kb = w.x.value('(data[@name="available_physical_memory_kb"]/value)[1]', 'bigint'),
+            total_page_file_kb = w.x.value('(data[@name="total_page_file_kb"]/value)[1]', 'bigint'),
+            available_page_file_kb = w.x.value('(data[@name="available_page_file_kb"]/value)[1]', 'bigint'),
+            total_virtual_address_space_kb = w.x.value('(data[@name="total_virtual_address_space_kb"]/value)[1]', 'bigint'),
+            available_virtual_address_space_kb = w.x.value('(data[@name="available_virtual_address_space_kb"]/value)[1]', 'bigint'),
+            target_kb = w.x.value('(data[@name="target_kb"]/value)[1]', 'bigint'),
+            reserved_kb = w.x.value('(data[@name="reserved_kb"]/value)[1]', 'bigint'),
+            committed_kb = w.x.value('(data[@name="committed_kb"]/value)[1]', 'bigint'),
+            shared_committed_kb = w.x.value('(data[@name="shared_committed_kb"]/value)[1]', 'bigint'),
+            awe_kb = w.x.value('(data[@name="awe_kb"]/value)[1]', 'bigint'),
+            pages_kb = w.x.value('(data[@name="pages_kb"]/value)[1]', 'bigint'),
+            failure_type = w.x.value('(data[@name="failure"]/text)[1]', 'nvarchar(256)'),
+            failure_value = w.x.value('(data[@name="failure"]/value)[1]', 'integer'),
+            resources = w.x.value('(data[@name="resources"]/value)[1]', 'integer'),
+            factor_text = w.x.value('(data[@name="factor"]/text)[1]', 'nvarchar(256)'),
+            factor_value = w.x.value('(data[@name="factor"]/value)[1]', 'integer'),
+            last_error = w.x.value('(data[@name="last_error"]/value)[1]', 'integer'),
+            pool_metadata_id = w.x.value('(data[@name="pool_metadata_id"]/value)[1]', 'integer'),
+            is_process_in_job = w.x.value('(data[@name="is_process_in_job"]/value)[1]', 'nvarchar(10)'),
+            is_system_physical_memory_high = w.x.value('(data[@name="is_system_physical_memory_high"]/value)[1]', 'nvarchar(10)'),
+            is_system_physical_memory_low = w.x.value('(data[@name="is_system_physical_memory_low"]/value)[1]', 'nvarchar(10)'),
+            is_process_physical_memory_low = w.x.value('(data[@name="is_process_physical_memory_low"]/value)[1]', 'nvarchar(10)'),
+            is_process_virtual_memory_low = w.x.value('(data[@name="is_process_virtual_memory_low"]/value)[1]', 'nvarchar(10)'),
             xml = w.x.query('.')
         INTO #memory_node_oom_info
         FROM #memory_node_oom AS mno
@@ -3397,18 +3511,45 @@ END;
         END;
         ELSE
         BEGIN
-            /* Build the query for memory broker notifications */
+            /* Build the query for memory node OOM events */
             SET @dsql = N'
             SELECT
                 ' + CASE
                         WHEN @log_to_table = 1
-                        THEN N''
-                        ELSE N'finding = ''memory broker notifications'','
-                    END +
-              N'
-                mbi.event_time,
-                mbi.notification_type,
-                reclaim_target_gb =
+                        THEN N'mnoi.event_time,
+                mnoi.node_id,
+                mnoi.memory_node_id,
+                mnoi.memory_utilization_pct,
+                mnoi.total_physical_memory_kb,
+                mnoi.available_physical_memory_kb,
+                mnoi.total_page_file_kb,
+                mnoi.available_page_file_kb,
+                mnoi.total_virtual_address_space_kb,
+                mnoi.available_virtual_address_space_kb,
+                mnoi.target_kb,
+                mnoi.reserved_kb,
+                mnoi.committed_kb,
+                mnoi.shared_committed_kb,
+                mnoi.awe_kb,
+                mnoi.pages_kb,
+                mnoi.failure_type,
+                mnoi.failure_value,
+                mnoi.resources,
+                mnoi.factor_text,
+                mnoi.factor_value,
+                mnoi.last_error,
+                mnoi.pool_metadata_id,
+                mnoi.is_process_in_job,
+                mnoi.is_system_physical_memory_high,
+                mnoi.is_system_physical_memory_low,
+                mnoi.is_process_physical_memory_low,
+                mnoi.is_process_virtual_memory_low'
+                        ELSE N'finding = ''memory node OOM events'',
+                mnoi.event_time,
+                mnoi.node_id,
+                mnoi.memory_node_id,
+                mnoi.memory_utilization_pct,
+                total_physical_memory_gb =
                     REPLACE
                     (
                         CONVERT
@@ -3417,14 +3558,14 @@ END;
                             CONVERT
                             (
                                 money,
-                                mbi.reclaim_target_kb / 1024.0 / 1024.0
+                                mnoi.total_physical_memory_kb / 1024.0 / 1024.0
                             ),
                             1
                         ),
                     N''.00'',
                     N''''
                     ),
-                reclaimed_gb =
+                available_physical_memory_gb =
                     REPLACE
                     (
                         CONVERT
@@ -3433,20 +3574,14 @@ END;
                             CONVERT
                             (
                                 money,
-                                mbi.reclaimed_kb / 1024.0 / 1024.0
+                                mnoi.available_physical_memory_kb / 1024.0 / 1024.0
                             ),
                             1
                         ),
                     N''.00'',
                     N''''
                     ),
-                reclaim_success_percent =
-                    CASE
-                        WHEN mbi.reclaim_target_kb > 0
-                        THEN CONVERT(decimal(5,2), 100.0 * mbi.reclaimed_kb / mbi.reclaim_target_kb)
-                        ELSE 0
-                    END,
-                currently_available_gb =
+                total_page_file_gb =
                     REPLACE
                     (
                         CONVERT
@@ -3455,7 +3590,39 @@ END;
                             CONVERT
                             (
                                 money,
-                                mbi.currently_available_kb / 1024.0 / 1024.0
+                                mnoi.total_page_file_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                available_page_file_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mnoi.available_page_file_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                target_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mnoi.target_kb / 1024.0 / 1024.0
                             ),
                             1
                         ),
@@ -3471,7 +3638,7 @@ END;
                             CONVERT
                             (
                                 money,
-                                mbi.reserved_kb / 1024.0 / 1024.0
+                                mnoi.reserved_kb / 1024.0 / 1024.0
                             ),
                             1
                         ),
@@ -3487,15 +3654,76 @@ END;
                             CONVERT
                             (
                                 money,
-                                mbi.committed_kb / 1024.0 / 1024.0
+                                mnoi.committed_kb / 1024.0 / 1024.0
                             ),
                             1
                         ),
                     N''.00'',
                     N''''
                     ),
-                mbi.worker_count
-            FROM #memory_broker_info AS mbi';
+                shared_committed_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mnoi.shared_committed_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                awe_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mnoi.awe_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                pages_gb =
+                    REPLACE
+                    (
+                        CONVERT
+                        (
+                            nvarchar(30),
+                            CONVERT
+                            (
+                                money,
+                                mnoi.pages_kb / 1024.0 / 1024.0
+                            ),
+                            1
+                        ),
+                    N''.00'',
+                    N''''
+                    ),
+                mnoi.failure_type,
+                mnoi.failure_value,
+                mnoi.resources,
+                mnoi.factor_text,
+                mnoi.factor_value,
+                mnoi.last_error,
+                mnoi.pool_metadata_id,
+                mnoi.is_process_in_job,
+                mnoi.is_system_physical_memory_high,
+                mnoi.is_system_physical_memory_low,
+                mnoi.is_process_physical_memory_low,
+                mnoi.is_process_virtual_memory_low'
+                    END +
+              N'
+            FROM #memory_node_oom_info AS mnoi';
 
             /* Add the WHERE clause only for table logging */
             IF @log_to_table = 1
@@ -3543,15 +3771,33 @@ END;
                 ' + @log_table_memory_node_oom + N'
             (
                 event_time,
-                notification_type,
-                reclaim_target_gb,
-                reclaimed_gb,
-                reclaim_success_percent,
-                pressure_gb,
-                currently_available_gb,
-                reserved_gb,
-                committed_gb,
-                worker_count
+                node_id,
+                memory_node_id,
+                memory_utilization_pct,
+                total_physical_memory_kb,
+                available_physical_memory_kb,
+                total_page_file_kb,
+                available_page_file_kb,
+                total_virtual_address_space_kb,
+                available_virtual_address_space_kb,
+                target_kb,
+                reserved_kb,
+                committed_kb,
+                shared_committed_kb,
+                awe_kb,
+                pages_kb,
+                failure_type,
+                failure_value,
+                resources,
+                factor_text,
+                factor_value,
+                last_error,
+                pool_metadata_id,
+                is_process_in_job,
+                is_system_physical_memory_high,
+                is_system_physical_memory_low,
+                is_process_physical_memory_low,
+                is_process_virtual_memory_low
             )' +
                 @dsql;
 
