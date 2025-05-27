@@ -3269,13 +3269,13 @@ END;
                     @max_event_time OUTPUT;
 
                 SET @dsql += N'
-            WHERE mbi.event_time > @max_event_time';
+            WHERE mnoi.event_time > @max_event_time';
             END;
 
             /* Add the ORDER BY clause */
             SET @dsql += N'
             ORDER BY
-                mbi.event_time DESC
+                mnoi.event_time DESC
             OPTION(RECOMPILE);
             ';
 
@@ -3443,25 +3443,9 @@ END;
                 reclaim_success_percent =
                     CASE
                         WHEN mbi.reclaim_target_kb > 0
-                        THEN CONVERT(DECIMAL(5,2), 100.0 * mbi.reclaimed_kb / mbi.reclaim_target_kb)
+                        THEN CONVERT(decimal(5,2), 100.0 * mbi.reclaimed_kb / mbi.reclaim_target_kb)
                         ELSE 0
                     END,
-                pressure_gb =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                mbi.pressure_mb / 1024.0
-                            ),
-                            1
-                        ),
-                    N''.00'',
-                    N''''
-                    ),
                 currently_available_gb =
                     REPLACE
                     (
