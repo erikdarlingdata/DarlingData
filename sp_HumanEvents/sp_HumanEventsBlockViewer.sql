@@ -105,6 +105,7 @@ BEGIN
     SELECT  'it will also work with any other extended event session that captures blocking' UNION ALL
     SELECT  'just use the @session_name parameter to point me there' UNION ALL
     SELECT  'EXECUTE dbo.sp_HumanEventsBlockViewer @session_name = N''blocked_process_report'';' UNION ALL
+    SELECT  'the system_health session also works, if you are okay with its lousy blocked process report'
     SELECT  'all scripts and documentation are available here: https://code.erikdarling.com' UNION ALL
     SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
@@ -137,8 +138,8 @@ BEGIN
             END,
         valid_inputs =
             CASE ap.name
-                 WHEN N'@session_name' THEN 'extended event session name capturing sqlserver.blocked_process_report'
-                 WHEN N'@target_type' THEN 'event_file or ring_buffer'
+                 WHEN N'@session_name' THEN 'extended event session name capturing sqlserver.blocked_process_report, system_health also works'
+                 WHEN N'@target_type' THEN 'event_file or ring_buffer or table'
                  WHEN N'@start_date' THEN 'a reasonable date'
                  WHEN N'@end_date' THEN 'a reasonable date'
                  WHEN N'@database_name' THEN 'a database that exists on this server'
@@ -195,7 +196,7 @@ BEGIN
             N'check the messages tab for setup commands';
 
     RAISERROR('
-The blocked process report needs to be enabled:
+Unless you want to use the lousy version in system_health, the blocked process report needs to be enabled:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
 EXECUTE sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
 RECONFIGURE;', 0, 1) WITH NOWAIT;
@@ -273,8 +274,9 @@ IF EXISTS
     WHERE c.name = N'blocked process threshold (s)'
     AND   CONVERT(int, c.value_in_use) = 0
 )
+AND @session_name NOT LIKE N'system%health'
 BEGIN
-    RAISERROR(N'The blocked process report needs to be enabled:
+    RAISERROR(N'Unless you want to use the lousy version in system_health, the blocked process report needs to be enabled:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
 EXECUTE sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
 RECONFIGURE;',
@@ -291,6 +293,7 @@ IF EXISTS
     WHERE c.name = N'blocked process threshold (s)'
     AND   CONVERT(int, c.value_in_use) <> 5
 )
+AND @session_name NOT LIKE N'system%health'
 BEGIN
     RAISERROR(N'For best results, set up the blocked process report like this:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
@@ -439,6 +442,47 @@ BEGIN
     FROM {table_check};
 END;';
 
+IF @debug = 1
+AND @is_system_health = 0
+BEGIN
+    RAISERROR('We are not using system_health', 0, 1) WITH NOWAIT;
+END;
+
+IF @is_system_health = 1
+BEGIN
+    RAISERROR('For best results, consider not using system_health as your target. Re-run with @help = 1 for guidance.', 0, 1) WITH NOWAIT;
+END
+
+/*
+Note: I do not allow logging to a table from system_health, because the set of columns
+and available data is too incomplete, and I don't want to juggle multiple
+table definitions.
+
+Logging to a table is only allowed from a blocked_process_report Extended Event,
+but it can either be ring buffer or file target. I don't care about that.
+*/
+IF @is_system_health = 1
+AND
+(
+  LOWER(@target_type) = N'table'
+  OR @log_to_table = 1
+)
+BEGIN
+    RAISERROR('Logging system_health to a table is not supported.
+Either pick a different session or change both
+@target_type to be ''event_file'' or ''ring_buffer''
+and @log_to_table to be 0.', 11, 0) WITH NOWAIT;
+    RETURN;
+END
+
+IF @is_system_health = 1
+AND @target_type IS NULL
+BEGIN
+    RAISERROR('No @target_type specified, using the ''event_file'' for system_health.', 0, 1) WITH NOWAIT;
+    SELECT
+        @target_type = 'event_file';
+END
+
 SELECT
     @azure_msg =
         CONVERT(nchar(1), @azure),
@@ -450,6 +494,7 @@ IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL
 AND ISNULL(@target_schema, N'dbo') IS NOT NULL
 AND @target_table IS NOT NULL
 AND @target_column IS NOT NULL
+AND @is_system_health = 0
 BEGIN
     SET @target_type = N'table';
 END;
@@ -1125,18 +1170,13 @@ END;
 
 /*
 This section is special for the well-hidden and much less comprehensive blocked
-process report stored in the system health extended event session
+process report stored in the system health extended event session.
 
-Note: I do not allow logging to a table from this, because the set of columns
-and available data is too incomplete, and I don't want to juggle multiple
-table definitions.
-
-Logging to a table is only allowed from the a blocked_process_report Extended Event,
-but it can either be ring buffer or file target. I don't care about that.
+We disallow many features here.
+See where @is_system_health was declared for details.
+That is also where we error out if somebody tries to use an unsupported feature.
 */
 IF  @is_system_health = 1
-AND LOWER(@target_type) <> N'table'
-AND @log_to_table = 0
 BEGIN
     IF @debug = 1
     BEGIN

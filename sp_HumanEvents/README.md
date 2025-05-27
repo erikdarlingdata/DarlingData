@@ -122,7 +122,9 @@ EXECUTE dbo.sp_HumanEvents
 
 This was originally a companion script to analyze the blocked process report Extended Event created by sp_HumanEvents, but has since turned into its own monster.
 
-It will work on any Extended Event that captures the blocked process report. If you need to set that up, run these two pieces of code.
+It will work on any Extended Event that captures the blocked process report. If you need to set that up, run the next two pieces of code.
+
+The system_health Extended Event works, but its blocked process report is much less comprehensive than the real thing. I do not allow logging to a table from this, because the set of columns and available data is too incomplete, and I don't want to juggle multiple table definitions.
 
 ## Setup
 
@@ -172,28 +174,28 @@ ON SERVER
 
 ## Parameters
 
-| parameter_name        | data_type |                   description                   |                              valid_inputs                              |              defaults              |
-|-----------------------|-----------|-------------------------------------------------|------------------------------------------------------------------------|------------------------------------|
-| @session_name         | sysname   | name of the extended event session to pull from | extended event session name capturing sqlserver.blocked_process_report | keeper_HumanEvents_blocking        |
-| @target_type          | sysname   | target of the extended event session            | event_file or ring_buffer                                              | NULL                               |
-| @start_date           | datetime2 | filter by date                                  | a reasonable date                                                      | NULL; will shortcut to last 7 days |
-| @end_date             | datetime2 | filter by date                                  | a reasonable date                                                      | NULL                               |
-| @database_name        | sysname   | filter by database name                         | a database that exists on this server                                  | NULL                               |
-| @object_name          | sysname   | filter by table name                            | a schema-prefixed table name                                           | NULL                               |
-| @target_database      | sysname   | database containing the table with BPR data     | a valid database name                                                  | NULL                               |
-| @target_schema        | sysname   | schema of the table                             | a valid schema name                                                    | NULL                               |
-| @target_table         | sysname   | table name                                      | a valid table name                                                     | NULL                               |
-| @target_column        | sysname   | column containing XML data                      | a valid column name                                                    | NULL                               |
-| @timestamp_column     | sysname   | column containing timestamp (optional)          | a valid column name                                                    | NULL                               |
-| @log_to_table         | bit       | enable logging to permanent tables              | 0 or 1                                                                 | 0                                  |
-| @log_database_name    | sysname   | database to store logging tables                | a valid database name                                                  | NULL                               |
-| @log_schema_name      | sysname   | schema to store logging tables                  | a valid schema name                                                    | NULL                               |
-| @log_table_name_prefix| sysname   | prefix for all logging tables                   | a valid table name prefix                                              | 'HumanEventsBlockViewer'           |
-| @log_retention_days   | integer   | Number of days to keep logs, 0 = keep indefinitely | a valid integer                                                    | 30                                 |
-| @help                 | bit       | how you got here                                | 0 or 1                                                                 | 0                                  |
-| @debug                | bit       | dumps raw temp table contents                   | 0 or 1                                                                 | 0                                  |
-| @version              | varchar   | OUTPUT; for support                             | none; OUTPUT                                                           | none; OUTPUT                       |
-| @version_date         | datetime  | OUTPUT; for support                             | none; OUTPUT                                                           | none; OUTPUT                       |
+| parameter_name        | data_type |                   description                      |                              valid_inputs                                                        |              defaults              |
+|-----------------------|-----------|----------------------------------------------------|--------------------------------------------------------------------------------------------------|------------------------------------|
+| @session_name         | sysname   | name of the extended event session to pull from    | extended event session name capturing sqlserver.blocked_process_report, system_health also works | keeper_HumanEvents_blocking        |
+| @target_type          | sysname   | target of the extended event session               | event_file or ring_buffer or table                                                               | NULL                               |
+| @start_date           | datetime2 | filter by date                                     | a reasonable date                                                                                | NULL; will shortcut to last 7 days |
+| @end_date             | datetime2 | filter by date                                     | a reasonable date                                                                                | NULL                               |
+| @database_name        | sysname   | filter by database name                            | a database that exists on this server                                                            | NULL                               |
+| @object_name          | sysname   | filter by table name                               | a schema-prefixed table name                                                                     | NULL                               |
+| @target_database      | sysname   | database containing the table with BPR data        | a valid database name                                                                            | NULL                               |
+| @target_schema        | sysname   | schema of the table                                | a valid schema name                                                                              | NULL                               |
+| @target_table         | sysname   | table name                                         | a valid table name                                                                               | NULL                               |
+| @target_column        | sysname   | column containing XML data                         | a valid column name                                                                              | NULL                               |
+| @timestamp_column     | sysname   | column containing timestamp (optional)             | a valid column name                                                                              | NULL                               |
+| @log_to_table         | bit       | enable logging to permanent tables                 | 0 or 1                                                                                           | 0                                  |
+| @log_database_name    | sysname   | database to store logging tables                   | a valid database name                                                                            | NULL                               |
+| @log_schema_name      | sysname   | schema to store logging tables                     | a valid schema name                                                                              | NULL                               |
+| @log_table_name_prefix| sysname   | prefix for all logging tables                      | a valid table name prefix                                                                        | 'HumanEventsBlockViewer'           |
+| @log_retention_days   | integer   | Number of days to keep logs, 0 = keep indefinitely | a valid integer                                                                                  | 30                                 |
+| @help                 | bit       | how you got here                                   | 0 or 1                                                                                           | 0                                  |
+| @debug                | bit       | dumps raw temp table contents                      | 0 or 1                                                                                           | 0                                  |
+| @version              | varchar   | OUTPUT; for support                                | none; OUTPUT                                                                                     | none; OUTPUT                       |
+| @version_date         | datetime  | OUTPUT; for support                                | none; OUTPUT                                                                                     | none; OUTPUT                       |
 
 ## Usage Examples
 
