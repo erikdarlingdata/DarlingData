@@ -1063,12 +1063,12 @@ AND   ca.utc_timestamp < @end_date';
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
                     event_time datetime2(7) NULL,
-                    error_number int NULL,
-                    severity int NULL,
-                    state int NULL,
+                    error_number integer NULL,
+                    severity integer NULL,
+                    state integer NULL,
                     message nvarchar(max) NULL,
                     database_name sysname NULL,
-                    database_id int NULL,
+                    database_id integer NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for severe errors logging.'', 0, 1, ''' + @log_table_severe_errors + N''') WITH NOWAIT; END;
@@ -1657,6 +1657,30 @@ AND   ca.utc_timestamp < @end_date';
             FROM #ring_buffer AS rb
             CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
             WHERE e.x.exist('@name[.= "memory_broker_ring_buffer_recorded"]') = 1
+            OPTION(RECOMPILE);
+        END;
+
+        /* Add memory node OOM collection for MI */
+        IF @what_to_check IN ('all', 'memory')
+        BEGIN
+            IF @debug = 1
+            BEGIN
+                RAISERROR('Checking Managed Instance memory node OOM events', 0, 0) WITH NOWAIT;
+                RAISERROR('Inserting #memory_node_oom', 0, 0) WITH NOWAIT;
+            END;
+
+            INSERT
+                #memory_node_oom
+            WITH
+                (TABLOCKX)
+            (
+                memory_node_oom
+            )
+            SELECT
+                e.x.query('.')
+            FROM #ring_buffer AS rb
+            CROSS APPLY rb.ring_buffer.nodes('/event') AS e(x)
+            WHERE e.x.exist('@name[.= "memory_node_oom_ring_buffer_recorded"]') = 1
             OPTION(RECOMPILE);
         END;
 
@@ -3285,7 +3309,7 @@ END;
                             CONVERT
                             (
                                 money,
-                                mbi.currently_predicated / 1024.0
+                                mbi.currently_predicated / 1024.0 / 1024.0
                             ),
                             1
                         ),
@@ -3301,7 +3325,7 @@ END;
                             CONVERT
                             (
                                 money,
-                                mbi.currently_allocated / 1024.0
+                                mbi.currently_allocated / 1024.0 / 1024.0
                             ),
                             1
                         ),
@@ -3317,7 +3341,7 @@ END;
                             CONVERT
                             (
                                 money,
-                                mbi.previously_allocated / 1024.0
+                                mbi.previously_allocated / 1024.0 / 1024.0
                             ),
                             1
                         ),
@@ -4596,7 +4620,7 @@ END;
             isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
             log_used = bd.value('(process/@logused)[1]', 'bigint'),
             clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-            clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
+            clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
             activity = CASE WHEN bd.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
             blocked_process_report = bd.query('.')
         INTO #blocked
@@ -4657,7 +4681,7 @@ END;
             isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
             log_used = bg.value('(process/@logused)[1]', 'bigint'),
             clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-            clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+            clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
             activity = CASE WHEN bg.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
             blocked_process_report = bg.query('.')
         INTO #blocking
