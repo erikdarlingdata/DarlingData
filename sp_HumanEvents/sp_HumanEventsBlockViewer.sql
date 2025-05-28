@@ -78,6 +78,7 @@ ALTER PROCEDURE
     @log_schema_name sysname = NULL, /*schema to store logging tables*/
     @log_table_name_prefix sysname = 'HumanEventsBlockViewer', /*prefix for all logging tables*/
     @log_retention_days integer = 30, /*Number of days to keep logs, 0 = keep indefinitely*/
+    @max_blocking_events bigint = 5000, /*maximum blocking events to analyze, 0 = unlimited*/
     @help bit = 0, /*get help with this procedure*/
     @debug bit = 0, /*print dynamic sql and select temp table contents*/
     @version varchar(30) = NULL OUTPUT, /*check the version number*/
@@ -131,6 +132,7 @@ BEGIN
                  WHEN N'@log_schema_name' THEN N'schema to store logging tables'
                  WHEN N'@log_table_name_prefix' THEN N'prefix for all logging tables'
                  WHEN N'@log_retention_days' THEN N'how many days of data to retain'
+                 WHEN N'@max_blocking_events' THEN N'maximum blocking events to analyze, 0 = unlimited'
                  WHEN N'@help' THEN 'how you got here'
                  WHEN N'@debug' THEN 'dumps raw temp table contents'
                  WHEN N'@version' THEN 'OUTPUT; for support'
@@ -154,6 +156,7 @@ BEGIN
                  WHEN N'@log_schema_name' THEN N'any valid schema name'
                  WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
                  WHEN N'@log_retention_days' THEN N'a positive integer'
+                 WHEN N'@max_blocking_events' THEN N'0 to 9223372036854775807 (0 = unlimited)'
                  WHEN N'@help' THEN '0 or 1'
                  WHEN N'@debug' THEN '0 or 1'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -177,6 +180,7 @@ BEGIN
                  WHEN N'@log_schema_name' THEN N'NULL (dbo)'
                  WHEN N'@log_table_name_prefix' THEN N'HumanEventsBlockViewer'
                  WHEN N'@log_retention_days' THEN N'30'
+                 WHEN N'@max_blocking_events' THEN N'5000'
                  WHEN N'@help' THEN '0'
                  WHEN N'@debug' THEN '0'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -1136,11 +1140,18 @@ BEGIN
         human_events_xml
     )
     SELECT
-        human_events_xml = e.x.query('.')
-    FROM #x AS x
-    CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
-    WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
-    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        human_events_xml
+    FROM
+    (
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE POWER(CONVERT(bigint, 2), 63) - 1 END)
+            human_events_xml = e.x.query('.'),
+            event_timestamp = e.x.value('@timestamp', 'datetime2')
+        FROM #x AS x
+        CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
+        WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        ORDER BY event_timestamp DESC
+    ) AS most_recent
     OPTION(RECOMPILE);
 END;
 
@@ -1160,11 +1171,18 @@ BEGIN
         human_events_xml
     )
     SELECT
-        human_events_xml = e.x.query('.')
-    FROM #x AS x
-    CROSS APPLY x.x.nodes('/event') AS e(x)
-    WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
-    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        human_events_xml
+    FROM
+    (
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE POWER(CONVERT(bigint, 2), 63) - 1 END)
+            human_events_xml = e.x.query('.'),
+            event_timestamp = e.x.value('@timestamp', 'datetime2')
+        FROM #x AS x
+        CROSS APPLY x.x.nodes('/event') AS e(x)
+        WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        ORDER BY event_timestamp DESC
+    ) AS most_recent
     OPTION(RECOMPILE);
 END;
 
@@ -1211,22 +1229,30 @@ BEGIN
     END;
 
     SELECT
-        event_time =
-            DATEADD
-            (
-                MINUTE,
-                DATEDIFF
+        event_time,
+        human_events_xml
+    INTO #blocking_xml_sh
+    FROM
+    (
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE POWER(CONVERT(bigint, 2), 63) - 1 END)
+            event_time =
+                DATEADD
                 (
                     MINUTE,
-                    GETUTCDATE(),
-                    SYSDATETIME()
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ),
+                    w.x.value('(//@timestamp)[1]', 'datetime2')
                 ),
-                w.x.value('(//@timestamp)[1]', 'datetime2')
-            ),
-        human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
-    INTO #blocking_xml_sh
-    FROM #sp_server_diagnostics_component_result AS wi
-    CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
+            human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report'),
+            event_timestamp = w.x.value('(//@timestamp)[1]', 'datetime2')
+        FROM #sp_server_diagnostics_component_result AS wi
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
+        ORDER BY event_timestamp DESC
+    ) AS most_recent
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -1992,7 +2018,7 @@ SELECT
     isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
     log_used = bg.value('(process/@logused)[1]', 'bigint'),
     clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-    clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+    clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
     currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
     currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
