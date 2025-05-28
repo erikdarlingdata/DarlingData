@@ -343,7 +343,10 @@ DECLARE
     @log_database_schema nvarchar(1024),
     @max_event_time datetime2(7),
     @dsql nvarchar(max) = N'',
-    @mdsql nvarchar(max) = N'';
+    @mdsql nvarchar(max) = N'',
+    @actual_start_date datetime2(7),
+    @actual_end_date datetime2(7),
+    @actual_event_count bigint;
 
 /*Use some sane defaults for input parameters*/
 IF @debug = 1
@@ -2825,8 +2828,23 @@ BEGIN
         ap.avg_worker_time_ms DESC
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 
+    /* Capture actual date range and event count from the data */
+    SELECT
+        @actual_start_date = MIN(event_time),
+        @actual_end_date = MAX(event_time),
+        @actual_event_count = COUNT_BIG(DISTINCT monitor_loop)
+    FROM #blocked
+    WHERE event_time IS NOT NULL;
+
+    /* Use original dates if no data found */
+    SELECT
+        @actual_start_date = ISNULL(@actual_start_date, @start_date_original),
+        @actual_end_date = ISNULL(@actual_end_date, @end_date_original),
+        @actual_event_count = ISNULL(@actual_event_count, 0);
+
     IF @debug = 1
     BEGIN
+        RAISERROR('Actual date range: %s to %s, Event count: %I64d', 0, 1, @actual_start_date, @actual_end_date, @actual_event_count) WITH NOWAIT;
         RAISERROR('Inserting #block_findings, check_id -1', 0, 1) WITH NOWAIT;
     END;
 
@@ -2845,7 +2863,13 @@ BEGIN
         database_name = N'erikdarling.com',
         object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
         finding_group = N'https://code.erikdarling.com',
-        finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
+        finding = N'blocking events from ' + CONVERT(nvarchar(30), @actual_start_date, 126) + N' to ' + CONVERT(nvarchar(30), @actual_end_date, 126) + 
+                  N' (' + CONVERT(nvarchar(30), @actual_event_count) + N' total events' + 
+                  CASE 
+                      WHEN @max_blocking_events > 0 AND @actual_event_count >= @max_blocking_events 
+                      THEN N', limited to most recent ' + CONVERT(nvarchar(30), @max_blocking_events) + N')' 
+                      ELSE N')' 
+                  END + N'.',
         1;
 
     IF @debug = 1
