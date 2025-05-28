@@ -2864,15 +2864,27 @@ BEGIN
     SELECT
         check_id = -1,
         database_name = N'erikdarling.com',
-        object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
+        object_name = 
+            N'sp_HumanEventsBlockViewer version ' + 
+            CONVERT(nvarchar(30), @version) + 
+            N'.',
         finding_group = N'https://code.erikdarling.com',
-        finding = N'blocking events from ' + CONVERT(nvarchar(30), @actual_start_date, 126) + N' to ' + CONVERT(nvarchar(30), @actual_end_date, 126) + 
-                  N' (' + CONVERT(nvarchar(30), @actual_event_count) + N' total events' + 
-                  CASE 
-                      WHEN @max_blocking_events > 0 AND @actual_event_count >= @max_blocking_events 
-                      THEN N', limited to most recent ' + CONVERT(nvarchar(30), @max_blocking_events) + N')' 
-                      ELSE N')' 
-                  END + N'.',
+        finding = 
+            N'blocking events from ' + 
+            CONVERT(nvarchar(30), @actual_start_date, 126) + 
+            N' to ' + 
+            CONVERT(nvarchar(30), @actual_end_date, 126) + 
+            N' (' + CONVERT(nvarchar(30), @actual_event_count) + 
+            N' total events' + 
+            CASE 
+                WHEN @max_blocking_events > 0 
+                AND  @actual_event_count >= @max_blocking_events 
+                THEN N', limited to most recent ' + 
+                     CONVERT(nvarchar(30), @max_blocking_events) + 
+                     N')' 
+                ELSE N')' 
+            END + 
+            N'.',
         1;
 
     IF @debug = 1
@@ -3701,7 +3713,9 @@ BEGIN
     SELECT
         check_id = 2147483647,
         database_name = N'erikdarling.com',
-        object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
+        object_name = 
+            N'sp_HumanEventsBlockViewer version ' + 
+            CONVERT(nvarchar(30), @version) + N'.',
         finding_group = N'https://code.erikdarling.com',
         finding = N'thanks for using me!',
         2147483647;
