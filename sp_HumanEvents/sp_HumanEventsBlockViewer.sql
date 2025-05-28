@@ -272,7 +272,7 @@ IF EXISTS
         1/0
     FROM sys.configurations AS c
     WHERE c.name = N'blocked process threshold (s)'
-    AND   CONVERT(int, c.value_in_use) = 0
+    AND   CONVERT(integer, c.value_in_use) = 0
 )
 AND @session_name NOT LIKE N'system%health'
 BEGIN
@@ -291,7 +291,7 @@ IF EXISTS
         1/0
     FROM sys.configurations AS c
     WHERE c.name = N'blocked process threshold (s)'
-    AND   CONVERT(int, c.value_in_use) <> 5
+    AND   CONVERT(integer, c.value_in_use) <> 5
 )
 AND @session_name NOT LIKE N'system%health'
 BEGIN
@@ -771,22 +771,22 @@ BEGIN
                 contentious_object nvarchar(4000) NULL,
                 activity varchar(8) NULL,
                 blocking_tree varchar(8000) NULL,
-                spid int NULL,
-                ecid int NULL,
+                spid integer NULL,
+                ecid integer NULL,
                 query_text xml NULL,
                 wait_time_ms bigint NULL,
                 status nvarchar(10) NULL,
                 isolation_level nvarchar(50) NULL,
                 lock_mode nvarchar(10) NULL,
                 resource_owner_type nvarchar(256) NULL,
-                transaction_count int NULL,
+                transaction_count integer NULL,
                 transaction_name nvarchar(1024) NULL,
                 last_transaction_started datetime2(7) NULL,
                 last_transaction_completed datetime2(7) NULL,
                 client_option_1 varchar(261) NULL,
                 client_option_2 varchar(307) NULL,
                 wait_resource nvarchar(1024) NULL,
-                priority int NULL,
+                priority integer NULL,
                 log_used bigint NULL,
                 client_app nvarchar(256) NULL,
                 host_name nvarchar(256) NULL,
@@ -1259,7 +1259,7 @@ BEGIN
         isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
         log_used = bd.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
+        clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
         activity = CASE WHEN bd.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
         blocked_process_report = bd.query('.')
     INTO #blocked_sh
@@ -1316,7 +1316,7 @@ BEGIN
         isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
         log_used = bg.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+        clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
         activity = CASE WHEN bg.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
         blocked_process_report = bg.query('.')
     INTO #blocking_sh
