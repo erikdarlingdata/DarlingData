@@ -1143,14 +1143,15 @@ BEGIN
         human_events_xml
     FROM
     (
-        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE POWER(CONVERT(bigint, 2), 63) - 1 END)
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 9223372036854775807 END)
             human_events_xml = e.x.query('.'),
             event_timestamp = e.x.value('@timestamp', 'datetime2')
         FROM #x AS x
         CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
         WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
         AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
-        ORDER BY event_timestamp DESC
+        ORDER BY 
+            event_timestamp DESC
     ) AS most_recent
     OPTION(RECOMPILE);
 END;
@@ -1174,14 +1175,15 @@ BEGIN
         human_events_xml
     FROM
     (
-        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE POWER(CONVERT(bigint, 2), 63) - 1 END)
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 9223372036854775807 END)
             human_events_xml = e.x.query('.'),
             event_timestamp = e.x.value('@timestamp', 'datetime2')
         FROM #x AS x
         CROSS APPLY x.x.nodes('/event') AS e(x)
         WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
         AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
-        ORDER BY event_timestamp DESC
+        ORDER BY 
+            event_timestamp DESC
     ) AS most_recent
     OPTION(RECOMPILE);
 END;
@@ -1234,7 +1236,7 @@ BEGIN
     INTO #blocking_xml_sh
     FROM
     (
-        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE POWER(CONVERT(bigint, 2), 63) - 1 END)
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 9223372036854775807 END)
             event_time =
                 DATEADD
                 (
@@ -1251,7 +1253,8 @@ BEGIN
             event_timestamp = w.x.value('(//@timestamp)[1]', 'datetime2')
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        ORDER BY event_timestamp DESC
+        ORDER BY 
+            event_timestamp DESC
     ) AS most_recent
     OPTION(RECOMPILE);
 
