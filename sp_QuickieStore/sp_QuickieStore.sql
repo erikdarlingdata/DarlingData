@@ -8549,7 +8549,7 @@ FROM
             THEN N'
         qsp.query_plan_hash,'
             ELSE N''
-        END + 
+        END +
         CASE
             WHEN @include_query_hashes IS NOT NULL
             OR   @ignore_query_hashes IS NOT NULL
@@ -8558,7 +8558,7 @@ FROM
             THEN N'
         qsq.query_hash,'
             ELSE N''
-        END + 
+        END +
         CASE
             WHEN @include_sql_handles IS NOT NULL
             OR   @ignore_sql_handles IS NOT NULL
