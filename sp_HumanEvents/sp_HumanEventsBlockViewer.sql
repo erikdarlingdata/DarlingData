@@ -78,6 +78,7 @@ ALTER PROCEDURE
     @log_schema_name sysname = NULL, /*schema to store logging tables*/
     @log_table_name_prefix sysname = 'HumanEventsBlockViewer', /*prefix for all logging tables*/
     @log_retention_days integer = 30, /*Number of days to keep logs, 0 = keep indefinitely*/
+    @max_blocking_events bigint = 5000, /*maximum blocking events to analyze, 0 = unlimited*/
     @help bit = 0, /*get help with this procedure*/
     @debug bit = 0, /*print dynamic sql and select temp table contents*/
     @version varchar(30) = NULL OUTPUT, /*check the version number*/
@@ -105,6 +106,7 @@ BEGIN
     SELECT  'it will also work with any other extended event session that captures blocking' UNION ALL
     SELECT  'just use the @session_name parameter to point me there' UNION ALL
     SELECT  'EXECUTE dbo.sp_HumanEventsBlockViewer @session_name = N''blocked_process_report'';' UNION ALL
+    SELECT  'the system_health session also works, if you are okay with its lousy blocked process report'
     SELECT  'all scripts and documentation are available here: https://code.erikdarling.com' UNION ALL
     SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
@@ -130,6 +132,7 @@ BEGIN
                  WHEN N'@log_schema_name' THEN N'schema to store logging tables'
                  WHEN N'@log_table_name_prefix' THEN N'prefix for all logging tables'
                  WHEN N'@log_retention_days' THEN N'how many days of data to retain'
+                 WHEN N'@max_blocking_events' THEN N'maximum blocking events to analyze, 0 = unlimited'
                  WHEN N'@help' THEN 'how you got here'
                  WHEN N'@debug' THEN 'dumps raw temp table contents'
                  WHEN N'@version' THEN 'OUTPUT; for support'
@@ -137,8 +140,8 @@ BEGIN
             END,
         valid_inputs =
             CASE ap.name
-                 WHEN N'@session_name' THEN 'extended event session name capturing sqlserver.blocked_process_report'
-                 WHEN N'@target_type' THEN 'event_file or ring_buffer'
+                 WHEN N'@session_name' THEN 'extended event session name capturing sqlserver.blocked_process_report, system_health also works'
+                 WHEN N'@target_type' THEN 'event_file or ring_buffer or table'
                  WHEN N'@start_date' THEN 'a reasonable date'
                  WHEN N'@end_date' THEN 'a reasonable date'
                  WHEN N'@database_name' THEN 'a database that exists on this server'
@@ -153,6 +156,7 @@ BEGIN
                  WHEN N'@log_schema_name' THEN N'any valid schema name'
                  WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
                  WHEN N'@log_retention_days' THEN N'a positive integer'
+                 WHEN N'@max_blocking_events' THEN N'0 to 9223372036854775807 (0 = unlimited)'
                  WHEN N'@help' THEN '0 or 1'
                  WHEN N'@debug' THEN '0 or 1'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -176,6 +180,7 @@ BEGIN
                  WHEN N'@log_schema_name' THEN N'NULL (dbo)'
                  WHEN N'@log_table_name_prefix' THEN N'HumanEventsBlockViewer'
                  WHEN N'@log_retention_days' THEN N'30'
+                 WHEN N'@max_blocking_events' THEN N'5000'
                  WHEN N'@help' THEN '0'
                  WHEN N'@debug' THEN '0'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -195,7 +200,7 @@ BEGIN
             N'check the messages tab for setup commands';
 
     RAISERROR('
-The blocked process report needs to be enabled:
+Unless you want to use the lousy version in system_health, the blocked process report needs to be enabled:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
 EXECUTE sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
 RECONFIGURE;', 0, 1) WITH NOWAIT;
@@ -271,10 +276,11 @@ IF EXISTS
         1/0
     FROM sys.configurations AS c
     WHERE c.name = N'blocked process threshold (s)'
-    AND   CONVERT(int, c.value_in_use) = 0
+    AND   CONVERT(integer, c.value_in_use) = 0
 )
+AND @session_name NOT LIKE N'system%health'
 BEGIN
-    RAISERROR(N'The blocked process report needs to be enabled:
+    RAISERROR(N'Unless you want to use the lousy version in system_health, the blocked process report needs to be enabled:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
 EXECUTE sys.sp_configure ''blocked process threshold'', 5; /* Seconds of blocking before a report is generated */
 RECONFIGURE;',
@@ -289,8 +295,9 @@ IF EXISTS
         1/0
     FROM sys.configurations AS c
     WHERE c.name = N'blocked process threshold (s)'
-    AND   CONVERT(int, c.value_in_use) <> 5
+    AND   CONVERT(integer, c.value_in_use) <> 5
 )
+AND @session_name NOT LIKE N'system%health'
 BEGIN
     RAISERROR(N'For best results, set up the blocked process report like this:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
@@ -336,7 +343,10 @@ DECLARE
     @log_database_schema nvarchar(1024),
     @max_event_time datetime2(7),
     @dsql nvarchar(max) = N'',
-    @mdsql nvarchar(max) = N'';
+    @mdsql nvarchar(max) = N'',
+    @actual_start_date datetime2(7),
+    @actual_end_date datetime2(7),
+    @actual_event_count bigint;
 
 /*Use some sane defaults for input parameters*/
 IF @debug = 1
@@ -439,6 +449,47 @@ BEGIN
     FROM {table_check};
 END;';
 
+IF @debug = 1
+AND @is_system_health = 0
+BEGIN
+    RAISERROR('We are not using system_health', 0, 1) WITH NOWAIT;
+END;
+
+IF @is_system_health = 1
+BEGIN
+    RAISERROR('For best results, consider not using system_health as your target. Re-run with @help = 1 for guidance.', 0, 1) WITH NOWAIT;
+END
+
+/*
+Note: I do not allow logging to a table from system_health, because the set of columns
+and available data is too incomplete, and I don't want to juggle multiple
+table definitions.
+
+Logging to a table is only allowed from a blocked_process_report Extended Event,
+but it can either be ring buffer or file target. I don't care about that.
+*/
+IF @is_system_health = 1
+AND
+(
+  LOWER(@target_type) = N'table'
+  OR @log_to_table = 1
+)
+BEGIN
+    RAISERROR('Logging system_health to a table is not supported.
+Either pick a different session or change both
+@target_type to be ''event_file'' or ''ring_buffer''
+and @log_to_table to be 0.', 11, 0) WITH NOWAIT;
+    RETURN;
+END
+
+IF @is_system_health = 1
+AND @target_type IS NULL
+BEGIN
+    RAISERROR('No @target_type specified, using the ''event_file'' for system_health.', 0, 1) WITH NOWAIT;
+    SELECT
+        @target_type = 'event_file';
+END
+
 SELECT
     @azure_msg =
         CONVERT(nchar(1), @azure),
@@ -450,6 +501,7 @@ IF  ISNULL(@target_database, DB_NAME()) IS NOT NULL
 AND ISNULL(@target_schema, N'dbo') IS NOT NULL
 AND @target_table IS NOT NULL
 AND @target_column IS NOT NULL
+AND @is_system_health = 0
 BEGIN
     SET @target_type = N'table';
 END;
@@ -726,22 +778,22 @@ BEGIN
                 contentious_object nvarchar(4000) NULL,
                 activity varchar(8) NULL,
                 blocking_tree varchar(8000) NULL,
-                spid int NULL,
-                ecid int NULL,
+                spid integer NULL,
+                ecid integer NULL,
                 query_text xml NULL,
                 wait_time_ms bigint NULL,
                 status nvarchar(10) NULL,
                 isolation_level nvarchar(50) NULL,
                 lock_mode nvarchar(10) NULL,
                 resource_owner_type nvarchar(256) NULL,
-                transaction_count int NULL,
+                transaction_count integer NULL,
                 transaction_name nvarchar(1024) NULL,
                 last_transaction_started datetime2(7) NULL,
                 last_transaction_completed datetime2(7) NULL,
                 client_option_1 varchar(261) NULL,
                 client_option_2 varchar(307) NULL,
                 wait_resource nvarchar(1024) NULL,
-                priority int NULL,
+                priority integer NULL,
                 log_used bigint NULL,
                 client_app nvarchar(256) NULL,
                 host_name nvarchar(256) NULL,
@@ -1091,11 +1143,19 @@ BEGIN
         human_events_xml
     )
     SELECT
-        human_events_xml = e.x.query('.')
-    FROM #x AS x
-    CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
-    WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
-    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        human_events_xml
+    FROM
+    (
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 9223372036854775807 END)
+            human_events_xml = e.x.query('.'),
+            event_timestamp = e.x.value('@timestamp', 'datetime2')
+        FROM #x AS x
+        CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
+        WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        ORDER BY 
+            event_timestamp DESC
+    ) AS most_recent
     OPTION(RECOMPILE);
 END;
 
@@ -1115,28 +1175,31 @@ BEGIN
         human_events_xml
     )
     SELECT
-        human_events_xml = e.x.query('.')
-    FROM #x AS x
-    CROSS APPLY x.x.nodes('/event') AS e(x)
-    WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
-    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        human_events_xml
+    FROM
+    (
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 9223372036854775807 END)
+            human_events_xml = e.x.query('.'),
+            event_timestamp = e.x.value('@timestamp', 'datetime2')
+        FROM #x AS x
+        CROSS APPLY x.x.nodes('/event') AS e(x)
+        WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        ORDER BY 
+            event_timestamp DESC
+    ) AS most_recent
     OPTION(RECOMPILE);
 END;
 
 /*
 This section is special for the well-hidden and much less comprehensive blocked
-process report stored in the system health extended event session
+process report stored in the system health extended event session.
 
-Note: I do not allow logging to a table from this, because the set of columns
-and available data is too incomplete, and I don't want to juggle multiple
-table definitions.
-
-Logging to a table is only allowed from the a blocked_process_report Extended Event,
-but it can either be ring buffer or file target. I don't care about that.
+We disallow many features here.
+See where @is_system_health was declared for details.
+That is also where we error out if somebody tries to use an unsupported feature.
 */
 IF  @is_system_health = 1
-AND LOWER(@target_type) <> N'table'
-AND @log_to_table = 0
 BEGIN
     IF @debug = 1
     BEGIN
@@ -1171,22 +1234,31 @@ BEGIN
     END;
 
     SELECT
-        event_time =
-            DATEADD
-            (
-                MINUTE,
-                DATEDIFF
+        event_time,
+        human_events_xml
+    INTO #blocking_xml_sh
+    FROM
+    (
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 9223372036854775807 END)
+            event_time =
+                DATEADD
                 (
                     MINUTE,
-                    GETUTCDATE(),
-                    SYSDATETIME()
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ),
+                    w.x.value('(//@timestamp)[1]', 'datetime2')
                 ),
-                w.x.value('(//@timestamp)[1]', 'datetime2')
-            ),
-        human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report')
-    INTO #blocking_xml_sh
-    FROM #sp_server_diagnostics_component_result AS wi
-    CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
+            human_events_xml = w.x.query('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report'),
+            event_timestamp = w.x.value('(//@timestamp)[1]', 'datetime2')
+        FROM #sp_server_diagnostics_component_result AS wi
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
+        ORDER BY 
+            event_timestamp DESC
+    ) AS most_recent
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -1219,7 +1291,7 @@ BEGIN
         isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
         log_used = bd.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
+        clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
         activity = CASE WHEN bd.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
         blocked_process_report = bd.query('.')
     INTO #blocked_sh
@@ -1276,7 +1348,7 @@ BEGIN
         isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
         log_used = bg.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+        clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
         activity = CASE WHEN bg.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
         blocked_process_report = bg.query('.')
     INTO #blocking_sh
@@ -1952,7 +2024,7 @@ SELECT
     isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
     log_used = bg.value('(process/@logused)[1]', 'bigint'),
     clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-    clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+    clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
     currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
     currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
@@ -2759,8 +2831,23 @@ BEGIN
         ap.avg_worker_time_ms DESC
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
 
+    /* Capture actual date range and event count from the data */
+    SELECT
+        @actual_start_date = MIN(event_time),
+        @actual_end_date = MAX(event_time),
+        @actual_event_count = COUNT_BIG(DISTINCT monitor_loop)
+    FROM #blocked
+    WHERE event_time IS NOT NULL;
+
+    /* Use original dates if no data found */
+    SELECT
+        @actual_start_date = ISNULL(@actual_start_date, @start_date_original),
+        @actual_end_date = ISNULL(@actual_end_date, @end_date_original),
+        @actual_event_count = ISNULL(@actual_event_count, 0);
+
     IF @debug = 1
     BEGIN
+        RAISERROR('Actual date range: %s to %s, Event count: %I64d', 0, 1, @actual_start_date, @actual_end_date, @actual_event_count) WITH NOWAIT;
         RAISERROR('Inserting #block_findings, check_id -1', 0, 1) WITH NOWAIT;
     END;
 
@@ -2777,9 +2864,27 @@ BEGIN
     SELECT
         check_id = -1,
         database_name = N'erikdarling.com',
-        object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
+        object_name = 
+            N'sp_HumanEventsBlockViewer version ' + 
+            CONVERT(nvarchar(30), @version) + 
+            N'.',
         finding_group = N'https://code.erikdarling.com',
-        finding = N'blocking for period ' + CONVERT(nvarchar(30), @start_date_original, 126) + N' through ' + CONVERT(nvarchar(30), @end_date_original, 126) + N'.',
+        finding = 
+            N'blocking events from ' + 
+            CONVERT(nvarchar(30), @actual_start_date, 126) + 
+            N' to ' + 
+            CONVERT(nvarchar(30), @actual_end_date, 126) + 
+            N' (' + CONVERT(nvarchar(30), @actual_event_count) + 
+            N' total events' + 
+            CASE 
+                WHEN @max_blocking_events > 0 
+                AND  @actual_event_count >= @max_blocking_events 
+                THEN N', limited to most recent ' + 
+                     CONVERT(nvarchar(30), @max_blocking_events) + 
+                     N')' 
+                ELSE N')' 
+            END + 
+            N'.',
         1;
 
     IF @debug = 1
@@ -3608,7 +3713,9 @@ BEGIN
     SELECT
         check_id = 2147483647,
         database_name = N'erikdarling.com',
-        object_name = N'sp_HumanEventsBlockViewer version ' + CONVERT(nvarchar(30), @version) + N'.',
+        object_name = 
+            N'sp_HumanEventsBlockViewer version ' + 
+            CONVERT(nvarchar(30), @version) + N'.',
         finding_group = N'https://code.erikdarling.com',
         finding = N'thanks for using me!',
         2147483647;
