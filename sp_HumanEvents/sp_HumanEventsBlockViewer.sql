@@ -2070,15 +2070,15 @@ ADD blocking_desc AS
             '(' +
             CONVERT(varchar(10), blocking_spid) +
             ':' +
-            CONVERT(archar(10), blocking_ecid) +
+            CONVERT(varchar(10), blocking_ecid) +
             ')',
             'unresolved process'
         ) PERSISTED,
     blocked_desc AS
         '(' +
-        CONVERT(archar(10), blocked_spid) +
+        CONVERT(varchar(10), blocked_spid) +
         ':' +
-        CONVERT(archar(10), blocked_ecid) +
+        CONVERT(varchar(10), blocked_ecid) +
         ')' PERSISTED;
 
 IF @debug = 1
