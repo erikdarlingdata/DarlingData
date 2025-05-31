@@ -482,7 +482,7 @@ and @log_to_table to be 0.', 11, 0) WITH NOWAIT;
     RETURN;
 END
 
-IF @is_system_health = 1
+IF  @is_system_health = 1
 AND @target_type IS NULL
 BEGIN
     RAISERROR('No @target_type specified, using the ''event_file'' for system_health.', 0, 1) WITH NOWAIT;
@@ -942,7 +942,8 @@ BEGIN
         JOIN sys.dm_xe_session_targets AS t
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        ORDER BY t.target_name
+        ORDER BY 
+            t.target_name
         OPTION(RECOMPILE);
     END;
 
@@ -955,7 +956,8 @@ BEGIN
         JOIN sys.dm_xe_database_session_targets AS t
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        ORDER BY t.target_name
+        ORDER BY 
+            t.target_name
         OPTION(RECOMPILE);
     END;
 END;
@@ -1908,7 +1910,7 @@ SELECT
     currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
     currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
-    sort_order = CAST('' AS varchar(400)),
+    sort_order = CONVERT(varchar(400), ''),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
     blocked_process_report = c.query('.')
 INTO #blocked
@@ -1946,17 +1948,17 @@ ADD blocking_desc AS
         ISNULL
         (
             '(' +
-            CAST(blocking_spid AS varchar(10)) +
+            CONVERT(varchar(10), blocking_spid) +
             ':' +
-            CAST(blocking_ecid AS varchar(10)) +
+            CONVERT(varchar(10), blocking_ecid) +
             ')',
             'unresolved process'
         ) PERSISTED,
     blocked_desc AS
         '(' +
-        CAST(blocked_spid AS varchar(10)) +
+        CONVERT(varchar(10), blocked_spid) +
         ':' +
-        CAST(blocked_ecid AS varchar(10)) +
+        CONVERT(varchar(10), blocked_ecid) +
         ')' PERSISTED;
 
 IF @debug = 1
@@ -2028,7 +2030,7 @@ SELECT
     currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
     currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
-    sort_order = CAST('' AS varchar(400)),
+    sort_order = CONVERT(varchar(400), ''),
     activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
     blocked_process_report = c.query('.')
 INTO #blocking
@@ -2066,17 +2068,17 @@ ADD blocking_desc AS
         ISNULL
         (
             '(' +
-            CAST(blocking_spid AS varchar(10)) +
+            CONVERT(varchar(10), blocking_spid) +
             ':' +
-            CAST(blocking_ecid AS varchar(10)) +
+            CONVERT(varchar(10), blocking_ecid) +
             ')',
             'unresolved process'
         ) PERSISTED,
     blocked_desc AS
         '(' +
-        CAST(blocked_spid AS varchar(10)) +
+        CONVERT(varchar(10), blocked_spid) +
         ':' +
-        CAST(blocked_ecid AS varchar(10)) +
+        CONVERT(varchar(10), blocked_ecid) +
         ')' PERSISTED;
 
 IF @debug = 1
@@ -2114,11 +2116,12 @@ WITH
         blocked_desc,
         level = 0,
         sort_order =
-            CAST
+            CONVERT
             (
+                varchar(400),
                 blocking_desc +
                 ' </* ' +
-                blocked_desc AS varchar(400)
+                blocked_desc 
             )
     FROM #blocking AS b
     WHERE NOT EXISTS
@@ -2138,13 +2141,14 @@ WITH
         bg.blocked_desc,
         h.level + 1,
         sort_order =
-            CAST
+            CONVERT
             (
+                varchar(400),
                 h.sort_order +
                 ' ' +
                 bg.blocking_desc +
                 ' </* ' +
-                bg.blocked_desc AS varchar(400)
+                bg.blocked_desc
             )
     FROM hierarchy AS h
     JOIN #blocking AS bg
@@ -2847,7 +2851,6 @@ BEGIN
 
     IF @debug = 1
     BEGIN
-        RAISERROR('Actual date range: %s to %s, Event count: %I64d', 0, 1, @actual_start_date, @actual_end_date, @actual_event_count) WITH NOWAIT;
         RAISERROR('Inserting #block_findings, check_id -1', 0, 1) WITH NOWAIT;
     END;
 
