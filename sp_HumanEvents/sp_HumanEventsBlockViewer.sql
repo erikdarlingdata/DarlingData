@@ -942,7 +942,7 @@ BEGIN
         JOIN sys.dm_xe_session_targets AS t
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        ORDER BY 
+        ORDER BY
             t.target_name
         OPTION(RECOMPILE);
     END;
@@ -956,7 +956,7 @@ BEGIN
         JOIN sys.dm_xe_database_session_targets AS t
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        ORDER BY 
+        ORDER BY
             t.target_name
         OPTION(RECOMPILE);
     END;
@@ -2121,7 +2121,7 @@ WITH
                 varchar(400),
                 blocking_desc +
                 ' </* ' +
-                blocked_desc 
+                blocked_desc
             )
     FROM #blocking AS b
     WHERE NOT EXISTS
