@@ -1,4 +1,4 @@
--- Compile Date: 05/31/2025 16:39:26 UTC
+-- Compile Date: 05/31/2025 17:14:59 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -71,8 +71,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '2.5',
-        @version_date = '20250501';
+        @version = '2.6',
+        @version_date = '20250601';
 
     IF @help = 1
     BEGIN
@@ -5625,8 +5625,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '6.5',
-    @version_date = '20250501';
+    @version = '6.6',
+    @version_date = '20250601';
 
 IF @help = 1
 BEGIN
@@ -10422,8 +10422,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.5',
-    @version_date = '20250501';
+    @version = '4.6',
+    @version_date = '20250601';
 
 IF @help = 1
 BEGIN
@@ -14140,8 +14140,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '1.5',
-        @version_date = '20250501';
+        @version = '1.6',
+        @version_date = '20250601';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -20713,8 +20713,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
     SELECT
-        @version = '2.5',
-        @version_date = '20250501';
+        @version = '2.6',
+        @version_date = '20250601';
 
     IF @help = 1
     BEGIN
@@ -21443,8 +21443,8 @@ BEGIN
     Set version information
     */
     SELECT
-        @version = N'1.5',
-        @version_date = N'20250501';
+        @version = N'1.6',
+        @version_date = N'20250601';
 
     /*
     Help section, for help.
@@ -26481,8 +26481,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.5',
-    @version_date = '20250501';
+    @version = '5.6',
+    @version_date = '20250601';
 
 
 IF @help = 1
@@ -30872,8 +30872,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '5.5',
-    @version_date = '20250501';
+    @version = '5.6',
+    @version_date = '20250601';
 
 /*
 Helpful section! For help.
