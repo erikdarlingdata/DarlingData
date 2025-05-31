@@ -80,13 +80,13 @@ Usage:
 ```sql
 SELECT
     sc.strip_characters
-FROM dbo.strip_characters(N'abc123!@#', N'[0-9]') AS sc;
+FROM dbo.strip_characters(N'abc123!@#', N'0-9') AS sc;
 -- Returns: abc!@#
 
 -- Self-contained version (no dependency on Numbers table)
 SELECT
     sc.strip_characters
-FROM dbo.strip_characters_cte(N'abc123!@#', N'[^a-z]') AS sc;
+FROM dbo.strip_characters_cte(N'abc123!@#', N'^a-z') AS sc;
 -- Returns: abc
 ```
 
