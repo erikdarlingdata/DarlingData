@@ -49,7 +49,7 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
 
 - **SELECT statements**:
   - SELECT keyword on first line
-  - Column list starts on next line, indented
+  - Column list starts on next line, indented four spaces
   - Trailing commas for multi-line column lists
   - Columns aligned vertically for readability
   - FROM clause on new line at same indent level as SELECT
