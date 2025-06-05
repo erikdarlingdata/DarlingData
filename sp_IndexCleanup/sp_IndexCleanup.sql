@@ -437,10 +437,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name sysname NOT NULL,
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
-        can_compress bit NOT NULL
-        INDEX filtered_objects CLUSTERED
-            (database_id, schema_id, object_id, index_id)
+        can_compress bit NOT NULL      
     );
+
+    create CLUSTERED INDEX filtered_objects ON #filtered_objects (database_id, schema_id, object_id, index_id)
 
     CREATE TABLE
         #operational_stats
@@ -583,10 +583,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* When this is a target, the index which points to it as a supersedes in consolidation */
         superseded_by nvarchar(4000) NULL,
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
-        index_priority decimal(10,6) NULL
-        INDEX index_analysis CLUSTERED
-            (database_id, schema_id, object_id, index_id)
+        index_priority decimal(10,6) NULL       
     );
+
+     CREATE CLUSTERED INDEX index_analysis on  #index_analysis
+            (database_id, schema_id, object_id, index_id)
 
     CREATE TABLE
         #compression_eligibility
@@ -782,10 +783,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
-        should_include_filter_columns bit NOT NULL,
-        INDEX c CLUSTERED
-            (database_id, schema_id, object_id, index_id)
+        should_include_filter_columns bit NOT NULL,      
     );
+    create CLUSTERED INDEX c ON #filtered_index_columns_analysis  
+            (database_id, schema_id, object_id, index_id)
 
     /* Parse @include_databases comma-separated list */
     IF  @get_all_databases = 1
