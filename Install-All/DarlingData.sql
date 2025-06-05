@@ -1,4 +1,4 @@
--- Compile Date: 05/31/2025 17:49:11 UTC
+-- Compile Date: 06/05/2025 19:32:39 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -10407,7 +10407,7 @@ ALTER PROCEDURE
     @log_schema_name sysname = NULL, /*schema to store logging tables*/
     @log_table_name_prefix sysname = 'HumanEventsBlockViewer', /*prefix for all logging tables*/
     @log_retention_days integer = 30, /*Number of days to keep logs, 0 = keep indefinitely*/
-    @max_blocking_events bigint = 5000, /*maximum blocking events to analyze, 0 = unlimited*/
+    @max_blocking_events integer = 5000, /*maximum blocking events to analyze, 0 = unlimited*/
     @help bit = 0, /*get help with this procedure*/
     @debug bit = 0, /*print dynamic sql and select temp table contents*/
     @version varchar(30) = NULL OUTPUT, /*check the version number*/
@@ -10485,7 +10485,7 @@ BEGIN
                  WHEN N'@log_schema_name' THEN N'any valid schema name'
                  WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
                  WHEN N'@log_retention_days' THEN N'a positive integer'
-                 WHEN N'@max_blocking_events' THEN N'0 to 9223372036854775807 (0 = unlimited)'
+                 WHEN N'@max_blocking_events' THEN N'0 to 2147483647 (0 = unlimited)'
                  WHEN N'@help' THEN '0 or 1'
                  WHEN N'@debug' THEN '0 or 1'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -11477,7 +11477,7 @@ BEGIN
         human_events_xml
     FROM
     (
-        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 9223372036854775807 END)
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 2147483647 END)
             human_events_xml = e.x.query('.'),
             event_timestamp = e.x.value('@timestamp', 'datetime2')
         FROM #x AS x
@@ -11509,7 +11509,7 @@ BEGIN
         human_events_xml
     FROM
     (
-        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 9223372036854775807 END)
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 2147483647 END)
             human_events_xml = e.x.query('.'),
             event_timestamp = e.x.value('@timestamp', 'datetime2')
         FROM #x AS x
@@ -11570,7 +11570,7 @@ BEGIN
     INTO #blocking_xml_sh
     FROM
     (
-        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 9223372036854775807 END)
+        SELECT TOP (CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 2147483647 END)
             event_time =
                 DATEADD
                 (
