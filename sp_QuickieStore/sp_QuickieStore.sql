@@ -7267,7 +7267,7 @@ BEGIN
         SUM(qsrs.count_executions * (qsrs.avg_logical_io_writes * 8.)) / 1024.,
         SUM(qsrs.count_executions * qsrs.avg_clr_time) / 1000.,
         SUM(qsrs.count_executions * (qsrs.avg_query_max_used_memory * 8.)) / 1024.,
-        SUM(qsrs.count_executions * qsrs.avg_rowcount)' +
+        SUM(qsrs.count_executions * qsrs.avg_rowcount),' +
   CASE
       @new
       WHEN 1
