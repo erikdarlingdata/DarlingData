@@ -1205,6 +1205,7 @@ AND   ca.utc_timestamp < @end_date';
         ('locking', 'xml_deadlock_report', '#xml_deadlock_report', 'xml_deadlock_report'),
         ('locking', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('waits', 'wait_info', '#wait_info', 'wait_info'),
+        ('waits', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('system', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('system', 'error_reported', '#error_reported', 'error_reported'),
         ('memory', 'memory_broker_ring_buffer_recorded', '#memory_broker', 'memory_broker'),
