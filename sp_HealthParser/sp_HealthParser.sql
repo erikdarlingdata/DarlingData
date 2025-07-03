@@ -2769,146 +2769,153 @@ AND   ca.utc_timestamp < @end_date';
             ORDER BY
                 x.event_time DESC;
         END;
-
-END;
+    END;
 
     /* CPU task details logging section */
-    IF NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM #scheduler_details AS sd
-    )
+    IF @what_to_check IN ('all', 'cpu')
     BEGIN
-        IF @log_to_table = 0
-            BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'cpu')
-                        THEN 'cpu skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'cpu')
-                        THEN 'no cpu issues found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no cpu issues found!'
-                    END
-
-            RAISERROR('No scheduler data found', 0, 0) WITH NOWAIT;
-        END;
-    END;
-    ELSE
-    BEGIN
-        /* Build the query */
-        SET @dsql = N'
-            SELECT
-                ' + CASE
-                        WHEN @log_to_table = 1
-                        THEN N''
-                        ELSE N'finding = ''cpu task details'','
-                    END +
-              N'
-                sd.event_time,
-                sd.state,
-                sd.maxWorkers,
-                sd.workersCreated,
-                sd.workersIdle,
-                sd.tasksCompletedWithinInterval,
-                sd.pendingTasks,
-                sd.oldestPendingTaskWaitingTime,
-                sd.hasUnresolvableDeadlockOccurred,
-                sd.hasDeadlockedSchedulersOccurred,
-                sd.didBlockingOccur
-            FROM #scheduler_details AS sd';
-
-        /* Add the WHERE clause only for table logging */
-        IF @log_to_table = 1
+        IF @debug = 1
         BEGIN
-            /* Get max event_time for CPU task details */
-            SET @mdsql_execute =
-                REPLACE
-                (
+            RAISERROR('Parsing scheduler stuff', 0, 0) WITH NOWAIT;
+        END;
+
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #scheduler_details AS sd
+        )
+        BEGIN
+            IF @log_to_table = 0
+                BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'cpu')
+                            THEN 'cpu skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'cpu')
+                            THEN 'no cpu issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no cpu issues found!'
+                        END
+        
+                RAISERROR('No scheduler data found', 0, 0) WITH NOWAIT;
+            END;
+        END;
+        ELSE
+        BEGIN
+            /* Build the query */
+            SET @dsql = N'
+                SELECT
+                    ' + CASE
+                            WHEN @log_to_table = 1
+                            THEN N''
+                            ELSE N'finding = ''cpu task details'','
+                        END +
+                  N'
+                    sd.event_time,
+                    sd.state,
+                    sd.maxWorkers,
+                    sd.workersCreated,
+                    sd.workersIdle,
+                    sd.tasksCompletedWithinInterval,
+                    sd.pendingTasks,
+                    sd.oldestPendingTaskWaitingTime,
+                    sd.hasUnresolvableDeadlockOccurred,
+                    sd.hasDeadlockedSchedulersOccurred,
+                    sd.didBlockingOccur
+                FROM #scheduler_details AS sd';
+        
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for CPU task details */
+                SET @mdsql_execute =
                     REPLACE
                     (
-                        @mdsql_template,
-                        '{table_check}',
-                        @log_table_cpu_tasks
-                    ),
-                    '{date_column}',
-                    'event_time'
-                );
-
-            IF @debug = 1
-            BEGIN
-                PRINT @mdsql_execute;
+                        REPLACE
+                        (
+                            @mdsql_template,
+                            '{table_check}',
+                            @log_table_cpu_tasks
+                        ),
+                        '{date_column}',
+                        'event_time'
+                    );
+        
+                IF @debug = 1
+                BEGIN
+                    PRINT @mdsql_execute;
+                END;
+        
+                EXECUTE sys.sp_executesql
+                    @mdsql_execute,
+                  N'@max_event_time datetime2(7) OUTPUT',
+                    @max_event_time OUTPUT;
+        
+                SET @dsql += N'
+            WHERE sd.event_time > @max_event_time';
             END;
-
-            EXECUTE sys.sp_executesql
-                @mdsql_execute,
-              N'@max_event_time datetime2(7) OUTPUT',
-                @max_event_time OUTPUT;
-
+        
+            /* Add the ORDER BY clause */
             SET @dsql += N'
-        WHERE sd.event_time > @max_event_time';
-        END;
-
-        /* Add the ORDER BY clause */
-        SET @dsql += N'
-        ORDER BY
-            sd.event_time DESC
-        OPTION(RECOMPILE);
-        ';
-
-        /* Handle table logging */
-        IF @log_to_table = 1
-        BEGIN
-            SET @insert_sql = N'
-            INSERT INTO
-                ' + @log_table_cpu_tasks + N'
-            (
-                event_time,
-                state,
-                maxWorkers,
-                workersCreated,
-                workersIdle,
-                tasksCompletedWithinInterval,
-                pendingTasks,
-                oldestPendingTaskWaitingTime,
-                hasUnresolvableDeadlockOccurred,
-                hasDeadlockedSchedulersOccurred,
-                didBlockingOccur
-            )' +
-                @dsql;
-
-            IF @debug = 1
+            ORDER BY
+                sd.event_time DESC
+            OPTION(RECOMPILE);
+            ';
+        
+            /* Handle table logging */
+            IF @log_to_table = 1
             BEGIN
-                PRINT @insert_sql;
+                SET @insert_sql = N'
+                INSERT INTO
+                    ' + @log_table_cpu_tasks + N'
+                (
+                    event_time,
+                    state,
+                    maxWorkers,
+                    workersCreated,
+                    workersIdle,
+                    tasksCompletedWithinInterval,
+                    pendingTasks,
+                    oldestPendingTaskWaitingTime,
+                    hasUnresolvableDeadlockOccurred,
+                    hasDeadlockedSchedulersOccurred,
+                    didBlockingOccur
+                )' +
+                    @dsql;
+        
+                IF @debug = 1
+                BEGIN
+                    PRINT @insert_sql;
+                END;
+        
+                EXECUTE sys.sp_executesql
+                    @insert_sql,
+                  N'@max_event_time datetime2(7)',
+                    @max_event_time;
             END;
-
-            EXECUTE sys.sp_executesql
-                @insert_sql,
-              N'@max_event_time datetime2(7)',
-                @max_event_time;
-        END;
-
-        /* Execute the query for client results */
-        IF @log_to_table = 0
-        BEGIN
-            IF @debug = 1
+        
+            /* Execute the query for client results */
+            IF @log_to_table = 0
             BEGIN
-                PRINT @dsql;
+                IF @debug = 1
+                BEGIN
+                    PRINT @dsql;
+                END;
+        
+                EXECUTE sys.sp_executesql
+                    @dsql;
             END;
-
-            EXECUTE sys.sp_executesql
-                @dsql;
-        END;
-    END; /*End CPU*/
+        END; 
+    END;/*End CPU*/
 
     /*Grab memory details*/
     IF @what_to_check IN ('all', 'memory')
