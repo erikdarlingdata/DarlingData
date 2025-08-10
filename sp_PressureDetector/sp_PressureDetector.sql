@@ -1395,9 +1395,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      /*Stats/Compilation*/
                      N'WAIT_ON_SYNC_STATISTICS_REFRESH',
                      /*Throttling*/
-                    N'IO_QUEUE_LIMIT',
-                    N'IO_RETRY',
-                    N'RESMGR_THROTTLED'
+                     N'IO_QUEUE_LIMIT',
+                     N'IO_RETRY',
+                     N'RESMGR_THROTTLED'
                  )
             /*Locking*/
             OR dows.wait_type LIKE N'LCK%'

@@ -1819,7 +1819,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(CONVERT(date, @end_date)) +
                                  ' with a minimum duration of ' +
                                  RTRIM(@wait_duration_ms) +
-                                 '.'
+                                 'ms.'
                             ELSE 'no queries with significant waits found!'
                         END;
 
@@ -2329,7 +2329,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(CONVERT(date, @end_date)) +
                                  ' with a minimum average duration of ' +
                                  RTRIM(@wait_duration_ms) +
-                                 '.'
+                                 'ms.'
                             ELSE 'no significant waits found!'
                         END
 
