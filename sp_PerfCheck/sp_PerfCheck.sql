@@ -310,7 +310,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @io_sql nvarchar(max) = N'',
         @file_io_sql nvarchar(max) = N'',
         @db_size_sql nvarchar(max) = N'',
-        @tempdb_files_sql nvarchar(max) = N'';
+        @tempdb_files_sql nvarchar(max) = N'',
+        /* TempDB pagelatch contention variables */
+        @pagelatch_wait_hours decimal(20,2),
+        @server_uptime_hours decimal(20,2),
+        @pagelatch_ratio_to_uptime decimal(10,4);
 
 
     /* Check for VIEW SERVER STATE permission */
@@ -926,7 +930,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         url
     )
     SELECT
-        check_id = 4103,
+        check_id = 5103,
         priority =
             CASE
                 WHEN
@@ -1982,6 +1986,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
+    END;
+
+    /* Calculate pagelatch wait time for TempDB contention check */
+    IF @has_view_server_state = 1
+    BEGIN
+        SELECT 
+            @pagelatch_wait_hours = 
+                SUM
+                (
+                    CASE 
+                        WHEN osw.wait_type IN (N'PAGELATCH_UP', N'PAGELATCH_SH', N'PAGELATCH_EX') 
+                        THEN osw.wait_time_ms / 1000.0 / 3600.0
+                        ELSE 0 
+                    END
+                ),
+            @server_uptime_hours = 
+                DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0
+        FROM sys.dm_os_wait_stats AS osw
+        CROSS JOIN sys.dm_os_sys_info AS osi;
+
+        SET @pagelatch_ratio_to_uptime = 
+            @pagelatch_wait_hours / NULLIF(@server_uptime_hours, 0) * 100;
     END;
 
     /* Check for CPU scheduling pressure (signal wait ratio) */
@@ -3283,8 +3309,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 50, /* High priority */
                 N'TempDB Configuration',
                 N'Single TempDB Data File',
-                N'TempDB has only one data file. Multiple files can reduce allocation page contention. ' +
-                N'Recommendation: Use multiple files (equal to number of logical processors up to 8).',
+                N'TempDB has only one data file on a ' + CONVERT(nvarchar(10), @processors) + 
+                N'-core system. This creates allocation contention. Recommendation: Add ' +
+                CASE 
+                    WHEN @processors > 8 THEN N'8' 
+                    ELSE CONVERT(nvarchar(10), @processors)
+                END + N' data files total.',
                 N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
@@ -3423,6 +3453,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'TempDB data files are using percentage growth settings. This can lead to increasingly larger growth events as files grow. ' +
                 N'TempDB is recreated on server restart, so using predictable fixed-size growth is recommended for better performance.',
                 N'https://erikdarling.com/sp_PerfCheck#tempdb'
+            );
+        END;
+
+        /* Check for TempDB allocation contention based on pagelatch waits */
+        IF  @tempdb_data_file_count <= @processors 
+        AND @tempdb_data_file_count < 8
+        AND @has_view_server_state = 1
+        AND @pagelatch_ratio_to_uptime >= 1.0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                2010,
+                40, /* High priority */
+                N'TempDB Performance',
+                N'TempDB Allocation Contention Detected',
+                N'Server has spent ' + 
+                CONVERT(nvarchar(20), CONVERT(decimal(10,2), @pagelatch_wait_hours)) + 
+                N' hours (' + 
+                CONVERT(nvarchar(10), CONVERT(decimal(5,2), @pagelatch_ratio_to_uptime)) + 
+                N'% of uptime) waiting on page latches. TempDB has ' + 
+                CONVERT(nvarchar(10), @tempdb_data_file_count) + 
+                N' data files. Consider adding files up to ' +
+                CASE 
+                    WHEN @processors > 8 THEN N'8'
+                    ELSE CONVERT(nvarchar(10), @processors)
+                END + N' total to reduce allocation contention.',
+                N'https://erikdarling.com/sp_PerfCheck#tempdb-contention'
             );
         END;
 
