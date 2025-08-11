@@ -878,6 +878,12 @@ CREATE TABLE
     sort_order bigint
 );
 
+CREATE TABLE
+    #sp_server_diagnostics_component_result
+(
+    sp_server_diagnostics_component_result xml
+);
+
 IF LOWER(@target_type) = N'table'
 BEGIN
     GOTO TableMode;
@@ -962,9 +968,11 @@ BEGIN
     END;
 END;
 
-/* Dump whatever we got into a temp table */
+/*
+Dump whatever we got into a temp table
+Note that system_health hits this branch if we use the ring_buffer target.
+*/
 IF  LOWER(@target_type) = N'ring_buffer'
-AND @is_system_health = 0
 BEGIN
     IF @azure = 0
     BEGIN
@@ -1205,24 +1213,51 @@ IF  @is_system_health = 1
 BEGIN
     IF @debug = 1
     BEGIN
-        RAISERROR('Inserting to #sp_server_diagnostics_component_result for system health: %s', 0, 1, @is_system_health_msg) WITH NOWAIT;
+        RAISERROR('Inserting to #sp_server_diagnostics_component_result for target type: %s and system health: %s', 0, 1, @target_type, @is_system_health_msg) WITH NOWAIT;
     END;
 
-    SELECT
-        xml.sp_server_diagnostics_component_result
-    INTO #sp_server_diagnostics_component_result
-    FROM
-    (
+    IF @target_type = N'ring_buffer'
+    BEGIN
+        INSERT
+            #sp_server_diagnostics_component_result
+        WITH
+            (TABLOCKX)
+        (
+            sp_server_diagnostics_component_result
+        )
         SELECT
-            sp_server_diagnostics_component_result =
-                TRY_CAST(fx.event_data AS xml)
-        FROM sys.fn_xe_file_target_read_file(N'system_health*.xel', NULL, NULL, NULL) AS fx
-        WHERE fx.object_name = N'sp_server_diagnostics_component_result'
-    ) AS xml
-    CROSS APPLY xml.sp_server_diagnostics_component_result.nodes('/event') AS e(x)
-    WHERE e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
-    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
-    OPTION(RECOMPILE);
+            sp_server_diagnostics_component_result = e.x.query('.')
+        FROM #x AS xml
+        CROSS APPLY xml.x.nodes('/RingBufferTarget/event') AS e(x)
+        WHERE e.x.exist('@name[ .= "sp_server_diagnostics_component_result"]') = 1
+        AND   e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        OPTION(RECOMPILE);
+    END
+    ELSE
+    BEGIN
+        INSERT
+            #sp_server_diagnostics_component_result
+        WITH
+            (TABLOCKX)
+        (
+            sp_server_diagnostics_component_result
+        )
+        SELECT
+            xml.sp_server_diagnostics_component_result
+        FROM
+        (
+            SELECT
+                sp_server_diagnostics_component_result =
+                    TRY_CAST(fx.event_data AS xml)
+            FROM sys.fn_xe_file_target_read_file(N'system_health*.xel', NULL, NULL, NULL) AS fx
+            WHERE fx.object_name = N'sp_server_diagnostics_component_result'
+        ) AS xml
+        CROSS APPLY xml.sp_server_diagnostics_component_result.nodes('/event') AS e(x)
+        WHERE e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        OPTION(RECOMPILE);
+    END;
 
     IF @debug = 1
     BEGIN
