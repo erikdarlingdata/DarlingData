@@ -3210,6 +3210,20 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         END,
                         14
                 ),
+            [dd hh:mm:ss.mss 2] =
+                CASE
+                    WHEN e.elapsed_time_ms < 0 
+                    THEN RIGHT(REPLICATE(''0'', 2) + CONVERT(varchar(10), (-1 * e.elapsed_time_ms) / 86400), 2) +
+                         '' '' +
+                         RIGHT(CONVERT(varchar(30), DATEADD(second, (-1 * e.elapsed_time_ms), 0), 120), 9) + 
+                         ''.000''
+                    ELSE RIGHT(REPLICATE(''0'', 2) + 
+                         CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
+                         '' '' +
+                         RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
+                         ''.'' + 
+                         RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
+                END,
             query_text =
                 (
                     SELECT
@@ -3310,6 +3324,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
         FROM sys.dm_exec_query_memory_grants AS deqmg
         LEFT JOIN sys.dm_exec_requests AS der
           ON der.session_id = deqmg.session_id
+        OUTER APPLY 
+        (
+            SELECT 
+                elapsed_time_ms =
+                    CASE
+                        WHEN DATEDIFF(HOUR, der.start_time, SYSDATETIME()) > 576 
+                        THEN DATEDIFF(SECOND, SYSDATETIME(), der.start_time)
+                        ELSE DATEDIFF(MILLISECOND, der.start_time, SYSDATETIME())
+                    END
+        ) AS e
         OUTER APPLY
         (
             SELECT TOP (1)
@@ -3898,6 +3922,20 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             END,
                             14
                     ),
+                [dd hh:mm:ss.mss 2] =
+                    CASE
+                        WHEN e.elapsed_time_ms < 0 
+                        THEN RIGHT(REPLICATE(''0'', 2) + CONVERT(varchar(10), (-1 * e.elapsed_time_ms) / 86400), 2) +
+                             '' '' +
+                             RIGHT(CONVERT(varchar(30), DATEADD(second, (-1 * e.elapsed_time_ms), 0), 120), 9) + 
+                             ''.000''
+                        ELSE RIGHT(REPLICATE(''0'', 2) + 
+                             CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
+                             '' '' +
+                             RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
+                             ''.'' + 
+                             RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
+                    END,
                 query_text =
                     (
                         SELECT
@@ -4047,6 +4085,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       nvarchar(max),
                       N'
             FROM sys.dm_exec_requests AS der
+            OUTER APPLY 
+            (
+                SELECT 
+                    elapsed_time_ms =
+                        CASE
+                            WHEN DATEDIFF(HOUR, der.start_time, SYSDATETIME()) > 576 
+                            THEN DATEDIFF(SECOND, SYSDATETIME(), der.start_time)
+                            ELSE DATEDIFF(MILLISECOND, der.start_time, SYSDATETIME())
+                        END
+            ) AS e
             OUTER APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
             OUTER APPLY sys.dm_exec_text_query_plan
             (
