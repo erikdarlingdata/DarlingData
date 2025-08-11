@@ -3156,61 +3156,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
             database_name =
                 DB_NAME(deqp.dbid),
             [dd hh:mm:ss.mss] =
-                RIGHT
-                (
-                    ''00'' +
-                    CONVERT
-                    (
-                        varchar(10),
-                        DATEDIFF
-                        (
-                            DAY,
-                            deqmg.request_time,
-                            SYSDATETIME()
-                        )
-                    ),
-                    2
-                ) +
-                '' '' +
-                CONVERT
-                (
-                    varchar(20),
-                    CASE
-                        WHEN
-                            DATEDIFF
-                            (
-                                DAY,
-                                deqmg.request_time,
-                                SYSDATETIME()
-                            ) >= 24
-                        THEN
-                            DATEADD
-                            (
-                                SECOND,
-                                DATEDIFF
-                                (
-                                    SECOND,
-                                    deqmg.request_time,
-                                    SYSDATETIME()
-                                ),
-                                ''19000101''
-                            )
-                        ELSE
-                            DATEADD
-                            (
-                                MILLISECOND,
-                                DATEDIFF
-                                (
-                                    MILLISECOND,
-                                    deqmg.request_time,
-                                    SYSDATETIME()
-                                ),
-                                ''19000101''
-                            )
-                        END,
-                        14
-                ),
-            [dd hh:mm:ss.mss 2] =
                 CASE
                     WHEN e.elapsed_time_ms < 0 
                     THEN RIGHT(REPLICATE(''0'', 2) + CONVERT(varchar(10), (-1 * e.elapsed_time_ms) / 86400), 2) +
@@ -3868,61 +3813,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 database_name =
                     DB_NAME(der.database_id),
                 [dd hh:mm:ss.mss] =
-                    RIGHT
-                    (
-                        ''00'' +
-                        CONVERT
-                        (
-                            varchar(10),
-                            DATEDIFF
-                            (
-                                DAY,
-                                der.start_time,
-                                SYSDATETIME()
-                            )
-                        ),
-                        2
-                    ) +
-                    '' '' +
-                    CONVERT
-                    (
-                        varchar(20),
-                        CASE
-                            WHEN
-                                DATEDIFF
-                                (
-                                    DAY,
-                                    der.start_time,
-                                    SYSDATETIME()
-                                ) >= 24
-                            THEN
-                                DATEADD
-                                (
-                                    SECOND,
-                                    DATEDIFF
-                                    (
-                                        SECOND,
-                                        der.start_time,
-                                        SYSDATETIME()
-                                    ),
-                                    ''19000101''
-                                )
-                            ELSE
-                                DATEADD
-                                (
-                                    MILLISECOND,
-                                    DATEDIFF
-                                    (
-                                        MILLISECOND,
-                                        der.start_time,
-                                        SYSDATETIME()
-                                    ),
-                                    ''19000101''
-                                )
-                            END,
-                            14
-                    ),
-                [dd hh:mm:ss.mss 2] =
                     CASE
                         WHEN e.elapsed_time_ms < 0 
                         THEN RIGHT(REPLICATE(''0'', 2) + CONVERT(varchar(10), (-1 * e.elapsed_time_ms) / 86400), 2) +
