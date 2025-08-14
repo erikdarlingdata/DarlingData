@@ -95,7 +95,7 @@ BEGIN
     SELECT ' * wait stats relevant to cpu, memory, and disk pressure, along with query performance' UNION ALL
     SELECT ' * how many worker threads and how much memory you have available' UNION ALL
     SELECT ' * running queries that are using cpu and memory' UNION ALL
-    SELECT 'from your loving sql server consultant, erik darling: https://erikdarling.com';
+    SELECT 'from https://erikdarling.com';
 
     /*
     Parameters
@@ -554,8 +554,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    hours_uptime integer NULL,
-                    hours_cpu_time decimal(38,2) NULL,
+                    server_hours_uptime integer NULL,
+                    server_hours_cpu_time decimal(38,2) NULL,
                     wait_type nvarchar(60) NOT NULL,
                     description nvarchar(60) NULL,
                     hours_wait_time decimal(38,2) NULL,
@@ -592,7 +592,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    hours_uptime integer NULL,
+                    server_hours_uptime integer NULL,
                     drive nvarchar(255) NOT NULL,
                     database_name nvarchar(128) NOT NULL,
                     database_file_details nvarchar(1000) NULL,
@@ -1000,8 +1000,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
     DECLARE
         @waits table
     (
-        hours_uptime integer,
-        hours_cpu_time decimal(38,2),
+        server_hours_uptime integer,
+        server_hours_cpu_time decimal(38,2),
         wait_type nvarchar(60),
         description nvarchar(60),
         hours_wait_time decimal(38,2),
@@ -1031,7 +1031,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     DECLARE
         @file_metrics table
     (
-        hours_uptime integer,
+        server_hours_uptime integer,
         drive nvarchar(255),
         database_name nvarchar(128),
         database_file_details nvarchar(1000),
@@ -1159,8 +1159,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         INSERT
             @waits
         (
-            hours_uptime,
-            hours_cpu_time,
+            server_hours_uptime,
+            server_hours_cpu_time,
             wait_type,
             description,
             hours_wait_time,
@@ -1171,7 +1171,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             sorting
         )
         SELECT
-            hours_uptime =
+            server_hours_uptime =
                 (
                     SELECT
                         DATEDIFF
@@ -1182,7 +1182,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         )
                     FROM sys.dm_os_sys_info AS osi
                 ),
-            hours_cpu_time =
+            server_hours_cpu_time =
                 (
                     SELECT
                         CONVERT
@@ -1414,8 +1414,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 SELECT
                     w.wait_type,
                     w.description,
-                    w.hours_uptime,
-                    w.hours_cpu_time,
+                    w.server_hours_uptime,
+                    w.server_hours_cpu_time,
                     w.hours_wait_time,
                     w.avg_ms_per_wait,
                     w.percent_signal_waits,
@@ -1455,7 +1455,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         CONVERT
                         (
                             decimal(38,2),
-                            (w2.hours_cpu_time - w.hours_cpu_time) / 1000.
+                            (w2.server_hours_cpu_time - w.server_hours_cpu_time) / 1000.
                         ),
                     wait_time_seconds =
                         CONVERT
@@ -1522,8 +1522,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                     INSERT INTO ' + @log_table_waits + N'
                     (
-                        hours_uptime,
-                        hours_cpu_time,
+                        server_hours_uptime,
+                        server_hours_cpu_time,
                         wait_type,
                         description,
                         hours_wait_time,
@@ -1532,8 +1532,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         waiting_tasks_count
                     )
                     SELECT
-                        w.hours_uptime,
-                        w.hours_cpu_time,
+                        w.server_hours_uptime,
+                        w.server_hours_cpu_time,
                         w.wait_type,
                         w.description,
                         w.hours_wait_time,
@@ -1571,7 +1571,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
         SELECT
-            hours_uptime =
+            server_hours_uptime =
                 (
                     SELECT
                         DATEDIFF
@@ -1760,7 +1760,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         INSERT
             @file_metrics
         (
-            hours_uptime,
+            server_hours_uptime,
             drive,
             database_name,
             database_file_details,
@@ -1788,7 +1788,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     file_metrics AS
                 (
                     SELECT
-                        fm.hours_uptime,
+                        fm.server_hours_uptime,
                         fm.drive,
                         fm.database_name,
                         fm.database_file_details,
@@ -1840,7 +1840,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     fm.drive,
                     fm.database_name,
                     fm.database_file_details,
-                    fm.hours_uptime,
+                    fm.server_hours_uptime,
                     fm.file_size_gb,
                     fm.avg_read_stall_ms,
                     fm.avg_write_stall_ms,
@@ -1857,7 +1857,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     drive = N'Nothing to see here',
                     database_name = N'By default, only >100 ms latency is reported',
                     database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
-                    hours_uptime = 0,
+                    server_hours_uptime = 0,
                     file_size_gb = 0,
                     avg_read_stall_ms = 0,
                     avg_write_stall_ms = 0,
@@ -2057,7 +2057,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                INSERT INTO ' + @log_table_file_metrics + N'
                (
-                   hours_uptime,
+                   server_hours_uptime,
                    drive,
                    database_name,
                    database_file_details,
@@ -2074,7 +2074,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    io_stall_write_ms
                )
                SELECT
-                   fm.hours_uptime,
+                   fm.server_hours_uptime,
                    fm.drive,
                    fm.database_name,
                    fm.database_file_details,
@@ -2196,7 +2196,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     p AS
                 (
                     SELECT
-                        hours_uptime =
+                        server_hours_uptime =
                             (
                                 SELECT
                                     DATEDIFF
@@ -2230,7 +2230,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     p.object_name,
                     p.counter_name,
                     p.instance_name,
-                    p.hours_uptime,
+                    p.server_hours_uptime,
                     p.total,
                     p.total_per_second
                 FROM p
