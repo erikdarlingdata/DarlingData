@@ -3675,14 +3675,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         (
                             decimal(38,2),
                             (
-                                x.runnable / (1. * NULLIF(x.total, 0))
+                                x.runnable / 
+                                (1. * NULLIF(x.total, 0))
                             )
                         ) * 100.
                 FROM
                 (
                     SELECT
-                        total =
-                            COUNT_BIG(*),
+                        total = COUNT_BIG(*),
                         runnable =
                             SUM
                             (
@@ -3694,6 +3694,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             )
                     FROM sys.dm_exec_requests AS der
                     WHERE der.session_id > 50
+                    AND   der.session_id <> @@SPID
+                    AND   der.status NOT IN (N''background'', N''sleeping'')
                 ) AS x
             ) AS y
             WHERE y.runnable_pct >= 10
@@ -3705,6 +3707,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         IF @log_to_table = 0
         BEGIN
+            IF @debug = 1
+            BEGIN
+                PRINT @cpu_threads;
+            END;
+
             EXECUTE sys.sp_executesql
                 @cpu_threads;
         END;
