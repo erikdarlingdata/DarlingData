@@ -1991,22 +1991,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     /* Calculate pagelatch wait time for TempDB contention check */
     IF @has_view_server_state = 1
     BEGIN
-        SELECT 
-            @pagelatch_wait_hours = 
+        SELECT
+            @pagelatch_wait_hours =
                 SUM
                 (
-                    CASE 
-                        WHEN osw.wait_type IN (N'PAGELATCH_UP', N'PAGELATCH_SH', N'PAGELATCH_EX') 
+                    CASE
+                        WHEN osw.wait_type IN (N'PAGELATCH_UP', N'PAGELATCH_SH', N'PAGELATCH_EX')
                         THEN osw.wait_time_ms / 1000.0 / 3600.0
-                        ELSE 0 
+                        ELSE 0
                     END
                 ),
-            @server_uptime_hours = 
+            @server_uptime_hours =
                 DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0
         FROM sys.dm_os_wait_stats AS osw
         CROSS JOIN sys.dm_os_sys_info AS osi;
 
-        SET @pagelatch_ratio_to_uptime = 
+        SET @pagelatch_ratio_to_uptime =
             @pagelatch_wait_hours / NULLIF(@server_uptime_hours, 0) * 100;
     END;
 
@@ -3309,10 +3309,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 50, /* High priority */
                 N'TempDB Configuration',
                 N'Single TempDB Data File',
-                N'TempDB has only one data file on a ' + CONVERT(nvarchar(10), @processors) + 
+                N'TempDB has only one data file on a ' + CONVERT(nvarchar(10), @processors) +
                 N'-core system. This creates allocation contention. Recommendation: Add ' +
-                CASE 
-                    WHEN @processors > 8 THEN N'8' 
+                CASE
+                    WHEN @processors > 8 THEN N'8'
                     ELSE CONVERT(nvarchar(10), @processors)
                 END + N' data files total.',
                 N'https://erikdarling.com/sp_PerfCheck#tempdb'
@@ -3457,7 +3457,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /* Check for TempDB allocation contention based on pagelatch waits */
-        IF  @tempdb_data_file_count <= @processors 
+        IF  @tempdb_data_file_count <= @processors
         AND @tempdb_data_file_count < 8
         AND @has_view_server_state = 1
         AND @pagelatch_ratio_to_uptime >= 1.0
@@ -3478,14 +3478,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 40, /* High priority */
                 N'TempDB Performance',
                 N'TempDB Allocation Contention Detected',
-                N'Server has spent ' + 
-                CONVERT(nvarchar(20), CONVERT(decimal(10,2), @pagelatch_wait_hours)) + 
-                N' hours (' + 
-                CONVERT(nvarchar(10), CONVERT(decimal(5,2), @pagelatch_ratio_to_uptime)) + 
-                N'% of uptime) waiting on page latches. TempDB has ' + 
-                CONVERT(nvarchar(10), @tempdb_data_file_count) + 
+                N'Server has spent ' +
+                CONVERT(nvarchar(20), CONVERT(decimal(10,2), @pagelatch_wait_hours)) +
+                N' hours (' +
+                CONVERT(nvarchar(10), CONVERT(decimal(5,2), @pagelatch_ratio_to_uptime)) +
+                N'% of uptime) waiting on page latches. TempDB has ' +
+                CONVERT(nvarchar(10), @tempdb_data_file_count) +
                 N' data files. Consider adding files up to ' +
-                CASE 
+                CASE
                     WHEN @processors > 8 THEN N'8'
                     ELSE CONVERT(nvarchar(10), @processors)
                 END + N' total to reduce allocation contention.',

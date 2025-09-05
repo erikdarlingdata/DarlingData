@@ -1,4 +1,4 @@
--- Compile Date: 06/05/2025 19:32:39 UTC
+-- Compile Date: 09/05/2025 16:18:35 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -1206,6 +1206,7 @@ AND   ca.utc_timestamp < @end_date';
         ('locking', 'xml_deadlock_report', '#xml_deadlock_report', 'xml_deadlock_report'),
         ('locking', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('waits', 'wait_info', '#wait_info', 'wait_info'),
+        ('waits', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('system', 'sp_server_diagnostics_component_result', '#sp_server_diagnostics_component_result', 'sp_server_diagnostics_component_result'),
         ('system', 'error_reported', '#error_reported', 'error_reported'),
         ('memory', 'memory_broker_ring_buffer_recorded', '#memory_broker', 'memory_broker'),
@@ -1819,7 +1820,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(CONVERT(date, @end_date)) +
                                  ' with a minimum duration of ' +
                                  RTRIM(@wait_duration_ms) +
-                                 '.'
+                                 'ms.'
                             ELSE 'no queries with significant waits found!'
                         END;
 
@@ -1991,7 +1992,6 @@ AND   ca.utc_timestamp < @end_date';
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byCount/wait') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         AND   NOT EXISTS
               (
                   SELECT
@@ -2246,7 +2246,6 @@ AND   ca.utc_timestamp < @end_date';
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         CROSS APPLY w.x.nodes('/event/data/value/queryProcessing/topWaits/nonPreemptive/byDuration/wait') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         AND   w2.x2.exist('@averageWaitTime[.>= sql:variable("@wait_duration_ms")]') = 1
         AND   NOT EXISTS
               (
@@ -2331,7 +2330,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(CONVERT(date, @end_date)) +
                                  ' with a minimum average duration of ' +
                                  RTRIM(@wait_duration_ms) +
-                                 '.'
+                                 'ms.'
                             ELSE 'no significant waits found!'
                         END
 
@@ -2770,146 +2769,153 @@ AND   ca.utc_timestamp < @end_date';
             ORDER BY
                 x.event_time DESC;
         END;
-
-END;
+    END;
 
     /* CPU task details logging section */
-    IF NOT EXISTS
-    (
-        SELECT
-            1/0
-        FROM #scheduler_details AS sd
-    )
+    IF @what_to_check IN ('all', 'cpu')
     BEGIN
-        IF @log_to_table = 0
-            BEGIN
-            /* No results logic, only return if not logging */
-            SELECT
-                finding =
-                    CASE
-                        WHEN @what_to_check NOT IN ('all', 'cpu')
-                        THEN 'cpu skipped, @what_to_check set to ' +
-                             @what_to_check
-                        WHEN @what_to_check IN ('all', 'cpu')
-                        THEN 'no cpu issues found between ' +
-                             RTRIM(CONVERT(date, @start_date)) +
-                             ' and ' +
-                             RTRIM(CONVERT(date, @end_date)) +
-                             ' with @warnings_only set to ' +
-                             RTRIM(@warnings_only) +
-                             '.'
-                        ELSE 'no cpu issues found!'
-                    END
-
-            RAISERROR('No scheduler data found', 0, 0) WITH NOWAIT;
-        END;
-    END;
-    ELSE
-    BEGIN
-        /* Build the query */
-        SET @dsql = N'
-            SELECT
-                ' + CASE
-                        WHEN @log_to_table = 1
-                        THEN N''
-                        ELSE N'finding = ''cpu task details'','
-                    END +
-              N'
-                sd.event_time,
-                sd.state,
-                sd.maxWorkers,
-                sd.workersCreated,
-                sd.workersIdle,
-                sd.tasksCompletedWithinInterval,
-                sd.pendingTasks,
-                sd.oldestPendingTaskWaitingTime,
-                sd.hasUnresolvableDeadlockOccurred,
-                sd.hasDeadlockedSchedulersOccurred,
-                sd.didBlockingOccur
-            FROM #scheduler_details AS sd';
-
-        /* Add the WHERE clause only for table logging */
-        IF @log_to_table = 1
+        IF @debug = 1
         BEGIN
-            /* Get max event_time for CPU task details */
-            SET @mdsql_execute =
-                REPLACE
-                (
+            RAISERROR('Parsing scheduler stuff', 0, 0) WITH NOWAIT;
+        END;
+
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #scheduler_details AS sd
+        )
+        BEGIN
+            IF @log_to_table = 0
+                BEGIN
+                /* No results logic, only return if not logging */
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'cpu')
+                            THEN 'cpu skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'cpu')
+                            THEN 'no cpu issues found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no cpu issues found!'
+                        END
+
+                RAISERROR('No scheduler data found', 0, 0) WITH NOWAIT;
+            END;
+        END;
+        ELSE
+        BEGIN
+            /* Build the query */
+            SET @dsql = N'
+                SELECT
+                    ' + CASE
+                            WHEN @log_to_table = 1
+                            THEN N''
+                            ELSE N'finding = ''cpu task details'','
+                        END +
+                  N'
+                    sd.event_time,
+                    sd.state,
+                    sd.maxWorkers,
+                    sd.workersCreated,
+                    sd.workersIdle,
+                    sd.tasksCompletedWithinInterval,
+                    sd.pendingTasks,
+                    sd.oldestPendingTaskWaitingTime,
+                    sd.hasUnresolvableDeadlockOccurred,
+                    sd.hasDeadlockedSchedulersOccurred,
+                    sd.didBlockingOccur
+                FROM #scheduler_details AS sd';
+
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for CPU task details */
+                SET @mdsql_execute =
                     REPLACE
                     (
-                        @mdsql_template,
-                        '{table_check}',
-                        @log_table_cpu_tasks
-                    ),
-                    '{date_column}',
-                    'event_time'
-                );
+                        REPLACE
+                        (
+                            @mdsql_template,
+                            '{table_check}',
+                            @log_table_cpu_tasks
+                        ),
+                        '{date_column}',
+                        'event_time'
+                    );
 
-            IF @debug = 1
-            BEGIN
-                PRINT @mdsql_execute;
+                IF @debug = 1
+                BEGIN
+                    PRINT @mdsql_execute;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @mdsql_execute,
+                  N'@max_event_time datetime2(7) OUTPUT',
+                    @max_event_time OUTPUT;
+
+                SET @dsql += N'
+            WHERE sd.event_time > @max_event_time';
             END;
 
-            EXECUTE sys.sp_executesql
-                @mdsql_execute,
-              N'@max_event_time datetime2(7) OUTPUT',
-                @max_event_time OUTPUT;
-
+            /* Add the ORDER BY clause */
             SET @dsql += N'
-        WHERE sd.event_time > @max_event_time';
-        END;
+            ORDER BY
+                sd.event_time DESC
+            OPTION(RECOMPILE);
+            ';
 
-        /* Add the ORDER BY clause */
-        SET @dsql += N'
-        ORDER BY
-            sd.event_time DESC
-        OPTION(RECOMPILE);
-        ';
-
-        /* Handle table logging */
-        IF @log_to_table = 1
-        BEGIN
-            SET @insert_sql = N'
-            INSERT INTO
-                ' + @log_table_cpu_tasks + N'
-            (
-                event_time,
-                state,
-                maxWorkers,
-                workersCreated,
-                workersIdle,
-                tasksCompletedWithinInterval,
-                pendingTasks,
-                oldestPendingTaskWaitingTime,
-                hasUnresolvableDeadlockOccurred,
-                hasDeadlockedSchedulersOccurred,
-                didBlockingOccur
-            )' +
-                @dsql;
-
-            IF @debug = 1
+            /* Handle table logging */
+            IF @log_to_table = 1
             BEGIN
-                PRINT @insert_sql;
+                SET @insert_sql = N'
+                INSERT INTO
+                    ' + @log_table_cpu_tasks + N'
+                (
+                    event_time,
+                    state,
+                    maxWorkers,
+                    workersCreated,
+                    workersIdle,
+                    tasksCompletedWithinInterval,
+                    pendingTasks,
+                    oldestPendingTaskWaitingTime,
+                    hasUnresolvableDeadlockOccurred,
+                    hasDeadlockedSchedulersOccurred,
+                    didBlockingOccur
+                )' +
+                    @dsql;
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @insert_sql;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @insert_sql,
+                  N'@max_event_time datetime2(7)',
+                    @max_event_time;
             END;
 
-            EXECUTE sys.sp_executesql
-                @insert_sql,
-              N'@max_event_time datetime2(7)',
-                @max_event_time;
-        END;
-
-        /* Execute the query for client results */
-        IF @log_to_table = 0
-        BEGIN
-            IF @debug = 1
+            /* Execute the query for client results */
+            IF @log_to_table = 0
             BEGIN
-                PRINT @dsql;
-            END;
+                IF @debug = 1
+                BEGIN
+                    PRINT @dsql;
+                END;
 
-            EXECUTE sys.sp_executesql
-                @dsql;
+                EXECUTE sys.sp_executesql
+                    @dsql;
+            END;
         END;
-    END; /*End CPU*/
+    END;/*End CPU*/
 
     /*Grab memory details*/
     IF @what_to_check IN ('all', 'memory')
@@ -11207,6 +11213,12 @@ CREATE TABLE
     sort_order bigint
 );
 
+CREATE TABLE
+    #sp_server_diagnostics_component_result
+(
+    sp_server_diagnostics_component_result xml
+);
+
 IF LOWER(@target_type) = N'table'
 BEGIN
     GOTO TableMode;
@@ -11291,9 +11303,11 @@ BEGIN
     END;
 END;
 
-/* Dump whatever we got into a temp table */
+/*
+Dump whatever we got into a temp table
+Note that system_health hits this branch if we use the ring_buffer target.
+*/
 IF  LOWER(@target_type) = N'ring_buffer'
-AND @is_system_health = 0
 BEGIN
     IF @azure = 0
     BEGIN
@@ -11534,24 +11548,51 @@ IF  @is_system_health = 1
 BEGIN
     IF @debug = 1
     BEGIN
-        RAISERROR('Inserting to #sp_server_diagnostics_component_result for system health: %s', 0, 1, @is_system_health_msg) WITH NOWAIT;
+        RAISERROR('Inserting to #sp_server_diagnostics_component_result for target type: %s and system health: %s', 0, 1, @target_type, @is_system_health_msg) WITH NOWAIT;
     END;
 
-    SELECT
-        xml.sp_server_diagnostics_component_result
-    INTO #sp_server_diagnostics_component_result
-    FROM
-    (
+    IF @target_type = N'ring_buffer'
+    BEGIN
+        INSERT
+            #sp_server_diagnostics_component_result
+        WITH
+            (TABLOCKX)
+        (
+            sp_server_diagnostics_component_result
+        )
         SELECT
-            sp_server_diagnostics_component_result =
-                TRY_CAST(fx.event_data AS xml)
-        FROM sys.fn_xe_file_target_read_file(N'system_health*.xel', NULL, NULL, NULL) AS fx
-        WHERE fx.object_name = N'sp_server_diagnostics_component_result'
-    ) AS xml
-    CROSS APPLY xml.sp_server_diagnostics_component_result.nodes('/event') AS e(x)
-    WHERE e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
-    AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
-    OPTION(RECOMPILE);
+            sp_server_diagnostics_component_result = e.x.query('.')
+        FROM #x AS xml
+        CROSS APPLY xml.x.nodes('/RingBufferTarget/event') AS e(x)
+        WHERE e.x.exist('@name[ .= "sp_server_diagnostics_component_result"]') = 1
+        AND   e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        OPTION(RECOMPILE);
+    END
+    ELSE
+    BEGIN
+        INSERT
+            #sp_server_diagnostics_component_result
+        WITH
+            (TABLOCKX)
+        (
+            sp_server_diagnostics_component_result
+        )
+        SELECT
+            xml.sp_server_diagnostics_component_result
+        FROM
+        (
+            SELECT
+                sp_server_diagnostics_component_result =
+                    TRY_CAST(fx.event_data AS xml)
+            FROM sys.fn_xe_file_target_read_file(N'system_health*.xel', NULL, NULL, NULL) AS fx
+            WHERE fx.object_name = N'sp_server_diagnostics_component_result'
+        ) AS xml
+        CROSS APPLY xml.sp_server_diagnostics_component_result.nodes('/event') AS e(x)
+        WHERE e.x.exist('//data[@name="data"]/value/queryProcessing/blockingTasks/blocked-process-report') = 1
+        AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
+        OPTION(RECOMPILE);
+    END;
 
     IF @debug = 1
     BEGIN
@@ -21693,7 +21734,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @io_sql nvarchar(max) = N'',
         @file_io_sql nvarchar(max) = N'',
         @db_size_sql nvarchar(max) = N'',
-        @tempdb_files_sql nvarchar(max) = N'';
+        @tempdb_files_sql nvarchar(max) = N'',
+        /* TempDB pagelatch contention variables */
+        @pagelatch_wait_hours decimal(20,2),
+        @server_uptime_hours decimal(20,2),
+        @pagelatch_ratio_to_uptime decimal(10,4);
 
 
     /* Check for VIEW SERVER STATE permission */
@@ -22309,7 +22354,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         url
     )
     SELECT
-        check_id = 4103,
+        check_id = 5103,
         priority =
             CASE
                 WHEN
@@ -23365,6 +23410,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
+    END;
+
+    /* Calculate pagelatch wait time for TempDB contention check */
+    IF @has_view_server_state = 1
+    BEGIN
+        SELECT
+            @pagelatch_wait_hours =
+                SUM
+                (
+                    CASE
+                        WHEN osw.wait_type IN (N'PAGELATCH_UP', N'PAGELATCH_SH', N'PAGELATCH_EX')
+                        THEN osw.wait_time_ms / 1000.0 / 3600.0
+                        ELSE 0
+                    END
+                ),
+            @server_uptime_hours =
+                DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0
+        FROM sys.dm_os_wait_stats AS osw
+        CROSS JOIN sys.dm_os_sys_info AS osi;
+
+        SET @pagelatch_ratio_to_uptime =
+            @pagelatch_wait_hours / NULLIF(@server_uptime_hours, 0) * 100;
     END;
 
     /* Check for CPU scheduling pressure (signal wait ratio) */
@@ -24666,8 +24733,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 50, /* High priority */
                 N'TempDB Configuration',
                 N'Single TempDB Data File',
-                N'TempDB has only one data file. Multiple files can reduce allocation page contention. ' +
-                N'Recommendation: Use multiple files (equal to number of logical processors up to 8).',
+                N'TempDB has only one data file on a ' + CONVERT(nvarchar(10), @processors) +
+                N'-core system. This creates allocation contention. Recommendation: Add ' +
+                CASE
+                    WHEN @processors > 8 THEN N'8'
+                    ELSE CONVERT(nvarchar(10), @processors)
+                END + N' data files total.',
                 N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
@@ -24806,6 +24877,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'TempDB data files are using percentage growth settings. This can lead to increasingly larger growth events as files grow. ' +
                 N'TempDB is recreated on server restart, so using predictable fixed-size growth is recommended for better performance.',
                 N'https://erikdarling.com/sp_PerfCheck#tempdb'
+            );
+        END;
+
+        /* Check for TempDB allocation contention based on pagelatch waits */
+        IF  @tempdb_data_file_count <= @processors
+        AND @tempdb_data_file_count < 8
+        AND @has_view_server_state = 1
+        AND @pagelatch_ratio_to_uptime >= 1.0
+        BEGIN
+            INSERT INTO
+                #results
+            (
+                check_id,
+                priority,
+                category,
+                finding,
+                details,
+                url
+            )
+            VALUES
+            (
+                2010,
+                40, /* High priority */
+                N'TempDB Performance',
+                N'TempDB Allocation Contention Detected',
+                N'Server has spent ' +
+                CONVERT(nvarchar(20), CONVERT(decimal(10,2), @pagelatch_wait_hours)) +
+                N' hours (' +
+                CONVERT(nvarchar(10), CONVERT(decimal(5,2), @pagelatch_ratio_to_uptime)) +
+                N'% of uptime) waiting on page latches. TempDB has ' +
+                CONVERT(nvarchar(10), @tempdb_data_file_count) +
+                N' data files. Consider adding files up to ' +
+                CASE
+                    WHEN @processors > 8 THEN N'8'
+                    ELSE CONVERT(nvarchar(10), @processors)
+                END + N' total to reduce allocation contention.',
+                N'https://erikdarling.com/sp_PerfCheck#tempdb-contention'
             );
         END;
 
@@ -26503,7 +26611,7 @@ BEGIN
     SELECT ' * wait stats relevant to cpu, memory, and disk pressure, along with query performance' UNION ALL
     SELECT ' * how many worker threads and how much memory you have available' UNION ALL
     SELECT ' * running queries that are using cpu and memory' UNION ALL
-    SELECT 'from your loving sql server consultant, erik darling: https://erikdarling.com';
+    SELECT 'from https://erikdarling.com';
 
     /*
     Parameters
@@ -26962,8 +27070,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    hours_uptime integer NULL,
-                    hours_cpu_time decimal(38,2) NULL,
+                    server_hours_uptime integer NULL,
+                    server_hours_cpu_time decimal(38,2) NULL,
                     wait_type nvarchar(60) NOT NULL,
                     description nvarchar(60) NULL,
                     hours_wait_time decimal(38,2) NULL,
@@ -27000,7 +27108,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 (
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
-                    hours_uptime integer NULL,
+                    server_hours_uptime integer NULL,
                     drive nvarchar(255) NOT NULL,
                     database_name nvarchar(128) NOT NULL,
                     database_file_details nvarchar(1000) NULL,
@@ -27408,8 +27516,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
     DECLARE
         @waits table
     (
-        hours_uptime integer,
-        hours_cpu_time decimal(38,2),
+        server_hours_uptime integer,
+        server_hours_cpu_time decimal(38,2),
         wait_type nvarchar(60),
         description nvarchar(60),
         hours_wait_time decimal(38,2),
@@ -27439,7 +27547,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
     DECLARE
         @file_metrics table
     (
-        hours_uptime integer,
+        server_hours_uptime integer,
         drive nvarchar(255),
         database_name nvarchar(128),
         database_file_details nvarchar(1000),
@@ -27567,8 +27675,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         INSERT
             @waits
         (
-            hours_uptime,
-            hours_cpu_time,
+            server_hours_uptime,
+            server_hours_cpu_time,
             wait_type,
             description,
             hours_wait_time,
@@ -27579,7 +27687,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             sorting
         )
         SELECT
-            hours_uptime =
+            server_hours_uptime =
                 (
                     SELECT
                         DATEDIFF
@@ -27590,7 +27698,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         )
                     FROM sys.dm_os_sys_info AS osi
                 ),
-            hours_cpu_time =
+            server_hours_cpu_time =
                 (
                     SELECT
                         CONVERT
@@ -27803,9 +27911,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                      /*Stats/Compilation*/
                      N'WAIT_ON_SYNC_STATISTICS_REFRESH',
                      /*Throttling*/
-                    N'IO_QUEUE_LIMIT',
-                    N'IO_RETRY',
-                    N'RESMGR_THROTTLED'
+                     N'IO_QUEUE_LIMIT',
+                     N'IO_RETRY',
+                     N'RESMGR_THROTTLED'
                  )
             /*Locking*/
             OR dows.wait_type LIKE N'LCK%'
@@ -27822,8 +27930,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 SELECT
                     w.wait_type,
                     w.description,
-                    w.hours_uptime,
-                    w.hours_cpu_time,
+                    w.server_hours_uptime,
+                    w.server_hours_cpu_time,
                     w.hours_wait_time,
                     w.avg_ms_per_wait,
                     w.percent_signal_waits,
@@ -27863,7 +27971,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         CONVERT
                         (
                             decimal(38,2),
-                            (w2.hours_cpu_time - w.hours_cpu_time) / 1000.
+                            (w2.server_hours_cpu_time - w.server_hours_cpu_time) / 1000.
                         ),
                     wait_time_seconds =
                         CONVERT
@@ -27930,8 +28038,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                     INSERT INTO ' + @log_table_waits + N'
                     (
-                        hours_uptime,
-                        hours_cpu_time,
+                        server_hours_uptime,
+                        server_hours_cpu_time,
                         wait_type,
                         description,
                         hours_wait_time,
@@ -27940,8 +28048,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         waiting_tasks_count
                     )
                     SELECT
-                        w.hours_uptime,
-                        w.hours_cpu_time,
+                        w.server_hours_uptime,
+                        w.server_hours_cpu_time,
                         w.wait_type,
                         w.description,
                         w.hours_wait_time,
@@ -27979,7 +28087,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
         SELECT
-            hours_uptime =
+            server_hours_uptime =
                 (
                     SELECT
                         DATEDIFF
@@ -28168,7 +28276,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         INSERT
             @file_metrics
         (
-            hours_uptime,
+            server_hours_uptime,
             drive,
             database_name,
             database_file_details,
@@ -28196,7 +28304,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     file_metrics AS
                 (
                     SELECT
-                        fm.hours_uptime,
+                        fm.server_hours_uptime,
                         fm.drive,
                         fm.database_name,
                         fm.database_file_details,
@@ -28248,7 +28356,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     fm.drive,
                     fm.database_name,
                     fm.database_file_details,
-                    fm.hours_uptime,
+                    fm.server_hours_uptime,
                     fm.file_size_gb,
                     fm.avg_read_stall_ms,
                     fm.avg_write_stall_ms,
@@ -28265,7 +28373,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     drive = N'Nothing to see here',
                     database_name = N'By default, only >100 ms latency is reported',
                     database_file_details = N'Use the @minimum_disk_latency_ms parameter to adjust what you see',
-                    hours_uptime = 0,
+                    server_hours_uptime = 0,
                     file_size_gb = 0,
                     avg_read_stall_ms = 0,
                     avg_write_stall_ms = 0,
@@ -28465,7 +28573,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                INSERT INTO ' + @log_table_file_metrics + N'
                (
-                   hours_uptime,
+                   server_hours_uptime,
                    drive,
                    database_name,
                    database_file_details,
@@ -28482,7 +28590,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    io_stall_write_ms
                )
                SELECT
-                   fm.hours_uptime,
+                   fm.server_hours_uptime,
                    fm.drive,
                    fm.database_name,
                    fm.database_file_details,
@@ -28604,7 +28712,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     p AS
                 (
                     SELECT
-                        hours_uptime =
+                        server_hours_uptime =
                             (
                                 SELECT
                                     DATEDIFF
@@ -28638,7 +28746,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     p.object_name,
                     p.counter_name,
                     p.instance_name,
-                    p.hours_uptime,
+                    p.server_hours_uptime,
                     p.total,
                     p.total_per_second
                 FROM p
@@ -29564,60 +29672,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
             database_name =
                 DB_NAME(deqp.dbid),
             [dd hh:mm:ss.mss] =
-                RIGHT
-                (
-                    ''00'' +
-                    CONVERT
-                    (
-                        varchar(10),
-                        DATEDIFF
-                        (
-                            DAY,
-                            deqmg.request_time,
-                            SYSDATETIME()
-                        )
-                    ),
-                    2
-                ) +
-                '' '' +
-                CONVERT
-                (
-                    varchar(20),
-                    CASE
-                        WHEN
-                            DATEDIFF
-                            (
-                                DAY,
-                                deqmg.request_time,
-                                SYSDATETIME()
-                            ) >= 24
-                        THEN
-                            DATEADD
-                            (
-                                SECOND,
-                                DATEDIFF
-                                (
-                                    SECOND,
-                                    deqmg.request_time,
-                                    SYSDATETIME()
-                                ),
-                                ''19000101''
-                            )
-                        ELSE
-                            DATEADD
-                            (
-                                MILLISECOND,
-                                DATEDIFF
-                                (
-                                    MILLISECOND,
-                                    deqmg.request_time,
-                                    SYSDATETIME()
-                                ),
-                                ''19000101''
-                            )
-                        END,
-                        14
-                ),
+                CASE
+                    WHEN e.elapsed_time_ms < 0
+                    THEN RIGHT(REPLICATE(''0'', 2) + CONVERT(varchar(10), (-1 * e.elapsed_time_ms) / 86400), 2) +
+                         '' '' +
+                         RIGHT(CONVERT(varchar(30), DATEADD(second, (-1 * e.elapsed_time_ms), 0), 120), 9) +
+                         ''.000''
+                    ELSE RIGHT(REPLICATE(''0'', 2) +
+                         CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
+                         '' '' +
+                         RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
+                         ''.'' +
+                         RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
+                END,
             query_text =
                 (
                     SELECT
@@ -29718,6 +29785,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
         FROM sys.dm_exec_query_memory_grants AS deqmg
         LEFT JOIN sys.dm_exec_requests AS der
           ON der.session_id = deqmg.session_id
+        OUTER APPLY
+        (
+            SELECT
+                elapsed_time_ms =
+                    CASE
+                        WHEN DATEDIFF(HOUR, der.start_time, SYSDATETIME()) > 576
+                        THEN DATEDIFF(SECOND, SYSDATETIME(), der.start_time)
+                        ELSE DATEDIFF(MILLISECOND, der.start_time, SYSDATETIME())
+                    END
+        ) AS e
         OUTER APPLY
         (
             SELECT TOP (1)
@@ -30114,14 +30191,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         (
                             decimal(38,2),
                             (
-                                x.runnable / (1. * NULLIF(x.total, 0))
+                                x.runnable /
+                                (1. * NULLIF(x.total, 0))
                             )
                         ) * 100.
                 FROM
                 (
                     SELECT
-                        total =
-                            COUNT_BIG(*),
+                        total = COUNT_BIG(*),
                         runnable =
                             SUM
                             (
@@ -30133,6 +30210,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             )
                     FROM sys.dm_exec_requests AS der
                     WHERE der.session_id > 50
+                    AND   der.session_id <> @@SPID
+                    AND   der.status NOT IN (N''background'', N''sleeping'')
                 ) AS x
             ) AS y
             WHERE y.runnable_pct >= 10
@@ -30144,6 +30223,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         IF @log_to_table = 0
         BEGIN
+            IF @debug = 1
+            BEGIN
+                PRINT @cpu_threads;
+            END;
+
             EXECUTE sys.sp_executesql
                 @cpu_threads;
         END;
@@ -30252,60 +30336,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 database_name =
                     DB_NAME(der.database_id),
                 [dd hh:mm:ss.mss] =
-                    RIGHT
-                    (
-                        ''00'' +
-                        CONVERT
-                        (
-                            varchar(10),
-                            DATEDIFF
-                            (
-                                DAY,
-                                der.start_time,
-                                SYSDATETIME()
-                            )
-                        ),
-                        2
-                    ) +
-                    '' '' +
-                    CONVERT
-                    (
-                        varchar(20),
-                        CASE
-                            WHEN
-                                DATEDIFF
-                                (
-                                    DAY,
-                                    der.start_time,
-                                    SYSDATETIME()
-                                ) >= 24
-                            THEN
-                                DATEADD
-                                (
-                                    SECOND,
-                                    DATEDIFF
-                                    (
-                                        SECOND,
-                                        der.start_time,
-                                        SYSDATETIME()
-                                    ),
-                                    ''19000101''
-                                )
-                            ELSE
-                                DATEADD
-                                (
-                                    MILLISECOND,
-                                    DATEDIFF
-                                    (
-                                        MILLISECOND,
-                                        der.start_time,
-                                        SYSDATETIME()
-                                    ),
-                                    ''19000101''
-                                )
-                            END,
-                            14
-                    ),
+                    CASE
+                        WHEN e.elapsed_time_ms < 0
+                        THEN RIGHT(REPLICATE(''0'', 2) + CONVERT(varchar(10), (-1 * e.elapsed_time_ms) / 86400), 2) +
+                             '' '' +
+                             RIGHT(CONVERT(varchar(30), DATEADD(second, (-1 * e.elapsed_time_ms), 0), 120), 9) +
+                             ''.000''
+                        ELSE RIGHT(REPLICATE(''0'', 2) +
+                             CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
+                             '' '' +
+                             RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
+                             ''.'' +
+                             RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
+                    END,
                 query_text =
                     (
                         SELECT
@@ -30455,6 +30498,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       nvarchar(max),
                       N'
             FROM sys.dm_exec_requests AS der
+            OUTER APPLY
+            (
+                SELECT
+                    elapsed_time_ms =
+                        CASE
+                            WHEN DATEDIFF(HOUR, der.start_time, SYSDATETIME()) > 576
+                            THEN DATEDIFF(SECOND, SYSDATETIME(), der.start_time)
+                            ELSE DATEDIFF(MILLISECOND, der.start_time, SYSDATETIME())
+                        END
+            ) AS e
             OUTER APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
             OUTER APPLY sys.dm_exec_text_query_plan
             (
@@ -38002,7 +38055,7 @@ BEGIN
         SUM(qsrs.count_executions * (qsrs.avg_logical_io_writes * 8.)) / 1024.,
         SUM(qsrs.count_executions * qsrs.avg_clr_time) / 1000.,
         SUM(qsrs.count_executions * (qsrs.avg_query_max_used_memory * 8.)) / 1024.,
-        SUM(qsrs.count_executions * qsrs.avg_rowcount)' +
+        SUM(qsrs.count_executions * qsrs.avg_rowcount),' +
   CASE
       @new
       WHEN 1
