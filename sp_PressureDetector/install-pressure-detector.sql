@@ -3,7 +3,7 @@
 
     run from sqlcmd.exe using the following command-line:
 
-    sqlcmd -S {sql-server} -i .\install-pressure-detector.sql -v TargetDB = "{target-database}"
+    sqlcmd -S {sql-server} -i .\install-pressure-detector.sql -v TargetDB = "{target-database}" -C
 
     {sql-server} is the name of the target SQL Server
     {target-database} is where we'll install the sp_PressureDetector procedures.
