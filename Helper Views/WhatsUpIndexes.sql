@@ -26,7 +26,7 @@ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMA
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-IF OBJECT_ID(N'dbo.WhatsUpIndexes', N'IF') IS NULL
+IF OBJECT_ID(N'dbo.WhatsUpIndexes', N'V') IS NULL
 BEGIN
     DECLARE
         @vsql nvarchar(MAX) = N'
@@ -45,21 +45,24 @@ GO
 ALTER VIEW
     dbo.WhatsUpIndexes
 AS
-SELECT TOP (2147483647)
-    view_name =
-        'WhatsUpIndexes',
-    database_name =
-        DB_NAME(),
-    schema_name =
-        s.name,
-    table_name =
-        OBJECT_NAME(ps.object_id),
-    index_name =
-        i.name,
+SELECT TOP (9223372036854775807)
+    view_name = 'WhatsUpIndexes',
+    database_name = DB_NAME(),
+    schema_name = s.name,
+    table_name = OBJECT_NAME(ps.object_id),
+    index_name = i.name,
     in_row_pages_mb =
-        (ps.reserved_page_count * 8. / 1024.),
+        CONVERT
+        (
+            decimal(38, 2),
+            (ps.reserved_page_count * 8. / 1024.)
+        ),
     lob_pages_mb =
-        (ps.lob_reserved_page_count * 8. / 1024.),
+        CONVERT
+        (
+            decimal(38, 2),
+            (ps.lob_reserved_page_count * 8. / 1024.)
+        ),
     ps.in_row_used_page_count,
     ps.row_count
 FROM sys.dm_db_partition_stats AS ps
@@ -76,3 +79,4 @@ ORDER BY
     ps.object_id,
     ps.index_id,
     ps.partition_number;
+GO

@@ -30,7 +30,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 */
 
-IF OBJECT_ID(N'dbo.WhatsUpMemory', N'IF') IS NULL
+IF OBJECT_ID(N'dbo.WhatsUpMemory', N'V') IS NULL
 BEGIN
     DECLARE
         @vsql nvarchar(MAX) = N'
@@ -49,44 +49,46 @@ GO
 ALTER VIEW
     dbo.WhatsUpMemory
 AS
-SELECT TOP (2147483647)
-    view_name =
-        'WhatsUpMemory',
-    database_name =
-        DB_NAME(),
+SELECT TOP (9223372036854775807)
+    view_name = 'WhatsUpMemory',
+    database_name = DB_NAME(),
     x.schema_name,
     x.object_name,
     x.index_name,
     in_row_pages_mb =
-        SUM
+        CONVERT
         (
-            CASE
-                WHEN x.type IN (1, 3)
-                THEN 1
-                ELSE 0
-            END
-        ) * 8. / 1024.,
+            decimal(38, 2),
+            SUM
+            (
+                CASE
+                    WHEN x.type IN (1, 3)
+                    THEN 1
+                    ELSE 0
+                END
+            ) * 8. / 1024.
+        ),
     lob_pages_mb =
-        SUM
+        CONVERT
         (
-            CASE
-                WHEN x.type = 2
-                THEN 1
-                ELSE 0
-            END
-        ) * 8. / 1024.,
-    buffer_cache_pages_total =
-        COUNT_BIG(*)
+            decimal(38, 2),
+            SUM
+            (
+                CASE
+                    WHEN x.type = 2
+                    THEN 1
+                    ELSE 0
+                END
+            ) * 8. / 1024.
+        ),
+    buffer_cache_pages_total = COUNT_BIG(*)
 FROM sys.dm_os_buffer_descriptors AS obd
 INNER HASH JOIN
 (
     SELECT
-        schema_name =
-            s.name,
-        object_name =
-            o.name,
-        index_name =
-            i.name,
+        schema_name = s.name,
+        object_name = o.name,
+        index_name = i.name,
         au.type,
         au.allocation_unit_id
     FROM sys.allocation_units AS au
@@ -106,12 +108,9 @@ INNER HASH JOIN
     UNION ALL
 
     SELECT
-        schema_name =
-            s.name,
-        object_name =
-            o.name,
-        index_name =
-            i.name,
+        schema_name = s.name,
+        object_name = o.name,
+        index_name = i.name,
         au.type,
         au.allocation_unit_id
     FROM sys.allocation_units AS au
@@ -131,12 +130,9 @@ INNER HASH JOIN
     UNION ALL
 
     SELECT
-        schema_name =
-            s.name,
-        object_name =
-            o.name,
-        index_name =
-            i.name,
+        schema_name = s.name,
+        object_name = o.name,
+        index_name = i.name,
         au.type,
         au.allocation_unit_id
     FROM sys.allocation_units AS au
@@ -160,3 +156,4 @@ GROUP BY
     x.index_name
 ORDER BY
     COUNT_BIG(*) DESC;
+GO

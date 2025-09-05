@@ -55,20 +55,19 @@ RETURN
 SELECT TOP (9223372036854775807)
     dtl.request_session_id,
     blocked_by =
-    ISNULL
-    (
+        ISNULL
         (
-            SELECT
-                der.blocking_session_id
-            FROM sys.dm_exec_requests AS der
-            WHERE dtl.request_session_id = der.session_id
+            (
+                SELECT
+                    der.blocking_session_id
+                FROM sys.dm_exec_requests AS der
+                WHERE dtl.request_session_id = der.session_id
+            ),
+            0
         ),
-        0
-    ),
     dtl.request_mode,
     l.locked_object,
-    index_name =
-        ISNULL(i.name, N'OBJECT'),
+    index_name = ISNULL(i.name, N'OBJECT'),
     dtl.resource_type,
     dtl.request_status,
     dtl.request_owner_type,
@@ -112,8 +111,7 @@ SELECT TOP (9223372036854775807)
                 0
             )
         ),
-    total_locks =
-        COUNT_BIG(*)
+    total_locks = COUNT_BIG(*)
 FROM sys.dm_tran_locks AS dtl WITH(NOLOCK)
 LEFT JOIN sys.partitions AS p WITH(NOLOCK)
   ON dtl.resource_associated_entity_id = p.hobt_id
@@ -159,3 +157,4 @@ ORDER BY
     l.locked_object,
     index_name,
     total_locks DESC;
+GO
