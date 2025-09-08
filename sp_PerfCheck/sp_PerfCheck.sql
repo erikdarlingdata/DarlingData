@@ -2005,7 +2005,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0
         FROM sys.dm_os_wait_stats AS osw
         CROSS JOIN sys.dm_os_sys_info AS osi
-        GROUP BY 
+        GROUP BY
             DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0;
 
         SET @pagelatch_ratio_to_uptime =

@@ -1,4 +1,4 @@
--- Compile Date: 09/05/2025 16:18:35 UTC
+-- Compile Date: 09/08/2025 12:37:28 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -23428,7 +23428,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @server_uptime_hours =
                 DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0
         FROM sys.dm_os_wait_stats AS osw
-        CROSS JOIN sys.dm_os_sys_info AS osi;
+        CROSS JOIN sys.dm_os_sys_info AS osi
+        GROUP BY
+            DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0;
 
         SET @pagelatch_ratio_to_uptime =
             @pagelatch_wait_hours / NULLIF(@server_uptime_hours, 0) * 100;
