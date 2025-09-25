@@ -8242,7 +8242,6 @@ WHERE EXISTS
               1/0
           FROM #query_store_plan AS qsp
           WHERE qsqv.query_variant_query_id = qsp.query_id
-          AND   qsqv.dispatcher_plan_id = qsp.plan_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
