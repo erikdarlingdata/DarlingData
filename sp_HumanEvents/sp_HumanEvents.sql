@@ -812,6 +812,8 @@ SET @output_schema_name    = ISNULL(@output_schema_name, N'');
 
 /*I'm also very forgiving of some white space*/
 SET @database_name = RTRIM(LTRIM(@database_name));
+/*Forgive my case*/
+SET @event_type = LOWER(@event_type);
 
 /*Assemble the full object name for easier wrangling*/
 SET @fully_formed_babby =
@@ -824,7 +826,7 @@ SET @fully_formed_babby =
 /*Some sanity checking*/
 IF @debug = 1 BEGIN RAISERROR(N'Sanity checking event types', 0, 1) WITH NOWAIT; END;
 /* You can only do this right now. */
-IF LOWER(@event_type) NOT IN
+IF @event_type NOT IN
         (
             N'waits',
             N'blocking',
