@@ -1489,7 +1489,7 @@ SET @session_filter +=
         ISNULL(@object_name_filter, N'')
     );
 
-/* For waits specifically, because they also need to filter on wait type and wait duration */
+/* For waits specifically, because they also need to filter on wait type and wait duration. object_name not supported. */
 SET @session_filter_waits +=
     (
         ISNULL(@wait_duration_filter, N'') +
@@ -1498,8 +1498,7 @@ SET @session_filter_waits +=
         ISNULL(@client_hostname_filter, N'') +
         ISNULL(@database_name_filter, N'') +
         ISNULL(@session_id_filter, N'') +
-        ISNULL(@username_filter, N'') +
-        ISNULL(@object_name_filter, N'')
+        ISNULL(@username_filter, N'')
     );
 
 /* For sessions that can't filter on client app or host name */
