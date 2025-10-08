@@ -1189,10 +1189,13 @@ END;
 IF @debug = 1 BEGIN RAISERROR(N'Is output database OR schema filled in?', 0, 1) WITH NOWAIT; END;
 IF
 (
-     LEN(@output_database_name + @output_schema_name) > 0
-    AND  @output_schema_name <> N'dbo'
-    AND (@output_database_name  = N''
-    OR   @output_schema_name = N'')
+        LEN(@output_database_name + @output_schema_name) > 0
+    AND @output_schema_name <> N'dbo'
+    AND
+    (
+           @output_database_name = N''
+        OR @output_schema_name   = N''
+    )
 )
 BEGIN
     IF @output_database_name = N''
@@ -1213,8 +1216,8 @@ END;
 IF @debug = 1 BEGIN RAISERROR(N'Is custom name something stupid?', 0, 1) WITH NOWAIT; END;
 IF
 (
-    PATINDEX(N'%[^a-zA-Z0-9]%', @custom_name) > 0
-      OR @custom_name LIKE N'[0-9]%'
+       PATINDEX(N'%[^a-zA-Z0-9]%', @custom_name) > 0
+    OR @custom_name LIKE N'[0-9]%'
 )
 BEGIN
     RAISERROR(N'
@@ -1697,9 +1700,12 @@ IF @debug = 1 BEGIN RAISERROR(@start_sql, 0, 1) WITH NOWAIT; END;
 EXECUTE (@start_sql);
 
 /* bail out here if we want to keep the session and not log to tables*/
-IF  @keep_alive = 1
-AND @output_database_name = N''
-AND @output_schema_name IN (N'', N'dbo')
+IF
+(
+        @keep_alive = 1
+    AND @output_database_name = N''
+    AND @output_schema_name IN (N'', N'dbo')
+)
 BEGIN
     IF @debug = 1
     BEGIN
