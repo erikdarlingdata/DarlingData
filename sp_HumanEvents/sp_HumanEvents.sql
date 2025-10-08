@@ -3950,16 +3950,16 @@ BEGIN
 
             IF @debug = 1
             BEGIN
-                PRINT SUBSTRING(@view_sql, 0,     4000);
-                PRINT SUBSTRING(@view_sql, 4001,  8000);
-                PRINT SUBSTRING(@view_sql, 8001,  12000);
-                PRINT SUBSTRING(@view_sql, 12001, 16000);
-                PRINT SUBSTRING(@view_sql, 16001, 20000);
-                PRINT SUBSTRING(@view_sql, 20001, 24000);
-                PRINT SUBSTRING(@view_sql, 24001, 28000);
-                PRINT SUBSTRING(@view_sql, 28001, 32000);
-                PRINT SUBSTRING(@view_sql, 32001, 36000);
-                PRINT SUBSTRING(@view_sql, 36001, 40000);
+                PRINT SUBSTRING(@view_sql, 1,     4000);
+                PRINT SUBSTRING(@view_sql, 4001,  4000);
+                PRINT SUBSTRING(@view_sql, 8001,  4000);
+                PRINT SUBSTRING(@view_sql, 12001, 4000);
+                PRINT SUBSTRING(@view_sql, 16001, 4000);
+                PRINT SUBSTRING(@view_sql, 20001, 4000);
+                PRINT SUBSTRING(@view_sql, 24001, 4000);
+                PRINT SUBSTRING(@view_sql, 28001, 4000);
+                PRINT SUBSTRING(@view_sql, 32001, 4000);
+                PRINT SUBSTRING(@view_sql, 36001, 4000);
             END;
 
             IF @debug = 1 BEGIN RAISERROR(N'creating view %s', 0, 1, @event_type_check) WITH NOWAIT; END;
