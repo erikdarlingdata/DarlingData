@@ -7267,7 +7267,7 @@ BEGIN
         SUM(qsrs.count_executions * (qsrs.avg_logical_io_writes * 8.)) / 1024.,
         SUM(qsrs.count_executions * qsrs.avg_clr_time) / 1000.,
         SUM(qsrs.count_executions * (qsrs.avg_query_max_used_memory * 8.)) / 1024.,
-        SUM(qsrs.count_executions * qsrs.avg_rowcount),' +
+        SUM(qsrs.count_executions * qsrs.avg_rowcount)' +
   CASE
       @new
       WHEN 1
@@ -7275,7 +7275,7 @@ BEGIN
         SUM(qsrs.count_executions * (qsrs.avg_num_physical_io_reads * 8)) / 1024.,
         SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 100000000.,
         SUM(qsrs.count_executions * (qsrs.avg_tempdb_space_used * 8)) / 1024.'
-      ELSE N'
+      ELSE N',
         NULL,
         NULL,
         NULL'
@@ -8242,7 +8242,6 @@ WHERE EXISTS
               1/0
           FROM #query_store_plan AS qsp
           WHERE qsqv.query_variant_query_id = qsp.query_id
-          AND   qsqv.dispatcher_plan_id = qsp.plan_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
