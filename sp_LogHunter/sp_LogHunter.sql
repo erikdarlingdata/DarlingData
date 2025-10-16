@@ -676,6 +676,7 @@ BEGIN
     OR    el.text LIKE N'SSPI%'
     OR    el.text LIKE N'%Severity: 1[0-8]%'
     OR    el.text LIKE N'Login succeeded for user%'
+    OR    el.text LIKE N'%query notification%'
     OR    el.text IN
           (
               N'The Database Mirroring endpoint is in disabled or stopped state.',
