@@ -4368,9 +4368,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             category = N'Database Configuration',
             finding = N'Query Store Not Enabled',
             database_name = d.name,
-            details = N'Query Store is not enabled.
-                        Consider enabling Query Store to track query performance
-                        over time and identify regression issues.',
+            details = N'Query Store is not enabled.'
+                    + N' Consider enabling Query Store to track query performance'
+                    + N' over time and identify regression issues.',
             url = N'https://erikdarling.com/sp_PerfCheck#QueryStore'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
