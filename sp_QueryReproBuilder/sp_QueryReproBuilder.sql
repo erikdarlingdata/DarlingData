@@ -2588,9 +2588,9 @@ WITH
 SELECT
     qsp.plan_id,
     parameter_name =
-        RTRIM(cr.c.value(N'@Column', N'sysname')),
+        LTRIM(RTRIM(cr.c.value(N'@Column', N'sysname'))),
     parameter_data_type =
-        RTRIM(cr.c.value(N'@ParameterDataType', N'sysname')),
+        LTRIM(RTRIM(cr.c.value(N'@ParameterDataType', N'sysname'))),
     parameter_compiled_value =
         CASE
             WHEN cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)') LIKE N'(%)'
