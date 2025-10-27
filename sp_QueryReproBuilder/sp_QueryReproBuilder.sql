@@ -258,26 +258,27 @@ BEGIN
         @new = 1;
 END;
 
-/*Check for SQL Server 2022+ Query Store views*/
-IF
-(
-    @product_version >= 16
- OR @azure = 1
-)
-BEGIN
-    IF EXISTS
-    (
-        SELECT
-            1/0
-        FROM sys.all_columns AS ac
-        WHERE ac.object_id = OBJECT_ID(N'sys.query_store_plan')
-        AND   ac.name = N'has_compile_replay_script'
-    )
-    BEGIN
-        SELECT
-            @sql_2022_views = 1;
-    END;
-END;
+/*
+See if our cool new 2022 views exist.
+May have to tweak this if views aren't present in some cloudy situations.
+*/
+SELECT
+    @sql_2022_views =
+        CASE
+            WHEN COUNT_BIG(*) = 5
+            THEN 1
+            ELSE 0
+        END
+FROM sys.all_objects AS ao
+WHERE ao.name IN
+      (
+          N'query_store_plan_feedback',
+          N'query_store_query_hints',
+          N'query_store_query_variant',
+          N'query_store_replicas',
+          N'query_store_plan_forcing_locations'
+      )
+OPTION(RECOMPILE);
 
 /*Check database state*/
 SELECT
