@@ -150,7 +150,11 @@ DECLARE
     @where_clause nvarchar(MAX) = N'',
     @start_date_original datetimeoffset(7),
     @end_date_original datetimeoffset(7),
-    @utc_minutes_difference bigint
+    @utc_minutes_difference bigint,
+    @product_version integer,
+    @azure bit = 0,
+    @sql_2022_views bit = 0,
+    @new bit = 0
 
 /*Fix NULL @database_name*/
 IF
@@ -203,6 +207,75 @@ IF
 BEGIN
     RAISERROR('Database %s does not exist', 10, 1, @database_name) WITH NOWAIT;
     RETURN;
+END;
+
+/*Check for Azure and get SQL Server version*/
+SELECT
+    @azure =
+        CASE
+            WHEN
+                CONVERT
+                (
+                    sysname,
+                    SERVERPROPERTY('EDITION')
+                ) = N'SQL Azure'
+            THEN 1
+            ELSE 0
+        END,
+    @product_version =
+        CONVERT
+        (
+            integer,
+            SUBSTRING
+            (
+                CONVERT
+                (
+                    varchar(128),
+                    SERVERPROPERTY('ProductVersion')
+                ),
+                1,
+                CHARINDEX
+                (
+                    '.',
+                    CONVERT
+                    (
+                        varchar(128),
+                        SERVERPROPERTY('ProductVersion')
+                    )
+                ) - 1
+            )
+        );
+
+/*Check for SQL Server 2019+ features*/
+IF
+(
+    @product_version >= 15
+ OR @azure = 1
+)
+BEGIN
+    SELECT
+        @new = 1;
+END;
+
+/*Check for SQL Server 2022+ Query Store views*/
+IF
+(
+    @product_version >= 16
+ OR @azure = 1
+)
+BEGIN
+    IF EXISTS
+    (
+        SELECT
+            1/0
+        FROM sys.all_columns AS ac
+        WHERE ac.object_id = OBJECT_ID(N'sys.query_store_plan')
+        AND   ac.name = N'has_compile_replay_script'
+    )
+    BEGIN
+        SELECT
+            @sql_2022_views = 1;
+    END;
 END;
 
 /*Check database state*/
@@ -517,6 +590,150 @@ CREATE TABLE
     #query_text_search_not
 (
     plan_id bigint NOT NULL
+);
+
+/*
+Create Query Store temp tables
+*/
+CREATE TABLE
+    #query_store_runtime_stats
+(
+    database_id integer NOT NULL,
+    runtime_stats_id bigint NOT NULL,
+    plan_id bigint NOT NULL,
+    runtime_stats_interval_id bigint NOT NULL,
+    execution_type_desc nvarchar(60) NULL,
+    first_execution_time datetimeoffset(7) NOT NULL,
+    last_execution_time datetimeoffset(7) NOT NULL,
+    count_executions bigint NOT NULL,
+    executions_per_second AS
+        ISNULL
+        (
+            count_executions /
+                NULLIF
+                (
+                    DATEDIFF
+                    (
+                        SECOND,
+                        first_execution_time,
+                        last_execution_time
+                    ),
+                    0
+                ),
+            0
+        ),
+    avg_duration_ms float NULL,
+    last_duration_ms bigint NOT NULL,
+    min_duration_ms bigint NOT NULL,
+    max_duration_ms bigint NOT NULL,
+    total_duration_ms AS
+        (avg_duration_ms * count_executions),
+    avg_cpu_time_ms float NULL,
+    last_cpu_time_ms bigint NOT NULL,
+    min_cpu_time_ms bigint NOT NULL,
+    max_cpu_time_ms bigint NOT NULL,
+    total_cpu_time_ms AS
+        (avg_cpu_time_ms * count_executions),
+    avg_logical_io_reads_mb float NULL,
+    last_logical_io_reads_mb bigint NOT NULL,
+    min_logical_io_reads_mb bigint NOT NULL,
+    max_logical_io_reads_mb bigint NOT NULL,
+    total_logical_io_reads_mb AS
+        (avg_logical_io_reads_mb * count_executions),
+    avg_logical_io_writes_mb float NULL,
+    last_logical_io_writes_mb bigint NOT NULL,
+    min_logical_io_writes_mb bigint NOT NULL,
+    max_logical_io_writes_mb bigint NOT NULL,
+    total_logical_io_writes_mb AS
+        (avg_logical_io_writes_mb * count_executions),
+    avg_physical_io_reads_mb float NULL,
+    last_physical_io_reads_mb bigint NOT NULL,
+    min_physical_io_reads_mb bigint NOT NULL,
+    max_physical_io_reads_mb bigint NOT NULL,
+    total_physical_io_reads_mb AS
+        (avg_physical_io_reads_mb * count_executions),
+    avg_clr_time_ms float NULL,
+    last_clr_time_ms bigint NOT NULL,
+    min_clr_time_ms bigint NOT NULL,
+    max_clr_time_ms bigint NOT NULL,
+    total_clr_time_ms AS
+        (avg_clr_time_ms * count_executions),
+    last_dop bigint NOT NULL,
+    min_dop bigint NOT NULL,
+    max_dop bigint NOT NULL,
+    avg_query_max_used_memory_mb float NULL,
+    last_query_max_used_memory_mb bigint NOT NULL,
+    min_query_max_used_memory_mb bigint NOT NULL,
+    max_query_max_used_memory_mb bigint NOT NULL,
+    total_query_max_used_memory_mb AS
+        (avg_query_max_used_memory_mb * count_executions),
+    avg_rowcount float NULL,
+    last_rowcount bigint NOT NULL,
+    min_rowcount bigint NOT NULL,
+    max_rowcount bigint NOT NULL,
+    total_rowcount AS
+        (avg_rowcount * count_executions),
+    avg_num_physical_io_reads_mb float NULL,
+    last_num_physical_io_reads_mb bigint NULL,
+    min_num_physical_io_reads_mb bigint NULL,
+    max_num_physical_io_reads_mb bigint NULL,
+    total_num_physical_io_reads_mb AS
+        (avg_num_physical_io_reads_mb * count_executions),
+    avg_log_bytes_used_mb float NULL,
+    last_log_bytes_used_mb bigint NULL,
+    min_log_bytes_used_mb bigint NULL,
+    max_log_bytes_used_mb bigint NULL,
+    total_log_bytes_used_mb AS
+        (avg_log_bytes_used_mb * count_executions),
+    avg_tempdb_space_used_mb float NULL,
+    last_tempdb_space_used_mb bigint NULL,
+    min_tempdb_space_used_mb bigint NULL,
+    max_tempdb_space_used_mb bigint NULL,
+    total_tempdb_space_used_mb AS
+        (avg_tempdb_space_used_mb * count_executions),
+    context_settings nvarchar(256) NULL
+);
+
+CREATE TABLE
+    #query_store_query_text
+(
+    database_id integer NOT NULL,
+    query_text_id bigint NOT NULL,
+    query_sql_text nvarchar(max) NULL,
+    statement_sql_handle varbinary(64) NULL,
+    is_part_of_encrypted_module bit NOT NULL,
+    has_restricted_text bit NOT NULL
+);
+
+CREATE TABLE
+    #query_store_plan
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    query_id bigint NOT NULL,
+    all_plan_ids varchar(max),
+    plan_group_id bigint NULL,
+    engine_version nvarchar(32) NULL,
+    compatibility_level smallint NOT NULL,
+    query_plan_hash binary(8) NOT NULL,
+    query_plan nvarchar(max) NULL,
+    is_online_index_plan bit NOT NULL,
+    is_trivial_plan bit NOT NULL,
+    is_parallel_plan bit NOT NULL,
+    is_forced_plan bit NOT NULL,
+    is_natively_compiled bit NOT NULL,
+    force_failure_count bigint NOT NULL,
+    last_force_failure_reason_desc nvarchar(128) NULL,
+    count_compiles bigint NULL,
+    initial_compile_start_time datetimeoffset(7) NOT NULL,
+    last_compile_start_time datetimeoffset(7) NULL,
+    last_execution_time datetimeoffset(7) NULL,
+    avg_compile_duration_ms float NULL,
+    last_compile_duration_ms bigint NULL,
+    plan_forcing_type_desc nvarchar(60) NULL,
+    has_compile_replay_script bit NULL,
+    is_optimized_plan_fixing_disabled bit NULL,
+    plan_type_desc nvarchar(120) NULL
 );
 
 /*
@@ -1029,11 +1246,722 @@ BEGIN
 
     EXECUTE sys.sp_executesql
         @sql,
-      N'@query_text_search_not nvarchar(4000), 
+      N'@query_text_search_not nvarchar(4000),
         @procedure_name_quoted nvarchar(1024)',
         @query_text_search_not,
         @procedure_name_quoted;
 END;
+
+/*
+Populate #query_store_runtime_stats from sys.query_store_runtime_stats
+This aggregates runtime stats for all filtered plan IDs
+*/
+SELECT
+    @sql = @isolation_level;
+
+SELECT
+    @sql += N'
+INSERT
+    #query_store_runtime_stats
+WITH
+    (TABLOCK)
+(
+    database_id,
+    runtime_stats_id,
+    plan_id,
+    runtime_stats_interval_id,
+    execution_type_desc,
+    first_execution_time,
+    last_execution_time,
+    count_executions,
+    avg_duration_ms,
+    last_duration_ms,
+    min_duration_ms,
+    max_duration_ms,
+    avg_cpu_time_ms,
+    last_cpu_time_ms,
+    min_cpu_time_ms,
+    max_cpu_time_ms,
+    avg_logical_io_reads_mb,
+    last_logical_io_reads_mb,
+    min_logical_io_reads_mb,
+    max_logical_io_reads_mb,
+    avg_logical_io_writes_mb,
+    last_logical_io_writes_mb,
+    min_logical_io_writes_mb,
+    max_logical_io_writes_mb,
+    avg_physical_io_reads_mb,
+    last_physical_io_reads_mb,
+    min_physical_io_reads_mb,
+    max_physical_io_reads_mb,
+    avg_clr_time_ms,
+    last_clr_time_ms,
+    min_clr_time_ms,
+    max_clr_time_ms,
+    last_dop,
+    min_dop,
+    max_dop,
+    avg_query_max_used_memory_mb,
+    last_query_max_used_memory_mb,
+    min_query_max_used_memory_mb,
+    max_query_max_used_memory_mb,
+    avg_rowcount,
+    last_rowcount,
+    min_rowcount,
+    max_rowcount,
+    avg_num_physical_io_reads_mb,
+    last_num_physical_io_reads_mb,
+    min_num_physical_io_reads_mb,
+    max_num_physical_io_reads_mb,
+    avg_log_bytes_used_mb,
+    last_log_bytes_used_mb,
+    min_log_bytes_used_mb,
+    max_log_bytes_used_mb,
+    avg_tempdb_space_used_mb,
+    last_tempdb_space_used_mb,
+    min_tempdb_space_used_mb,
+    max_tempdb_space_used_mb,
+    context_settings
+)
+SELECT
+    @database_id,
+    MAX(qsrs_with_lasts.runtime_stats_id),
+    qsrs_with_lasts.plan_id,
+    MAX(qsrs_with_lasts.runtime_stats_interval_id),
+    MAX(qsrs_with_lasts.execution_type_desc),
+    MIN(qsrs_with_lasts.first_execution_time),
+    MAX(qsrs_with_lasts.partitioned_last_execution_time),
+    SUM(qsrs_with_lasts.count_executions),
+    AVG((qsrs_with_lasts.avg_duration / 1000.)),
+    MAX((qsrs_with_lasts.partitioned_last_duration / 1000.)),
+    MIN((qsrs_with_lasts.min_duration / 1000.)),
+    MAX((qsrs_with_lasts.max_duration / 1000.)),
+    AVG((qsrs_with_lasts.avg_cpu_time / 1000.)),
+    MAX((qsrs_with_lasts.partitioned_last_cpu_time / 1000.)),
+    MIN((qsrs_with_lasts.min_cpu_time / 1000.)),
+    MAX((qsrs_with_lasts.max_cpu_time / 1000.)),
+    AVG((qsrs_with_lasts.avg_logical_io_reads * 8.) / 1024.),
+    MAX((qsrs_with_lasts.partitioned_last_logical_io_reads * 8.) / 1024.),
+    MIN((qsrs_with_lasts.min_logical_io_reads * 8.) / 1024.),
+    MAX((qsrs_with_lasts.max_logical_io_reads * 8.) / 1024.),
+    AVG((qsrs_with_lasts.avg_logical_io_writes * 8.) / 1024.),
+    MAX((qsrs_with_lasts.partitioned_last_logical_io_writes * 8.) / 1024.),
+    MIN((qsrs_with_lasts.min_logical_io_writes * 8.) / 1024.),
+    MAX((qsrs_with_lasts.max_logical_io_writes * 8.) / 1024.),
+    AVG((qsrs_with_lasts.avg_physical_io_reads * 8.) / 1024.),
+    MAX((qsrs_with_lasts.partitioned_last_physical_io_reads * 8.) / 1024.),
+    MIN((qsrs_with_lasts.min_physical_io_reads * 8.) / 1024.),
+    MAX((qsrs_with_lasts.max_physical_io_reads * 8.) / 1024.),
+    AVG((qsrs_with_lasts.avg_clr_time / 1000.)),
+    MAX((qsrs_with_lasts.partitioned_last_clr_time / 1000.)),
+    MIN((qsrs_with_lasts.min_clr_time / 1000.)),
+    MAX((qsrs_with_lasts.max_clr_time / 1000.)),
+    MAX(qsrs_with_lasts.partitioned_last_dop),
+    MIN(qsrs_with_lasts.min_dop),
+    MAX(qsrs_with_lasts.max_dop),
+    AVG((qsrs_with_lasts.avg_query_max_used_memory * 8.) / 1024.),
+    MAX((qsrs_with_lasts.partitioned_last_query_max_used_memory * 8.) / 1024.),
+    MIN((qsrs_with_lasts.min_query_max_used_memory * 8.) / 1024.),
+    MAX((qsrs_with_lasts.max_query_max_used_memory * 8.) / 1024.),
+    AVG(qsrs_with_lasts.avg_rowcount * 1.),
+    MAX(qsrs_with_lasts.partitioned_last_rowcount),
+    MIN(qsrs_with_lasts.min_rowcount),
+    MAX(qsrs_with_lasts.max_rowcount),';
+
+/*Add SQL 2017+ columns*/
+IF @new = 1
+BEGIN
+    SELECT @sql += N'
+    AVG((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.),
+    MAX((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.),
+    MIN((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.),
+    MAX((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.),
+    AVG(qsrs_with_lasts.avg_log_bytes_used / 1000000.),
+    MAX(qsrs_with_lasts.partitioned_last_log_bytes_used / 1000000.),
+    MIN(qsrs_with_lasts.min_log_bytes_used / 1000000.),
+    MAX(qsrs_with_lasts.max_log_bytes_used / 1000000.),
+    AVG((qsrs_with_lasts.avg_tempdb_space_used * 8.) / 1024.),
+    MAX((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8.) / 1024.),
+    MIN((qsrs_with_lasts.min_tempdb_space_used * 8.) / 1024.),
+    MAX((qsrs_with_lasts.max_tempdb_space_used * 8.) / 1024.),';
+END;
+ELSE
+BEGIN
+    SELECT @sql += N'
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    NULL,';
+END;
+
+SELECT @sql += N'
+    context_settings = NULL
+FROM
+(
+    SELECT
+        qsrs.*,
+        partitioned_last_execution_time =
+            LAST_VALUE(qsrs.last_execution_time) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_duration =
+            LAST_VALUE(qsrs.last_duration) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_cpu_time =
+            LAST_VALUE(qsrs.last_cpu_time) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_logical_io_reads =
+            LAST_VALUE(qsrs.last_logical_io_reads) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_logical_io_writes =
+            LAST_VALUE(qsrs.last_logical_io_writes) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_physical_io_reads =
+            LAST_VALUE(qsrs.last_physical_io_reads) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_clr_time =
+            LAST_VALUE(qsrs.last_clr_time) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_dop =
+            LAST_VALUE(qsrs.last_dop) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_query_max_used_memory =
+            LAST_VALUE(qsrs.last_query_max_used_memory) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_rowcount =
+            LAST_VALUE(qsrs.last_rowcount) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),';
+
+/*Add SQL 2017+ windowing columns*/
+IF @new = 1
+BEGIN
+    SELECT @sql += N'
+        partitioned_last_num_physical_io_reads =
+            LAST_VALUE(qsrs.last_num_physical_io_reads) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_log_bytes_used =
+            LAST_VALUE(qsrs.last_log_bytes_used) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            ),
+        partitioned_last_tempdb_space_used =
+            LAST_VALUE(qsrs.last_tempdb_space_used) OVER
+            (
+                PARTITION BY
+                    qsrs.plan_id,
+                    qsrs.execution_type
+                ORDER BY
+                    qsrs.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            )';
+END;
+ELSE
+BEGIN
+    SELECT @sql += N'
+        partitioned_last_num_physical_io_reads = NULL,
+        partitioned_last_log_bytes_used = NULL,
+        partitioned_last_tempdb_space_used = NULL';
+END;
+
+SELECT @sql += N'
+    FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    WHERE qsrs.is_online_index_plan = 0';
+
+/*Add date filtering if specified*/
+IF @start_date <= @end_date
+BEGIN
+    SELECT
+        @sql += N'
+    AND   qsrs.last_execution_time >= @start_date
+    AND   qsrs.last_execution_time < @end_date';
+END;
+
+/*Add include plan IDs filter if specified*/
+IF
+(
+    @include_plan_ids IS NOT NULL
+ OR @include_query_ids IS NOT NULL
+)
+BEGIN
+    SELECT
+        @sql += N'
+    AND   EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #include_plan_ids AS ipi
+              WHERE ipi.plan_id = qsrs.plan_id
+          )';
+END;
+
+/*Add ignore plan IDs filter if specified*/
+IF
+(
+    @ignore_plan_ids IS NOT NULL
+ OR @ignore_query_ids IS NOT NULL
+)
+BEGIN
+    SELECT
+        @sql += N'
+    AND   NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #ignore_plan_ids AS ipi
+              WHERE ipi.plan_id = qsrs.plan_id
+          )';
+END;
+
+/*Add query text search filter if specified*/
+IF @query_text_search IS NOT NULL
+BEGIN
+    SELECT
+        @sql += N'
+    AND   EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #query_text_search AS qts
+              WHERE qts.plan_id = qsrs.plan_id
+          )';
+END;
+
+/*Add query text exclusion filter if specified*/
+IF @query_text_search_not IS NOT NULL
+BEGIN
+    SELECT
+        @sql += N'
+    AND   NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #query_text_search_not AS qtsn
+              WHERE qtsn.plan_id = qsrs.plan_id
+          )';
+END;
+
+/*Add procedure filter if specified*/
+IF
+(
+    @procedure_name IS NOT NULL
+AND @procedure_exists = 1
+AND CHARINDEX(N'%', @procedure_name) = 0
+)
+BEGIN
+    SELECT
+        @sql += N'
+    AND   qsrs.plan_id IN
+          (
+              SELECT
+                  qsp.plan_id
+              FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              WHERE qsp.query_id IN
+                    (
+                        SELECT
+                            qsq.query_id
+                        FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                        WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+                    )
+          )';
+END;
+
+SELECT @sql += N'
+) AS qsrs_with_lasts
+GROUP BY
+    qsrs_with_lasts.plan_id
+ORDER BY
+    MAX(qsrs_with_lasts.partitioned_last_execution_time) DESC
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+/*Execute the population query*/
+EXECUTE sys.sp_executesql
+    @sql,
+    N'@database_id integer,
+      @start_date datetimeoffset(7),
+      @end_date datetimeoffset(7),
+      @procedure_name_quoted nvarchar(1024)',
+    @database_id,
+    @start_date,
+    @end_date,
+    @procedure_name_quoted;
+
+/*
+Populate #query_store_plan from sys.query_store_plan
+This will pull plan details for all filtered plan IDs
+*/
+SELECT
+    @sql = @isolation_level;
+
+SELECT
+    @sql += N'
+INSERT
+    #query_store_plan
+WITH
+    (TABLOCK)
+(
+    database_id,
+    plan_id,
+    query_id,
+    all_plan_ids,
+    plan_group_id,
+    engine_version,
+    compatibility_level,
+    query_plan_hash,
+    query_plan,
+    is_online_index_plan,
+    is_trivial_plan,
+    is_parallel_plan,
+    is_forced_plan,
+    is_natively_compiled,
+    force_failure_count,
+    last_force_failure_reason_desc,
+    count_compiles,
+    initial_compile_start_time,
+    last_compile_start_time,
+    last_execution_time,
+    avg_compile_duration_ms,
+    last_compile_duration_ms,
+    plan_forcing_type_desc,
+    has_compile_replay_script,
+    is_optimized_plan_forcing_disabled,
+    plan_type_desc
+)
+SELECT
+    @database_id,
+    qsp.plan_id,
+    qsp.query_id,
+    all_plan_ids =
+        STUFF
+        (
+            (
+                SELECT DISTINCT
+                    '', '' +
+                    RTRIM
+                        (qsp_plans.plan_id)
+                FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp_plans
+                WHERE qsp_plans.query_id = qsp.query_id
+                FOR XML
+                    PATH(''''),
+                    TYPE
+            ).value(''./text()[1]'', ''varchar(max)''),
+            1,
+            2,
+            ''''
+        ),
+    qsp.plan_group_id,
+    qsp.engine_version,
+    qsp.compatibility_level,
+    qsp.query_plan_hash,
+    qsp.query_plan,
+    qsp.is_online_index_plan,
+    qsp.is_trivial_plan,
+    qsp.is_parallel_plan,
+    qsp.is_forced_plan,
+    qsp.is_natively_compiled,
+    qsp.force_failure_count,
+    qsp.last_force_failure_reason_desc,
+    qsp.count_compiles,
+    qsp.initial_compile_start_time,
+    qsp.last_compile_start_time,
+    qsp.last_execution_time,
+    (qsp.avg_compile_duration / 1000.),
+    (qsp.last_compile_duration / 1000.),';
+
+/*Add version-specific columns*/
+IF (@new = 0 AND @sql_2022_views = 0)
+BEGIN
+    SELECT @sql += N'
+    NULL,
+    NULL,
+    NULL,
+    NULL';
+END;
+
+IF (@new = 1 AND @sql_2022_views = 0)
+BEGIN
+    SELECT @sql += N'
+    qsp.plan_forcing_type_desc,
+    NULL,
+    NULL,
+    NULL';
+END;
+
+IF (@new = 1 AND @sql_2022_views = 1)
+BEGIN
+    SELECT @sql += N'
+    qsp.plan_forcing_type_desc,
+    qsp.has_compile_replay_script,
+    qsp.is_optimized_plan_forcing_disabled,
+    qsp.plan_type_desc';
+END;
+
+/*Add FROM clause and filtering*/
+SELECT
+    @sql += N'
+FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+WHERE qsp.is_online_index_plan = 0';
+
+/*Add date filtering if specified*/
+IF @start_date <= @end_date
+BEGIN
+    SELECT
+        @sql += N'
+AND   qsp.last_execution_time >= @start_date
+AND   qsp.last_execution_time < @end_date';
+END;
+
+/*Add include plan IDs filter if specified*/
+IF
+(
+    @include_plan_ids IS NOT NULL
+ OR @include_query_ids IS NOT NULL
+)
+BEGIN
+    SELECT
+        @sql += N'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #include_plan_ids AS ipi
+          WHERE ipi.plan_id = qsp.plan_id
+      )';
+END;
+
+/*Add ignore plan IDs filter if specified*/
+IF
+(
+    @ignore_plan_ids IS NOT NULL
+ OR @ignore_query_ids IS NOT NULL
+)
+BEGIN
+    SELECT
+        @sql += N'
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #ignore_plan_ids AS ipi
+          WHERE ipi.plan_id = qsp.plan_id
+      )';
+END;
+
+/*Add query text search filter if specified*/
+IF @query_text_search IS NOT NULL
+BEGIN
+    SELECT
+        @sql += N'
+AND   EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_text_search AS qts
+          WHERE qts.plan_id = qsp.plan_id
+      )';
+END;
+
+/*Add query text exclusion filter if specified*/
+IF @query_text_search_not IS NOT NULL
+BEGIN
+    SELECT
+        @sql += N'
+AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_text_search_not AS qtsn
+          WHERE qtsn.plan_id = qsp.plan_id
+      )';
+END;
+
+/*Add procedure filter if specified*/
+IF
+(
+    @procedure_name IS NOT NULL
+AND @procedure_exists = 1
+AND CHARINDEX(N'%', @procedure_name) = 0
+)
+BEGIN
+    SELECT
+        @sql += N'
+AND   qsp.query_id IN
+      (
+          SELECT
+              qsq.query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+      )';
+END;
+
+/*Add final ORDER BY and options*/
+SELECT
+    @sql += N'
+ORDER BY
+    qsp.last_execution_time DESC
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+/*Execute the population query*/
+EXECUTE sys.sp_executesql
+    @sql,
+    N'@database_id integer,
+      @start_date datetimeoffset(7),
+      @end_date datetimeoffset(7),
+      @procedure_name_quoted nvarchar(1024)',
+    @database_id,
+    @start_date,
+    @end_date,
+    @procedure_name_quoted;
+
+/*
+Populate the #query_store_query_text table with query text
+*/
+SELECT
+    @sql = N'',
+    @current_table = N'inserting #query_store_query_text';
+
+SELECT
+    @sql += N'
+SELECT
+    @database_id,
+    qsqt.query_text_id,
+    qsqt.query_sql_text,
+    qsqt.statement_sql_handle,
+    qsqt.is_part_of_encrypted_module,
+    qsqt.has_restricted_text
+FROM #query_store_plan AS qsp
+CROSS APPLY
+(
+    SELECT TOP (1)
+        qsqt.*
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+    WHERE qsqt.query_text_id = qsp.query_text_id
+) AS qsqt
+WHERE qsp.database_id = @database_id
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #query_store_query_text
+WITH
+    (TABLOCK)
+(
+    database_id,
+    query_text_id,
+    query_sql_text,
+    statement_sql_handle,
+    is_part_of_encrypted_module,
+    has_restricted_text
+)
+EXECUTE sys.sp_executesql
+    @sql,
+    N'@database_id integer',
+    @database_id;
 
 
 
