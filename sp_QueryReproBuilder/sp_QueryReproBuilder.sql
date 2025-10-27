@@ -2041,15 +2041,15 @@ SELECT
     qsqt.statement_sql_handle,
     qsqt.is_part_of_encrypted_module,
     qsqt.has_restricted_text
-FROM #query_store_plan AS qsp
+FROM #query_store_query AS qsq
 CROSS APPLY
 (
     SELECT TOP (1)
         qsqt.*
     FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-    WHERE qsqt.query_text_id = qsp.query_text_id
+    WHERE qsqt.query_text_id = qsq.query_text_id
 ) AS qsqt
-WHERE qsp.database_id = @database_id
+WHERE qsq.database_id = @database_id
 OPTION(RECOMPILE);' + @nc10;
 
 IF @debug = 1
