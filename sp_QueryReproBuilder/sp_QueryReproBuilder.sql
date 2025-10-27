@@ -14,14 +14,16 @@ CREATE OR ALTER PROCEDURE
     dbo.sp_QueryReproBuilder
 (
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
+    @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
+    @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
     @include_plan_ids nvarchar(4000) = NULL, /*a list of query ids to search for*/
     @include_query_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
     @ignore_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to ignore*/
-    @ignore_query_ids nvarchar(4000) = NULL, /*a list of query ids to ignore*/    
+    @ignore_query_ids nvarchar(4000) = NULL, /*a list of query ids to ignore*/
     @procedure_schema sysname = NULL, /*the schema of the procedure you're searching for*/
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
-    @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/    
+    @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @version varchar(30) = NULL OUTPUT, /*OUTPUT; for support*/
@@ -65,6 +67,8 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'the name of the database you want to look at query store in'
+                WHEN N'@start_date' THEN 'the begin date of your search, will be converted to UTC internally'
+                WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
                 WHEN N'@include_plan_ids' THEN 'a list of plan ids to search for'
                 WHEN N'@include_query_ids' THEN 'a list of query ids to search for'
                 WHEN N'@ignore_plan_ids' THEN 'a list of plan ids to ignore'
@@ -83,6 +87,8 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'a database name with query store enabled'
+                WHEN N'@start_date' THEN 'January 1, 1753, through December 31, 9999'
+                WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@include_plan_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN N'@include_query_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN N'@ignore_plan_ids' THEN 'a string; comma separated for multiple ids'
@@ -101,6 +107,8 @@ BEGIN
             CASE
                 ap.name
                 WHEN N'@database_name' THEN 'NULL; current database name if NULL'
+                WHEN N'@start_date' THEN 'the last seven days'
+                WHEN N'@end_date' THEN 'NULL'
                 WHEN N'@include_plan_ids' THEN 'NULL'
                 WHEN N'@include_query_ids' THEN 'NULL'
                 WHEN N'@ignore_plan_ids' THEN 'NULL'
@@ -139,7 +147,10 @@ DECLARE
     @procedure_exists bit = 0,
     @isolation_level nvarchar(100) = N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' + NCHAR(13) + NCHAR(10),
     @nc10 nchar(1) = NCHAR(10),
-    @where_clause nvarchar(MAX) = N''
+    @where_clause nvarchar(MAX) = N'',
+    @start_date_original datetimeoffset(7),
+    @end_date_original datetimeoffset(7),
+    @utc_minutes_difference bigint
 
 /*Fix NULL @database_name*/
 IF
@@ -232,6 +243,135 @@ IF @query_store_exists = 0
 BEGIN
     RAISERROR('Query Store doesn''t seem to be enabled for database: %s', 10, 1, @database_name) WITH NOWAIT;
     RETURN;
+END;
+
+/*
+Initialize date variables
+*/
+SELECT
+    @start_date_original =
+        ISNULL
+        (
+            @start_date,
+            DATEADD
+            (
+                DAY,
+                -7,
+                DATEDIFF
+                (
+                    DAY,
+                    '19000101',
+                    SYSUTCDATETIME()
+                )
+            )
+        ),
+    @end_date_original =
+        ISNULL
+        (
+            @end_date,
+            DATEADD
+            (
+                DAY,
+                1,
+                DATEADD
+                (
+                    MINUTE,
+                    0,
+                    DATEDIFF
+                    (
+                        DAY,
+                        '19000101',
+                        SYSUTCDATETIME()
+                    )
+                )
+            )
+        ),
+    @utc_minutes_difference =
+        DATEDIFF
+        (
+            MINUTE,
+            SYSDATETIME(),
+            SYSUTCDATETIME()
+        );
+
+/*
+Convert dates to UTC for filtering
+*/
+SELECT
+    @start_date =
+        CASE
+            WHEN @start_date IS NULL
+            THEN
+                DATEADD
+                (
+                    DAY,
+                    -7,
+                    DATEDIFF
+                    (
+                        DAY,
+                        '19000101',
+                        SYSUTCDATETIME()
+                    )
+                )
+            WHEN @start_date IS NOT NULL
+            THEN
+                DATEADD
+                (
+                    MINUTE,
+                    @utc_minutes_difference,
+                    @start_date_original
+                )
+        END,
+    @end_date =
+        CASE
+            WHEN @end_date IS NULL
+            THEN
+                DATEADD
+                (
+                    DAY,
+                    1,
+                    DATEADD
+                    (
+                        MINUTE,
+                        0,
+                        DATEDIFF
+                        (
+                            DAY,
+                            '19000101',
+                            SYSUTCDATETIME()
+                        )
+                    )
+                )
+            WHEN @end_date IS NOT NULL
+            THEN
+                DATEADD
+                (
+                    MINUTE,
+                    @utc_minutes_difference,
+                    @end_date_original
+                )
+        END;
+
+/*
+Validate date range
+*/
+IF @start_date >= @end_date
+BEGIN
+    SELECT
+        @end_date =
+            DATEADD
+            (
+                DAY,
+                7,
+                @start_date
+            ),
+        @end_date_original =
+            DATEADD
+            (
+                DAY,
+                1,
+                @start_date_original
+            );
 END;
 
 /*
