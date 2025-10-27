@@ -2301,7 +2301,7 @@ SET
                         integer,
                         qcs.set_options
                     ) & 4096 = 4096
-                THEN ', ARITH_ABORT'
+                THEN ', ARITHABORT'
                 ELSE ''
             END +
             CASE
@@ -2894,7 +2894,7 @@ CROSS APPLY
                         SUBSTRING
                         (
                             qsqt.query_sql_text,
-                            PATINDEX(N'%)%', qsqt.query_sql_text) + 2,
+                            PATINDEX(N'%))%', qsqt.query_sql_text) + 2,
                             LEN(qsqt.query_sql_text)
                         )
                     )
