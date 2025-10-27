@@ -1877,31 +1877,29 @@ SELECT
     (qsp.last_compile_duration / 1000.),';
 
 /*Add version-specific columns*/
-IF (@new = 0 AND @sql_2022_views = 0)
-BEGIN
-    SELECT @sql += N'
-    NULL,
-    NULL,
-    NULL,
-    NULL';
-END;
-
-IF (@new = 1 AND @sql_2022_views = 0)
-BEGIN
-    SELECT @sql += N'
-    qsp.plan_forcing_type_desc,
-    NULL,
-    NULL,
-    NULL';
-END;
-
-IF (@new = 1 AND @sql_2022_views = 1)
+IF @sql_2022_views = 1
 BEGIN
     SELECT @sql += N'
     qsp.plan_forcing_type_desc,
     qsp.has_compile_replay_script,
     qsp.is_optimized_plan_forcing_disabled,
     qsp.plan_type_desc';
+END;
+ELSE IF @new = 1
+BEGIN
+    SELECT @sql += N'
+    qsp.plan_forcing_type_desc,
+    NULL,
+    NULL,
+    NULL';
+END;
+ELSE
+BEGIN
+    SELECT @sql += N'
+    NULL,
+    NULL,
+    NULL,
+    NULL';
 END;
 
 /*Add FROM clause and filtering*/
