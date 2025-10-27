@@ -2639,6 +2639,7 @@ JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
 WHERE qsqt.query_sql_text LIKE N'%FROM #%'
 OR    qsqt.query_sql_text LIKE N'%JOIN #%'
+OR    qsqt.query_sql_text LIKE N'%INTO #%'
 OPTION(RECOMPILE);
 
 INSERT
@@ -2661,6 +2662,7 @@ JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
 WHERE qsqt.query_sql_text LIKE N'%FROM @%'
 OR    qsqt.query_sql_text LIKE N'%JOIN @%'
+OR    qsqt.query_sql_text LIKE N'%INTO @%'
 OPTION(RECOMPILE);
 
 /*
