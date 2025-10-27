@@ -2026,56 +2026,6 @@ EXECUTE sys.sp_executesql
     @procedure_name_quoted;
 
 /*
-Populate the #query_store_query_text table with query text
-*/
-SELECT
-    @sql = N'',
-    @current_table = N'inserting #query_store_query_text';
-
-SELECT
-    @sql += N'
-SELECT
-    @database_id,
-    qsqt.query_text_id,
-    qsqt.query_sql_text,
-    qsqt.statement_sql_handle,
-    qsqt.is_part_of_encrypted_module,
-    qsqt.has_restricted_text
-FROM #query_store_query AS qsq
-CROSS APPLY
-(
-    SELECT TOP (1)
-        qsqt.*
-    FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
-    WHERE qsqt.query_text_id = qsq.query_text_id
-) AS qsqt
-WHERE qsq.database_id = @database_id
-OPTION(RECOMPILE);' + @nc10;
-
-IF @debug = 1
-BEGIN
-    PRINT LEN(@sql);
-    PRINT @sql;
-END;
-
-INSERT
-    #query_store_query_text
-WITH
-    (TABLOCK)
-(
-    database_id,
-    query_text_id,
-    query_sql_text,
-    statement_sql_handle,
-    is_part_of_encrypted_module,
-    has_restricted_text
-)
-EXECUTE sys.sp_executesql
-    @sql,
-    N'@database_id integer',
-    @database_id;
-
-/*
 Populate the #query_store_query table with query metadata
 */
 SELECT
@@ -2127,6 +2077,56 @@ WITH
     initial_compile_start_time,
     last_compile_start_time,
     last_execution_time
+)
+EXECUTE sys.sp_executesql
+    @sql,
+    N'@database_id integer',
+    @database_id;
+
+/*
+Populate the #query_store_query_text table with query text
+*/
+SELECT
+    @sql = N'',
+    @current_table = N'inserting #query_store_query_text';
+
+SELECT
+    @sql += N'
+SELECT
+    @database_id,
+    qsqt.query_text_id,
+    qsqt.query_sql_text,
+    qsqt.statement_sql_handle,
+    qsqt.is_part_of_encrypted_module,
+    qsqt.has_restricted_text
+FROM #query_store_query AS qsq
+CROSS APPLY
+(
+    SELECT TOP (1)
+        qsqt.*
+    FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+    WHERE qsqt.query_text_id = qsq.query_text_id
+) AS qsqt
+WHERE qsq.database_id = @database_id
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #query_store_query_text
+WITH
+    (TABLOCK)
+(
+    database_id,
+    query_text_id,
+    query_sql_text,
+    statement_sql_handle,
+    is_part_of_encrypted_module,
+    has_restricted_text
 )
 EXECUTE sys.sp_executesql
     @sql,
