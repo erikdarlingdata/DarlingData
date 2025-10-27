@@ -14,6 +14,8 @@ CREATE OR ALTER PROCEDURE
     dbo.sp_QueryReproBuilder
 (
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
+    @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
+    @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
     @include_plan_ids nvarchar(4000) = NULL, /*a list of query ids to search for*/
     @include_query_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
     @ignore_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to ignore*/
@@ -341,67 +343,43 @@ END;
 /*
 Create temp tables for filter parameters
 */
-IF
+CREATE TABLE
+    #include_plan_ids
 (
-    @include_plan_ids IS NOT NULL
- OR @include_query_ids IS NOT NULL
-)
-BEGIN
-    CREATE TABLE
-        #include_plan_ids
-    (
-        plan_id bigint NOT NULL
-    );
-END;
+    plan_id bigint NOT NULL
+);
 
-IF @include_query_ids IS NOT NULL
-BEGIN
-    CREATE TABLE
-        #include_query_ids
-    (
-        query_id bigint NOT NULL
-    );
-END;
 
-IF
+CREATE TABLE
+    #include_query_ids
 (
-    @ignore_plan_ids IS NOT NULL
- OR @ignore_query_ids IS NOT NULL
-)
-BEGIN
-    CREATE TABLE
-        #ignore_plan_ids
-    (
-        plan_id bigint NOT NULL
-    );
-END;
+    query_id bigint NOT NULL
+);
 
-IF @ignore_query_ids IS NOT NULL
-BEGIN
-    CREATE TABLE
-        #ignore_query_ids
-    (
-        query_id bigint NOT NULL
-    );
-END;
+CREATE TABLE
+    #ignore_plan_ids
+(
+    plan_id bigint NOT NULL
+);
 
-IF @query_text_search IS NOT NULL
-BEGIN
-    CREATE TABLE
-        #query_text_search
-    (
-        plan_id bigint NOT NULL
-    );
-END;
+CREATE TABLE
+    #ignore_query_ids
+(
+    query_id bigint NOT NULL
+);
 
-IF @query_text_search_not IS NOT NULL
-BEGIN
-    CREATE TABLE
-        #query_text_search_not
-    (
-        plan_id bigint NOT NULL
-    );
-END;
+CREATE TABLE
+    #query_text_search
+(
+    plan_id bigint NOT NULL
+);
+
+
+CREATE TABLE
+    #query_text_search_not
+(
+    plan_id bigint NOT NULL
+);
 
 /*
 Populate filter temp tables using XML-based string splitting for compatibility
@@ -913,7 +891,8 @@ BEGIN
 
     EXECUTE sys.sp_executesql
         @sql,
-        N'@query_text_search_not nvarchar(4000), @procedure_name_quoted nvarchar(1024)',
+      N'@query_text_search_not nvarchar(4000), 
+        @procedure_name_quoted nvarchar(1024)',
         @query_text_search_not,
         @procedure_name_quoted;
 END;
@@ -927,7 +906,5 @@ END TRY
 BEGIN CATCH
     SELECT x = 1
 END CATCH 
-
-
 
 END; /*Final end*/
