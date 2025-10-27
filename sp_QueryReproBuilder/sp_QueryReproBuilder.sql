@@ -850,9 +850,9 @@ CREATE TABLE
     #query_parameters
 (
     plan_id bigint NOT NULL,
-    parameter_name nvarchar(128) NULL,
-    parameter_data_type nvarchar(128) NULL,
-    parameter_compiled_value nvarchar(4000) NULL
+    parameter_name sysname NULL,
+    parameter_data_type sysname NULL,
+    parameter_compiled_value nvarchar(max) NULL
 );
 
 CREATE TABLE
@@ -2588,17 +2588,17 @@ WITH
 SELECT
     qsp.plan_id,
     parameter_name =
-        cr.c.value(N'@Column', N'nvarchar(128)'),
+        cr.c.value(N'@Column', N'sysname'),
     parameter_data_type =
-        cr.c.value(N'@ParameterDataType', N'nvarchar(128)'),
+        cr.c.value(N'@ParameterDataType', N'sysname'),
     parameter_compiled_value =
-        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(4000)')
+        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')
 FROM #query_store_plan AS qsp
 CROSS APPLY
 (
     SELECT
         query_plan_xml =
-            CONVERT(xml, qsp.query_plan)
+            TRY_CAST(qsp.query_plan AS xml)
 ) AS x
 CROSS APPLY x.query_plan_xml.nodes(N'//QueryPlan/ParameterList/ColumnReference') AS cr(c)
 WHERE qsp.query_plan IS NOT NULL
@@ -2621,15 +2621,15 @@ WITH
 )
 SELECT
     qsp.plan_id,
-    warning_type = N'TEMP_TABLE',
+    warning_type = N'#temp table',
     warning_message = N'Query contains temp table(s) - reproduction may require temp table creation'
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
-WHERE qsqt.query_sql_text LIKE N'%#%'
-AND   qsqt.query_sql_text NOT LIKE N'%''%#%''%'
+WHERE qsqt.query_sql_text LIKE N'%FROM #%'
+OR    qsqt.query_sql_text LIKE N'%JOIN #%'
 OPTION(RECOMPILE);
 
 INSERT
@@ -2643,7 +2643,7 @@ WITH
 )
 SELECT
     qsp.plan_id,
-    warning_type = N'TABLE_VARIABLE',
+    warning_type = N'@table variable',
     warning_message = N'Query may contain table variable(s) - reproduction may require table variable creation'
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
@@ -2652,7 +2652,6 @@ JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
 WHERE qsqt.query_sql_text LIKE N'%FROM @%'
 OR    qsqt.query_sql_text LIKE N'%JOIN @%'
-OR    qsqt.query_sql_text LIKE N'%APPLY @%'
 OPTION(RECOMPILE);
 
 /*
@@ -2672,7 +2671,7 @@ WITH
 )
 SELECT
     qsp.plan_id,
-    warning_type = N'PARAMETER_MISMATCH',
+    warning_type = N'parameter count mismatch',
     warning_message =
         N'Parameter count mismatch: ' +
         RTRIM(plan_param_count) +
@@ -2722,18 +2721,21 @@ SELECT
     qsp.plan_id,
     qsp.query_id,
     executable_query =
-        N'/*' + NCHAR(13) + NCHAR(10) +
-        N'Query ID: ' + RTRIM(qsp.query_id) + NCHAR(13) + NCHAR(10) +
-        N'Plan ID: ' + RTRIM(qsp.plan_id) + NCHAR(13) + NCHAR(10) +
+        N'/*' + NCHAR(10) +
+        N'Query ID: ' + 
+        RTRIM(qsp.query_id) + NCHAR(10) +
+        N'Plan ID: ' + RTRIM(qsp.plan_id) + NCHAR(10) +
         ISNULL(
             (
                 SELECT
-                    N'Warnings:' + NCHAR(13) + NCHAR(10) +
+                    N'Warnings:' + NCHAR(10) +
                     STUFF
                     (
                         (
                             SELECT
-                                NCHAR(13) + NCHAR(10) + N'  - ' + rw.warning_message
+                                NCHAR(10) + 
+                                N' - ' + 
+                                rw.warning_message
                             FROM #reproduction_warnings AS rw
                             WHERE rw.plan_id = qsp.plan_id
                             ORDER BY
@@ -2745,37 +2747,78 @@ SELECT
                         1,
                         0,
                         N''
-                    ) + NCHAR(13) + NCHAR(10)
+                    ) + NCHAR(10)
             ),
             N''
         ) +
-        N'*/' + NCHAR(13) + NCHAR(10) +
-        NCHAR(13) + NCHAR(10) +
-        N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' + NCHAR(13) + NCHAR(10) +
-        ISNULL(qsrs.context_settings + N';' + NCHAR(13) + NCHAR(10), N'') +
-        ISNULL(N'SET LANGUAGE ' + lang.name + N';' + NCHAR(13) + NCHAR(10), N'') +
-        ISNULL(N'SET DATEFORMAT ' +
+        N'*/' + 
+        NCHAR(10) +
+        N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' + 
+        NCHAR(10) +
+        ISNULL
+        (
+            qsrs.context_settings + 
+            N';' + 
+            NCHAR(10), 
+            N''
+        ) +
+        ISNULL
+        (
+            N'SET LANGUAGE ' + 
+            lang.name + 
+            N';' + 
+            NCHAR(10), 
+            N''
+        ) +
+        ISNULL
+        (
+            N'SET DATEFORMAT ' +
             CASE qcs.date_format
-                WHEN 0 THEN N'mdy'
-                WHEN 1 THEN N'dmy'
-                WHEN 2 THEN N'ymd'
-                WHEN 3 THEN N'ydm'
-                WHEN 4 THEN N'myd'
-                WHEN 5 THEN N'dym'
-                ELSE N'mdy'
-            END + N';' + NCHAR(13) + NCHAR(10), N'') +
-        ISNULL(N'SET DATEFIRST ' + RTRIM(qcs.date_first) + N';' + NCHAR(13) + NCHAR(10), N'') +
-        NCHAR(13) + NCHAR(10) +
-        N'EXECUTE sys.sp_executesql' + NCHAR(13) + NCHAR(10) +
-        N'    N''' + REPLACE(qsqt.query_sql_text, N'''', N'''''') + N''',' + NCHAR(13) + NCHAR(10) +
+                 WHEN 0 THEN N'mdy'
+                 WHEN 1 THEN N'dmy'
+                 WHEN 2 THEN N'ymd'
+                 WHEN 3 THEN N'ydm'
+                 WHEN 4 THEN N'myd'
+                 WHEN 5 THEN N'dym'
+                 ELSE N'mdy'
+            END + 
+            N';' + 
+            NCHAR(10), 
+            N''
+        ) +
+        ISNULL
+        (
+            N'SET DATEFIRST ' + 
+            RTRIM(qcs.date_first) + 
+            N';' + 
+            NCHAR(10), 
+            N''
+        ) +
+        NCHAR(10) +
+        N'EXECUTE sys.sp_executesql' + 
+        NCHAR(10) +
+        N'    N''' + 
+        REPLACE
+        (
+            qsqt.query_sql_text, 
+            N'''', 
+            N''''''
+        ) + 
+        N''',' + 
+        NCHAR(10) +
         N'    N''' +
-        ISNULL(
+        ISNULL
+        (
             STUFF
             (
                 (
                     SELECT
-                        N',' + NCHAR(13) + NCHAR(10) + N'      ' +
-                        qp.parameter_name + N' ' + qp.parameter_data_type
+                        N',' + 
+                        CHAR(10) +
+                        N'      ' +
+                        qp.parameter_name + 
+                        N' ' + 
+                        qp.parameter_data_type
                     FROM #query_parameters AS qp
                     WHERE qp.plan_id = qsp.plan_id
                     ORDER BY
@@ -2785,19 +2828,30 @@ SELECT
                         TYPE
                 ).value(N'./text()[1]', N'nvarchar(max)'),
                 1,
-                6 + LEN(NCHAR(13) + NCHAR(10)),
+                6 + 
+                LEN(NCHAR(10)),
                 N''
             ),
             N''
-        ) + N''',' + NCHAR(13) + NCHAR(10) +
-        ISNULL(
+        ) + 
+        N''',' + 
+        NCHAR(10) +
+        ISNULL
+        (
             STUFF
             (
                 (
                     SELECT
-                        N',' + NCHAR(13) + NCHAR(10) + N'    ' +
-                        qp.parameter_name + N' = ' +
-                        ISNULL(qp.parameter_compiled_value, N'NULL')
+                        N',' + 
+                        NCHAR(10) + 
+                        N'    ' +
+                        qp.parameter_name + 
+                        N' = ' +
+                        ISNULL
+                        (
+                            qp.parameter_compiled_value, 
+                            N'NULL'
+                        )
                     FROM #query_parameters AS qp
                     WHERE qp.plan_id = qsp.plan_id
                     ORDER BY
@@ -2807,11 +2861,13 @@ SELECT
                         TYPE
                 ).value(N'./text()[1]', N'nvarchar(max)'),
                 1,
-                6 + LEN(NCHAR(13) + NCHAR(10)),
+                6 + 
+                LEN(NCHAR(10)),
                 N''
             ),
             N''
-        ) + N';' + NCHAR(13) + NCHAR(10)
+        ) + N';' + 
+        NCHAR(10)
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
