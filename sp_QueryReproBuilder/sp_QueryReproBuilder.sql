@@ -1661,7 +1661,14 @@ END;
 
 SELECT @sql += N'
     FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
-    WHERE qsrs.is_online_index_plan = 0';
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              WHERE qsp.plan_id = qsrs.plan_id
+              AND   qsp.is_online_index_plan = 0
+          )';
 
 /*Add date filtering if specified*/
 IF @start_date <= @end_date
