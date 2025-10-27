@@ -2600,8 +2600,8 @@ CROSS APPLY
         query_plan_xml =
             TRY_CAST(qsp.query_plan AS xml)
 ) AS x
-CROSS APPLY x.query_plan_xml.nodes(N'//QueryPlan/ParameterList/ColumnReference') AS cr(c)
-WHERE qsp.query_plan IS NOT NULL
+CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:ParameterList/p:ColumnReference') AS cr(c)
+WHERE x.query_plan_xml IS NOT NULL
 OPTION(RECOMPILE);
 
 /*
@@ -2755,7 +2755,8 @@ SELECT
         NCHAR(10) +
         ISNULL
         (
-            qsrs.context_settings +
+            N'SET ' +
+            REPLACE(qsrs.context_settings, N', ', N';' + NCHAR(10) + N'SET ') +
             N';' +
             NCHAR(10),
             N''
@@ -2882,21 +2883,16 @@ CROSS APPLY
         query_text_cleaned =
             CASE
                 WHEN qsqt.query_sql_text LIKE N'(@%'
-                AND CHARINDEX(N')' + NCHAR(13) + NCHAR(10), qsqt.query_sql_text) > 0
-                THEN SUBSTRING
-                     (
-                         qsqt.query_sql_text,
-                         CHARINDEX(N')' + NCHAR(13) + NCHAR(10), qsqt.query_sql_text) + 3,
-                         LEN(qsqt.query_sql_text)
-                     )
-                WHEN qsqt.query_sql_text LIKE N'(@%'
-                AND CHARINDEX(N')' + NCHAR(10), qsqt.query_sql_text) > 0
-                THEN SUBSTRING
-                     (
-                         qsqt.query_sql_text,
-                         CHARINDEX(N')' + NCHAR(10), qsqt.query_sql_text) + 2,
-                         LEN(qsqt.query_sql_text)
-                     )
+                THEN
+                    LTRIM
+                    (
+                        SUBSTRING
+                        (
+                            qsqt.query_sql_text,
+                            PATINDEX(N'%)%', qsqt.query_sql_text) + 1,
+                            LEN(qsqt.query_sql_text)
+                        )
+                    )
                 ELSE qsqt.query_sql_text
             END
 ) AS clean_query
