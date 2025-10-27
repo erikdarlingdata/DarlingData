@@ -2588,9 +2588,9 @@ WITH
 SELECT
     qsp.plan_id,
     parameter_name =
-        cr.c.value(N'@Column', N'sysname'),
+        RTRIM(cr.c.value(N'@Column', N'sysname')),
     parameter_data_type =
-        cr.c.value(N'@ParameterDataType', N'sysname'),
+        RTRIM(cr.c.value(N'@ParameterDataType', N'sysname')),
     parameter_compiled_value =
         CASE
             WHEN cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)') LIKE N'(%)'
@@ -2818,7 +2818,7 @@ SELECT
                              WHERE qp.plan_id = qsp.plan_id
                          )
                     THEN
-                        N'    N''' +
+                        N'N''' +
                         STUFF
                         (
                             (
@@ -2828,7 +2828,7 @@ SELECT
                                     N'    ' +
                                     qp.parameter_name +
                                     N' ' +
-                                    RTRIM(qp.parameter_data_type)
+                                    qp.parameter_data_type
                                 FROM #query_parameters AS qp
                                 WHERE qp.plan_id = qsp.plan_id
                                 ORDER BY
