@@ -839,7 +839,7 @@ CREATE TABLE
     last_compile_duration_ms bigint NULL,
     plan_forcing_type_desc nvarchar(60) NULL,
     has_compile_replay_script bit NULL,
-    is_optimized_plan_fixing_disabled bit NULL,
+    is_optimized_plan_forcing_disabled bit NULL,
     plan_type_desc nvarchar(120) NULL
 );
 
