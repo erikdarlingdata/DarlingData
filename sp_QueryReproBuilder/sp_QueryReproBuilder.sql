@@ -2201,6 +2201,103 @@ EXECUTE sys.sp_executesql
     @database_id;
 
 /*
+Update things to get the context settings for each query
+*/
+SELECT
+    @current_table = N'updating context_settings in #query_store_runtime_stats';
+
+UPDATE
+    qsrs
+SET
+    qsrs.context_settings =
+        SUBSTRING
+        (
+            CASE
+                WHEN
+                    CONVERT
+                    (
+                        integer,
+                        qcs.set_options
+                    ) & 1 = 1
+                THEN ', ANSI_PADDING'
+                ELSE ''
+            END +
+            CASE
+                WHEN
+                    CONVERT
+                    (
+                        integer,
+                        qcs.set_options
+                    ) & 8 = 8
+                THEN ', CONCAT_NULL_YIELDS_NULL'
+                ELSE ''
+            END +
+            CASE
+                WHEN
+                    CONVERT
+                    (
+                        integer,
+                        qcs.set_options
+                    ) & 16 = 16
+                THEN ', ANSI_WARNINGS'
+                ELSE ''
+            END +
+            CASE
+                WHEN
+                    CONVERT
+                    (
+                        integer,
+                        qcs.set_options
+                    ) & 32 = 32
+                THEN ', ANSI_NULLS'
+                ELSE ''
+            END +
+            CASE
+                WHEN
+                    CONVERT
+                    (
+                        integer,
+                        qcs.set_options
+                    ) & 64 = 64
+                THEN ', QUOTED_IDENTIFIER'
+                ELSE ''
+            END +
+            CASE
+                WHEN
+                    CONVERT
+                    (
+                        integer,
+                        qcs.set_options
+                    ) & 4096 = 4096
+                THEN ', ARITH_ABORT'
+                ELSE ''
+            END +
+            CASE
+                WHEN
+                    CONVERT
+                    (
+                        integer,
+                        qcs.set_options
+                    ) & 8192 = 8192
+                THEN ', NUMERIC_ROUNDABORT'
+                ELSE ''
+            END,
+            2,
+            256
+        )
+FROM #query_store_runtime_stats AS qsrs
+JOIN #query_store_plan AS qsp
+  ON  qsrs.plan_id = qsp.plan_id
+  AND qsrs.database_id = qsp.database_id
+JOIN #query_store_query AS qsq
+  ON  qsp.query_id = qsq.query_id
+  AND qsp.database_id = qsq.database_id
+JOIN #query_context_settings AS qcs
+  ON  qsq.context_settings_id = qcs.context_settings_id
+  AND qsq.database_id = qcs.database_id
+OPTION(RECOMPILE);
+
+/*
 Populate the #query_store_wait_stats table with wait statistics (SQL 2017+)
 */
 SELECT
