@@ -2431,6 +2431,90 @@ OPTION(RECOMPILE);' + @nc10;
         @database_id;
 END;
 
+/*
+Debug result sets for temp tables
+*/
+SELECT
+    table_name =
+        N'#query_store_runtime_stats',
+    qsrs.*
+FROM #query_store_runtime_stats AS qsrs
+ORDER BY
+    qsrs.plan_id
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#query_store_plan',
+    qsp.*
+FROM #query_store_plan AS qsp
+ORDER BY
+    qsp.plan_id
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#query_store_query_text',
+    qsqt.*
+FROM #query_store_query_text AS qsqt
+ORDER BY
+    qsqt.query_text_id
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#query_store_query',
+    qsq.*
+FROM #query_store_query AS qsq
+ORDER BY
+    qsq.query_id
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#query_context_settings',
+    qcs.*
+FROM #query_context_settings AS qcs
+ORDER BY
+    qcs.context_settings_id
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#query_store_wait_stats',
+    qsws.*
+FROM #query_store_wait_stats AS qsws
+ORDER BY
+    qsws.plan_id
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#query_store_plan_feedback',
+    qspf.*
+FROM #query_store_plan_feedback AS qspf
+ORDER BY
+    qspf.plan_feedback_id
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#query_store_query_variant',
+    qsqv.*
+FROM #query_store_query_variant AS qsqv
+ORDER BY
+    qsqv.query_variant_query_id
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#query_store_query_hints',
+    qsqh.*
+FROM #query_store_query_hints AS qsqh
+ORDER BY
+    qsqh.query_hint_id
+OPTION(RECOMPILE);
+
 
 
 
