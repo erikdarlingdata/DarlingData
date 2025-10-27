@@ -846,6 +846,38 @@ CREATE TABLE
     plan_type_desc nvarchar(120) NULL
 );
 
+CREATE TABLE
+    #query_parameters
+(
+    plan_id bigint NOT NULL,
+    parameter_name nvarchar(128) NULL,
+    parameter_data_type nvarchar(128) NULL,
+    parameter_compiled_value nvarchar(4000) NULL
+);
+
+CREATE TABLE
+    #query_text_parameters
+(
+    plan_id bigint NOT NULL,
+    parameter_declaration nvarchar(max) NULL
+);
+
+CREATE TABLE
+    #reproduction_warnings
+(
+    plan_id bigint NOT NULL,
+    warning_type nvarchar(50) NULL,
+    warning_message nvarchar(max) NULL
+);
+
+CREATE TABLE
+    #repro_queries
+(
+    plan_id bigint NOT NULL,
+    query_id bigint NOT NULL,
+    executable_query nvarchar(max) NULL
+);
+
 /*
 Populate filter temp tables using XML-based string splitting for compatibility
 */
@@ -2538,6 +2570,260 @@ OPTION(RECOMPILE);' + @nc10;
 END;
 
 /*
+Extract parameters from query plans
+*/
+SELECT
+    @current_table = N'extracting parameters from query plans';
+
+INSERT
+    #query_parameters
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    parameter_name,
+    parameter_data_type,
+    parameter_compiled_value
+)
+SELECT
+    qsp.plan_id,
+    parameter_name =
+        cr.c.value(N'@Column', N'nvarchar(128)'),
+    parameter_data_type =
+        cr.c.value(N'@ParameterDataType', N'nvarchar(128)'),
+    parameter_compiled_value =
+        cr.c.value(N'@ParameterCompiledValue', N'nvarchar(4000)')
+FROM #query_store_plan AS qsp
+CROSS APPLY
+(
+    SELECT
+        query_plan_xml =
+            CONVERT(xml, qsp.query_plan)
+) AS x
+CROSS APPLY x.query_plan_xml.nodes(N'//QueryPlan/ParameterList/ColumnReference') AS cr(c)
+WHERE qsp.query_plan IS NOT NULL
+OPTION(RECOMPILE);
+
+/*
+Check for temp tables and table variables in query text
+*/
+SELECT
+    @current_table = N'checking for temp tables and table variables';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT
+    qsp.plan_id,
+    warning_type = N'TEMP_TABLE',
+    warning_message = N'Query contains temp table(s) - reproduction may require temp table creation'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.query_sql_text LIKE N'%#%'
+AND   qsqt.query_sql_text NOT LIKE N'%''%#%''%'
+OPTION(RECOMPILE);
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT
+    qsp.plan_id,
+    warning_type = N'TABLE_VARIABLE',
+    warning_message = N'Query may contain table variable(s) - reproduction may require table variable creation'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.query_sql_text LIKE N'%@%TABLE%'
+OPTION(RECOMPILE);
+
+/*
+Check for parameter count mismatch
+*/
+SELECT
+    @current_table = N'checking for parameter count mismatch';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT
+    qsp.plan_id,
+    warning_type = N'PARAMETER_MISMATCH',
+    warning_message =
+        N'Parameter count mismatch: ' +
+        RTRIM(plan_param_count) +
+        N' in plan, ' +
+        RTRIM(text_param_count) +
+        N' estimated in query text'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        plan_param_count =
+            COUNT_BIG(*)
+    FROM #query_parameters AS qp
+    WHERE qp.plan_id = qsp.plan_id
+) AS ppc
+CROSS APPLY
+(
+    SELECT
+        text_param_count =
+            LEN(qsqt.query_sql_text) -
+            LEN(REPLACE(qsqt.query_sql_text, N'@', N''))
+) AS tpc
+WHERE ppc.plan_param_count <> tpc.text_param_count
+AND   ppc.plan_param_count > 0
+OPTION(RECOMPILE);
+
+/*
+Build reproduction queries with sp_executesql
+*/
+SELECT
+    @current_table = N'building reproduction queries';
+
+INSERT
+    #repro_queries
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    query_id,
+    executable_query
+)
+SELECT
+    qsp.plan_id,
+    qsp.query_id,
+    executable_query =
+        N'/*' + NCHAR(13) + NCHAR(10) +
+        N'Query ID: ' + RTRIM(qsp.query_id) + NCHAR(13) + NCHAR(10) +
+        N'Plan ID: ' + RTRIM(qsp.plan_id) + NCHAR(13) + NCHAR(10) +
+        ISNULL(
+            (
+                SELECT
+                    N'Warnings:' + NCHAR(13) + NCHAR(10) +
+                    STUFF
+                    (
+                        (
+                            SELECT
+                                NCHAR(13) + NCHAR(10) + N'  - ' + rw.warning_message
+                            FROM #reproduction_warnings AS rw
+                            WHERE rw.plan_id = qsp.plan_id
+                            ORDER BY
+                                rw.warning_type
+                            FOR XML
+                                PATH(N''),
+                                TYPE
+                        ).value(N'./text()[1]', N'nvarchar(max)'),
+                        1,
+                        0,
+                        N''
+                    ) + NCHAR(13) + NCHAR(10)
+            ),
+            N''
+        ) +
+        N'*/' + NCHAR(13) + NCHAR(10) +
+        NCHAR(13) + NCHAR(10) +
+        N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' + NCHAR(13) + NCHAR(10) +
+        ISNULL(qsrs.context_settings + N';' + NCHAR(13) + NCHAR(10), N'') +
+        ISNULL(N'SET LANGUAGE ' + lang.name + N';' + NCHAR(13) + NCHAR(10), N'') +
+        ISNULL(N'SET DATEFORMAT ' +
+            CASE qcs.date_format
+                WHEN 0 THEN N'mdy'
+                WHEN 1 THEN N'dmy'
+                WHEN 2 THEN N'ymd'
+                WHEN 3 THEN N'ydm'
+                WHEN 4 THEN N'myd'
+                WHEN 5 THEN N'dym'
+                ELSE N'mdy'
+            END + N';' + NCHAR(13) + NCHAR(10), N'') +
+        ISNULL(N'SET DATEFIRST ' + RTRIM(qcs.date_first) + N';' + NCHAR(13) + NCHAR(10), N'') +
+        NCHAR(13) + NCHAR(10) +
+        N'EXECUTE sys.sp_executesql' + NCHAR(13) + NCHAR(10) +
+        N'    N''' + REPLACE(qsqt.query_sql_text, N'''', N'''''') + N''',' + NCHAR(13) + NCHAR(10) +
+        N'    N''' +
+        ISNULL(
+            STUFF
+            (
+                (
+                    SELECT
+                        N',' + NCHAR(13) + NCHAR(10) + N'      ' +
+                        qp.parameter_name + N' ' + qp.parameter_data_type
+                    FROM #query_parameters AS qp
+                    WHERE qp.plan_id = qsp.plan_id
+                    ORDER BY
+                        qp.parameter_name
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                6 + LEN(NCHAR(13) + NCHAR(10)),
+                N''
+            ),
+            N''
+        ) + N''',' + NCHAR(13) + NCHAR(10) +
+        ISNULL(
+            STUFF
+            (
+                (
+                    SELECT
+                        N',' + NCHAR(13) + NCHAR(10) + N'    ' +
+                        qp.parameter_name + N' = ' +
+                        ISNULL(qp.parameter_compiled_value, N'NULL')
+                    FROM #query_parameters AS qp
+                    WHERE qp.plan_id = qsp.plan_id
+                    ORDER BY
+                        qp.parameter_name
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                6 + LEN(NCHAR(13) + NCHAR(10)),
+                N''
+            ),
+            N''
+        ) + N';' + NCHAR(13) + NCHAR(10)
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+JOIN #query_store_runtime_stats AS qsrs
+  ON qsp.plan_id = qsrs.plan_id
+JOIN #query_context_settings AS qcs
+  ON qsq.context_settings_id = qcs.context_settings_id
+LEFT JOIN sys.syslanguages AS lang
+  ON qcs.language_id = lang.langid
+OPTION(RECOMPILE);
+
+/*
 Debug result sets for temp tables
 */
 SELECT
@@ -2619,6 +2905,35 @@ SELECT
 FROM #query_store_query_hints AS qsqh
 ORDER BY
     qsqh.query_hint_id
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#query_parameters',
+    qp.*
+FROM #query_parameters AS qp
+ORDER BY
+    qp.plan_id,
+    qp.parameter_name
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#reproduction_warnings',
+    rw.*
+FROM #reproduction_warnings AS rw
+ORDER BY
+    rw.plan_id,
+    rw.warning_type
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#repro_queries',
+    rq.*
+FROM #repro_queries AS rq
+ORDER BY
+    rq.plan_id
 OPTION(RECOMPILE);
 
 
