@@ -695,6 +695,78 @@ CREATE TABLE
 );
 
 CREATE TABLE
+    #query_store_wait_stats
+(
+    database_id integer NOT NULL,
+    plan_id bigint NOT NULL,
+    wait_category_desc nvarchar(60) NOT NULL,
+    total_query_wait_time_ms bigint NOT NULL,
+    avg_query_wait_time_ms float NULL,
+    last_query_wait_time_ms bigint NOT NULL,
+    min_query_wait_time_ms bigint NOT NULL,
+    max_query_wait_time_ms bigint NOT NULL
+);
+
+CREATE TABLE
+    #query_context_settings
+(
+    database_id integer NOT NULL,
+    context_settings_id bigint NOT NULL,
+    set_options varbinary(8) NULL,
+    language_id smallint NOT NULL,
+    date_format smallint NOT NULL,
+    date_first tinyint NOT NULL,
+    status varbinary(2) NULL,
+    required_cursor_options integer NOT NULL,
+    acceptable_cursor_options integer NOT NULL,
+    merge_action_type smallint NOT NULL,
+    default_schema_id integer NOT NULL,
+    is_replication_specific bit NOT NULL,
+    is_contained varbinary(1) NULL
+);
+
+CREATE TABLE
+    #query_store_query
+(
+    database_id integer NOT NULL,
+    query_id bigint NOT NULL,
+    query_text_id bigint NOT NULL,
+    context_settings_id bigint NOT NULL,
+    object_id bigint NULL,
+    object_name AS
+        ISNULL
+        (
+            QUOTENAME
+            (
+                OBJECT_SCHEMA_NAME
+                (
+                    object_id,
+                    database_id
+                )
+            ) +
+            N'.' +
+            QUOTENAME
+            (
+                OBJECT_NAME
+                (
+                    object_id,
+                    database_id
+                )
+            ),
+            CASE
+                WHEN object_id > 0
+                THEN N'Unknown object_id: ' +
+                     RTRIM(object_id)
+                ELSE N'Adhoc'
+            END
+        ),
+    query_hash binary(8) NOT NULL,
+    initial_compile_start_time datetimeoffset(7) NOT NULL,
+    last_compile_start_time datetimeoffset(7) NULL,
+    last_execution_time datetimeoffset(7) NULL
+);
+
+CREATE TABLE
     #query_store_query_text
 (
     database_id integer NOT NULL,
@@ -1957,6 +2029,212 @@ WITH
     statement_sql_handle,
     is_part_of_encrypted_module,
     has_restricted_text
+)
+EXECUTE sys.sp_executesql
+    @sql,
+    N'@database_id integer',
+    @database_id;
+
+/*
+Populate the #query_store_query table with query metadata
+*/
+SELECT
+    @sql = N'',
+    @current_table = N'inserting #query_store_query';
+
+SELECT
+    @sql += N'
+SELECT
+    @database_id,
+    qsq.query_id,
+    qsq.query_text_id,
+    qsq.context_settings_id,
+    qsq.object_id,
+    qsq.query_hash,
+    qsq.initial_compile_start_time,
+    qsq.last_compile_start_time,
+    qsq.last_execution_time
+FROM #query_store_plan AS qsp
+CROSS APPLY
+(
+    SELECT TOP (1)
+        qsq.*
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    WHERE qsq.query_id = qsp.query_id
+    ORDER BY
+        qsq.last_execution_time DESC
+) AS qsq
+WHERE qsp.database_id = @database_id
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #query_store_query
+WITH
+    (TABLOCK)
+(
+    database_id,
+    query_id,
+    query_text_id,
+    context_settings_id,
+    object_id,
+    query_hash,
+    initial_compile_start_time,
+    last_compile_start_time,
+    last_execution_time
+)
+EXECUTE sys.sp_executesql
+    @sql,
+    N'@database_id integer',
+    @database_id;
+
+/*
+Populate the #query_context_settings table with context settings
+*/
+SELECT
+    @sql = N'',
+    @current_table = N'inserting #query_context_settings';
+
+SELECT
+    @sql += N'
+SELECT
+    @database_id,
+    qcs.context_settings_id,
+    qcs.set_options,
+    qcs.language_id,
+    qcs.date_format,
+    qcs.date_first,
+    qcs.status,
+    qcs.required_cursor_options,
+    qcs.acceptable_cursor_options,
+    qcs.merge_action_type,
+    qcs.default_schema_id,
+    qcs.is_replication_specific,
+    qcs.is_contained
+FROM ' + @database_name_quoted + N'.sys.query_context_settings AS qcs
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_query AS qsq
+          WHERE qsq.context_settings_id = qcs.context_settings_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #query_context_settings
+WITH
+    (TABLOCK)
+(
+    database_id,
+    context_settings_id,
+    set_options,
+    language_id,
+    date_format,
+    date_first,
+    status,
+    required_cursor_options,
+    acceptable_cursor_options,
+    merge_action_type,
+    default_schema_id,
+    is_replication_specific,
+    is_contained
+)
+EXECUTE sys.sp_executesql
+    @sql,
+    N'@database_id integer',
+    @database_id;
+
+/*
+Populate the #query_store_wait_stats table with wait statistics (SQL 2017+)
+*/
+SELECT
+    @sql = N'',
+    @current_table = N'inserting #query_store_wait_stats';
+
+SELECT
+    @sql += N'
+SELECT
+    @database_id,
+    qsws_with_lasts.plan_id,
+    qsws_with_lasts.wait_category_desc,
+    total_query_wait_time_ms =
+        SUM(qsws_with_lasts.total_query_wait_time_ms),
+    avg_query_wait_time_ms =
+        SUM(qsws_with_lasts.avg_query_wait_time_ms),
+    last_query_wait_time_ms =
+        MAX(qsws_with_lasts.partitioned_last_query_wait_time_ms),
+    min_query_wait_time_ms =
+        SUM(qsws_with_lasts.min_query_wait_time_ms),
+    max_query_wait_time_ms =
+        SUM(qsws_with_lasts.max_query_wait_time_ms)
+FROM
+(
+    SELECT
+        qsws.*,
+        partitioned_last_query_wait_time_ms =
+            LAST_VALUE(qsws.last_query_wait_time_ms) OVER
+            (
+                PARTITION BY
+                    qsws.plan_id,
+                    qsws.execution_type,
+                    qsws.wait_category_desc
+                ORDER BY
+                    qsws.runtime_stats_interval_id DESC
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+            )
+    FROM #query_store_runtime_stats AS qsrs
+    CROSS APPLY
+    (
+        SELECT TOP (5)
+            qsws.*
+        FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+        WHERE qsws.runtime_stats_interval_id = qsrs.runtime_stats_interval_id
+        AND   qsws.plan_id = qsrs.plan_id
+        AND   qsws.wait_category > 0
+        AND   qsws.min_query_wait_time_ms > 0
+        ORDER BY
+            qsws.avg_query_wait_time_ms DESC
+    ) AS qsws
+    WHERE qsrs.database_id = @database_id
+) AS qsws_with_lasts
+GROUP BY
+    qsws_with_lasts.plan_id,
+    qsws_with_lasts.wait_category_desc
+HAVING
+    SUM(qsws_with_lasts.min_query_wait_time_ms) > 0.
+OPTION(RECOMPILE);' + @nc10;
+
+IF @debug = 1
+BEGIN
+    PRINT LEN(@sql);
+    PRINT @sql;
+END;
+
+INSERT
+    #query_store_wait_stats
+WITH
+    (TABLOCK)
+(
+    database_id,
+    plan_id,
+    wait_category_desc,
+    total_query_wait_time_ms,
+    avg_query_wait_time_ms,
+    last_query_wait_time_ms,
+    min_query_wait_time_ms,
+    max_query_wait_time_ms
 )
 EXECUTE sys.sp_executesql
     @sql,
