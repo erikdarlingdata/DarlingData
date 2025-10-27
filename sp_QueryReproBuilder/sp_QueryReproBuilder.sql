@@ -2665,7 +2665,7 @@ OPTION(RECOMPILE);
 
 /*
 Check for parameter count mismatch
-Note: This is a simplified check and may have false positives
+Only warn if query text starts with parameters but none found in plan
 */
 SELECT
     @current_table = N'checking for parameter count mismatch';
@@ -2683,10 +2683,12 @@ SELECT
     qsp.plan_id,
     warning_type = N'parameter count mismatch',
     warning_message =
-        N'Parameter count mismatch: ' +
-        RTRIM(plan_param_count) +
-        N' parameter(s) in plan XML'
+        N'Query text has parameter declarations but no parameters found in plan XML'
 FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
 CROSS APPLY
 (
     SELECT
@@ -2695,7 +2697,8 @@ CROSS APPLY
     FROM #query_parameters AS qp
     WHERE qp.plan_id = qsp.plan_id
 ) AS ppc
-WHERE ppc.plan_param_count = 0
+WHERE qsqt.query_sql_text LIKE N'(@%'
+AND   ppc.plan_param_count = 0
 OPTION(RECOMPILE);
 
 /*
