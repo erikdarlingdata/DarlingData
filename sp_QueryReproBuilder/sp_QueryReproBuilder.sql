@@ -2872,7 +2872,7 @@ SELECT
                         N';' +
                         NCHAR(10)
                     ELSE
-                        N'    N'''';' +
+                        N'N'''';' +
                         NCHAR(10)
                 END
             ELSE
