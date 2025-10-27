@@ -2828,7 +2828,7 @@ SELECT
                                     N'    ' +
                                     qp.parameter_name +
                                     N' ' +
-                                    qp.parameter_data_type
+                                    RTRIM(qp.parameter_data_type)
                                 FROM #query_parameters AS qp
                                 WHERE qp.plan_id = qsp.plan_id
                                 ORDER BY
