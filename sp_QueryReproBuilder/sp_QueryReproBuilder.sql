@@ -145,7 +145,9 @@ DECLARE
     @query_store_exists bit = 'true',
     @procedure_name_quoted nvarchar(1024),
     @procedure_exists bit = 0,
-    @isolation_level nvarchar(100) = N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' + NCHAR(13) + NCHAR(10),
+    @isolation_level nvarchar(100) = 
+        N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' + 
+        NCHAR(10),
     @nc10 nchar(1) = NCHAR(10),
     @where_clause nvarchar(MAX) = N'',
     @start_date_original datetimeoffset(7),
