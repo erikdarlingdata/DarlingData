@@ -154,7 +154,8 @@ DECLARE
     @product_version integer,
     @azure bit = 0,
     @sql_2022_views bit = 0,
-    @new bit = 0
+    @new bit = 0,
+    @current_table nvarchar(100)
 
 /*Fix NULL @database_name*/
 IF
