@@ -2529,15 +2529,15 @@ OPTION(RECOMPILE);
 END TRY
 
 BEGIN CATCH
-    IF @sql IS NOT NULL
-    BEGIN
-        RAISERROR('Current @sql length: %d', 0, 1, LEN(@sql)) WITH NOWAIT;
-        RAISERROR('%s', 0, 1, @sql) WITH NOWAIT;
-    END;
-
     IF @current_table IS NOT NULL
     BEGIN
-        RAISERROR('Current table: %s', 0, 1, @current_table) WITH NOWAIT;
+        RAISERROR('error while %s', 10, 1, @current_table) WITH NOWAIT;
+    END;
+
+    IF @sql IS NOT NULL
+    BEGIN
+        RAISERROR('current dynamic sql:', 10, 1) WITH NOWAIT;
+        RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
     END;
 
     IF @@TRANCOUNT > 0
