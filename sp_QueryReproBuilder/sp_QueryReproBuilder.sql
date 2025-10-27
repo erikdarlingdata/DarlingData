@@ -2751,15 +2751,13 @@ SELECT
             ),
             N''
         ) +
-        N'*/' + 
-        NCHAR(10) +
-        N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' + 
+        N'*/' +
         NCHAR(10) +
         ISNULL
         (
-            qsrs.context_settings + 
-            N';' + 
-            NCHAR(10), 
+            qsrs.context_settings +
+            N';' +
+            NCHAR(10),
             N''
         ) +
         ISNULL
@@ -2795,84 +2793,113 @@ SELECT
             N''
         ) +
         NCHAR(10) +
-        N'EXECUTE sys.sp_executesql' + 
-        NCHAR(10) +
-        N'    N''' + 
-        REPLACE
-        (
-            qsqt.query_sql_text, 
-            N'''', 
-            N''''''
-        ) + 
-        N''',' + 
+        N'EXECUTE sys.sp_executesql' +
         NCHAR(10) +
         N'    N''' +
-        ISNULL
+        REPLACE
         (
-            STUFF
-            (
-                (
-                    SELECT
-                        N',' + 
-                        CHAR(10) +
-                        N'      ' +
-                        qp.parameter_name + 
-                        N' ' + 
-                        qp.parameter_data_type
-                    FROM #query_parameters AS qp
-                    WHERE qp.plan_id = qsp.plan_id
-                    ORDER BY
-                        qp.parameter_name
-                    FOR XML
-                        PATH(N''),
-                        TYPE
-                ).value(N'./text()[1]', N'nvarchar(max)'),
-                1,
-                6 + 
-                LEN(NCHAR(10)),
-                N''
-            ),
-            N''
-        ) + 
-        N''',' + 
+            clean_query.query_text_cleaned,
+            N'''',
+            N''''''
+        ) +
+        N''',' +
         NCHAR(10) +
-        ISNULL
-        (
-            STUFF
-            (
+        CASE
+            WHEN EXISTS
+                 (
+                     SELECT
+                         1/0
+                     FROM #query_parameters AS qp
+                     WHERE qp.plan_id = qsp.plan_id
+                 )
+            THEN
+                N'    N''' +
+                STUFF
                 (
-                    SELECT
-                        N',' + 
-                        NCHAR(10) + 
-                        N'    ' +
-                        qp.parameter_name + 
-                        N' = ' +
-                        ISNULL
-                        (
-                            qp.parameter_compiled_value, 
-                            N'NULL'
-                        )
-                    FROM #query_parameters AS qp
-                    WHERE qp.plan_id = qsp.plan_id
-                    ORDER BY
-                        qp.parameter_name
-                    FOR XML
-                        PATH(N''),
-                        TYPE
-                ).value(N'./text()[1]', N'nvarchar(max)'),
-                1,
-                6 + 
-                LEN(NCHAR(10)),
-                N''
-            ),
-            N''
-        ) + N';' + 
+                    (
+                        SELECT
+                            N',' +
+                            NCHAR(10) +
+                            N'      ' +
+                            qp.parameter_name +
+                            N' ' +
+                            qp.parameter_data_type
+                        FROM #query_parameters AS qp
+                        WHERE qp.plan_id = qsp.plan_id
+                        ORDER BY
+                            qp.parameter_name
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    1 +
+                    LEN(NCHAR(10)),
+                    N''
+                ) +
+                N''',' +
+                NCHAR(10) +
+                STUFF
+                (
+                    (
+                        SELECT
+                            N',' +
+                            NCHAR(10) +
+                            N'    ' +
+                            qp.parameter_name +
+                            N' = ' +
+                            ISNULL
+                            (
+                                qp.parameter_compiled_value,
+                                N'NULL'
+                            )
+                        FROM #query_parameters AS qp
+                        WHERE qp.plan_id = qsp.plan_id
+                        ORDER BY
+                            qp.parameter_name
+                        FOR XML
+                            PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    1 +
+                    LEN(NCHAR(10)),
+                    N''
+                ) +
+                N';'
+            ELSE
+                N'    N'''';'
+        END + 
         NCHAR(10)
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_text_cleaned =
+            CASE
+                WHEN qsqt.query_sql_text LIKE N'(@%'
+                AND CHARINDEX(N')' + NCHAR(13) + NCHAR(10), qsqt.query_sql_text) > 0
+                THEN SUBSTRING
+                     (
+                         qsqt.query_sql_text,
+                         CHARINDEX(N')' + NCHAR(13) + NCHAR(10), qsqt.query_sql_text) + 3,
+                         LEN(qsqt.query_sql_text)
+                     )
+                WHEN qsqt.query_sql_text LIKE N'(@%'
+                AND CHARINDEX(N')' + NCHAR(10), qsqt.query_sql_text) > 0
+                THEN SUBSTRING
+                     (
+                         qsqt.query_sql_text,
+                         CHARINDEX(N')' + NCHAR(10), qsqt.query_sql_text) + 2,
+                         LEN(qsqt.query_sql_text)
+                     )
+                ELSE qsqt.query_sql_text
+            END
+) AS clean_query
 JOIN #query_store_runtime_stats AS qsrs
   ON qsp.plan_id = qsrs.plan_id
 JOIN #query_context_settings AS qcs
