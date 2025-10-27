@@ -2808,7 +2808,7 @@ SELECT
                         SELECT
                             N',' +
                             NCHAR(10) +
-                            N'      ' +
+                            N'    ' +
                             qp.parameter_name +
                             N' ' +
                             qp.parameter_data_type
@@ -2871,14 +2871,11 @@ CROSS APPLY
                 THEN
                     LTRIM
                     (
-                        RTRIM
+                        SUBSTRING
                         (
-                            SUBSTRING
-                            (
-                                qsqt.query_sql_text,
-                                PATINDEX(N'%)%', qsqt.query_sql_text) + 1,
-                                LEN(qsqt.query_sql_text)
-                            )
+                            qsqt.query_sql_text,
+                            PATINDEX(N'%)%', qsqt.query_sql_text) + 2,
+                            LEN(qsqt.query_sql_text)
                         )
                     )
                 ELSE qsqt.query_sql_text
