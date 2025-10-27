@@ -2301,7 +2301,7 @@ SET
                         integer,
                         qcs.set_options
                     ) & 4096 = 4096
-                THEN ', ARITH_ABORT'
+                THEN ', ARITHABORT'
                 ELSE ''
             END +
             CASE
@@ -2783,7 +2783,7 @@ SELECT
         NCHAR(10) +
         N'EXECUTE sys.sp_executesql' +
         NCHAR(10) +
-        N'    N''' +
+        N' N''' +
         REPLACE
         (
             clean_query.query_text_cleaned,
@@ -2801,7 +2801,7 @@ SELECT
                      WHERE qp.plan_id = qsp.plan_id
                  )
             THEN
-                N'    N''' +
+                N' N''' +
                 STUFF
                 (
                     (
@@ -2874,7 +2874,7 @@ CROSS APPLY
                         SUBSTRING
                         (
                             qsqt.query_sql_text,
-                            PATINDEX(N'%)%', qsqt.query_sql_text) + 2,
+                            PATINDEX(N'%))%', qsqt.query_sql_text) + 2,
                             LEN(qsqt.query_sql_text)
                         )
                     )
