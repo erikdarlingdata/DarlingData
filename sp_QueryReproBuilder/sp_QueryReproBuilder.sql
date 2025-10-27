@@ -708,6 +708,40 @@ CREATE TABLE
 );
 
 CREATE TABLE
+    #query_store_plan_feedback
+(
+    database_id integer NOT NULL,
+    plan_feedback_id bigint NOT NULL,
+    plan_id bigint NULL,
+    feature_desc nvarchar(120) NULL,
+    feedback_data nvarchar(max) NULL,
+    state_desc nvarchar(120) NULL,
+    create_time datetimeoffset(7) NOT NULL,
+    last_updated_time datetimeoffset(7) NULL
+);
+
+CREATE TABLE
+    #query_store_query_hints
+(
+    database_id integer NOT NULL,
+    query_hint_id bigint NOT NULL,
+    query_id bigint NOT NULL,
+    query_hint_text nvarchar(max) NULL,
+    last_query_hint_failure_reason_desc nvarchar(256) NULL,
+    query_hint_failure_count bigint NOT NULL,
+    source_desc nvarchar(256) NULL
+);
+
+CREATE TABLE
+    #query_store_query_variant
+(
+    database_id integer NOT NULL,
+    query_variant_query_id bigint NOT NULL,
+    parent_query_id bigint NOT NULL,
+    dispatcher_plan_id bigint NOT NULL
+);
+
+CREATE TABLE
     #query_context_settings
 (
     database_id integer NOT NULL,
@@ -2240,6 +2274,161 @@ EXECUTE sys.sp_executesql
     @sql,
     N'@database_id integer',
     @database_id;
+
+/*
+Populate SQL 2022+ Query Store tables
+*/
+IF @sql_2022_views = 1
+BEGIN
+    /*
+    Populate the #query_store_plan_feedback table
+    */
+    SELECT
+        @sql = N'',
+        @current_table = N'inserting #query_store_plan_feedback';
+
+    SELECT
+        @sql += N'
+SELECT
+    @database_id,
+    qspf.plan_feedback_id,
+    qspf.plan_id,
+    qspf.feature_desc,
+    qspf.feedback_data,
+    qspf.state_desc,
+    qspf.create_time,
+    qspf.last_updated_time
+FROM ' + @database_name_quoted + N'.sys.query_store_plan_feedback AS qspf
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE qspf.plan_id = qsp.plan_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #query_store_plan_feedback
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_feedback_id,
+        plan_id,
+        feature_desc,
+        feedback_data,
+        state_desc,
+        create_time,
+        last_updated_time
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+        N'@database_id integer',
+        @database_id;
+
+    /*
+    Populate the #query_store_query_variant table
+    */
+    SELECT
+        @sql = N'',
+        @current_table = N'inserting #query_store_query_variant';
+
+    SELECT
+        @sql += N'
+SELECT
+    @database_id,
+    qsqv.query_variant_query_id,
+    qsqv.parent_query_id,
+    qsqv.dispatcher_plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query_variant AS qsqv
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE qsqv.query_variant_query_id = qsp.query_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #query_store_query_variant
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        query_variant_query_id,
+        parent_query_id,
+        dispatcher_plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+        N'@database_id integer',
+        @database_id;
+
+    /*
+    Populate the #query_store_query_hints table
+    */
+    SELECT
+        @sql = N'',
+        @current_table = N'inserting #query_store_query_hints';
+
+    SELECT
+        @sql += N'
+SELECT
+    @database_id,
+    qsqh.query_hint_id,
+    qsqh.query_id,
+    qsqh.query_hint_text,
+    qsqh.last_query_hint_failure_reason_desc,
+    qsqh.query_hint_failure_count,
+    qsqh.source_desc
+FROM ' + @database_name_quoted + N'.sys.query_store_query_hints AS qsqh
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE qsqh.query_id = qsp.query_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #query_store_query_hints
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        query_hint_id,
+        query_id,
+        query_hint_text,
+        last_query_hint_failure_reason_desc,
+        query_hint_failure_count,
+        source_desc
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+        N'@database_id integer',
+        @database_id;
+END;
 
 
 
