@@ -2522,7 +2522,23 @@ OPTION(RECOMPILE);
 END TRY
 
 BEGIN CATCH
-    SELECT x = 1
+    IF @sql IS NOT NULL
+    BEGIN
+        RAISERROR('Current @sql length: %d', 0, 1, LEN(@sql)) WITH NOWAIT;
+        RAISERROR('%s', 0, 1, @sql) WITH NOWAIT;
+    END;
+
+    IF @current_table IS NOT NULL
+    BEGIN
+        RAISERROR('Current table: %s', 0, 1, @current_table) WITH NOWAIT;
+    END;
+
+    IF @@TRANCOUNT > 0
+    BEGIN
+        ROLLBACK;
+    END;
+
+    THROW;
 END CATCH 
 
 END; /*Final end*/
