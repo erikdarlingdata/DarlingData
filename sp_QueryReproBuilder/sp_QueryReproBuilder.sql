@@ -2656,6 +2656,7 @@ OPTION(RECOMPILE);
 
 /*
 Check for parameter count mismatch
+Note: This is a simplified check and may have false positives
 */
 SELECT
     @current_table = N'checking for parameter count mismatch';
@@ -2675,14 +2676,8 @@ SELECT
     warning_message =
         N'Parameter count mismatch: ' +
         RTRIM(plan_param_count) +
-        N' in plan, ' +
-        RTRIM(text_param_count) +
-        N' estimated in query text'
+        N' parameter(s) in plan XML'
 FROM #query_store_plan AS qsp
-JOIN #query_store_query AS qsq
-  ON qsp.query_id = qsq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsq.query_text_id = qsqt.query_text_id
 CROSS APPLY
 (
     SELECT
@@ -2691,15 +2686,7 @@ CROSS APPLY
     FROM #query_parameters AS qp
     WHERE qp.plan_id = qsp.plan_id
 ) AS ppc
-CROSS APPLY
-(
-    SELECT
-        text_param_count =
-            LEN(qsqt.query_sql_text) -
-            LEN(REPLACE(qsqt.query_sql_text, N'@', N''))
-) AS tpc
-WHERE ppc.plan_param_count <> tpc.text_param_count
-AND   ppc.plan_param_count > 0
+WHERE ppc.plan_param_count = 0
 OPTION(RECOMPILE);
 
 /*
@@ -2756,8 +2743,8 @@ SELECT
         ISNULL
         (
             N'SET ' +
-            REPLACE(qsrs.context_settings, N', ', N';' + NCHAR(10) + N'SET ') +
-            N';' +
+            REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
+            N' ON;' +
             NCHAR(10),
             N''
         ) +
@@ -2847,8 +2834,6 @@ SELECT
                             N',' +
                             NCHAR(10) +
                             N'    ' +
-                            qp.parameter_name +
-                            N' = ' +
                             ISNULL
                             (
                                 qp.parameter_compiled_value,
@@ -2886,11 +2871,14 @@ CROSS APPLY
                 THEN
                     LTRIM
                     (
-                        SUBSTRING
+                        RTRIM
                         (
-                            qsqt.query_sql_text,
-                            PATINDEX(N'%)%', qsqt.query_sql_text) + 1,
-                            LEN(qsqt.query_sql_text)
+                            SUBSTRING
+                            (
+                                qsqt.query_sql_text,
+                                PATINDEX(N'%)%', qsqt.query_sql_text) + 1,
+                                LEN(qsqt.query_sql_text)
+                            )
                         )
                     )
                 ELSE qsqt.query_sql_text
