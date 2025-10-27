@@ -2823,9 +2823,7 @@ SELECT
                         (
                             (
                                 SELECT
-                                    N',' +
-                                    NCHAR(10) +
-                                    N'    ' +
+                                    N', ' +
                                     qp.parameter_name +
                                     N' ' +
                                     qp.parameter_data_type
@@ -2838,8 +2836,7 @@ SELECT
                                     TYPE
                             ).value(N'./text()[1]', N'nvarchar(max)'),
                             1,
-                            1 +
-                            LEN(NCHAR(10)),
+                            2,
                             N''
                         ) +
                         N''',' +
@@ -2848,9 +2845,7 @@ SELECT
                         (
                             (
                                 SELECT
-                                    N',' +
-                                    NCHAR(10) +
-                                    N'    ' +
+                                    N', ' +
                                     ISNULL
                                     (
                                         qp.parameter_compiled_value,
@@ -2865,8 +2860,7 @@ SELECT
                                     TYPE
                             ).value(N'./text()[1]', N'nvarchar(max)'),
                             1,
-                            1 +
-                            LEN(NCHAR(10)),
+                            2,
                             N''
                         ) +
                         N';' +
