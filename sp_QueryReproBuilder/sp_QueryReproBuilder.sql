@@ -923,12 +923,12 @@ BEGIN
         plan_id
     )
     SELECT
-        x.plan_id
+        ids.plan_id
     FROM
     (
         SELECT
             plan_id =
-                x.value
+                x.x.value
                 (
                     ''(./text())[1]'',
                     ''bigint''
@@ -936,7 +936,7 @@ BEGIN
         FROM
         (
             SELECT
-                x =
+                ids =
                     CONVERT
                     (
                         xml,
@@ -949,10 +949,10 @@ BEGIN
                         ) +
                         ''</x>''
                     )
-        ) AS a
-        CROSS APPLY a.x.nodes(''x'') AS b (x)
-    ) AS x
-    WHERE x.plan_id IS NOT NULL
+        ) AS ids
+        CROSS APPLY ids.ids.nodes(''x'') AS x (x)
+    ) AS ids
+    WHERE ids.plan_id IS NOT NULL
     OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -982,12 +982,12 @@ BEGIN
         query_id
     )
     SELECT
-        x.query_id
+        ids.query_id
     FROM
     (
         SELECT
             query_id =
-                x.value
+                x.x.value
                 (
                     ''(./text())[1]'',
                     ''bigint''
@@ -995,7 +995,7 @@ BEGIN
         FROM
         (
             SELECT
-                x =
+                ids =
                     CONVERT
                     (
                         xml,
@@ -1008,10 +1008,10 @@ BEGIN
                         ) +
                         ''</x>''
                     )
-        ) AS a
-        CROSS APPLY a.x.nodes(''x'') AS b (x)
-    ) AS x
-    WHERE x.query_id IS NOT NULL
+        ) AS ids
+        CROSS APPLY ids.ids.nodes(''x'') AS x (x)
+    ) AS ids
+    WHERE ids.query_id IS NOT NULL
     OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
