@@ -878,6 +878,13 @@ CREATE TABLE
     executable_query nvarchar(max) NULL
 );
 
+CREATE TABLE
+    #embedded_constants
+(
+    plan_id bigint NOT NULL,
+    constant_value nvarchar(max) NULL
+);
+
 /*
 Populate filter temp tables using XML-based string splitting for compatibility
 */
@@ -2614,6 +2621,97 @@ WHERE x.query_plan_xml IS NOT NULL
 OPTION(RECOMPILE);
 
 /*
+Check for plans too large to cast to XML
+*/
+SELECT
+    @current_table = N'checking for plans too large to cast to XML';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'plan too large for XML parsing',
+    warning_message =
+        N'Query plan could not be cast to XML (likely too large). ' +
+        N'Parameters and embedded constants cannot be extracted using XQuery. ' +
+        N'Manual review of plan text required.'
+FROM #query_store_plan AS qsp
+WHERE TRY_CAST(qsp.query_plan AS xml) IS NULL
+OPTION(RECOMPILE);
+
+/*
+Detect OPTION(RECOMPILE) usage and extract embedded constants
+*/
+SELECT
+    @current_table = N'checking for OPTION(RECOMPILE) and extracting embedded constants';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type = N'parameter embedding optimization',
+    warning_message =
+        N'Query uses OPTION(RECOMPILE) with parameter embedding optimization. ' +
+        N'Literal values are embedded throughout the plan instead of using parameters. ' +
+        N'Parameter alignment may be incomplete. Review embedded constants and original query text.'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
+OPTION(RECOMPILE);
+
+/*
+Extract embedded constants from plans with OPTION(RECOMPILE)
+For plans that can be cast to XML, use XQuery
+*/
+SELECT
+    @current_table = N'extracting embedded constants from plans';
+
+INSERT
+    #embedded_constants
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    constant_value
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    constant_value =
+        LTRIM(RTRIM(c.const.value(N'@ConstValue', N'nvarchar(max)')))
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        query_plan_xml =
+            TRY_CAST(qsp.query_plan AS xml)
+) AS x
+CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:Const[@ConstValue]') AS c(const)
+WHERE x.query_plan_xml IS NOT NULL
+AND   qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
+OPTION(RECOMPILE);
+
+/*
 Check for temp tables and table variables in query text
 */
 SELECT
@@ -2685,7 +2783,9 @@ SELECT
     qsp.plan_id,
     warning_type = N'parameter count mismatch',
     warning_message =
-        N'Query text has parameter declarations but no parameters found in plan XML'
+        N'Query text has parameter declarations but no parameters found in plan XML. ' +
+        N'This typically indicates local variables that do not have sniffed values cached in the plan. ' +
+        N'Review the stored procedure or batch text to determine how these variables are assigned values.'
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
@@ -3007,6 +3107,16 @@ FROM #reproduction_warnings AS rw
 ORDER BY
     rw.plan_id,
     rw.warning_type
+OPTION(RECOMPILE);
+
+SELECT
+    table_name =
+        N'#embedded_constants',
+    ec.*
+FROM #embedded_constants AS ec
+ORDER BY
+    ec.plan_id,
+    ec.constant_value
 OPTION(RECOMPILE);
 
 SELECT
