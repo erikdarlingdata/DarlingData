@@ -3247,7 +3247,14 @@ SELECT
     qsrs.max_num_physical_io_reads_mb,
     qsrs.total_num_physical_io_reads_mb,
     qsrs.last_num_physical_io_reads_mb
-FROM #repro_queries AS rq
+FROM 
+(
+   SELECT DISTINCT
+       rq.plan_id,
+       rq.query_id,
+       rq.executable_query
+   FROM #repro_queries AS rq
+) AS rq
 CROSS APPLY
 (
   SELECT TOP (1)
@@ -3307,6 +3314,8 @@ OUTER APPLY
         PATH('waits'),
         TYPE
 ) AS qsws(waits)
+ORDER BY
+    qsrs.last_execution_time DESC
 OPTION(RECOMPILE);
 
 END TRY
