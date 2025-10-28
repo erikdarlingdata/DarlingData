@@ -3063,62 +3063,6 @@ LEFT JOIN sys.syslanguages AS lang
   ON qcs.language_id = lang.langid
 OPTION(RECOMPILE);
 
-/*
-Debug result sets for temp tables
-*/
-SELECT
-    table_name =
-        N'#query_store_runtime_stats',
-    qsrs.*
-FROM #query_store_runtime_stats AS qsrs
-ORDER BY
-    qsrs.plan_id
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
-        N'#query_store_plan',
-    qsp.*
-FROM #query_store_plan AS qsp
-ORDER BY
-    qsp.plan_id
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
-        N'#query_store_query_text',
-    qsqt.*
-FROM #query_store_query_text AS qsqt
-ORDER BY
-    qsqt.query_text_id
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
-        N'#query_store_query',
-    qsq.*
-FROM #query_store_query AS qsq
-ORDER BY
-    qsq.query_id
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
-        N'#query_context_settings',
-    qcs.*
-FROM #query_context_settings AS qcs
-ORDER BY
-    qcs.context_settings_id
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
-        N'#query_store_wait_stats',
-    qsws.*
-FROM #query_store_wait_stats AS qsws
-ORDER BY
-    qsws.plan_id
-OPTION(RECOMPILE);
 
 SELECT
     table_name =
@@ -3187,6 +3131,36 @@ ORDER BY
 OPTION(RECOMPILE);
 
 
+SELECT
+    table_name =
+        N'results',
+    *
+FROM #repro_queries AS rq
+JOIN #query_store_runtime_stats AS qsrs
+  ON qsrs.plan_id = rq.plan_id
+JOIN #query_store_plan AS qsp
+  ON   qsp.plan_id = rq.plan_id
+  AND qsp.query_id = rq.query_id
+JOIN #query_store_query AS qsq
+  ON qsq.query_id = rq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsqt.query_text_id = qsq.query_text_id
+LEFT JOIN
+(
+    SELECT
+        qsws.plan_id,
+        qsws.wait_category_desc,
+        TotalWaitTime = SUM(qsws.total_query_wait_time_ms),
+        AverageWaitTime = AVG(qsws.avg_query_wait_time_ms),
+        MinimumWaitTime = MIN(qsws.min_query_wait_time_ms),
+        MaximumWaitTime = MAX(qsws.max_query_wait_time_ms)
+    FROM #query_store_wait_stats AS qsws
+    GROUP BY 
+        qsws.plan_id,
+        qsws.wait_category_desc
+) AS qsws
+  ON qsws.plan_id = rq.plan_id
+OPTION(RECOMPILE);
 
 
 
@@ -3211,5 +3185,65 @@ BEGIN CATCH
 
     THROW;
 END CATCH 
+
+IF @debug = 1
+BEGIN
+    /*
+    Debug result sets for temp tables
+    */
+    SELECT
+        table_name =
+            N'#query_store_runtime_stats',
+        qsrs.*
+    FROM #query_store_runtime_stats AS qsrs
+    ORDER BY
+        qsrs.plan_id
+    OPTION(RECOMPILE);
+    
+    SELECT
+        table_name =
+            N'#query_store_plan',
+        qsp.*
+    FROM #query_store_plan AS qsp
+    ORDER BY
+        qsp.plan_id
+    OPTION(RECOMPILE);
+    
+    SELECT
+        table_name =
+            N'#query_store_query_text',
+        qsqt.*
+    FROM #query_store_query_text AS qsqt
+    ORDER BY
+        qsqt.query_text_id
+    OPTION(RECOMPILE);
+    
+    SELECT
+        table_name =
+            N'#query_store_query',
+        qsq.*
+    FROM #query_store_query AS qsq
+    ORDER BY
+        qsq.query_id
+    OPTION(RECOMPILE);
+    
+    SELECT
+        table_name =
+            N'#query_context_settings',
+        qcs.*
+    FROM #query_context_settings AS qcs
+    ORDER BY
+        qcs.context_settings_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#query_store_wait_stats',
+        qsws.*
+    FROM #query_store_wait_stats AS qsws
+    ORDER BY
+        qsws.plan_id
+    OPTION(RECOMPILE);
+END;
 
 END; /*Final end*/
