@@ -3100,24 +3100,28 @@ SELECT
         DB_NAME(qsrs.database_id),
     rq.executable_query,
     embedded_constants =
-        STUFF
+        ISNULL
         (
+            STUFF
             (
-                SELECT
-                    N', ' +
-                    ec.constant_value
-                FROM #embedded_constants AS ec
-                WHERE ec.plan_id = rq.plan_id
-                ORDER BY
-                    ec.constant_value
-                FOR XML
-                    PATH(N''),
-                    TYPE
-            ).value(N'./text()[1]', N'nvarchar(max)'),
-            1,
-            2,
-            N''
-        ),
+                (
+                    SELECT
+                        N', ' +
+                        ec.constant_value
+                    FROM #embedded_constants AS ec
+                    WHERE ec.plan_id = rq.plan_id
+                    ORDER BY
+                        ec.constant_value
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                2,
+                N''
+            ),
+        N'N/A'
+    ),
     rq.query_id,
     rq.plan_id,
     qsp.all_plan_ids,
@@ -3181,15 +3185,44 @@ SELECT
     qsrs.total_num_physical_io_reads_mb,
     qsrs.last_num_physical_io_reads_mb
 FROM #repro_queries AS rq
-JOIN #query_store_runtime_stats AS qsrs
-  ON qsrs.plan_id = rq.plan_id
-JOIN #query_store_plan AS qsp
-  ON  qsp.plan_id = rq.plan_id
-  AND qsp.query_id = rq.query_id
-JOIN #query_store_query AS qsq
-  ON qsq.query_id = rq.query_id
-JOIN #query_store_query_text AS qsqt
-  ON qsqt.query_text_id = qsq.query_text_id
+CROSS APPLY
+(
+  SELECT TOP (1)
+      qsrs.*
+  FROM #query_store_runtime_stats AS qsrs
+  WHERE qsrs.plan_id = rq.plan_id
+  ORDER BY
+      qsrs.plan_id DESC
+) AS qsrs
+CROSS APPLY
+(
+  SELECT TOP (1)
+      qsp.*
+  FROM #query_store_plan AS qsp
+  WHERE qsp.plan_id = rq.plan_id
+  AND   qsp.query_id = rq.query_id
+  ORDER BY
+      qsp.plan_id DESC,
+      qsp.query_id DESC
+) AS qsp
+CROSS APPLY
+(
+  SELECT TOP (1)
+      qsq.*
+  FROM #query_store_query AS qsq
+  WHERE qsq.query_id = rq.query_id
+  ORDER BY 
+      qsq.query_id DESC 
+) AS qsq
+CROSS APPLY
+(
+  SELECT TOP (1)
+      qsqt.*
+  FROM  #query_store_query_text AS qsqt
+  WHERE qsqt.query_text_id = qsq.query_text_id
+  ORDER BY 
+      qsqt.query_text_id DESC 
+) AS qsqt
 OUTER APPLY
 (
     SELECT
