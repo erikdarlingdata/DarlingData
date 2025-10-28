@@ -2793,7 +2793,7 @@ CROSS APPLY
         query_plan_xml =
             TRY_CAST(qsp.query_plan AS xml)
 ) AS x
-CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:Const[@ConstValue]') AS c(const)
+CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:RelOp[@PhysicalOp="Index Scan" or @PhysicalOp="Index Seek" or @PhysicalOp="Clustered Index Scan" or @PhysicalOp="Clustered Index Seek"]//p:Const[@ConstValue]') AS c(const)
 WHERE x.query_plan_xml IS NOT NULL
 AND   qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
 OPTION(RECOMPILE);
