@@ -3095,17 +3095,6 @@ OPTION(RECOMPILE);
 
 SELECT
     table_name =
-        N'#embedded_constants',
-    ec.*
-FROM #embedded_constants AS ec
-ORDER BY
-    ec.plan_id,
-    ec.constant_value
-OPTION(RECOMPILE);
-
-
-SELECT
-    table_name =
         N'results',
     database_name =
         DB_NAME(qsrs.database_id),
@@ -3359,6 +3348,16 @@ BEGIN
     FROM #repro_queries AS rq
     ORDER BY
         rq.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#embedded_constants',
+        ec.*
+    FROM #embedded_constants AS ec
+    ORDER BY
+        ec.plan_id,
+        ec.constant_value
     OPTION(RECOMPILE);
 END;
 
