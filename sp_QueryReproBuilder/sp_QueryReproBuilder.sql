@@ -2772,7 +2772,16 @@ WITH
 SELECT DISTINCT
     qsp.plan_id,
     constant_value =
-        LTRIM(RTRIM(c.const.value(N'@ConstValue', N'nvarchar(max)')))
+        CASE
+            WHEN c.const.value(N'@ConstValue', N'nvarchar(max)') LIKE N'(%)'
+            THEN SUBSTRING
+                 (
+                     c.const.value(N'@ConstValue', N'nvarchar(max)'),
+                     2,
+                     LEN(c.const.value(N'@ConstValue', N'nvarchar(max)')) - 2
+                 )
+            ELSE LTRIM(RTRIM(c.const.value(N'@ConstValue', N'nvarchar(max)')))
+        END
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
@@ -3098,9 +3107,28 @@ OPTION(RECOMPILE);
 SELECT
     table_name =
         N'results',
-    database_name = 
+    database_name =
         DB_NAME(qsrs.database_id),
     rq.executable_query,
+    embedded_constants =
+        STUFF
+        (
+            (
+                SELECT
+                    N', ' +
+                    ec.constant_value
+                FROM #embedded_constants AS ec
+                WHERE ec.plan_id = rq.plan_id
+                ORDER BY
+                    ec.constant_value
+                FOR XML
+                    PATH(N''),
+                    TYPE
+            ).value(N'./text()[1]', N'nvarchar(max)'),
+            1,
+            2,
+            N''
+        ),
     rq.query_id,
     rq.plan_id,
     qsp.all_plan_ids,
