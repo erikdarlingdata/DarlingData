@@ -895,7 +895,7 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    executable_query xml NULL,
+    executable_query nvarchar(MAX) NULL,
     INDEX plan_id_query_id CLUSTERED (plan_id, query_id)
 );
 
@@ -2954,159 +2954,156 @@ SELECT
         (
             SELECT
                 N'/*' + NCHAR(10) +
-        N'Query ID: ' + 
-        RTRIM(qsp.query_id) + NCHAR(10) +
-        N'Plan ID: ' + RTRIM(qsp.plan_id) + NCHAR(10) +
-        ISNULL(
-            (
-                SELECT
-                    N'Warnings:' + NCHAR(10) +
-                    STUFF
+                N'Query ID: ' + 
+                RTRIM(qsp.query_id) + NCHAR(10) +
+                N'Plan ID: ' + RTRIM(qsp.plan_id) + NCHAR(10) +
+                ISNULL(
                     (
-                        (
-                            SELECT
-                                NCHAR(10) + 
-                                N' - ' + 
-                                rw.warning_message
-                            FROM #reproduction_warnings AS rw
-                            WHERE rw.plan_id = qsp.plan_id
-                            ORDER BY
-                                rw.warning_type
-                            FOR XML
-                                PATH(N''),
-                                TYPE
-                        ).value(N'./text()[1]', N'nvarchar(max)'),
-                        1,
-                        0,
-                        N''
-                    ) + NCHAR(10)
-            ),
-            N''
-        ) +
-        N'*/' +
-        NCHAR(10) +
-        ISNULL
-        (
-            N'SET ' +
-            REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
-            N' ON;' +
-            NCHAR(10),
-            N''
-        ) +
-        ISNULL
-        (
-            N'SET LANGUAGE ' + 
-            lang.name + 
-            N';' + 
-            NCHAR(10), 
-            N''
-        ) +
-        ISNULL
-        (
-            N'SET DATEFORMAT ' +
-            CASE qcs.date_format
-                 WHEN 0 THEN N'mdy'
-                 WHEN 1 THEN N'dmy'
-                 WHEN 2 THEN N'ymd'
-                 WHEN 3 THEN N'ydm'
-                 WHEN 4 THEN N'myd'
-                 WHEN 5 THEN N'dym'
-                 ELSE N'mdy'
-            END + 
-            N';' + 
-            NCHAR(10), 
-            N''
-        ) +
-        ISNULL
-        (
-            N'SET DATEFIRST ' + 
-            RTRIM(qcs.date_first) + 
-            N';' + 
-            NCHAR(10), 
-            N''
-        ) +
-        NCHAR(10) +
-        CASE
-            WHEN qsqt.query_sql_text LIKE N'(@%'
-            THEN
-                N'EXECUTE sys.sp_executesql' +
-                NCHAR(10) +
-                N'    N''' +
-                REPLACE
-                (
-                    clean_query.query_text_cleaned,
-                    N'''',
-                    N''''''
+                        SELECT
+                            N'Warnings:' + NCHAR(10) +
+                            STUFF
+                            (
+                                (
+                                    SELECT
+                                        NCHAR(10) + 
+                                        N' - ' + 
+                                        rw.warning_message
+                                    FROM #reproduction_warnings AS rw
+                                    WHERE rw.plan_id = qsp.plan_id
+                                    ORDER BY
+                                        rw.warning_type
+                                    FOR XML
+                                        PATH(N''),
+                                        TYPE
+                                ).value(N'./text()[1]', N'nvarchar(max)'),
+                                1,
+                                0,
+                                N''
+                            ) + NCHAR(10)
+                    ),
+                    N''
                 ) +
-                N''',' +
+                N'*/' +
+                NCHAR(10) +
+                ISNULL
+                (
+                    N'SET ' +
+                    REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
+                    N' ON;' +
+                    NCHAR(10),
+                    N''
+                ) +
+                ISNULL
+                (
+                    N'SET LANGUAGE ' + 
+                    lang.name + 
+                    N';' + 
+                    NCHAR(10), 
+                    N''
+                ) +
+                ISNULL
+                (
+                    N'SET DATEFORMAT ' +
+                    CASE qcs.date_format
+                         WHEN 0 THEN N'mdy'
+                         WHEN 1 THEN N'dmy'
+                         WHEN 2 THEN N'ymd'
+                         WHEN 3 THEN N'ydm'
+                         WHEN 4 THEN N'myd'
+                         WHEN 5 THEN N'dym'
+                         ELSE N'mdy'
+                    END + 
+                    N';' + 
+                    NCHAR(10), 
+                    N''
+                ) +
+                ISNULL
+                (
+                    N'SET DATEFIRST ' + 
+                    RTRIM(qcs.date_first) + 
+                    N';' + 
+                    NCHAR(10), 
+                    N''
+                ) +
                 NCHAR(10) +
                 CASE
-                    WHEN EXISTS
-                         (
-                             SELECT
-                                 1/0
-                             FROM #query_parameters AS qp
-                             WHERE qp.plan_id = qsp.plan_id
-                         )
+                    WHEN qsqt.query_sql_text LIKE N'(@%'
                     THEN
-                        N'N''' +
-                        STUFF
+                        N'EXECUTE sys.sp_executesql' +
+                        NCHAR(10) +
+                        N'    N''' +
+                        REPLACE
                         (
-                            (
-                                SELECT
-                                    N', ' +
-                                    qp.parameter_name +
-                                    N' ' +
-                                    qp.parameter_data_type
-                                FROM #query_parameters AS qp
-                                WHERE qp.plan_id = qsp.plan_id
-                                ORDER BY
-                                    qp.parameter_name
-                                FOR XML
-                                    PATH(N''),
-                                    TYPE
-                            ).value(N'./text()[1]', N'nvarchar(max)'),
-                            1,
-                            2,
-                            N''
+                            clean_query.query_text_cleaned,
+                            N'''',
+                            N''''''
                         ) +
                         N''',' +
                         NCHAR(10) +
-                        STUFF
-                        (
-                            (
-                                SELECT
-                                    N', ' +
-                                    ISNULL
+                        CASE
+                            WHEN EXISTS
+                                 (
+                                     SELECT
+                                         1/0
+                                     FROM #query_parameters AS qp
+                                     WHERE qp.plan_id = qsp.plan_id
+                                 )
+                            THEN
+                                N'N''' +
+                                STUFF
+                                (
                                     (
-                                        qp.parameter_compiled_value,
-                                        N'NULL'
-                                    )
-                                FROM #query_parameters AS qp
-                                WHERE qp.plan_id = qsp.plan_id
-                                ORDER BY
-                                    qp.parameter_name
-                                FOR XML
-                                    PATH(N''),
-                                    TYPE
-                            ).value(N'./text()[1]', N'nvarchar(max)'),
-                            1,
-                            2,
-                            N''
-                        ) +
-                        N';' +
-                        NCHAR(10)
+                                        SELECT
+                                            N', ' +
+                                            qp.parameter_name +
+                                            N' ' +
+                                            qp.parameter_data_type
+                                        FROM #query_parameters AS qp
+                                        WHERE qp.plan_id = qsp.plan_id
+                                        ORDER BY
+                                            qp.parameter_name
+                                        FOR XML
+                                            PATH(N''),
+                                            TYPE
+                                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                                    1,
+                                    2,
+                                    N''
+                                ) +
+                                N''',' +
+                                NCHAR(10) +
+                                STUFF
+                                (
+                                    (
+                                        SELECT
+                                            N', ' +
+                                            ISNULL
+                                            (
+                                                qp.parameter_compiled_value,
+                                                N'NULL'
+                                            )
+                                        FROM #query_parameters AS qp
+                                        WHERE qp.plan_id = qsp.plan_id
+                                        ORDER BY
+                                            qp.parameter_name
+                                        FOR XML
+                                            PATH(N''),
+                                            TYPE
+                                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                                    1,
+                                    2,
+                                    N''
+                                ) +
+                                N';' +
+                                NCHAR(10)
+                            ELSE
+                                N'N'''';' +
+                                NCHAR(10)
+                        END
                     ELSE
-                        N'N'''';' +
+                        qsqt.query_sql_text +
                         NCHAR(10)
                 END
-            ELSE
-                qsqt.query_sql_text +
-                NCHAR(10)
-        END
-            FOR XML
-                PATH(N''),
-                TYPE
         )
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
@@ -3146,7 +3143,16 @@ SELECT
         N'results',
     database_name =
         DB_NAME(qsrs.database_id),
-    rq.executable_query,
+    executable_query =
+    (
+        SELECT
+            [processing-instruction(_)] = 
+                rq.executable_query
+        FOR
+            XML
+            PATH(''),
+            TYPE
+    ),
     parameter_values =
         ISNULL
         (
