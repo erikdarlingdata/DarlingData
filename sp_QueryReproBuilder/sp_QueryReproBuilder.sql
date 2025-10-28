@@ -3000,9 +3000,13 @@ SELECT
                 ) +
                 N'*/' +
                 NCHAR(10) +
+                N'USE ' +
+                QUOTENAME(@database_name) + 
+                N';' +
+                NCHAR(10) +
                 ISNULL
                 (
-                    N'SET ' +
+                    N'SET' +
                     REPLACE(qsrs.context_settings, N', ', N' ON;' + NCHAR(10) + N'SET ') +
                     N' ON;' +
                     NCHAR(10),
@@ -3137,7 +3141,7 @@ CROSS APPLY
                         SUBSTRING
                         (
                             qsqt.query_sql_text,
-                            PATINDEX(N'%))%', qsqt.query_sql_text) + 2,
+                            PATINDEX(N'%)%', qsqt.query_sql_text) + 2,
                             LEN(qsqt.query_sql_text)
                         )
                     )
