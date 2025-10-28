@@ -824,6 +824,8 @@ CREATE TABLE
     query_text_id bigint NOT NULL,
     INDEX query_text_id CLUSTERED (query_text_id),
     query_sql_text nvarchar(max) NULL,
+    query_sql_text_clickable 
+        AS TRY_CAST(query_sql_text AS xml) PERSISTED,    
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
     has_restricted_text bit NOT NULL
@@ -3139,6 +3141,29 @@ SELECT
     database_name =
         DB_NAME(qsrs.database_id),
     rq.executable_query,
+    parameter_values =
+        ISNULL
+        (
+            STUFF
+            (
+                (
+                    SELECT
+                        N', ' +
+                        qp.parameter_compiled_value
+                    FROM #query_parameters AS qp
+                    WHERE qp.plan_id = rq.plan_id
+                    ORDER BY
+                        qp.parameter_compiled_value
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                2,
+                N''
+            ),
+        N'N/A'
+    ),
     embedded_constants =
         ISNULL
         (
@@ -3167,7 +3192,7 @@ SELECT
     qsp.all_plan_ids,
     qsp.compatibility_level,
     qsq.object_name,
-    qsqt.query_sql_text,
+    qsqt.query_sql_text_clickable,
     query_plan =
          CASE
              WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
