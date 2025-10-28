@@ -824,8 +824,7 @@ CREATE TABLE
     query_text_id bigint NOT NULL,
     INDEX query_text_id CLUSTERED (query_text_id),
     query_sql_text nvarchar(max) NULL,
-    query_sql_text_clickable 
-        AS TRY_CAST(query_sql_text AS xml) PERSISTED,    
+    query_sql_text_clickable xml NULL,
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
     has_restricted_text bit NOT NULL
@@ -2199,6 +2198,22 @@ EXECUTE sys.sp_executesql
     @database_id;
 
 /*
+Populate the clickable XML column
+*/
+UPDATE qsqt
+SET qsqt.query_sql_text_clickable =
+    (
+        SELECT
+            [processing-instruction(_)] =
+                qsqt.query_sql_text
+        FOR XML
+            PATH(N''),
+            TYPE
+    )
+FROM #query_store_query_text AS qsqt
+OPTION(RECOMPILE);
+
+/*
 Populate the #query_context_settings table with context settings
 */
 SELECT
@@ -3146,7 +3161,7 @@ SELECT
     executable_query =
         (
             SELECT
-                [comment()] =
+                [processing-instruction(_)] =
                     rq.executable_query
             FOR XML
                 PATH(N''),
