@@ -561,39 +561,45 @@ Create temp tables for filter parameters
 CREATE TABLE
     #include_plan_ids
 (
-    plan_id bigint NOT NULL
+    plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id)
 );
 
 
 CREATE TABLE
     #include_query_ids
 (
-    query_id bigint NOT NULL
+    query_id bigint NOT NULL,
+    INDEX query_id CLUSTERED (query_id)
 );
 
 CREATE TABLE
     #ignore_plan_ids
 (
-    plan_id bigint NOT NULL
+    plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id)
 );
 
 CREATE TABLE
     #ignore_query_ids
 (
-    query_id bigint NOT NULL
+    query_id bigint NOT NULL,
+    INDEX query_id CLUSTERED (query_id)
 );
 
 CREATE TABLE
     #query_text_search
 (
-    plan_id bigint NOT NULL
+    plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id)
 );
 
 
 CREATE TABLE
     #query_text_search_not
 (
-    plan_id bigint NOT NULL
+    plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id)
 );
 
 /*
@@ -605,6 +611,7 @@ CREATE TABLE
     database_id integer NOT NULL,
     runtime_stats_id bigint NOT NULL,
     plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id),
     runtime_stats_interval_id bigint NOT NULL,
     execution_type_desc nvarchar(60) NULL,
     first_execution_time datetimeoffset(7) NOT NULL,
@@ -703,6 +710,7 @@ CREATE TABLE
 (
     database_id integer NOT NULL,
     plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id),
     wait_category_desc nvarchar(60) NOT NULL,
     total_query_wait_time_ms bigint NOT NULL,
     avg_query_wait_time_ms float NULL,
@@ -717,6 +725,7 @@ CREATE TABLE
     database_id integer NOT NULL,
     plan_feedback_id bigint NOT NULL,
     plan_id bigint NULL,
+    INDEX plan_id CLUSTERED (plan_id),
     feature_desc nvarchar(120) NULL,
     feedback_data nvarchar(max) NULL,
     state_desc nvarchar(120) NULL,
@@ -730,6 +739,7 @@ CREATE TABLE
     database_id integer NOT NULL,
     query_hint_id bigint NOT NULL,
     query_id bigint NOT NULL,
+    INDEX query_id CLUSTERED (query_id),
     query_hint_text nvarchar(max) NULL,
     last_query_hint_failure_reason_desc nvarchar(256) NULL,
     query_hint_failure_count bigint NOT NULL,
@@ -741,6 +751,7 @@ CREATE TABLE
 (
     database_id integer NOT NULL,
     query_variant_query_id bigint NOT NULL,
+    INDEX query_variant_query_id CLUSTERED (query_variant_query_id),
     parent_query_id bigint NOT NULL,
     dispatcher_plan_id bigint NOT NULL
 );
@@ -750,6 +761,7 @@ CREATE TABLE
 (
     database_id integer NOT NULL,
     context_settings_id bigint NOT NULL,
+    INDEX context_settings_id CLUSTERED (context_settings_id),
     set_options varbinary(8) NULL,
     language_id smallint NOT NULL,
     date_format smallint NOT NULL,
@@ -768,6 +780,7 @@ CREATE TABLE
 (
     database_id integer NOT NULL,
     query_id bigint NOT NULL,
+    INDEX query_id CLUSTERED (query_id),
     query_text_id bigint NOT NULL,
     context_settings_id bigint NOT NULL,
     object_id bigint NULL,
@@ -809,6 +822,7 @@ CREATE TABLE
 (
     database_id integer NOT NULL,
     query_text_id bigint NOT NULL,
+    INDEX query_text_id CLUSTERED (query_text_id),
     query_sql_text nvarchar(max) NULL,
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
@@ -843,13 +857,15 @@ CREATE TABLE
     plan_forcing_type_desc nvarchar(60) NULL,
     has_compile_replay_script bit NULL,
     is_optimized_plan_forcing_disabled bit NULL,
-    plan_type_desc nvarchar(120) NULL
+    plan_type_desc nvarchar(120) NULL,
+    INDEX plan_id_query_id CLUSTERED (plan_id, query_id)
 );
 
 CREATE TABLE
     #query_parameters
 (
     plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id),
     parameter_name sysname NULL,
     parameter_data_type sysname NULL,
     parameter_compiled_value nvarchar(max) NULL
@@ -859,6 +875,7 @@ CREATE TABLE
     #query_text_parameters
 (
     plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id),
     parameter_declaration nvarchar(max) NULL
 );
 
@@ -866,6 +883,7 @@ CREATE TABLE
     #reproduction_warnings
 (
     plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id),
     warning_type nvarchar(50) NULL,
     warning_message nvarchar(max) NULL
 );
@@ -875,13 +893,15 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    executable_query nvarchar(max) NULL
+    executable_query nvarchar(max) NULL,
+    INDEX plan_id_query_id CLUSTERED (plan_id, query_id)
 );
 
 CREATE TABLE
     #embedded_constants
 (
     plan_id bigint NOT NULL,
+    INDEX plan_id CLUSTERED (plan_id),
     constant_value nvarchar(max) NULL
 );
 
@@ -3066,53 +3086,6 @@ OPTION(RECOMPILE);
 
 SELECT
     table_name =
-        N'#query_store_plan_feedback',
-    qspf.*
-FROM #query_store_plan_feedback AS qspf
-ORDER BY
-    qspf.plan_feedback_id
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
-        N'#query_store_query_variant',
-    qsqv.*
-FROM #query_store_query_variant AS qsqv
-ORDER BY
-    qsqv.query_variant_query_id
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
-        N'#query_store_query_hints',
-    qsqh.*
-FROM #query_store_query_hints AS qsqh
-ORDER BY
-    qsqh.query_hint_id
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
-        N'#query_parameters',
-    qp.*
-FROM #query_parameters AS qp
-ORDER BY
-    qp.plan_id,
-    qp.parameter_name
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
-        N'#reproduction_warnings',
-    rw.*
-FROM #reproduction_warnings AS rw
-ORDER BY
-    rw.plan_id,
-    rw.warning_type
-OPTION(RECOMPILE);
-
-SELECT
-    table_name =
         N'#embedded_constants',
     ec.*
 FROM #embedded_constants AS ec
@@ -3121,31 +3094,86 @@ ORDER BY
     ec.constant_value
 OPTION(RECOMPILE);
 
-SELECT
-    table_name =
-        N'#repro_queries',
-    rq.*
-FROM #repro_queries AS rq
-ORDER BY
-    rq.plan_id
-OPTION(RECOMPILE);
-
 
 SELECT
     table_name =
         N'results',
-    *
+    database_name = 
+        DB_NAME(qsrs.database_id),
+    rq.executable_query,
+    rq.query_id,
+    rq.plan_id,
+    qsp.all_plan_ids,
+    qsp.compatibility_level,
+    qsq.object_name,
+    qsqt.query_sql_text,
+    qsqt.is_part_of_encrypted_module,
+    qsqt.has_restricted_text,
+    query_plan =
+         CASE
+             WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
+             THEN TRY_CAST(qsp.query_plan AS xml)
+             WHEN TRY_CAST(qsp.query_plan AS xml) IS NULL
+             THEN
+                 (
+                     SELECT
+                         [processing-instruction(query_plan)] =
+                             N'-- ' + NCHAR(13) + NCHAR(10) +
+                             N'-- This is a huge query plan.' + NCHAR(13) + NCHAR(10) +
+                             N'-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.' + NCHAR(13) + NCHAR(10) +
+                             NCHAR(13) + NCHAR(10) +
+                             REPLACE(qsp.query_plan, N'<RelOp', NCHAR(13) + NCHAR(10) + N'<RelOp') +
+                             NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                     FOR XML
+                         PATH(N''),
+                         TYPE
+                 )
+         END,
+    qsrs.execution_type_desc,
+    qsrs.first_execution_time,
+    qsrs.last_execution_time,
+    qsws.waits,
+    qsrs.count_executions,
+    qsrs.executions_per_second,
+    qsrs.avg_duration_ms,
+    qsrs.min_duration_ms,
+    qsrs.max_duration_ms,
+    qsrs.total_duration_ms,
+    qsrs.last_duration_ms,
+    qsrs.avg_cpu_time_ms,
+    qsrs.min_cpu_time_ms,
+    qsrs.max_cpu_time_ms,
+    qsrs.total_cpu_time_ms,
+    qsrs.last_cpu_time_ms,
+    qsrs.last_dop,
+    qsrs.min_dop,
+    qsrs.max_dop,
+    qsrs.avg_query_max_used_memory_mb,
+    qsrs.last_query_max_used_memory_mb,
+    qsrs.min_query_max_used_memory_mb,
+    qsrs.max_query_max_used_memory_mb,
+    qsrs.total_query_max_used_memory_mb,
+    qsrs.avg_rowcount,
+    qsrs.min_rowcount,
+    qsrs.max_rowcount,
+    qsrs.total_rowcount,
+    qsrs.last_rowcount,
+    qsrs.avg_num_physical_io_reads_mb,
+    qsrs.min_num_physical_io_reads_mb,
+    qsrs.max_num_physical_io_reads_mb,
+    qsrs.total_num_physical_io_reads_mb,
+    qsrs.last_num_physical_io_reads_mb
 FROM #repro_queries AS rq
 JOIN #query_store_runtime_stats AS qsrs
   ON qsrs.plan_id = rq.plan_id
 JOIN #query_store_plan AS qsp
-  ON   qsp.plan_id = rq.plan_id
+  ON  qsp.plan_id = rq.plan_id
   AND qsp.query_id = rq.query_id
 JOIN #query_store_query AS qsq
   ON qsq.query_id = rq.query_id
 JOIN #query_store_query_text AS qsqt
   ON qsqt.query_text_id = qsq.query_text_id
-LEFT JOIN
+OUTER APPLY
 (
     SELECT
         qsws.plan_id,
@@ -3155,14 +3183,18 @@ LEFT JOIN
         MinimumWaitTime = MIN(qsws.min_query_wait_time_ms),
         MaximumWaitTime = MAX(qsws.max_query_wait_time_ms)
     FROM #query_store_wait_stats AS qsws
+    WHERE qsws.plan_id = rq.plan_id
     GROUP BY 
         qsws.plan_id,
         qsws.wait_category_desc
-) AS qsws
-  ON qsws.plan_id = rq.plan_id
+    ORDER BY
+        TotalWaitTime DESC
+    FOR
+        XML
+        PATH('waits'),
+        TYPE
+) AS qsws(waits)
 OPTION(RECOMPILE);
-
-
 
 END TRY
 
@@ -3243,6 +3275,62 @@ BEGIN
     FROM #query_store_wait_stats AS qsws
     ORDER BY
         qsws.plan_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#query_store_plan_feedback',
+        qspf.*
+    FROM #query_store_plan_feedback AS qspf
+    ORDER BY
+        qspf.plan_feedback_id
+    OPTION(RECOMPILE);
+    
+    SELECT
+        table_name =
+            N'#query_store_query_variant',
+        qsqv.*
+    FROM #query_store_query_variant AS qsqv
+    ORDER BY
+        qsqv.query_variant_query_id
+    OPTION(RECOMPILE);
+    
+    SELECT
+        table_name =
+            N'#query_store_query_hints',
+        qsqh.*
+    FROM #query_store_query_hints AS qsqh
+    ORDER BY
+        qsqh.query_hint_id
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#query_parameters',
+        qp.*
+    FROM #query_parameters AS qp
+    ORDER BY
+        qp.plan_id,
+        qp.parameter_name
+    OPTION(RECOMPILE);
+    
+    SELECT
+        table_name =
+            N'#reproduction_warnings',
+        rw.*
+    FROM #reproduction_warnings AS rw
+    ORDER BY
+        rw.plan_id,
+        rw.warning_type
+    OPTION(RECOMPILE);
+
+    SELECT
+        table_name =
+            N'#repro_queries',
+        rq.*
+    FROM #repro_queries AS rq
+    ORDER BY
+        rq.plan_id
     OPTION(RECOMPILE);
 END;
 
