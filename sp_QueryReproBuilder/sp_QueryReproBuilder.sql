@@ -3144,15 +3144,13 @@ SELECT
     database_name =
         DB_NAME(qsrs.database_id),
     executable_query =
-    (
-        SELECT
-            [processing-instruction(_)] = 
-                rq.executable_query
-        FOR
-            XML
-            PATH(''),
-            TYPE
-    ),
+        CONVERT
+        (
+            xml,
+            N'<![CDATA[' +
+            rq.executable_query +
+            N']]>'
+        ),
     parameter_values =
         ISNULL
         (
