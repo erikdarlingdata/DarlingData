@@ -2621,6 +2621,64 @@ WHERE x.query_plan_xml IS NOT NULL
 OPTION(RECOMPILE);
 
 /*
+Extract parameters from plans too large to cast as full XML
+*/
+INSERT
+    #query_parameters
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    parameter_name,
+    parameter_data_type,
+    parameter_compiled_value
+)
+SELECT
+    qsp.plan_id,
+    parameter_name =
+        LTRIM(RTRIM(cr.c.value(N'@Column', N'sysname'))),
+    parameter_data_type =
+        LTRIM(RTRIM(cr.c.value(N'@ParameterDataType', N'sysname'))),
+    parameter_compiled_value =
+        CASE
+            WHEN cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)') LIKE N'(%)'
+            THEN SUBSTRING
+                 (
+                     cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)'),
+                     2,
+                     LEN(cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')) - 2
+                 )
+            ELSE cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')
+        END
+FROM #query_store_plan AS qsp
+CROSS APPLY
+(
+    SELECT
+        parameter_list_xml =
+            TRY_CAST
+            (
+                SUBSTRING
+                (
+                    qsp.query_plan,
+                    CHARINDEX(N'<ParameterList>', qsp.query_plan),
+                    CHARINDEX
+                    (
+                        N'</ParameterList>',
+                        qsp.query_plan,
+                        CHARINDEX(N'<ParameterList>', qsp.query_plan)
+                    )
+                    + LEN(N'</ParameterList>')
+                    - CHARINDEX(N'<ParameterList>', qsp.query_plan)
+                ) AS xml
+            )
+) AS x
+CROSS APPLY x.parameter_list_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:ParameterList/p:ColumnReference') AS cr(c)
+WHERE TRY_CAST(qsp.query_plan AS xml) IS NULL
+AND   CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
+AND   x.parameter_list_xml IS NOT NULL
+OPTION(RECOMPILE);
+
+/*
 Check for plans too large to cast to XML
 */
 SELECT
