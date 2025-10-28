@@ -17,17 +17,23 @@ You can filter queries by plan_id or query_id, and optionally specify a date ran
 
 ## Parameters
 
-| parameter_name      | data_type  | description                                                           | valid_inputs                                       | defaults                         |
-|---------------------|------------|-----------------------------------------------------------------------|----------------------------------------------------|----------------------------------|
-| @database_name      | sysname    | the name of the database you want to extract queries from             | a database name with query store enabled           | NULL; current database if NULL   |
-| @start_date         | datetime2  | the begin date of your search                                         | January 1, 1753, through December 31, 9999         | the last seven days              |
-| @end_date           | datetime2  | the end date of your search                                           | January 1, 1753, through December 31, 9999         | current date/time                |
-| @include_plan_ids   | nvarchar   | a list of plan ids to search for                                      | a string; comma separated for multiple ids         | NULL                             |
-| @include_query_ids  | nvarchar   | a list of query ids to search for                                     | a string; comma separated for multiple ids         | NULL                             |
-| @help               | bit        | how you got here                                                      | 0 or 1                                             | 0                                |
-| @debug              | bit        | prints dynamic sql and statement length                               | 0 or 1                                             | 0                                |
-| @version            | varchar    | OUTPUT; for support                                                   | none; OUTPUT                                       | none; OUTPUT                     |
-| @version_date       | datetime   | OUTPUT; for support                                                   | none; OUTPUT                                       | none; OUTPUT                     |
+| parameter_name         | data_type          | description                                                           | valid_inputs                                       | defaults                         |
+|------------------------|--------------------|-----------------------------------------------------------------------|----------------------------------------------------|----------------------------------|
+| @database_name         | sysname            | the name of the database you want to look at query store in           | a database name with query store enabled           | NULL; current database if NULL   |
+| @start_date            | datetimeoffset(7)  | the begin date of your search, will be converted to UTC internally    | January 1, 1753, through December 31, 9999         | the last seven days              |
+| @end_date              | datetimeoffset(7)  | the end date of your search, will be converted to UTC internally      | January 1, 1753, through December 31, 9999         | current date/time                |
+| @include_plan_ids      | nvarchar(4000)     | a list of plan ids to search for                                      | a string; comma separated for multiple ids         | NULL                             |
+| @include_query_ids     | nvarchar(4000)     | a list of query ids to search for                                     | a string; comma separated for multiple ids         | NULL                             |
+| @ignore_plan_ids       | nvarchar(4000)     | a list of plan ids to ignore                                          | a string; comma separated for multiple ids         | NULL                             |
+| @ignore_query_ids      | nvarchar(4000)     | a list of query ids to ignore                                         | a string; comma separated for multiple ids         | NULL                             |
+| @procedure_schema      | sysname            | the schema of the procedure you're searching for                      | a valid schema in your database                    | NULL                             |
+| @procedure_name        | sysname            | the name of the programmable object you're searching for              | a valid programmable object in your database       | NULL                             |
+| @query_text_search     | nvarchar(4000)     | query text to search for                                              | a string; leading and trailing wildcards added    | NULL                             |
+| @query_text_search_not | nvarchar(4000)     | query text to exclude                                                 | a string; leading and trailing wildcards added    | NULL                             |
+| @help                  | bit                | return available parameter details, etc.                              | 0 or 1                                             | 0                                |
+| @debug                 | bit                | prints dynamic sql, statement length, parameter and variable values   | 0 or 1                                             | 0                                |
+| @version               | varchar(30)        | OUTPUT; for support                                                   | none; OUTPUT                                       | none; OUTPUT                     |
+| @version_date          | datetime           | OUTPUT; for support                                                   | none; OUTPUT                                       | none; OUTPUT                     |
 
 ## Examples
 
@@ -43,16 +49,34 @@ EXECUTE dbo.sp_QueryReproBuilder
 EXECUTE dbo.sp_QueryReproBuilder
     @include_query_ids = '100,200,300';
 
+-- Exclude specific plan IDs
+EXECUTE dbo.sp_QueryReproBuilder
+    @ignore_plan_ids = '999,888';
+
 -- Filter by date range
 EXECUTE dbo.sp_QueryReproBuilder
     @start_date = '2025-01-01',
     @end_date = '2025-01-31';
 
--- Combine filters
+-- Search for queries from a specific procedure
+EXECUTE dbo.sp_QueryReproBuilder
+    @procedure_schema = 'dbo',
+    @procedure_name = 'usp_GetCustomerOrders';
+
+-- Search for queries containing specific text
+EXECUTE dbo.sp_QueryReproBuilder
+    @query_text_search = 'SELECT * FROM Orders';
+
+-- Exclude queries containing specific text
+EXECUTE dbo.sp_QueryReproBuilder
+    @query_text_search_not = 'temp table';
+
+-- Combine multiple filters
 EXECUTE dbo.sp_QueryReproBuilder
     @include_query_ids = '500',
     @start_date = '2025-01-15',
-    @end_date = '2025-01-20';
+    @end_date = '2025-01-20',
+    @query_text_search = 'Products';
 ```
 
 ## Output
