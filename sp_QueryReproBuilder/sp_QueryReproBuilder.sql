@@ -3128,8 +3128,6 @@ SELECT
     qsp.compatibility_level,
     qsq.object_name,
     qsqt.query_sql_text,
-    qsqt.is_part_of_encrypted_module,
-    qsqt.has_restricted_text,
     query_plan =
          CASE
              WHEN TRY_CAST(qsp.query_plan AS xml) IS NOT NULL
