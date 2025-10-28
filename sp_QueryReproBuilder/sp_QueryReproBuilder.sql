@@ -895,7 +895,7 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     query_id bigint NOT NULL,
-    executable_query nvarchar(max) NULL,
+    executable_query xml NULL,
     INDEX plan_id_query_id CLUSTERED (plan_id, query_id)
 );
 
@@ -2951,7 +2951,9 @@ SELECT
     qsp.plan_id,
     qsp.query_id,
     executable_query =
-        N'/*' + NCHAR(10) +
+        (
+            SELECT
+                N'/*' + NCHAR(10) +
         N'Query ID: ' + 
         RTRIM(qsp.query_id) + NCHAR(10) +
         N'Plan ID: ' + RTRIM(qsp.plan_id) + NCHAR(10) +
@@ -3102,6 +3104,10 @@ SELECT
                 qsqt.query_sql_text +
                 NCHAR(10)
         END
+            FOR XML
+                PATH(N''),
+                TYPE
+        )
 FROM #query_store_plan AS qsp
 JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
