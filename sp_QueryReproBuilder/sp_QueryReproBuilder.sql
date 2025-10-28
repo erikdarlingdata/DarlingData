@@ -2799,6 +2799,46 @@ AND   qsqt.query_sql_text LIKE N'%OPTION%(%RECOMPILE%)%'
 OPTION(RECOMPILE);
 
 /*
+Check for encrypted modules and restricted text
+*/
+SELECT
+    @current_table = N'checking for encrypted modules and restricted text';
+
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    warning_type =
+        CASE
+            WHEN qsqt.is_part_of_encrypted_module = 1
+            THEN N'encrypted module'
+            WHEN qsqt.has_restricted_text = 1
+            THEN N'restricted text'
+        END,
+    warning_message =
+        CASE
+            WHEN qsqt.is_part_of_encrypted_module = 1
+            THEN N'Query is part of an encrypted module. Full query text may not be available.'
+            WHEN qsqt.has_restricted_text = 1
+            THEN N'Query has restricted text. Full query text may not be available due to permissions or other restrictions.'
+        END
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsqt.is_part_of_encrypted_module = 1
+OR    qsqt.has_restricted_text = 1
+OPTION(RECOMPILE);
+
+/*
 Check for temp tables and table variables in query text
 */
 SELECT
