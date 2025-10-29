@@ -68,6 +68,7 @@ ALTER PROCEDURE
     @seconds_sample tinyint = 10,
     @gimme_danger bit = 0,
     @keep_alive bit = 0,
+    @use_like bit = 1,
     @custom_name sysname = N'',
     @output_database_name sysname = N'',
     @output_schema_name sysname = N'dbo',
@@ -153,14 +154,15 @@ BEGIN
                 WHEN N'@object_schema' THEN N'(inclusive) the schema of the object you want to filter to; only needed with blocking events'
                 WHEN N'@requested_memory_mb' THEN N'(>=) the memory grant a query must ask for to have data collected'
                 WHEN N'@seconds_sample' THEN N'the duration in seconds to run the event session for'
-                WHEN N'@gimme_danger' THEN N'used to override default minimums for query, wait, and blocking durations. only use if you''re okay with potentially adding a lot of observer overhead on your system, or for testing purposes.'
+                WHEN N'@gimme_danger' THEN N'used to override default minimums for query, wait, and blocking durations. only use if you''re okay with potentially adding a lot of observer overhead on your system, or for testing purposes'
                 WHEN N'@debug' THEN N'use to print out dynamic SQL'
                 WHEN N'@keep_alive' THEN N'creates a permanent session, either to watch live or log to a table from'
+                WHEN N'@use_like' THEN N'use the case insensitive like operator for matching instead of equals. tries to be smart and guess what user wants; checking for percent sign and brackets. escape character isn''t used'
                 WHEN N'@custom_name' THEN N'if you want to custom name a permanent session'
                 WHEN N'@output_database_name' THEN N'the database you want to log data to'
                 WHEN N'@output_schema_name' THEN N'the schema you want to log data to'
                 WHEN N'@delete_retention_days' THEN N'how many days of logged data you want to keep'
-                WHEN N'@cleanup' THEN N'deletes all sessions, tables, and views. requires output database and schema.'
+                WHEN N'@cleanup' THEN N'deletes all sessions, tables, and views. requires output database and schema'
                 WHEN N'@max_memory_kb' THEN N'set a max ring buffer size to log data to'
                 WHEN N'@help' THEN N'well you''re here so you figured this one out'
                 WHEN N'@version' THEN N'to make sure you have the most recent bits'
@@ -189,6 +191,7 @@ BEGIN
                WHEN N'@gimme_danger' THEN N'1 or 0'
                WHEN N'@debug' THEN N'1 or 0'
                WHEN N'@keep_alive' THEN N'1 or 0'
+               WHEN N'@use_like' THEN N'1 or 0'
                WHEN N'@custom_name' THEN N'a stringy thing'
                WHEN N'@output_database_name' THEN N'a valid database name'
                WHEN N'@output_schema_name' THEN N'a valid schema'
@@ -221,6 +224,7 @@ BEGIN
                WHEN N'@seconds_sample' THEN N'10'
                WHEN N'@gimme_danger' THEN N'0'
                WHEN N'@keep_alive' THEN N'0'
+               WHEN N'@use_like' THEN N'1'
                WHEN N'@custom_name' THEN N'intentionally left blank'
                WHEN N'@output_database_name' THEN N'intentionally left blank'
                WHEN N'@output_schema_name' THEN N'dbo'
@@ -239,7 +243,7 @@ BEGIN
     JOIN sys.types AS t
       ON  ap.system_type_id = t.system_type_id
       AND ap.user_type_id = t.user_type_id
-    WHERE o.name = N'sp_HumanEvents';
+    WHERE o.object_id = @@PROCID;
 
 
     /*Example calls*/
@@ -425,6 +429,21 @@ CREATE TABLE
         )
 );
 
+CREATE TABLE
+    #equals_object_id
+(
+    object_id int
+);
+CREATE TABLE
+    #matched_object_id
+(
+    object_id int
+);
+CREATE TABLE
+    #matched_database_name
+(
+    name sysname
+);
 
 /*
 I mean really stop it with the unsupported versions
@@ -489,11 +508,12 @@ DECLARE
     @requested_memory_mb_filter nvarchar(max) = N'',
     @compile_events bit = 0,
     @parameterization_events bit = 0,
-    @fully_formed_babby nvarchar(1000) = N'',
+    @object_name_three_part nvarchar(1000) = N'',
+    @object_name_three_part_id nvarchar(11) = N'',
+    @object_name_two_part nvarchar(1000) = N'',
     @s_out integer,
     @s_sql nvarchar(max) = N'',
     @s_params nvarchar(max) = N'',
-    @object_id sysname = N'',
     @requested_memory_kb nvarchar(11) = N'',
     @the_sleeper_must_awaken nvarchar(max) = N'',
     @min_id integer,
@@ -515,7 +535,34 @@ DECLARE
     @drop_holder nvarchar(max) = N'',
     @cleanup_views nvarchar(max) = N'',
     @nc10 nvarchar(2) = NCHAR(10),
-    @inputbuf_bom nvarchar(1) = CONVERT(nvarchar(1), 0x0a00, 0);
+    @inputbuf_bom nvarchar(1) = CONVERT(nvarchar(1), 0x0a00, 0),
+    @like_percent nvarchar(5) = N'%[%]%',
+    @like_open_bracket nvarchar(5) = '%[[]%',
+    @like_closing_bracket nvarchar(3) = '%]%',
+    @database_name_predicate nvarchar(max) = N'',
+    @database_name_id nvarchar(11) = N'',
+    @database_name_parsed sysname = N'',
+    @database_name_has_match bit = 0,
+    @object_name_has_match bit = 0,
+    @object_name_has_wildcard bit = 0,
+    @object_name_parsed sysname = N'',
+    @object_schema_parsed sysname = N'',
+    @current_matched_database_name sysname = N'',
+    @current_matched_object_id int,
+    @object_id_equals_sql nvarchar(max) = N'',
+    @object_id_matched_sql nvarchar(max) = N'',
+    @wait_event_type_pattern nvarchar(6) = N'%wait%',
+    @lock_event_type_pattern nvarchar(6) = N'%lock%',
+    @query_event_type_pattern nvarchar(6) = N'%quer%',
+    @compile_event_type_pattern nvarchar(6) = N'%comp%',
+    @recompile_exclude_event_type_pattern nvarchar(4) = N'%re%',
+    @recompile_event_type_pattern nvarchar(8) = N'%recomp%',
+    @is_wait_event_type bit = 0,
+    @is_lock_event_type bit = 0,
+    @is_query_event_type bit = 0,
+    @is_compile_event_type bit = 0,
+    @is_compile_any_event_type bit = 0,
+    @is_recompile_event_type bit = 0;
 
 /*check to make sure we're on a usable version*/
 IF
@@ -810,21 +857,37 @@ SET @custom_name           = ISNULL(@custom_name, N'');
 SET @output_database_name  = ISNULL(@output_database_name, N'');
 SET @output_schema_name    = ISNULL(@output_schema_name, N'');
 
-/*I'm also very forgiving of some white space*/
-SET @database_name = RTRIM(LTRIM(@database_name));
+/*I'm also very forgiving of some white space and brackets*/
+SET @database_name         = RTRIM(LTRIM(@database_name));
+SET @database_name_parsed  = PARSENAME(@database_name, 1);
+SET @database_name_id      = ISNULL(
+                                        CONVERT(nvarchar(11), DB_ID(@database_name_parsed)),
+                                        N''
+                                   );
+/*Forgive my case*/
+SET @event_type = LOWER(@event_type);
 
 /*Assemble the full object name for easier wrangling*/
-SET @fully_formed_babby =
-        QUOTENAME(@database_name) +
+SET @object_name_parsed = PARSENAME(@object_name, 1);
+SET @object_schema_parsed = PARSENAME(@object_schema, 1);
+SET @object_name_two_part =
+        QUOTENAME(@object_schema_parsed) +
         N'.' +
-        QUOTENAME(@object_schema) +
+        QUOTENAME(@object_name_parsed);
+SET @object_name_three_part =
+        QUOTENAME(@database_name_parsed) +
         N'.' +
-        QUOTENAME(@object_name);
-
+        QUOTENAME(@object_schema_parsed) +
+        N'.' +
+        QUOTENAME(@object_name_parsed);
+SET @object_name_three_part_id = ISNULL(
+                                           CONVERT(nvarchar(11), OBJECT_ID( @object_name_three_part )),
+                                           N''
+                                       );
 /*Some sanity checking*/
 IF @debug = 1 BEGIN RAISERROR(N'Sanity checking event types', 0, 1) WITH NOWAIT; END;
 /* You can only do this right now. */
-IF LOWER(@event_type) NOT IN
+IF @event_type NOT IN
         (
             N'waits',
             N'blocking',
@@ -851,6 +914,18 @@ You have chosen a value for @event_type... poorly. use @help = 1 to see valid ar
 What on earth is %s?', 11, 1, @event_type) WITH NOWAIT;
     RETURN;
 END;
+
+SELECT
+    @is_lock_event_type           = CASE WHEN @event_type LIKE @lock_event_type_pattern THEN 1 ELSE 0 END,
+    @is_query_event_type          = CASE WHEN @event_type LIKE @query_event_type_pattern THEN 1 ELSE 0 END,
+    @is_recompile_event_type      = CASE WHEN @event_type LIKE @recompile_event_type_pattern THEN 1 ELSE 0 END,
+    @is_compile_any_event_type    = CASE WHEN @event_type LIKE @compile_event_type_pattern THEN 1 ELSE 0 END,
+    @is_wait_event_type           = CASE WHEN @event_type LIKE @wait_event_type_pattern THEN 1 ELSE 0 END,
+    @is_compile_event_type        = CASE
+                                        WHEN @event_type LIKE @compile_event_type_pattern
+                                             AND @event_type NOT LIKE @recompile_exclude_event_type_pattern THEN 1
+                                        ELSE 0
+                                    END;
 
 
 IF @debug = 1 BEGIN RAISERROR(N'Checking query sort order', 0, 1) WITH NOWAIT; END;
@@ -982,7 +1057,7 @@ IF
 (
         @wait_type <> N''
     AND @wait_type <> N'ALL'
-    AND LOWER(@event_type) NOT LIKE N'%wait%'
+    AND @is_wait_event_type = 0
 )
 BEGIN
     RAISERROR(N'You can''t filter on wait stats unless you use the wait stats event.', 11, 1) WITH NOWAIT;
@@ -990,36 +1065,243 @@ BEGIN
 END;
 
 
+/* validatabase name */
+IF @debug = 1 BEGIN RAISERROR(N'If there''s a database filter, is the name valid?', 0, 1) WITH NOWAIT; END;
+IF @database_name <> N''
+BEGIN
+    IF @database_name_id = N''
+    BEGIN
+        IF
+        (
+            (
+                @database_name LIKE @like_percent
+                OR
+                (
+                        @database_name LIKE @like_open_bracket
+                    AND @database_name LIKE @like_closing_bracket
+                )
+            )
+            AND @use_like = 1
+        )
+        BEGIN
+            INSERT
+                #matched_database_name WITH(TABLOCK)
+            (
+                name
+            )
+            SELECT
+                name
+            FROM sys.databases AS dbs
+            WHERE LOWER(dbs.name) LIKE LOWER(@database_name);
+
+            IF NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #matched_database_name
+            )
+            BEGIN
+                RAISERROR(N'It looks like you''re looking for a database pattern that doesn''t wanna be looked for (%s); check that spelling!', 11, 1, @database_name) WITH NOWAIT;
+                RETURN;
+            END;
+            ELSE
+            BEGIN
+                SET @database_name_has_match = 1
+            END;
+        END;
+        ELSE
+        BEGIN
+            RAISERROR(N'It looks like you''re looking for a database that doesn''t wanna be looked for (%s); check that spelling!', 11, 1, @database_name) WITH NOWAIT;
+            RETURN;
+        END;
+    END;
+END;
+
+
 /* This is probably important, huh? */
 IF @debug = 1 BEGIN RAISERROR(N'Are we trying to filter for a blocking session?', 0, 1) WITH NOWAIT; END;
 
 /* blocking events need a database name to resolve objects */
-IF
-(
-        LOWER(@event_type) LIKE N'%lock%'
-    AND DB_ID(@database_name) IS NULL
-    AND @object_name <> N''
-)
+IF @object_name <> N''
 BEGIN
-    RAISERROR(N'The blocking event can only filter on an object_id, and we need a valid @database_name to resolve it correctly.', 11, 1) WITH NOWAIT;
-    RETURN;
+    IF
+    (
+        (
+            @object_name LIKE @like_percent
+            OR
+            (
+                    @object_name LIKE @like_open_bracket
+                AND @object_name LIKE @like_closing_bracket
+            )
+        )
+        AND @use_like = 1
+    )
+    BEGIN
+        SET @object_name_has_wildcard = 1;
+    END;
+
+    IF
+    (
+            @is_lock_event_type = 1
+        AND @database_name_has_match = 0
+        AND @database_name_id = N''
+    )
+    BEGIN
+        RAISERROR(N'The blocking event can only filter on an object_id, and we need a valid @database_name to resolve it correctly.', 11, 1) WITH NOWAIT;
+        RETURN;
+    END;
+    ELSE IF /*Found actual @database_name and have wildcards in @object_name*/
+    (
+            @database_name_id <> N''
+        AND @object_name_has_wildcard = 1
+    )
+    BEGIN
+        SET @object_id_matched_sql = N'
+SELECT
+    object_id
+FROM ' + QUOTENAME(@database_name_parsed) + N'.sys.objects AS obj
+INNER JOIN ' + QUOTENAME(@database_name_parsed) + N'.sys.schemas AS sch
+    ON obj.schema_id = sch.schema_id
+WHERE sch.name = @object_schema_parsed
+      AND LOWER(obj.name) LIKE LOWER(@object_name);';
+        IF @debug = 1 BEGIN RAISERROR(@object_id_matched_sql, 0, 1) WITH NOWAIT; END;
+        INSERT
+            #matched_object_id
+        (
+            object_id
+        )
+        EXECUTE sys.sp_executesql
+            @stmt = @object_id_matched_sql,
+            @params = N'@object_schema_parsed sysname,
+                        @object_name nvarchar(200)',
+            @object_schema_parsed = @object_schema_parsed,
+            @object_name = @object_name;
+    END
+    ELSE IF @database_name_has_match = 1
+    BEGIN
+        DECLARE
+            @matched_database_name CURSOR;
+
+        SET
+            @matched_database_name =
+            CURSOR
+            LOCAL
+            SCROLL
+            DYNAMIC
+            READ_ONLY
+        FOR
+        SELECT
+            mdm.name
+        FROM #matched_database_name AS mdm
+        WHERE mdm.name LIKE @database_name;
+
+        OPEN @matched_database_name;
+
+        FETCH NEXT
+        FROM @matched_database_name
+        INTO @current_matched_database_name;
+
+        WHILE @@FETCH_STATUS = 0
+        BEGIN
+            SET @object_id_equals_sql = N'
+SELECT
+    @current_matched_object_id = OBJECT_ID(N' +
+            QUOTENAME
+            (
+                QUOTENAME(@current_matched_database_name) +
+                N'.' +
+                @object_name_two_part,
+                N''''
+            ) +
+            N');';
+            IF @debug = 1 BEGIN RAISERROR(@object_id_equals_sql, 0, 1) WITH NOWAIT; END;
+            EXECUTE sys.sp_executesql
+                @stmt = @object_id_equals_sql,
+                @params = N'@current_matched_object_id int OUTPUT',
+                @current_matched_object_id = @current_matched_object_id OUTPUT;
+            IF @current_matched_object_id IS NOT NULL
+            BEGIN
+                INSERT
+                    #equals_object_id
+                (
+                    object_id
+                )
+                VALUES
+                    (@current_matched_object_id)
+            END;
+
+            IF
+            (
+                    @object_name_has_wildcard = 1
+                AND NOT EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #equals_object_id
+                )
+            )
+            BEGIN
+                SET @object_id_matched_sql = N'
+SELECT
+    object_id
+FROM ' + QUOTENAME(@current_matched_database_name) + N'.sys.objects AS obj
+INNER JOIN ' + QUOTENAME(@current_matched_database_name) + N'.sys.schemas AS sch
+    ON obj.schema_id = sch.schema_id
+WHERE sch.name = @object_schema_parsed
+      AND LOWER(obj.name) LIKE LOWER(@object_name);';
+                IF @debug = 1 BEGIN RAISERROR(@object_id_matched_sql, 0, 1) WITH NOWAIT; END
+                INSERT
+                    #matched_object_id
+                (
+                    object_id
+                )
+                EXECUTE sys.sp_executesql
+                    @stmt = @object_id_matched_sql,
+                    @params = N'@object_schema_parsed sysname,
+                                @object_name nvarchar(200)',
+                    @object_schema_parsed = @object_schema_parsed,
+                    @object_name = @object_name;
+            END;
+
+            FETCH NEXT
+            FROM @matched_database_name
+            INTO @current_matched_database_name;
+        END;
+    END;
 END;
 
-/* but could we resolve the object name? */
+/* but could we resolve the object name for lock event type? */
 IF
 (
-        LOWER(@event_type) LIKE N'%lock%'
+        @database_name <> N''
+    AND
+    (
+            @database_name_id <> N''
+        OR @database_name_has_match = 1
+    )
     AND @object_name <> N''
-    AND OBJECT_ID(@fully_formed_babby) IS NULL
+    AND @object_name_three_part_id = N''
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #matched_object_id
+    )
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #equals_object_id
+    )
 )
 BEGIN
-    RAISERROR(N'We couldn''t find the object you''re trying to find: %s', 11, 1, @fully_formed_babby) WITH NOWAIT;
+    RAISERROR(N'We couldn''t find the object, %s, you''re trying to find across the current database and/or the @database_name, %s.' , 11, 1, @object_name, @database_name) WITH NOWAIT;
     RETURN;
 END;
 
 /* no blocked process report, no love */
 IF @debug = 1 BEGIN RAISERROR(N'Validating if the Blocked Process Report is on, if the session is for blocking', 0, 1) WITH NOWAIT; END;
-IF @event_type LIKE N'%lock%'
+IF @is_lock_event_type = 1
 AND EXISTS
 (
     SELECT
@@ -1035,17 +1317,6 @@ BEGIN
     RECONFIGURE;',
     11, 0) WITH NOWAIT;
     RETURN;
-END;
-
-/* validatabase name */
-IF @debug = 1 BEGIN RAISERROR(N'If there''s a database filter, is the name valid?', 0, 1) WITH NOWAIT; END;
-IF @database_name <> N''
-BEGIN
-    IF DB_ID(@database_name) IS NULL
-    BEGIN
-        RAISERROR(N'It looks like you''re looking for a database that doesn''t wanna be looked for (%s); check that spelling!', 11, 1, @database_name) WITH NOWAIT;
-        RETURN;
-    END;
 END;
 
 
@@ -1163,10 +1434,13 @@ END;
 IF @debug = 1 BEGIN RAISERROR(N'Is output database OR schema filled in?', 0, 1) WITH NOWAIT; END;
 IF
 (
-     LEN(@output_database_name + @output_schema_name) > 0
-    AND  @output_schema_name <> N'dbo'
-    AND (@output_database_name  = N''
-    OR   @output_schema_name = N'')
+        LEN(@output_database_name + @output_schema_name) > 0
+    AND @output_schema_name <> N'dbo'
+    AND
+    (
+           @output_database_name = N''
+        OR @output_schema_name   = N''
+    )
 )
 BEGIN
     IF @output_database_name = N''
@@ -1187,8 +1461,8 @@ END;
 IF @debug = 1 BEGIN RAISERROR(N'Is custom name something stupid?', 0, 1) WITH NOWAIT; END;
 IF
 (
-    PATINDEX(N'%[^a-zA-Z0-9]%', @custom_name) > 0
-      OR @custom_name LIKE N'[0-9]%'
+       PATINDEX(N'%[^a-zA-Z0-9]%', @custom_name) > 0
+    OR @custom_name LIKE N'[0-9]%'
 )
 BEGIN
     RAISERROR(N'
@@ -1232,7 +1506,7 @@ END;
 IF @debug = 1 BEGIN RAISERROR(N'Setting up individual filters', 0, 1) WITH NOWAIT; END;
 IF @query_duration_ms > 0
 BEGIN
-    IF LOWER(@event_type) NOT LIKE N'%comp%' /* compile and recompile durations are tiny */
+    IF @is_compile_any_event_type <> 0 /* compile and recompile durations are tiny */
     BEGIN
         SET @query_duration_filter += N'     AND duration >= ' + CONVERT(nvarchar(20), (@query_duration_ms * 1000)) + @nc10;
     END;
@@ -1250,23 +1524,68 @@ END;
 
 IF @client_app_name <> N''
 BEGIN
-    SET @client_app_name_filter += N'     AND sqlserver.client_app_name = N' + QUOTENAME(@client_app_name, N'''') + @nc10;
+    IF
+    (
+        (
+            @client_app_name LIKE @like_percent
+            OR
+            (
+                    @client_app_name LIKE @like_open_bracket
+                AND @client_app_name LIKE @like_closing_bracket
+            )
+        )
+        AND @use_like = 1
+    )
+    BEGIN
+        SET @client_app_name_filter  += N'     AND sqlserver.like_i_sql_unicode_string( sqlserver.client_app_name, N' + QUOTENAME(@client_app_name, N'''') + ')' + @nc10;
+    END;
+    ELSE
+    BEGIN
+        SET @client_app_name_filter += N'     AND sqlserver.client_app_name = N' + QUOTENAME(@client_app_name, N'''') + @nc10;
+    END;
 END;
 
 IF @client_hostname <> N''
 BEGIN
-    SET @client_hostname_filter += N'     AND sqlserver.client_hostname = N' + QUOTENAME(@client_hostname, N'''') + @nc10;
+    IF
+        (
+            (
+                @client_hostname LIKE @like_percent
+                OR
+                (
+                        @client_hostname LIKE @like_open_bracket
+                    AND @client_hostname LIKE @like_closing_bracket
+                )
+            )
+            AND @use_like = 1
+        )
+    BEGIN
+        SET @client_hostname_filter += N'     AND sqlserver.like_i_sql_unicode_string( sqlserver.client_hostname, N' + QUOTENAME(@client_hostname, N'''') + ')' + @nc10;
+    END;
+    ELSE
+    BEGIN
+        SET @client_hostname_filter += N'     AND sqlserver.client_hostname = N' + QUOTENAME(@client_hostname, N'''') + @nc10;
+    END;
 END;
 
 IF @database_name <> N''
 BEGIN
-    IF LOWER(@event_type) NOT LIKE N'%lock%'
+    IF @is_lock_event_type = 1
     BEGIN
-        SET @database_name_filter += N'     AND sqlserver.database_name = N' + QUOTENAME(@database_name, N'''') + @nc10;
+        SET @database_name_predicate = N'database_name';
     END;
-    IF LOWER(@event_type) LIKE N'%lock%'
+    ELSE
     BEGIN
-        SET @database_name_filter += N'     AND database_name = N' + QUOTENAME(@database_name, N'''') + @nc10;
+        SET @database_name_predicate = N'sqlserver.database_name';
+    END;
+
+    IF @database_name_has_match = 1
+    BEGIN
+        SET @database_name_filter += N'     AND sqlserver.like_i_sql_unicode_string( ' + @database_name_predicate + N', N' + QUOTENAME(@database_name, N'''') + ')' + @nc10;
+    END;
+    ELSE
+    BEGIN
+        SET @database_name_filter += N'     AND ' + @database_name_predicate + N' = N' + QUOTENAME(@database_name_parsed, N'''') + @nc10;
     END;
 END;
 
@@ -1284,19 +1603,99 @@ END;
 
 IF @username <> N''
 BEGIN
-    SET @username_filter += N'     AND sqlserver.username = N' + QUOTENAME(@username, '''') + @nc10;
+    IF
+        (
+            (
+                @username LIKE @like_percent
+                OR
+                (
+                        @username LIKE @like_open_bracket
+                    AND @username LIKE @like_closing_bracket
+                )
+            )
+            AND @use_like = 1
+        )
+    BEGIN
+        SET @username_filter += N'     AND sqlserver.like_i_sql_unicode_string( sqlserver.username, N' + QUOTENAME(@username, N'''') + ')' + @nc10;
+    END;
+    ELSE
+    BEGIN
+        SET @username_filter += N'     AND sqlserver.username = N' + QUOTENAME(@username, '''') + @nc10;
+    END;
 END;
 
 IF @object_name <> N''
 BEGIN
-    IF @event_type LIKE N'%lock%'
+    IF @is_lock_event_type = 1
     BEGIN
-        SET @object_id = OBJECT_ID(@fully_formed_babby);
-        SET @object_name_filter += N'     AND object_id = ' + @object_id + @nc10;
+        IF @object_name_three_part_id <> ''
+        BEGIN
+            SET @object_name_filter += N'     AND object_id = ' + @object_name_three_part_id + @nc10;
+        END;
+        ELSE IF EXISTS
+        (
+            SELECT
+                1/0
+            FROM #equals_object_id
+        )
+        BEGIN
+            SET @object_name_filter += N'     AND' +
+                @nc10 +
+                N'     (' +
+                (
+                    SELECT
+	                    STUFF
+		                    (
+			                    (
+                                    SELECT
+                                        @nc10 + N'         OR object_id = ' + CONVERT(nvarchar(11), eoi.object_id)
+                                    FROM #equals_object_id AS eoi FOR XML PATH(N''), TYPE
+			                    ).value( './text()[1]' , 'nvarchar(max)' ) ,
+			                    10 ,
+			                    3 ,
+			                    ''
+		                    )
+                ) +
+                @nc10 +
+                N'     )' +
+                @nc10;
+        END;
+        ELSE IF EXISTS
+        (
+            SELECT
+                1/0
+            FROM #matched_object_id
+        )
+        BEGIN
+            SET @object_name_filter += N'     AND' +
+                @nc10 +
+                N'     (' +
+                (
+                    SELECT
+	                    STUFF
+		                    (
+			                    (
+                                    SELECT
+                                        @nc10 + N'         OR object_id = ' + CONVERT(nvarchar(11), moi.object_id)
+                                    FROM #matched_object_id AS moi FOR XML PATH(N''), TYPE
+			                    ).value( './text()[1]' , 'nvarchar(max)' ) ,
+			                    10 ,
+			                    3 ,
+			                    ''
+		                    )
+                ) +
+                @nc10 +
+                N'     )' +
+                @nc10;
+        END;
     END;
-    IF @event_type NOT LIKE N'%lock%'
+    ELSE IF @object_name_has_wildcard = 0
     BEGIN
         SET @object_name_filter += N'     AND object_name = N' + QUOTENAME(@object_name, N'''') + @nc10;
+    END;
+    ELSE IF @object_name_has_wildcard = 1
+    BEGIN
+        SET @object_name_filter += N'     AND sqlserver.like_i_sql_unicode_string( object_name , N' + QUOTENAME(@object_name, N'''') + N')' + @nc10;
     END;
 END;
 
@@ -1309,7 +1708,7 @@ END;
 
 /* At this point we'll either put my list of interesting waits in a temp table,
    or a list of user defined waits */
-IF LOWER(@event_type) LIKE N'%wait%'
+IF @is_wait_event_type = 1
 BEGIN
     INSERT
         #wait WITH(TABLOCK)
@@ -1489,7 +1888,7 @@ SET @session_filter +=
         ISNULL(@object_name_filter, N'')
     );
 
-/* For waits specifically, because they also need to filter on wait type and wait duration */
+/* For waits specifically, because they also need to filter on wait type and wait duration. object_name not supported. */
 SET @session_filter_waits +=
     (
         ISNULL(@wait_duration_filter, N'') +
@@ -1498,8 +1897,7 @@ SET @session_filter_waits +=
         ISNULL(@client_hostname_filter, N'') +
         ISNULL(@database_name_filter, N'') +
         ISNULL(@session_id_filter, N'') +
-        ISNULL(@username_filter, N'') +
-        ISNULL(@object_name_filter, N'')
+        ISNULL(@username_filter, N'')
     );
 
 /* For sessions that can't filter on client app or host name */
@@ -1570,11 +1968,11 @@ SET @session_filter_parameterization +=
 IF @debug = 1 BEGIN RAISERROR(N'Setting up the event session', 0, 1) WITH NOWAIT; END;
 SET @session_sql +=
         CASE
-            WHEN LOWER(@event_type) LIKE N'%lock%'
+            WHEN @is_lock_event_type = 1
             THEN N'
       ADD EVENT sqlserver.blocked_process_report
         (WHERE ( ' + @session_filter_blocking + N' ))'
-            WHEN LOWER(@event_type) LIKE N'%quer%'
+            WHEN @is_query_event_type = 1
             THEN N'
       ADD EVENT sqlserver.module_end
         (SET collect_statement = 1
@@ -1601,21 +1999,21 @@ SET @session_sql +=
          WHERE ( ' + @session_filter_query_plans + N' ))'
                          ELSE N''
                      END
-            WHEN LOWER(@event_type) LIKE N'%wait%'
+            WHEN @is_wait_event_type = 1
             AND  @v > 11
             THEN N'
       ADD EVENT sqlos.wait_completed
         (SET collect_wait_resource = 1
          ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
          WHERE ( ' + @session_filter_waits + N' ))'
-            WHEN LOWER(@event_type) LIKE N'%wait%'
+            WHEN @is_wait_event_type = 1
             AND  @v = 11
             THEN N'
       ADD EVENT sqlos.wait_info
         (
          ACTION (sqlserver.database_name, sqlserver.plan_handle, sqlserver.query_hash_signed, sqlserver.query_plan_hash_signed)
          WHERE ( ' + @session_filter_waits + N' ))'
-            WHEN LOWER(@event_type) LIKE N'%recomp%'
+            WHEN @is_recompile_event_type = 1
             THEN CASE
                      WHEN @compile_events = 1
                      THEN N'
@@ -1629,8 +2027,7 @@ SET @session_sql +=
          ACTION(sqlserver.database_name)
          WHERE ( ' + @session_filter_recompile + N' ))'
                  END
-            WHEN (LOWER(@event_type) LIKE N'%comp%'
-            AND   LOWER(@event_type) NOT LIKE N'%re%')
+            WHEN @is_compile_event_type = 1
             THEN CASE
                      WHEN @compile_events = 1
                      THEN N'
@@ -1665,7 +2062,14 @@ SET @session_sql +=
 /* This creates the event session */
 SET @session_sql += @session_with;
 
-IF @debug = 1 BEGIN RAISERROR(@session_sql, 0, 1) WITH NOWAIT; END;
+IF @debug = 1
+BEGIN
+    PRINT SUBSTRING(@session_sql, 1,     4000)
+    PRINT SUBSTRING(@session_sql, 4001,  4000)
+    PRINT SUBSTRING(@session_sql, 8001,  4000);
+    PRINT SUBSTRING(@session_sql, 12001, 4000);
+    PRINT SUBSTRING(@session_sql, 16001, 4000);
+END;
 EXECUTE (@session_sql);
 
 /* This starts the event session */
@@ -1673,9 +2077,12 @@ IF @debug = 1 BEGIN RAISERROR(@start_sql, 0, 1) WITH NOWAIT; END;
 EXECUTE (@start_sql);
 
 /* bail out here if we want to keep the session and not log to tables*/
-IF  @keep_alive = 1
-AND @output_database_name = N''
-AND @output_schema_name IN (N'', N'dbo')
+IF
+(
+        @keep_alive = 1
+    AND @output_database_name = N''
+    AND @output_schema_name IN (N'', N'dbo')
+)
 BEGIN
     IF @debug = 1
     BEGIN
@@ -1783,7 +2190,7 @@ END;
 /*
 This is where magic will happen
 */
-IF LOWER(@event_type) LIKE N'%quer%'
+IF @is_query_event_type = 1
 BEGIN
     WITH
         queries AS
@@ -2136,7 +2543,7 @@ BEGIN
 END;
 
 
-IF LOWER(@event_type) LIKE N'%comp%' AND LOWER(@event_type) NOT LIKE N'%re%'
+IF @is_compile_event_type = 1
 BEGIN
     IF @compile_events = 1
     BEGIN
@@ -2388,7 +2795,7 @@ BEGIN
     END;
 END;
 
-IF LOWER(@event_type) LIKE N'%recomp%'
+IF @is_recompile_event_type = 1
 BEGIN
 IF @compile_events = 1
     BEGIN
@@ -2547,7 +2954,7 @@ IF @compile_events = 1
 END;
 
 
-IF LOWER(@event_type) LIKE N'%wait%'
+IF @is_wait_event_type = 1
 BEGIN
     WITH
         waits AS
@@ -2699,7 +3106,7 @@ BEGIN
 END;
 
 
-IF LOWER(@event_type) LIKE N'%lock%'
+IF @is_lock_event_type = 1
 BEGIN
     SELECT
         event_time =
@@ -3625,16 +4032,16 @@ BEGIN
         SET
             hew.event_type_short =
                 CASE
-                    WHEN hew.event_type LIKE N'%block%'
+                    WHEN hew.event_type LIKE @lock_event_type_pattern
                     THEN N'[_]Blocking'
-                    WHEN ( hew.event_type LIKE N'%comp%'
-                             AND hew.event_type NOT LIKE N'%re%' )
+                    WHEN ( hew.event_type LIKE @compile_event_type_pattern
+                             AND hew.event_type NOT LIKE @recompile_exclude_event_type_pattern )
                     THEN N'[_]Compiles'
-                    WHEN hew.event_type LIKE N'%quer%'
+                    WHEN hew.event_type LIKE @query_event_type_pattern
                     THEN N'[_]Queries'
-                    WHEN hew.event_type LIKE N'%recomp%'
+                    WHEN hew.event_type LIKE @recompile_event_type_pattern
                     THEN N'[_]Recompiles'
-                    WHEN hew.event_type LIKE N'%wait%'
+                    WHEN hew.event_type LIKE @wait_event_type_pattern
                     THEN N'[_]Waits'
                     ELSE N'?'
                 END
@@ -3686,12 +4093,12 @@ BEGIN
                 SELECT
                     @table_sql =
                         CASE
-                            WHEN @event_type_check LIKE N'%wait%'
+                            WHEN @event_type_check LIKE @wait_event_type_pattern
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +
                                  N'  database_name sysname NULL, wait_type nvarchar(60) NULL, duration_ms bigint NULL, signal_duration_ms bigint NULL, ' + @nc10 +
                                  N'  wait_resource sysname NULL, query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, plan_handle varbinary(64) NULL );'
-                            WHEN @event_type_check LIKE N'%lock%'
+                            WHEN @event_type_check LIKE @lock_event_type_pattern
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, ' + @nc10 +
                                  N'  activity nvarchar(20) NULL, database_name sysname NULL, database_id integer NULL, object_id bigint NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + @nc10 +
@@ -3699,7 +4106,7 @@ BEGIN
                                  N'  wait_time bigint NULL, transaction_name sysname NULL, last_transaction_started nvarchar(30) NULL, wait_resource nvarchar(100) NULL, ' + @nc10 +
                                  N'  lock_mode nvarchar(10) NULL, status nvarchar(10) NULL, priority integer NULL, transaction_count integer NULL, ' + @nc10 +
                                  N'  client_app sysname NULL, host_name sysname NULL, login_name sysname NULL, isolation_level nvarchar(30) NULL, sql_handle varbinary(64) NULL, blocked_process_report XML NULL );'
-                            WHEN @event_type_check LIKE N'%quer%'
+                            WHEN @event_type_check LIKE @query_event_type_pattern
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL, ' + @nc10 +
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, sql_text nvarchar(max) NULL, statement nvarchar(max) NULL, ' + @nc10 +
@@ -3708,12 +4115,12 @@ BEGIN
                                  N'  spills_mb decimal(18,2) NULL, row_count decimal(18,2) NULL, estimated_rows decimal(18,2) NULL, dop integer NULL,  ' + @nc10 +
                                  N'  serial_ideal_memory_mb decimal(18,2) NULL, requested_memory_mb decimal(18,2) NULL, used_memory_mb decimal(18,2) NULL, ideal_memory_mb decimal(18,2) NULL, ' + @nc10 +
                                  N'  granted_memory_mb decimal(18,2) NULL, query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, plan_handle varbinary(64) NULL );'
-                            WHEN @event_type_check LIKE N'%recomp%'
+                            WHEN @event_type_check LIKE @recompile_event_type_pattern
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, recompile_cause sysname NULL, statement_text nvarchar(max) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
                                  + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms bigint NULL, compile_duration_ms bigint NULL );' ELSE N' );' END
-                            WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
+                            WHEN @event_type_check LIKE @compile_event_type_pattern AND @event_type_check NOT LIKE @recompile_exclude_event_type_pattern
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, statement_text nvarchar(max) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
@@ -3950,16 +4357,16 @@ BEGIN
 
             IF @debug = 1
             BEGIN
-                PRINT SUBSTRING(@view_sql, 0,     4000);
-                PRINT SUBSTRING(@view_sql, 4001,  8000);
-                PRINT SUBSTRING(@view_sql, 8001,  12000);
-                PRINT SUBSTRING(@view_sql, 12001, 16000);
-                PRINT SUBSTRING(@view_sql, 16001, 20000);
-                PRINT SUBSTRING(@view_sql, 20001, 24000);
-                PRINT SUBSTRING(@view_sql, 24001, 28000);
-                PRINT SUBSTRING(@view_sql, 28001, 32000);
-                PRINT SUBSTRING(@view_sql, 32001, 36000);
-                PRINT SUBSTRING(@view_sql, 36001, 40000);
+                PRINT SUBSTRING(@view_sql, 1,     4000);
+                PRINT SUBSTRING(@view_sql, 4001,  4000);
+                PRINT SUBSTRING(@view_sql, 8001,  4000);
+                PRINT SUBSTRING(@view_sql, 12001, 4000);
+                PRINT SUBSTRING(@view_sql, 16001, 4000);
+                PRINT SUBSTRING(@view_sql, 20001, 4000);
+                PRINT SUBSTRING(@view_sql, 24001, 4000);
+                PRINT SUBSTRING(@view_sql, 28001, 4000);
+                PRINT SUBSTRING(@view_sql, 32001, 4000);
+                PRINT SUBSTRING(@view_sql, 36001, 4000);
             END;
 
             IF @debug = 1 BEGIN RAISERROR(N'creating view %s', 0, 1, @event_type_check) WITH NOWAIT; END;
@@ -4051,7 +4458,7 @@ END;
                                  (
                                      nvarchar(max),
                         CASE
-                        WHEN @event_type_check LIKE N'%wait%' /*Wait stats!*/
+                        WHEN @event_type_check LIKE @wait_event_type_pattern /*Wait stats!*/
                         THEN CONVERT
                              (
                                  nvarchar(max),
@@ -4103,9 +4510,9 @@ OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE c.exist(''(data[@name="duration"]/value/text()[. > 0])'') = 1
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1;')
                              )
-                        WHEN @event_type_check LIKE N'%lock%' /*Blocking!*/
-                                                              /*To cut down on nonsense, I'm only inserting new blocking scenarios*/
-                                                              /*Any existing blocking scenarios will update the blocking duration*/
+                        WHEN @event_type_check LIKE @lock_event_type_pattern /*Blocking!*/
+                                                                             /*To cut down on nonsense, I'm only inserting new blocking scenarios*/
+                                                                             /*Any existing blocking scenarios will update the blocking duration*/
                         THEN CONVERT
                              (
                                  nvarchar(max),
@@ -4282,7 +4689,7 @@ JOIN
     AND   x.hostname = x2.host_name
     AND   x.loginname = x2.login_name;
 '                                ))
-                       WHEN @event_type_check LIKE N'%quer%' /*Queries!*/
+                       WHEN @event_type_check LIKE @query_event_type_pattern /*Queries!*/
                        THEN
                             CONVERT
                             (
@@ -4345,7 +4752,7 @@ OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 AND   oa.c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '
                             ))
-                       WHEN @event_type_check LIKE N'%recomp%' /*Recompiles!*/
+                       WHEN @event_type_check LIKE @recompile_event_type_pattern /*Recompiles!*/
                        THEN
                             CONVERT
                             (
@@ -4392,7 +4799,7 @@ AND oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY
     event_time;'
                             )))
-                       WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%' /*Compiles!*/
+                       WHEN @event_type_check LIKE @compile_event_type_pattern AND @event_type_check NOT LIKE @recompile_exclude_event_type_pattern /*Compiles!*/
                        THEN
                             CONVERT
                             (
