@@ -8709,6 +8709,23 @@ FROM
                     CONVERT(NVARCHAR(20), total_duration_ms) +
                     ''))'', 
                     0
+                ),
+            p = geometry::STGeomFromText
+                (
+                    ''POLYGON
+                      (('' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' +
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' + 
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' + 
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' + 
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' + 
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms) +
+                    ''))'', 
+                    0
                 )
     FROM #query_store_runtime_stats AS qsrs'
     );
