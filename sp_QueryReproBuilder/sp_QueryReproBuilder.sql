@@ -2856,6 +2856,62 @@ OR    qsqt.has_restricted_text = 1
 OPTION(RECOMPILE);
 
 /*
+Check for dispatcher plans (parameter sensitive plan optimization)
+If a query is a dispatcher, warn and provide the variant query IDs
+*/
+IF @sql_2022_views = 1
+BEGIN
+    SELECT
+        @current_table = N'checking for dispatcher plans';
+
+    INSERT
+        #reproduction_warnings
+    WITH
+        (TABLOCK)
+    (
+        plan_id,
+        warning_type,
+        warning_message
+    )
+    SELECT DISTINCT
+        qsp.plan_id,
+        warning_type = N'dispatcher plan',
+        warning_message =
+            N'This is a dispatcher plan for parameter sensitive plan optimization. ' +
+            N'No executable query can be generated for dispatcher plans. ' +
+            N'Use the following variant query IDs to generate repro scripts: ' +
+            STUFF
+            (
+                (
+                    SELECT
+                        N', ' +
+                        RTRIM(qsqv.query_variant_query_id)
+                    FROM #query_store_query_variant AS qsqv
+                    WHERE qsqv.parent_query_id = qsq.query_id
+                    ORDER BY
+                        qsqv.query_variant_query_id
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                2,
+                N''
+            )
+    FROM #query_store_plan AS qsp
+    JOIN #query_store_query AS qsq
+      ON qsp.query_id = qsq.query_id
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #query_store_query_variant AS qsqv
+              WHERE qsqv.parent_query_id = qsq.query_id
+          )
+    OPTION(RECOMPILE);
+END;
+
+/*
 Check for temp tables and table variables in query text
 */
 SELECT
@@ -3141,7 +3197,17 @@ CROSS APPLY
                         SUBSTRING
                         (
                             qsqt.query_sql_text,
-                            PATINDEX(N'%)%', qsqt.query_sql_text) + 2,
+                            PATINDEX(N'%)%', qsqt.query_sql_text) +
+                                CASE
+                                    WHEN SUBSTRING
+                                         (
+                                             qsqt.query_sql_text,
+                                             PATINDEX(N'%)%', qsqt.query_sql_text),
+                                             2
+                                         ) = N'))'
+                                    THEN 2
+                                    ELSE 1
+                                END,
                             LEN(qsqt.query_sql_text)
                         )
                     )
@@ -3154,6 +3220,13 @@ JOIN #query_context_settings AS qcs
   ON qsq.context_settings_id = qcs.context_settings_id
 LEFT JOIN sys.syslanguages AS lang
   ON qcs.language_id = lang.langid
+WHERE NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_query_variant AS qsqv
+          WHERE qsqv.parent_query_id = qsq.query_id
+      )
 OPTION(RECOMPILE);
 
 
