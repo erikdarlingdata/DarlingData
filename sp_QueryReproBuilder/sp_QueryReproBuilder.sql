@@ -1849,10 +1849,10 @@ END;
 /*Execute the population query*/
 EXECUTE sys.sp_executesql
     @sql,
-    N'@database_id integer,
-      @start_date datetimeoffset(7),
-      @end_date datetimeoffset(7),
-      @procedure_name_quoted nvarchar(1024)',
+  N'@database_id integer,
+    @start_date datetimeoffset(7),
+    @end_date datetimeoffset(7),
+    @procedure_name_quoted nvarchar(1024)',
     @database_id,
     @start_date,
     @end_date,
