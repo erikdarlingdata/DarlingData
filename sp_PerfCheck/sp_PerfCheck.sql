@@ -63,8 +63,8 @@ BEGIN
     Set version information
     */
     SELECT
-        @version = N'1.6',
-        @version_date = N'20250601';
+        @version = N'1.11',
+        @version_date = N'20251114';
 
     /*
     Help section, for help.
