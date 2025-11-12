@@ -8958,17 +8958,17 @@ ORDER BY
          THEN
              CASE WHEN @regression_mode = 1
                   AND @regression_direction IN ('improved', 'better')
-                  THEN 'TRY_PARSE(replace(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) ASC,
+                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) ASC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
                   WHEN @regression_mode = 1
                   AND @regression_direction IN ('regressed', 'worse')
-                  THEN 'TRY_PARSE(replace(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) DESC,
+                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) DESC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
                   WHEN @regression_mode = 1
                   AND @regression_direction IN ('magnitude', 'absolute')
-                  THEN 'ABS(TRY_PARSE(replace(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money)) DESC,
+                  THEN 'ABS(TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money)) DESC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
              ELSE
