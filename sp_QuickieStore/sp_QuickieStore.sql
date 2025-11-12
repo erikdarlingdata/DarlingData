@@ -90,8 +90,8 @@ ALTER PROCEDURE
     @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/
     @format_output bit = 1, /*returns numbers formatted with commas and most decimals rounded away*/
     @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them*/
-    @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
-    @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
+    @include_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
+    @exclude_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
     @work_start time(0) = '9am', /*Use this to set a specific start of your work days*/
     @work_end time(0) = '5pm', /*Use this to set a specific end of your work days*/
@@ -140,8 +140,8 @@ END;
 These are for your outputs.
 */
 SELECT
-    @version = '5.6',
-    @version_date = '20250601';
+    @version = '5.11',
+    @version_date = '20251114';
 
 /*
 Helpful section! For help.
@@ -1575,50 +1575,50 @@ VALUES
     (215, 'executions', 'count_hash', 'count_executions_by_query_hash', 'qht.total_executions', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Duration metrics (group together avg, total, last, min, max) */
     (300, 'duration', 'avg', 'avg_duration_ms', 'qsrs.avg_duration_ms', 0, NULL, NULL, 0, 'N0'),
-    (310, 'duration', 'total', 'total_duration_ms', 'qsrs.total_duration_ms', 0, NULL, NULL, 0, 'N0'),
-    (320, 'duration', 'last', 'last_duration_ms', 'qsrs.last_duration_ms', 0, NULL, NULL, 1, 'N0'),
-    (330, 'duration', 'min', 'min_duration_ms', 'qsrs.min_duration_ms', 0, NULL, NULL, 1, 'N0'),
-    (340, 'duration', 'max', 'max_duration_ms', 'qsrs.max_duration_ms', 0, NULL, NULL, 0, 'N0'),
+    (310, 'duration', 'last', 'last_duration_ms', 'qsrs.last_duration_ms', 0, NULL, NULL, 1, 'N0'),
+    (320, 'duration', 'min', 'min_duration_ms', 'qsrs.min_duration_ms', 0, NULL, NULL, 0, 'N0'),
+    (330, 'duration', 'max', 'max_duration_ms', 'qsrs.max_duration_ms', 0, NULL, NULL, 0, 'N0'),
+    (340, 'duration', 'total', 'total_duration_ms', 'qsrs.total_duration_ms', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for duration */
     (315, 'duration', 'total_hash', 'total_duration_ms_by_query_hash', 'qht.total_duration_ms', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* CPU metrics */
     (400, 'cpu', 'avg', 'avg_cpu_time_ms', 'qsrs.avg_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
-    (410, 'cpu', 'total', 'total_cpu_time_ms', 'qsrs.total_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
-    (420, 'cpu', 'last', 'last_cpu_time_ms', 'qsrs.last_cpu_time_ms', 0, NULL, NULL, 1, 'N0'),
-    (430, 'cpu', 'min', 'min_cpu_time_ms', 'qsrs.min_cpu_time_ms', 0, NULL, NULL, 1, 'N0'),
-    (440, 'cpu', 'max', 'max_cpu_time_ms', 'qsrs.max_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
+    (410, 'cpu', 'last', 'last_cpu_time_ms', 'qsrs.last_cpu_time_ms', 0, NULL, NULL, 1, 'N0'),
+    (420, 'cpu', 'min', 'min_cpu_time_ms', 'qsrs.min_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
+    (430, 'cpu', 'max', 'max_cpu_time_ms', 'qsrs.max_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
+    (440, 'cpu', 'total', 'total_cpu_time_ms', 'qsrs.total_cpu_time_ms', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for CPU */
     (415, 'cpu', 'total_hash', 'total_cpu_time_ms_by_query_hash', 'qht.total_cpu_time_ms', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Logical IO Reads */
     (500, 'logical_io_reads', 'avg', 'avg_logical_io_reads_mb', 'qsrs.avg_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
-    (510, 'logical_io_reads', 'total', 'total_logical_io_reads_mb', 'qsrs.total_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
-    (520, 'logical_io_reads', 'last', 'last_logical_io_reads_mb', 'qsrs.last_logical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
-    (530, 'logical_io_reads', 'min', 'min_logical_io_reads_mb', 'qsrs.min_logical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
-    (540, 'logical_io_reads', 'max', 'max_logical_io_reads_mb', 'qsrs.max_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
+    (510, 'logical_io_reads', 'last', 'last_logical_io_reads_mb', 'qsrs.last_logical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
+    (520, 'logical_io_reads', 'min', 'min_logical_io_reads_mb', 'qsrs.min_logical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
+    (530, 'logical_io_reads', 'max', 'max_logical_io_reads_mb', 'qsrs.max_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
+    (540, 'logical_io_reads', 'total', 'total_logical_io_reads_mb', 'qsrs.total_logical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for logical reads */
     (515, 'logical_io_reads', 'total_hash', 'total_logical_io_reads_mb_by_query_hash', 'qht.total_logical_reads_mb', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Logical IO Writes */
     (600, 'logical_io_writes', 'avg', 'avg_logical_io_writes_mb', 'qsrs.avg_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
-    (610, 'logical_io_writes', 'total', 'total_logical_io_writes_mb', 'qsrs.total_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
-    (620, 'logical_io_writes', 'last', 'last_logical_io_writes_mb', 'qsrs.last_logical_io_writes_mb', 0, NULL, NULL, 1, 'N0'),
-    (630, 'logical_io_writes', 'min', 'min_logical_io_writes_mb', 'qsrs.min_logical_io_writes_mb', 0, NULL, NULL, 1, 'N0'),
-    (640, 'logical_io_writes', 'max', 'max_logical_io_writes_mb', 'qsrs.max_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
+    (610, 'logical_io_writes', 'last', 'last_logical_io_writes_mb', 'qsrs.last_logical_io_writes_mb', 0, NULL, NULL, 1, 'N0'),
+    (620, 'logical_io_writes', 'min', 'min_logical_io_writes_mb', 'qsrs.min_logical_io_writes_mb', 0, NULL, NULL, 1, 'N0'),
+    (630, 'logical_io_writes', 'max', 'max_logical_io_writes_mb', 'qsrs.max_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
+    (640, 'logical_io_writes', 'total', 'total_logical_io_writes_mb', 'qsrs.total_logical_io_writes_mb', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for logical writes */
     (615, 'logical_io_writes', 'total_hash', 'total_logical_io_writes_mb_by_query_hash', 'qht.total_logical_writes_mb', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Physical IO Reads */
     (700, 'physical_io_reads', 'avg', 'avg_physical_io_reads_mb', 'qsrs.avg_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
-    (710, 'physical_io_reads', 'total', 'total_physical_io_reads_mb', 'qsrs.total_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
-    (720, 'physical_io_reads', 'last', 'last_physical_io_reads_mb', 'qsrs.last_physical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
-    (730, 'physical_io_reads', 'min', 'min_physical_io_reads_mb', 'qsrs.min_physical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
-    (740, 'physical_io_reads', 'max', 'max_physical_io_reads_mb', 'qsrs.max_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
+    (710, 'physical_io_reads', 'last', 'last_physical_io_reads_mb', 'qsrs.last_physical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
+    (720, 'physical_io_reads', 'min', 'min_physical_io_reads_mb', 'qsrs.min_physical_io_reads_mb', 0, NULL, NULL, 1, 'N0'),
+    (730, 'physical_io_reads', 'max', 'max_physical_io_reads_mb', 'qsrs.max_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
+    (740, 'physical_io_reads', 'total', 'total_physical_io_reads_mb', 'qsrs.total_physical_io_reads_mb', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for physical reads */
     (715, 'physical_io_reads', 'total_hash', 'total_physical_io_reads_mb_by_query_hash', 'qht.total_physical_reads_mb', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* CLR Time */
     (800, 'clr_time', 'avg', 'avg_clr_time_ms', 'qsrs.avg_clr_time_ms', 0, NULL, NULL, 0, 'N0'),
-    (810, 'clr_time', 'total', 'total_clr_time_ms', 'qsrs.total_clr_time_ms', 0, NULL, NULL, 0, 'N0'),
-    (820, 'clr_time', 'last', 'last_clr_time_ms', 'qsrs.last_clr_time_ms', 0, NULL, NULL, 1, 'N0'),
-    (830, 'clr_time', 'min', 'min_clr_time_ms', 'qsrs.min_clr_time_ms', 0, NULL, NULL, 1, 'N0'),
-    (840, 'clr_time', 'max', 'max_clr_time_ms', 'qsrs.max_clr_time_ms', 0, NULL, NULL, 0, 'N0'),
+    (810, 'clr_time', 'last', 'last_clr_time_ms', 'qsrs.last_clr_time_ms', 0, NULL, NULL, 1, 'N0'),
+    (820, 'clr_time', 'min', 'min_clr_time_ms', 'qsrs.min_clr_time_ms', 0, NULL, NULL, 1, 'N0'),
+    (830, 'clr_time', 'max', 'max_clr_time_ms', 'qsrs.max_clr_time_ms', 0, NULL, NULL, 0, 'N0'),
+    (840, 'clr_time', 'total', 'total_clr_time_ms', 'qsrs.total_clr_time_ms', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for CLR time */
     (815, 'clr_time', 'total_hash', 'total_clr_time_ms_by_query_hash', 'qht.total_clr_time_ms', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* DOP (Degree of Parallelism) */
@@ -1627,44 +1627,44 @@ VALUES
     (920, 'dop', 'max', 'max_dop', 'qsrs.max_dop', 0, NULL, NULL, 0, NULL),
     /* Memory metrics */
     (1000, 'memory', 'avg', 'avg_query_max_used_memory_mb', 'qsrs.avg_query_max_used_memory_mb', 0, NULL, NULL, 0, 'N0'),
-    (1010, 'memory', 'total', 'total_query_max_used_memory_mb', 'qsrs.total_query_max_used_memory_mb', 0, NULL, NULL, 0, 'N0'),
-    (1020, 'memory', 'last', 'last_query_max_used_memory_mb', 'qsrs.last_query_max_used_memory_mb', 0, NULL, NULL, 1, 'N0'),
-    (1030, 'memory', 'min', 'min_query_max_used_memory_mb', 'qsrs.min_query_max_used_memory_mb', 0, NULL, NULL, 1, 'N0'),
-    (1040, 'memory', 'max', 'max_query_max_used_memory_mb', 'qsrs.max_query_max_used_memory_mb', 0, NULL, NULL, 0, 'N0'),
+    (1010, 'memory', 'last', 'last_query_max_used_memory_mb', 'qsrs.last_query_max_used_memory_mb', 0, NULL, NULL, 1, 'N0'),
+    (1020, 'memory', 'min', 'min_query_max_used_memory_mb', 'qsrs.min_query_max_used_memory_mb', 0, NULL, NULL, 1, 'N0'),
+    (1030, 'memory', 'max', 'max_query_max_used_memory_mb', 'qsrs.max_query_max_used_memory_mb', 0, NULL, NULL, 0, 'N0'),
+    (1040, 'memory', 'total', 'total_query_max_used_memory_mb', 'qsrs.total_query_max_used_memory_mb', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for memory */
     (1015, 'memory', 'total_hash', 'total_query_max_used_memory_mb_by_query_hash', 'qht.total_memory_mb', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* Row counts */
     (1100, 'rowcount', 'avg', 'avg_rowcount', 'qsrs.avg_rowcount', 0, NULL, NULL, 0, 'N0'),
-    (1110, 'rowcount', 'total', 'total_rowcount', 'qsrs.total_rowcount', 0, NULL, NULL, 0, 'N0'),
-    (1120, 'rowcount', 'last', 'last_rowcount', 'qsrs.last_rowcount', 0, NULL, NULL, 1, 'N0'),
-    (1130, 'rowcount', 'min', 'min_rowcount', 'qsrs.min_rowcount', 0, NULL, NULL, 1, 'N0'),
-    (1140, 'rowcount', 'max', 'max_rowcount', 'qsrs.max_rowcount', 0, NULL, NULL, 0, 'N0'),
+    (1110, 'rowcount', 'last', 'last_rowcount', 'qsrs.last_rowcount', 0, NULL, NULL, 1, 'N0'),
+    (1120, 'rowcount', 'min', 'min_rowcount', 'qsrs.min_rowcount', 0, NULL, NULL, 1, 'N0'),
+    (1130, 'rowcount', 'max', 'max_rowcount', 'qsrs.max_rowcount', 0, NULL, NULL, 0, 'N0'),
+    (1140, 'rowcount', 'total', 'total_rowcount', 'qsrs.total_rowcount', 0, NULL, NULL, 0, 'N0'),
     /* Hash totals for row counts */
     (1115, 'rowcount', 'total_hash', 'total_rowcount_by_query_hash', 'qht.total_rowcount', 1, 'include_query_hash_totals', 1, 0, 'N0'),
     /* New metrics for newer versions */
     /* Physical IO Reads (for newer versions) */
     (1200, 'num_physical_io_reads', 'avg', 'avg_num_physical_io_reads_mb', 'qsrs.avg_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
-    (1210, 'num_physical_io_reads', 'total', 'total_num_physical_io_reads_mb', 'qsrs.total_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
-    (1220, 'num_physical_io_reads', 'last', 'last_num_physical_io_reads_mb', 'qsrs.last_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
-    (1230, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads_mb', 'qsrs.min_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
-    (1240, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads_mb', 'qsrs.max_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
+    (1210, 'num_physical_io_reads', 'last', 'last_num_physical_io_reads_mb', 'qsrs.last_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
+    (1220, 'num_physical_io_reads', 'min', 'min_num_physical_io_reads_mb', 'qsrs.min_num_physical_io_reads_mb', 1, 'new', 1, 1, 'N0'),
+    (1230, 'num_physical_io_reads', 'max', 'max_num_physical_io_reads_mb', 'qsrs.max_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
+    (1240, 'num_physical_io_reads', 'total', 'total_num_physical_io_reads_mb', 'qsrs.total_num_physical_io_reads_mb', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for new physical IO reads */
     (1215, 'num_physical_io_reads', 'total_hash', 'total_num_physical_io_reads_mb_by_query_hash', 'qht.total_num_physical_io_reads', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* Finish adding the remaining columns (log bytes and tempdb usage) */
     /* Log bytes used */
     (1300, 'log_bytes', 'avg', 'avg_log_bytes_used_mb', 'qsrs.avg_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
-    (1310, 'log_bytes', 'total', 'total_log_bytes_used_mb', 'qsrs.total_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
-    (1320, 'log_bytes', 'last', 'last_log_bytes_used_mb', 'qsrs.last_log_bytes_used_mb', 1, 'new', 1, 1, 'N0'),
-    (1330, 'log_bytes', 'min', 'min_log_bytes_used_mb', 'qsrs.min_log_bytes_used_mb', 1, 'new', 1, 1, 'N0'),
-    (1340, 'log_bytes', 'max', 'max_log_bytes_used_mb', 'qsrs.max_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
+    (1310, 'log_bytes', 'last', 'last_log_bytes_used_mb', 'qsrs.last_log_bytes_used_mb', 1, 'new', 1, 1, 'N0'),
+    (1320, 'log_bytes', 'min', 'min_log_bytes_used_mb', 'qsrs.min_log_bytes_used_mb', 1, 'new', 1, 1, 'N0'),
+    (1330, 'log_bytes', 'max', 'max_log_bytes_used_mb', 'qsrs.max_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
+    (1340, 'log_bytes', 'total', 'total_log_bytes_used_mb', 'qsrs.total_log_bytes_used_mb', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for log bytes */
     (1315, 'log_bytes', 'total_hash', 'total_log_bytes_used_mb_by_query_hash', 'qht.total_log_bytes_used_mb', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* TempDB usage  */
     (1400, 'tempdb', 'avg', 'avg_tempdb_space_used_mb', 'qsrs.avg_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
-    (1410, 'tempdb', 'total', 'total_tempdb_space_used_mb', 'qsrs.total_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
-    (1420, 'tempdb', 'last', 'last_tempdb_space_used_mb', 'qsrs.last_tempdb_space_used_mb', 1, 'new', 1, 1, 'N0'),
-    (1430, 'tempdb', 'min', 'min_tempdb_space_used_mb', 'qsrs.min_tempdb_space_used_mb', 1, 'new', 1, 1, 'N0'),
-    (1440, 'tempdb', 'max', 'max_tempdb_space_used_mb', 'qsrs.max_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
+    (1410, 'tempdb', 'last', 'last_tempdb_space_used_mb', 'qsrs.last_tempdb_space_used_mb', 1, 'new', 1, 1, 'N0'),
+    (1420, 'tempdb', 'min', 'min_tempdb_space_used_mb', 'qsrs.min_tempdb_space_used_mb', 1, 'new', 1, 1, 'N0'),
+    (1430, 'tempdb', 'max', 'max_tempdb_space_used_mb', 'qsrs.max_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
+    (1440, 'tempdb', 'total', 'total_tempdb_space_used_mb', 'qsrs.total_tempdb_space_used_mb', 1, 'new', 1, 0, 'N0'),
     /* Hash totals for tempdb */
     (1415, 'tempdb', 'total_hash', 'total_tempdb_space_used_mb_by_query_hash', 'qht.total_tempdb_space_used_mb', 1, 'new_with_hash_totals', 1, 0, 'N0'),
     /* Context settings and sorting columns  */
@@ -5181,7 +5181,7 @@ END
 GROUP BY
     qsws.plan_id
 HAVING
-    SUM(qsws.avg_query_wait_time_ms) > 1000.
+    SUM(qsws.avg_query_wait_time_ms) > 0
 ORDER BY
     SUM(qsws.avg_query_wait_time_ms) DESC
 OPTION(RECOMPILE, OPTIMIZE FOR (@top = 9223372036854775807));' + @nc10;
@@ -6600,7 +6600,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_duration =
@@ -6610,7 +6610,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_cpu_time =
@@ -6620,7 +6620,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_logical_io_reads =
@@ -6630,7 +6630,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_logical_io_writes =
@@ -6640,7 +6640,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_physical_io_reads =
@@ -6650,7 +6650,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_clr_time =
@@ -6660,7 +6660,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_dop =
@@ -6670,7 +6670,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_query_max_used_memory =
@@ -6680,7 +6680,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_rowcount =
@@ -6690,7 +6690,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),';
 
@@ -6705,7 +6705,7 @@ BEGIN
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_log_bytes_used =
@@ -6715,7 +6715,7 @@ BEGIN
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_tempdb_space_used =
@@ -6725,7 +6725,7 @@ BEGIN
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )';
 END;
@@ -7532,7 +7532,7 @@ FROM
                 PARTITION BY
                     deqs.sql_handle
                 ORDER BY
-                    deqs.last_execution_time DESC
+                    deqs.last_execution_time ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_used_grant_kb =
@@ -7541,7 +7541,7 @@ FROM
                 PARTITION BY
                     deqs.sql_handle
                 ORDER BY
-                    deqs.last_execution_time DESC
+                    deqs.last_execution_time ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_ideal_grant_kb =
@@ -7550,7 +7550,7 @@ FROM
                 PARTITION BY
                     deqs.sql_handle
                 ORDER BY
-                    deqs.last_execution_time DESC
+                    deqs.last_execution_time ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
        partitioned_last_reserved_threads =
@@ -7559,7 +7559,7 @@ FROM
                PARTITION BY
                    deqs.sql_handle
                ORDER BY
-                   deqs.last_execution_time DESC
+                   deqs.last_execution_time ASC
                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
            ),
        partitioned_last_used_threads =
@@ -7568,7 +7568,7 @@ FROM
                PARTITION BY
                    deqs.sql_handle
                ORDER BY
-                   deqs.last_execution_time DESC
+                   deqs.last_execution_time ASC
                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
            )
     FROM sys.dm_exec_query_stats AS deqs
@@ -7878,7 +7878,7 @@ FROM
                     qsws.execution_type,
                     qsws.wait_category_desc
                 ORDER BY
-                    qsws.runtime_stats_interval_id DESC
+                    qsws.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )
     FROM #query_store_runtime_stats AS qsrs
@@ -8684,8 +8684,50 @@ FROM
     CONVERT
     (
         nvarchar(max),
-        N'
-        FROM #query_store_runtime_stats AS qsrs'
+        N', 
+            g = geometry::STGeomFromText
+                (
+                    N''POLYGON(('' +
+                    CONVERT(NVARCHAR(20), total_cpu_time_ms) + 
+                    '' '' + 
+                    CONVERT(NVARCHAR(20), total_duration_ms) + 
+                    '','' +
+                    CONVERT(NVARCHAR(20), total_cpu_time_ms + (count_executions * 90000)) + 
+                    '' '' + 
+                    CONVERT(NVARCHAR(20), total_duration_ms) + 
+                    '','' +
+                    CONVERT(NVARCHAR(20), total_cpu_time_ms + (count_executions * 90000)) + 
+                    '' '' + 
+                    CONVERT(NVARCHAR(20), total_duration_ms + (count_executions * 90000)) + 
+                    '','' +
+                    CONVERT(NVARCHAR(20), total_cpu_time_ms) + 
+                    '' '' + 
+                    CONVERT(NVARCHAR(20), total_duration_ms + (count_executions * 90000)) + 
+                    '','' +
+                    CONVERT(NVARCHAR(20), total_cpu_time_ms) + 
+                    '' '' + 
+                    CONVERT(NVARCHAR(20), total_duration_ms) +
+                    ''))'', 
+                    0
+                ),
+            p = geometry::STGeomFromText
+                (
+                    ''POLYGON
+                      (('' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' +
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' + 
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' + 
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' + 
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
+                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' + 
+                        CONVERT(NVARCHAR(20), max_cpu_time_ms) +
+                    ''))'', 
+                    0
+                )
+    FROM #query_store_runtime_stats AS qsrs'
     );
 
     /*
@@ -8916,17 +8958,17 @@ ORDER BY
          THEN
              CASE WHEN @regression_mode = 1
                   AND @regression_direction IN ('improved', 'better')
-                  THEN 'TRY_PARSE(replace(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) ASC,
+                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) ASC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
                   WHEN @regression_mode = 1
                   AND @regression_direction IN ('regressed', 'worse')
-                  THEN 'TRY_PARSE(replace(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) DESC,
+                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) DESC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
                   WHEN @regression_mode = 1
                   AND @regression_direction IN ('magnitude', 'absolute')
-                  THEN 'ABS(TRY_PARSE(replace(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money)) DESC,
+                  THEN 'ABS(TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money)) DESC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
              ELSE

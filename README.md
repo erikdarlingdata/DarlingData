@@ -11,6 +11,7 @@
     - [sp_HumanEvents](#human-events): Use Extended Events to track down various query performance issues
     - [sp_HumanEventsBlockViewer](#human-events-block-viewer): Analyze the blocked process report
     - [sp_QuickieStore](#quickie-store): The fastest and most configurable way to navigate Query Store data
+    - [sp_QueryReproBuilder](#query-repro-builder): Generate executable reproduction scripts from Query Store data
     - [sp_HealthParser](#health-parser): Pull all the performance-related data from the system health Extended Event
     - [sp_LogHunter](#log-hunter): Get all of the worst stuff out of your error log
     - [sp_IndexCleanup](#index-cleanup): Identify unused and duplicate indexes
@@ -308,6 +309,42 @@ Current valid parameter details:
 | @version                                | varchar        | OUTPUT; for support                                                                                                                               | none; OUTPUT                                                                                                                                                                                                                                                                                                                                                      | none; OUTPUT                                                              |
 | @version_date                           | datetime       | OUTPUT; for support                                                                                                                               | none; OUTPUT                                                                                                                                                                                                                                                                                                                                                      | none; OUTPUT                                                              |
 
+
+[*Back to top*](#navigatory)
+
+## Query Repro Builder
+
+This procedure extracts queries and their parameters from SQL Server Query Store and generates executable reproduction scripts that you can run in a new query window.
+
+It's designed to make it easy to reproduce query performance issues by capturing:
+* Query text with parameter declarations removed
+* Actual parameter values from the query plan
+* Context settings (ANSI options, language, date format, etc.)
+* Warnings about potential reproduction obstacles (temp tables, OPTION(RECOMPILE), etc.)
+* Embedded constants extracted from plans using parameter embedding optimization
+
+You can filter queries by plan_id or query_id, and optionally specify a date range.
+
+The executable_query column is displayed as clickable XML - click on it in SSMS to view the formatted, ready-to-run script.
+
+More examples can be found here: [Examples](https://github.com/erikdarlingdata/DarlingData/blob/main/sp_QueryReproBuilder/Examples.sql)
+
+More resources:
+ * For a text-based adventure, head to [my site here](https://www.erikdarling.com/sp_queryreprobuilder/).
+
+Current valid parameter details:
+
+| parameter_name      | data_type  | description                                                           | valid_inputs                                       | defaults                         |
+|---------------------|------------|-----------------------------------------------------------------------|----------------------------------------------------|----------------------------------|
+| @database_name      | sysname    | the name of the database you want to extract queries from             | a database name with query store enabled           | NULL; current database if NULL   |
+| @start_date         | datetime2  | the begin date of your search                                         | January 1, 1753, through December 31, 9999         | the last seven days              |
+| @end_date           | datetime2  | the end date of your search                                           | January 1, 1753, through December 31, 9999         | current date/time                |
+| @include_plan_ids   | nvarchar   | a list of plan ids to search for                                      | a string; comma separated for multiple ids         | NULL                             |
+| @include_query_ids  | nvarchar   | a list of query ids to search for                                     | a string; comma separated for multiple ids         | NULL                             |
+| @help               | bit        | how you got here                                                      | 0 or 1                                             | 0                                |
+| @debug              | bit        | prints dynamic sql and statement length                               | 0 or 1                                             | 0                                |
+| @version            | varchar    | OUTPUT; for support                                                   | none; OUTPUT                                       | none; OUTPUT                     |
+| @version_date       | datetime   | OUTPUT; for support                                                   | none; OUTPUT                                       | none; OUTPUT                     |
 
 [*Back to top*](#navigatory)
 

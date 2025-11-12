@@ -72,8 +72,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '1.6',
-        @version_date = '20250601';
+        @version = '1.11',
+        @version_date = '20251114';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -438,9 +438,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         can_compress bit NOT NULL
-        INDEX filtered_objects CLUSTERED
-            (database_id, schema_id, object_id, index_id)
     );
+
+    CREATE CLUSTERED INDEX
+        filtered_objects
+    ON #filtered_objects
+        (database_id, schema_id, object_id, index_id);
 
     CREATE TABLE
         #operational_stats
@@ -584,9 +587,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by nvarchar(4000) NULL,
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
         index_priority decimal(10,6) NULL
-        INDEX index_analysis CLUSTERED
-            (database_id, schema_id, object_id, index_id)
     );
+
+    CREATE CLUSTERED INDEX
+        index_analysis
+    ON #index_analysis
+        (database_id, schema_id, object_id, index_id);
 
     CREATE TABLE
         #compression_eligibility
@@ -782,10 +788,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
-        should_include_filter_columns bit NOT NULL,
-        INDEX c CLUSTERED
-            (database_id, schema_id, object_id, index_id)
+        should_include_filter_columns bit NOT NULL
     );
+
+    CREATE CLUSTERED INDEX
+        c
+    ON #filtered_index_columns_analysis
+        (database_id, schema_id, object_id, index_id);
 
     /* Parse @include_databases comma-separated list */
     IF  @get_all_databases = 1
@@ -2719,6 +2728,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND   id.user_scans > 0
                 ) THEN 100 ELSE 0
             END /* Indexes with scans get some priority */
+            +
+            CASE
+                WHEN #index_analysis.included_columns IS NOT NULL
+                AND  LEN(#index_analysis.included_columns) > 0
+                THEN 50  /* Indexes with includes get priority over those without */
+                ELSE 0
+            END /* Prefer indexes with included columns */
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -3734,6 +3750,115 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia.key_columns = kdd.base_key_columns
       AND ISNULL(ia.filter_definition, '') = kdd.filter_definition
     WHERE ia.index_name = kdd.winning_index_name
+    OPTION(RECOMPILE);
+
+    /* Merge all included columns from Key Duplicate indexes into the winning index */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Merging included columns from Key Duplicate indexes', 0, 0) WITH NOWAIT;
+    END;
+
+    WITH
+        KeyDuplicateIncludes AS
+    (
+        SELECT
+            winner.database_id,
+            winner.object_id,
+            winner.index_id,
+            winner.index_name,
+            winner.included_columns AS winner_includes,
+            loser.included_columns AS loser_includes
+        FROM #index_analysis AS winner
+        JOIN #key_duplicate_dedupe AS kdd
+          ON  winner.database_id = kdd.database_id
+          AND winner.object_id = kdd.object_id
+          AND winner.key_columns = kdd.base_key_columns
+          AND ISNULL(winner.filter_definition, '') = kdd.filter_definition
+          AND winner.index_name = kdd.winning_index_name
+        JOIN #index_analysis AS loser
+          ON  loser.database_id = kdd.database_id
+          AND loser.object_id = kdd.object_id
+          AND loser.key_columns = kdd.base_key_columns
+          AND ISNULL(loser.filter_definition, '') = kdd.filter_definition
+          AND loser.index_name <> kdd.winning_index_name
+          AND loser.action = N'DISABLE'
+          AND loser.consolidation_rule = N'Key Duplicate'
+        WHERE winner.action = N'MERGE INCLUDES'
+        AND   winner.consolidation_rule = N'Key Duplicate'
+    )
+    UPDATE
+        ia
+    SET
+        ia.included_columns =
+        (
+            SELECT
+                /* Combine all includes from winner and all losers, removing duplicates */
+                combined_cols =
+                    STUFF
+                    (
+                        (
+                            SELECT DISTINCT
+                                N', ' +
+                                t.c.value('.', 'sysname')
+                            FROM
+                            (
+                                /* Create XML from winner's includes */
+                                SELECT
+                                    x = CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE(ISNULL(kdi.winner_includes, N''), N', ', N'</c><c>') +
+                                        N'</c>'
+                                    )
+                                FROM KeyDuplicateIncludes AS kdi
+                                WHERE kdi.database_id = ia.database_id
+                                AND   kdi.object_id = ia.object_id
+                                AND   kdi.index_id = ia.index_id
+                                AND   kdi.winner_includes IS NOT NULL
+
+                                UNION ALL
+
+                                /* Create XML from each loser's includes */
+                                SELECT
+                                    x = CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE(kdi.loser_includes, N', ', N'</c><c>') +
+                                        N'</c>'
+                                    )
+                                FROM KeyDuplicateIncludes AS kdi
+                                WHERE kdi.database_id = ia.database_id
+                                AND   kdi.object_id = ia.object_id
+                                AND   kdi.index_id = ia.index_id
+                                AND   kdi.loser_includes IS NOT NULL
+                            ) AS a
+                            /* Split XML into individual columns */
+                            CROSS APPLY a.x.nodes('/c') AS t(c)
+                            /* Filter out empty strings that can result from NULL handling */
+                            WHERE LEN(t.c.value('.', 'sysname')) > 0
+                            FOR
+                                XML
+                                PATH('')
+                        ),
+                        1,
+                        2,
+                        ''
+                    )
+        )
+    FROM #index_analysis AS ia
+    WHERE ia.action = N'MERGE INCLUDES'
+    AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #key_duplicate_dedupe AS kdd
+        WHERE kdd.database_id = ia.database_id
+        AND   kdd.object_id = ia.object_id
+        AND   kdd.winning_index_name = ia.index_name
+    )
     OPTION(RECOMPILE);
 
     /* Find indexes with same key columns where one has includes that are a subset of another */

@@ -32,7 +32,7 @@ OTHER DEALINGS IN THE SOFTWARE.
 CREATE OR ALTER PROCEDURE
     dbo.Longingly
 (
-    @loops int = 1,
+    @loops integer = 1,
     @debug bit = 0
 )
 AS
@@ -42,14 +42,11 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     DECLARE
-        @psql nvarchar(MAX) =
-            N'DECLARE @p',
+        @psql nvarchar(MAX) = N'DECLARE @p',
         @ssql nvarchar(MAX) =
             N'SELECT c = COUNT_BIG(*) FROM dbo.Users AS u WHERE u.Reputation < 0 OR u.DisplayName IN (@p',
-        @asql nvarchar(MAX) =
-            N'',
-        @i int =
-            1;
+        @asql nvarchar(MAX) = N'',
+        @i integer = 1;
 
     WHILE @i <= @loops
     BEGIN

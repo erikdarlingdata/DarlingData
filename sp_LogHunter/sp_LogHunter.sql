@@ -72,8 +72,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN
     SELECT
-        @version = '2.6',
-        @version_date = '20250601';
+        @version = '2.11',
+        @version_date = '20251114';
 
     IF @help = 1
     BEGIN
@@ -676,6 +676,7 @@ BEGIN
     OR    el.text LIKE N'SSPI%'
     OR    el.text LIKE N'%Severity: 1[0-8]%'
     OR    el.text LIKE N'Login succeeded for user%'
+    OR    el.text LIKE N'%query notification%'
     OR    el.text IN
           (
               N'The Database Mirroring endpoint is in disabled or stopped state.',
