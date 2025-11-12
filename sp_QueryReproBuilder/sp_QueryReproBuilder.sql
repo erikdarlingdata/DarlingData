@@ -3197,7 +3197,17 @@ CROSS APPLY
                         SUBSTRING
                         (
                             qsqt.query_sql_text,
-                            PATINDEX(N'%)[^,]%', qsqt.query_sql_text) + 1,
+                            PATINDEX(N'%)[^,]%', qsqt.query_sql_text) +
+                                CASE
+                                    WHEN SUBSTRING
+                                         (
+                                             qsqt.query_sql_text,
+                                             PATINDEX(N'%)[^,]%', qsqt.query_sql_text),
+                                             2
+                                         ) = N'))'
+                                    THEN 2
+                                    ELSE 1
+                                END,
                             LEN(qsqt.query_sql_text)
                         )
                     )
