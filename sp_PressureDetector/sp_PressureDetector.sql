@@ -1011,21 +1011,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         sample_time datetime,
         sorting bigint,
         waiting_tasks_count AS
-            REPLACE
-            (
-                CONVERT
-                (
-                    nvarchar(30),
-                    CONVERT
-                    (
-                        money,
-                        waiting_tasks_count_n
-                    ),
-                    1
-                ),
-                N'.00',
-                N''
-            )
+            FORMAT(waiting_tasks_count_n, 'N0')
     );
 
     DECLARE
@@ -1420,21 +1406,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     w.avg_ms_per_wait,
                     w.percent_signal_waits,
                     waiting_tasks_count =
-                        REPLACE
-                        (
-                            CONVERT
-                            (
-                                nvarchar(30),
-                                CONVERT
-                                (
-                                    money,
-                                    w.waiting_tasks_count
-                                ),
-                                1
-                            ),
-                            N'.00',
-                            N''
-                        )
+                        FORMAT(w.waiting_tasks_count_n, 'N0')
                 FROM @waits AS w
                 WHERE w.waiting_tasks_count_n > 0
                 ORDER BY
@@ -1476,21 +1448,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             (w2.percent_signal_waits + w.percent_signal_waits) / 2
                         ),
                     waiting_tasks_count =
-                        REPLACE
-                        (
-                            CONVERT
-                            (
-                                nvarchar(30),
-                                CONVERT
-                                (
-                                    money,
-                                    (w2.waiting_tasks_count_n - w.waiting_tasks_count_n)
-                                ),
-                                1
-                            ),
-                            N'.00',
-                            N''
-                        ),
+                        FORMAT((w2.waiting_tasks_count_n - w.waiting_tasks_count_n), 'N0'),
                     sample_seconds =
                         DATEDIFF
                         (
@@ -1798,37 +1756,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         fm.total_gb_read,
                         fm.total_gb_written,
                         total_read_count =
-                            REPLACE
-                            (
-                                CONVERT
-                                (
-                                    nvarchar(30),
-                                    CONVERT
-                                    (
-                                        money,
-                                        fm.total_read_count
-                                    ),
-                                    1
-                                ),
-                                N'.00',
-                                N''
-                            ),
+                            FORMAT(fm.total_read_count, 'N0'),
                         total_write_count =
-                            REPLACE
-                            (
-                                CONVERT
-                                (
-                                    nvarchar(30),
-                                    CONVERT
-                                    (
-                                        money,
-                                        fm.total_write_count
-                                    ),
-                                    1
-                                ),
-                                N'.00',
-                                N''
-                            ),
+                            FORMAT(fm.total_write_count, 'N0'),
                         total_avg_stall_ms =
                             fm.avg_read_stall_ms +
                             fm.avg_write_stall_ms
@@ -1962,69 +1892,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     f.avg_write_stall_ms,
                     f.total_avg_stall,
                     total_mb_read =
-                        REPLACE
-                        (
-                            CONVERT
-                            (
-                                nvarchar(30),
-                                CONVERT
-                                (
-                                    money,
-                                    f.total_mb_read
-                                ),
-                                1
-                            ),
-                            N'.00',
-                            N''
-                        ),
+                        FORMAT(f.total_mb_read, 'N0'),
                     total_mb_written =
-                        REPLACE
-                        (
-                            CONVERT
-                            (
-                                nvarchar(30),
-                                CONVERT
-                                (
-                                    money,
-                                    f.total_mb_written
-                                ),
-                                1
-                            ),
-                            N'.00',
-                            N''
-                        ),
+                        FORMAT(f.total_mb_written, 'N0'),
                     total_read_count =
-                        REPLACE
-                        (
-                            CONVERT
-                            (
-                                nvarchar(30),
-                                CONVERT
-                                (
-                                    money,
-                                    f.total_read_count
-                                ),
-                                1
-                            ),
-                            N'.00',
-                            N''
-                        ),
+                        FORMAT(f.total_read_count, 'N0'),
                     total_write_count =
-                        REPLACE
-                        (
-                            CONVERT
-                            (
-                                nvarchar(30),
-                                CONVERT
-                                (
-                                    money,
-                                    f.total_write_count
-                                ),
-                                1
-                            ),
-                            N'.00',
-                            N''
-                        ),
+                        FORMAT(f.total_write_count, 'N0'),
                     sample_seconds =
                         DATEDIFF
                         (
@@ -2841,37 +2715,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         N''0.00''
                     ),
                 entries_count =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                SUM(domcc.entries_count)
-                            ),
-                            1
-                        ),
-                        N''.00'',
-                        N''''
-                    ),
+                    FORMAT(SUM(domcc.entries_count), ''N0''),
                 entries_in_use_count =
-                    REPLACE
-                    (
-                        CONVERT
-                        (
-                            nvarchar(30),
-                            CONVERT
-                            (
-                                money,
-                                SUM(domcc.entries_in_use_count)
-                            ),
-                            1
-                        ),
-                        N''.00'',
-                        N''''
-                    )
+                    FORMAT(SUM(domcc.entries_in_use_count), ''N0'')
             FROM sys.dm_os_memory_cache_counters AS domcc
             WHERE domcc.name NOT IN
             (
