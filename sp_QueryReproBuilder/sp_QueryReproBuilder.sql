@@ -1618,7 +1618,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_duration =
@@ -1628,7 +1628,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_cpu_time =
@@ -1638,7 +1638,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_logical_io_reads =
@@ -1648,7 +1648,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_logical_io_writes =
@@ -1658,7 +1658,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_physical_io_reads =
@@ -1668,7 +1668,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_clr_time =
@@ -1678,7 +1678,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_dop =
@@ -1688,7 +1688,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_query_max_used_memory =
@@ -1698,7 +1698,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_rowcount =
@@ -1708,7 +1708,7 @@ FROM
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),';
 
@@ -1723,7 +1723,7 @@ BEGIN
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_log_bytes_used =
@@ -1733,7 +1733,7 @@ BEGIN
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             ),
         partitioned_last_tempdb_space_used =
@@ -1743,7 +1743,7 @@ BEGIN
                     qsrs.plan_id,
                     qsrs.execution_type
                 ORDER BY
-                    qsrs.runtime_stats_interval_id DESC
+                    qsrs.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )';
 END;
@@ -2440,7 +2440,7 @@ FROM
                     qsws.execution_type,
                     qsws.wait_category_desc
                 ORDER BY
-                    qsws.runtime_stats_interval_id DESC
+                    qsws.runtime_stats_interval_id ASC
                 ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
             )
     FROM #query_store_runtime_stats AS qsrs
