@@ -438,9 +438,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         can_compress bit NOT NULL
-        INDEX filtered_objects CLUSTERED
-            (database_id, schema_id, object_id, index_id)
     );
+
+    CREATE CLUSTERED INDEX
+        filtered_objects
+    ON #filtered_objects
+        (database_id, schema_id, object_id, index_id);
 
     CREATE TABLE
         #operational_stats
@@ -600,10 +603,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
-        reason nvarchar(200) NULL,
-        PRIMARY KEY CLUSTERED
-            (database_id, schema_id, object_id, index_id, can_compress)
+        reason nvarchar(200) NULL
     );
+
+    ALTER TABLE
+        #compression_eligibility
+    ADD PRIMARY KEY CLUSTERED
+        (database_id, schema_id, object_id, index_id, can_compress);
 
     CREATE TABLE
         #index_cleanup_results
@@ -782,10 +788,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NULL,
         filter_definition nvarchar(max) NULL,
         missing_included_columns nvarchar(max) NULL,
-        should_include_filter_columns bit NOT NULL,
-        INDEX c CLUSTERED
-            (database_id, schema_id, object_id, index_id)
+        should_include_filter_columns bit NOT NULL
     );
+
+    CREATE CLUSTERED INDEX
+        c
+    ON #filtered_index_columns_analysis
+        (database_id, schema_id, object_id, index_id);
 
     /* Parse @include_databases comma-separated list */
     IF  @get_all_databases = 1
