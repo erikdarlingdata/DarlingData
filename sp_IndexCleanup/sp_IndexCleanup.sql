@@ -587,9 +587,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superseded_by nvarchar(4000) NULL,
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
         index_priority decimal(10,6) NULL
-        INDEX index_analysis CLUSTERED
-            (database_id, schema_id, object_id, index_id)
     );
+
+    CREATE CLUSTERED INDEX
+        index_analysis
+    ON #index_analysis
+        (database_id, schema_id, object_id, index_id);
 
     CREATE TABLE
         #compression_eligibility
@@ -603,13 +606,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
-        reason nvarchar(200) NULL
+        reason nvarchar(200) NULL,
+        PRIMARY KEY CLUSTERED
+            (database_id, schema_id, object_id, index_id, can_compress)
     );
-
-    ALTER TABLE
-        #compression_eligibility
-    ADD PRIMARY KEY CLUSTERED
-        (database_id, schema_id, object_id, index_id, can_compress);
 
     CREATE TABLE
         #index_cleanup_results
