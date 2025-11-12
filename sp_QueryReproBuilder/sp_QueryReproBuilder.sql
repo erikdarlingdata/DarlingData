@@ -835,7 +835,12 @@ CREATE TABLE
                     (
                         REPLACE
                         (
-                            REPLACE(query_sql_text, NCHAR(13), N' '),
+                            REPLACE
+                            (
+                                query_sql_text, 
+                                NCHAR(13), 
+                                N' '
+                            ),
                             NCHAR(10),
                             N' '
                         ),
@@ -3093,9 +3098,14 @@ SELECT
                 ) +
                 N'*/' +
                 NCHAR(10) +
-                N'USE ' +
-                QUOTENAME(@database_name) + 
-                N';' +
+                CASE
+                    WHEN @azure = 0
+                    THEN
+                        N'USE ' +
+                        QUOTENAME(@database_name) + 
+                        N';'
+                    ELSE N''
+                END +
                 NCHAR(10) +
                 ISNULL
                 (
