@@ -831,14 +831,24 @@ CREATE TABLE
             (
                 REPLACE
                 (
-                    REPLACE(query_sql_text, NCHAR(13), N' '),
-                    NCHAR(10),
-                    N' '
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            REPLACE(query_sql_text, NCHAR(13), N' '),
+                            NCHAR(10),
+                            N' '
+                        ),
+                        NCHAR(9),
+                        N' '
+                    ),
+                    N' ',
+                    NCHAR(1) + NCHAR(2)
                 ),
-                NCHAR(9),
-                N' '
+                NCHAR(2) + NCHAR(1),
+                N''
             ),
-            N'  ',
+            NCHAR(1) + NCHAR(2),
             N' '
         ) PERSISTED,
     query_sql_text_clickable xml NULL,
