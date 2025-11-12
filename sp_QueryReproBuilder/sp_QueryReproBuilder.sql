@@ -824,6 +824,23 @@ CREATE TABLE
     query_text_id bigint NOT NULL,
     INDEX query_text_id CLUSTERED (query_text_id),
     query_sql_text nvarchar(max) NULL,
+    query_sql_text_normalized AS
+        REPLACE
+        (
+            REPLACE
+            (
+                REPLACE
+                (
+                    REPLACE(query_sql_text, NCHAR(13), N' '),
+                    NCHAR(10),
+                    N' '
+                ),
+                NCHAR(9),
+                N' '
+            ),
+            N'  ',
+            N' '
+        ) PERSISTED,
     query_sql_text_clickable xml NULL,
     statement_sql_handle varbinary(64) NULL,
     is_part_of_encrypted_module bit NOT NULL,
@@ -2935,9 +2952,14 @@ JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
-WHERE qsqt.query_sql_text LIKE N'%FROM #%'
-OR    qsqt.query_sql_text LIKE N'%JOIN #%'
-OR    qsqt.query_sql_text LIKE N'%INTO #%'
+WHERE qsqt.query_sql_text_normalized LIKE N'% FROM #%'
+OR    qsqt.query_sql_text_normalized LIKE N'% JOIN #%'
+OR    qsqt.query_sql_text_normalized LIKE N'% INTO #%'
+OR    qsqt.query_sql_text_normalized LIKE N'%INSERT #%'
+OR    qsqt.query_sql_text_normalized LIKE N'%UPDATE #%'
+OR    qsqt.query_sql_text_normalized LIKE N'%DELETE #%'
+OR    qsqt.query_sql_text_normalized LIKE N'%MERGE #%'
+OR    qsqt.query_sql_text_normalized LIKE N'%MERGE INTO #%'
 OPTION(RECOMPILE);
 
 INSERT
@@ -2958,9 +2980,14 @@ JOIN #query_store_query AS qsq
   ON qsp.query_id = qsq.query_id
 JOIN #query_store_query_text AS qsqt
   ON qsq.query_text_id = qsqt.query_text_id
-WHERE qsqt.query_sql_text LIKE N'%FROM @%'
-OR    qsqt.query_sql_text LIKE N'%JOIN @%'
-OR    qsqt.query_sql_text LIKE N'%INTO @%'
+WHERE qsqt.query_sql_text_normalized LIKE N'% FROM @%'
+OR    qsqt.query_sql_text_normalized LIKE N'% JOIN @%'
+OR    qsqt.query_sql_text_normalized LIKE N'% INTO @%'
+OR    qsqt.query_sql_text_normalized LIKE N'%INSERT @%'
+OR    qsqt.query_sql_text_normalized LIKE N'%UPDATE @%'
+OR    qsqt.query_sql_text_normalized LIKE N'%DELETE @%'
+OR    qsqt.query_sql_text_normalized LIKE N'%MERGE @%'
+OR    qsqt.query_sql_text_normalized LIKE N'%MERGE INTO @%'
 OPTION(RECOMPILE);
 
 /*
