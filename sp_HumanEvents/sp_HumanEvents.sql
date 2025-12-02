@@ -74,6 +74,7 @@ ALTER PROCEDURE
     @delete_retention_days integer = 3,
     @cleanup bit = 0,
     @max_memory_kb bigint = 102400,
+    @target_output sysname = N'ring_buffer', /*output target for extended events: ring_buffer or event_file*/
     @version varchar(30) = NULL OUTPUT,
     @version_date datetime = NULL OUTPUT,
     @debug bit = 0,
@@ -162,6 +163,7 @@ BEGIN
                 WHEN N'@delete_retention_days' THEN N'how many days of logged data you want to keep'
                 WHEN N'@cleanup' THEN N'deletes all sessions, tables, and views. requires output database and schema.'
                 WHEN N'@max_memory_kb' THEN N'set a max ring buffer size to log data to'
+                WHEN N'@target_output' THEN N'choose between ring_buffer or event_file (not available for Azure SQL DB or Managed Instance)'
                 WHEN N'@help' THEN N'well you''re here so you figured this one out'
                 WHEN N'@version' THEN N'to make sure you have the most recent bits'
                 WHEN N'@version_date' THEN N'to make sure you have the most recent bits'
@@ -195,6 +197,7 @@ BEGIN
                WHEN N'@delete_retention_days' THEN N'a POSITIVE integer'
                WHEN N'@cleanup' THEN N'1 or 0'
                WHEN N'@max_memory_kb' THEN N'an integer'
+               WHEN N'@target_output' THEN N'ring_buffer, event_file'
                WHEN N'@help' THEN N'1 or 0'
                WHEN N'@version' THEN N'none, output'
                WHEN N'@version_date' THEN N'none, output'
@@ -228,6 +231,7 @@ BEGIN
                WHEN N'@debug' THEN N'0'
                WHEN N'@cleanup' THEN N'0'
                WHEN N'@max_memory_kb' THEN N'102400'
+               WHEN N'@target_output' THEN N'ring_buffer'
                WHEN N'@help' THEN N'0'
                WHEN N'@version' THEN N'none, output'
                WHEN N'@version_date' THEN N'none, output'
@@ -687,8 +691,15 @@ END;
 
 /* session create options */
 SET @session_with = N'
-ADD TARGET package0.ring_buffer
-        ( SET max_memory = ' + RTRIM(@max_memory_kb) + N' )
+ADD TARGET ' +
+    CASE
+        WHEN LOWER(@target_output) = N'ring_buffer'
+        THEN N'package0.ring_buffer
+        ( SET max_memory = ' + RTRIM(@max_memory_kb) + N' )'
+        WHEN LOWER(@target_output) = N'event_file'
+        THEN N'package0.event_file
+        ( SET filename = N''' + @session_name + N'.xel'', max_file_size = 1024, max_rollover_files = 5 )'
+    END + N'
 WITH
         (
             MAX_MEMORY = ' + RTRIM(@max_memory_kb) + N'KB,
@@ -849,6 +860,25 @@ BEGIN
     RAISERROR(N'
 You have chosen a value for @event_type... poorly. use @help = 1 to see valid arguments.
 What on earth is %s?', 11, 1, @event_type) WITH NOWAIT;
+    RETURN;
+END;
+
+
+IF @debug = 1 BEGIN RAISERROR(N'Checking target_output parameter', 0, 1) WITH NOWAIT; END;
+IF LOWER(@target_output) NOT IN
+(
+    N'ring_buffer',
+    N'event_file'
+)
+BEGIN
+    RAISERROR(N'You have chosen an invalid value for @target_output: %s. Valid options are ring_buffer or event_file.', 11, 1, @target_output) WITH NOWAIT;
+    RETURN;
+END;
+
+IF LOWER(@target_output) = N'event_file'
+AND @azure = 1
+BEGIN
+    RAISERROR(N'The event_file target is not supported for Azure SQL Database or Azure SQL Managed Instance because additional setup is required that this procedure cannot complete. Please use ring_buffer instead.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
