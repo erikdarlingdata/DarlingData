@@ -8684,49 +8684,7 @@ FROM
     CONVERT
     (
         nvarchar(max),
-        N', 
-            g = geometry::STGeomFromText
-                (
-                    N''POLYGON(('' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms) + 
-                    '' '' + 
-                    CONVERT(NVARCHAR(20), total_duration_ms) + 
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms + (count_executions * 90000)) + 
-                    '' '' + 
-                    CONVERT(NVARCHAR(20), total_duration_ms) + 
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms + (count_executions * 90000)) + 
-                    '' '' + 
-                    CONVERT(NVARCHAR(20), total_duration_ms + (count_executions * 90000)) + 
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms) + 
-                    '' '' + 
-                    CONVERT(NVARCHAR(20), total_duration_ms + (count_executions * 90000)) + 
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms) + 
-                    '' '' + 
-                    CONVERT(NVARCHAR(20), total_duration_ms) +
-                    ''))'', 
-                    0
-                ),
-            p = geometry::STGeomFromText
-                (
-                    ''POLYGON
-                      (('' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' + 
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' + 
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' + 
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' + 
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms) +
-                    ''))'', 
-                    0
-                )
+        N'
     FROM #query_store_runtime_stats AS qsrs'
     );
 
