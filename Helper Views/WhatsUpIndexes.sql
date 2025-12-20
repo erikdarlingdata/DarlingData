@@ -51,6 +51,7 @@ SELECT TOP (9223372036854775807)
     schema_name = s.name,
     table_name = OBJECT_NAME(ps.object_id),
     index_name = i.name,
+    data_compression_desc = p.data_compression_desc,
     in_row_pages_mb =
         CONVERT
         (
@@ -75,6 +76,10 @@ JOIN sys.schemas AS s
 JOIN sys.indexes AS i
   ON  ps.object_id = i.object_id
   AND ps.index_id  = i.index_id
+JOIN sys.partitions AS p
+  ON  ps.object_id = p.object_id
+  AND ps.index_id = p.index_id
+  AND ps.partition_number = p.partition_number
 ORDER BY
     ps.object_id,
     ps.index_id,
