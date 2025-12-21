@@ -2918,7 +2918,108 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
-    /* Rule 3: Key duplicates - matching key columns, different includes */
+    /* Rule 3: Superset/subset key columns (runs before key duplicates to prioritize subset/superset relationships) */
+    UPDATE
+        ia1
+    SET
+        ia1.consolidation_rule = N'Key Subset',
+        ia1.target_index_name = ia2.index_name,
+        ia1.action = N'DISABLE'  /* The narrower index gets disabled */
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2
+      ON  ia1.database_id = ia2.database_id
+      AND ia1.object_id = ia2.object_id
+      AND ia1.index_name <> ia2.index_name
+      AND ia2.key_columns LIKE (ia1.key_columns + '%')  /* ia2 has wider key that starts with ia1's key */
+      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+      /* Exception: If narrower index is unique and wider is not, they should not be merged */
+      AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
+    WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
+    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id1
+        WHERE id1.database_id = ia1.database_id
+        AND   id1.object_id = ia1.object_id
+        AND   id1.index_id = ia1.index_id
+        AND   id1.is_eligible_for_dedupe = 1
+    )
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id2
+        WHERE id2.database_id = ia2.database_id
+        AND   id2.object_id = ia2.object_id
+        AND   id2.index_id = ia2.index_id
+        AND   id2.is_eligible_for_dedupe = 1
+    )
+     AND NOT EXISTS
+     (
+      SELECT
+          1/0
+      FROM #index_details AS id1
+      JOIN #index_details AS id2
+        ON  id2.database_id = id1.database_id
+        AND id2.object_id = id1.object_id
+        AND id2.column_name = id1.column_name
+        AND id2.key_ordinal = id1.key_ordinal
+      WHERE id1.database_id = ia1.database_id
+        AND id1.object_id = ia1.object_id
+        AND id1.index_id = ia1.index_id
+        AND id2.database_id = ia2.database_id
+        AND id2.object_id = ia2.object_id
+        AND id2.index_id = ia2.index_id
+        AND id1.is_descending_key <> id2.is_descending_key  /* Different sort direction */
+    )
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 3',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
+
+    /* Rule 4: Mark superset indexes for merging with includes from subset */
+    UPDATE
+        ia2
+    SET
+        ia2.consolidation_rule = N'Key Superset',
+        ia2.action = N'MERGE INCLUDES',  /* The wider index gets merged with includes */
+        ia2.superseded_by =
+            ISNULL
+            (
+                ia2.superseded_by +
+                ', ',
+                ''
+            ) +
+            N'Supersedes ' +
+            ia1.index_name
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2
+      ON  ia1.database_id = ia2.database_id
+      AND ia1.object_id = ia2.object_id
+      AND ia1.target_index_name = ia2.index_name  /* Link from Rule 3 */
+    WHERE ia1.consolidation_rule = N'Key Subset'
+    AND   ia1.action = N'DISABLE'
+    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 4',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
+
+    /* Rule 5: Key duplicates - matching key columns, different includes */
     UPDATE
         ia1
     SET
@@ -3013,107 +3114,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.index_id = ia2.index_id
         AND   id2.is_eligible_for_dedupe = 1
     )
-    OPTION(RECOMPILE);
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#index_analysis after rule 3',
-            ia.*
-        FROM #index_analysis AS ia
-        OPTION(RECOMPILE);
-    END;
-
-    /* Rule 4: Superset/subset key columns */
-    UPDATE
-        ia1
-    SET
-        ia1.consolidation_rule = N'Key Subset',
-        ia1.target_index_name = ia2.index_name,
-        ia1.action = N'DISABLE'  /* The narrower index gets disabled */
-    FROM #index_analysis AS ia1
-    JOIN #index_analysis AS ia2
-      ON  ia1.database_id = ia2.database_id
-      AND ia1.object_id = ia2.object_id
-      AND ia1.index_name <> ia2.index_name
-      AND ia2.key_columns LIKE (ia1.key_columns + '%')  /* ia2 has wider key that starts with ia1's key */
-      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
-      /* Exception: If narrower index is unique and wider is not, they should not be merged */
-      AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
-    WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
-    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    AND EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details AS id1
-        WHERE id1.database_id = ia1.database_id
-        AND   id1.object_id = ia1.object_id
-        AND   id1.index_id = ia1.index_id
-        AND   id1.is_eligible_for_dedupe = 1
-    )
-    AND EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details AS id2
-        WHERE id2.database_id = ia2.database_id
-        AND   id2.object_id = ia2.object_id
-        AND   id2.index_id = ia2.index_id
-        AND   id2.is_eligible_for_dedupe = 1
-    )
-     AND NOT EXISTS
-     (
-      SELECT
-          1/0
-      FROM #index_details AS id1
-      JOIN #index_details AS id2
-        ON  id2.database_id = id1.database_id
-        AND id2.object_id = id1.object_id
-        AND id2.column_name = id1.column_name
-        AND id2.key_ordinal = id1.key_ordinal
-      WHERE id1.database_id = ia1.database_id
-        AND id1.object_id = ia1.object_id
-        AND id1.index_id = ia1.index_id
-        AND id2.database_id = ia2.database_id
-        AND id2.object_id = ia2.object_id
-        AND id2.index_id = ia2.index_id
-        AND id1.is_descending_key <> id2.is_descending_key  /* Different sort direction */
-    )
-    OPTION(RECOMPILE);
-
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#index_analysis after rule 4',
-            ia.*
-        FROM #index_analysis AS ia
-        OPTION(RECOMPILE);
-    END;
-
-    /* Rule 5: Mark superset indexes for merging with includes from subset */
-    UPDATE
-        ia2
-    SET
-        ia2.consolidation_rule = N'Key Superset',
-        ia2.action = N'MERGE INCLUDES',  /* The wider index gets merged with includes */
-        ia2.superseded_by =
-            ISNULL
-            (
-                ia2.superseded_by +
-                ', ',
-                ''
-            ) +
-            N'Supersedes ' +
-            ia1.index_name
-    FROM #index_analysis AS ia1
-    JOIN #index_analysis AS ia2
-      ON  ia1.database_id = ia2.database_id
-      AND ia1.object_id = ia2.object_id
-      AND ia1.target_index_name = ia2.index_name  /* Link from Rule 4 */
-    WHERE ia1.consolidation_rule = N'Key Subset'
-    AND   ia1.action = N'DISABLE'
-    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
     OPTION(RECOMPILE);
 
     IF @debug = 1
