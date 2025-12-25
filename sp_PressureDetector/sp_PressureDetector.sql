@@ -2796,6 +2796,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
         BEGIN
             EXECUTE sys.sp_executesql
                 N'
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
                 SELECT
                     @health_history_xml =
                     (
@@ -2807,7 +2809,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             oj.clerk_type,
                             oj.pages_allocated_kb
                         FROM sys.dm_os_memory_health_history AS hh
-                        CROSS APPLY 
+                        CROSS APPLY
                             OPENJSON
                                 (hh.top_memory_clerks)
                             WITH
@@ -2820,7 +2822,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             hh.snapshot_time DESC,
                             oj.pages_allocated_kb DESC
                         FOR XML
-                            PATH(''top_memory_clerks''),
+                            PATH(''health_history''),
                             TYPE
                     );
                 ',
