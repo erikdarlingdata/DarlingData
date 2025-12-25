@@ -305,8 +305,8 @@ END; /*End help section*/
                         integer,
                         SERVERPROPERTY('EngineEdition')
                     ) = 5
-                THEN 1
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @pool_sql nvarchar(max) = N'',
         @pages_kb bit =
@@ -319,8 +319,8 @@ END; /*End help section*/
                     WHERE ac.object_id = OBJECT_ID(N'sys.dm_os_memory_clerks')
                     AND   ac.name = N'pages_kb'
                 ) = 1
-                THEN 1
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @mem_sql nvarchar(max) = N'',
         @helpful_new_columns bit =
@@ -337,8 +337,8 @@ END; /*End help section*/
                               N'used_worker_count'
                           )
                 ) = 2
-                THEN 1
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @cpu_sql nvarchar(max) = N'',
         @cool_new_columns bit =
@@ -355,8 +355,8 @@ END; /*End help section*/
                             N'parallel_worker_count'
                         )
                 ) = 2
-                THEN 1
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @reserved_worker_count_out varchar(10) = '0',
         @reserved_worker_count nvarchar(max) = N'
@@ -393,12 +393,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @total_physical_memory_gb bigint,
         @cpu_utilization xml = N'',
         @low_memory xml = N'',
+        @health_history bit =
+            CASE
+                WHEN OBJECT_ID('sys.dm_os_memory_health_history') IS NOT NULL
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
+            END,
+        @health_history_xml xml,
         @disk_check nvarchar(max) = N'',
         @live_plans bit =
             CASE
                 WHEN OBJECT_ID('sys.dm_exec_query_statistics_xml') IS NOT NULL
-                THEN CONVERT(bit, 1)
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @waitfor varchar(20) =
             CONVERT
@@ -2785,13 +2792,64 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
         END;
 
+        IF @health_history = 'true'
+        BEGIN
+            EXECUTE sys.sp_executesql
+                N'
+                SELECT
+                    @health_history_xml =
+                    (
+                        SELECT TOP (9223372036854775807)
+                            hh.snapshot_time,
+                            hh.severity_level,
+                            hh.allocation_potential_memory_mb,
+                            hh.reclaimable_cache_memory_mb,
+                            oj.clerk_type,
+                            oj.pages_allocated_kb
+                        FROM sys.dm_os_memory_health_history AS hh
+                        CROSS APPLY 
+                            OPENJSON
+                                (hh.top_memory_clerks)
+                            WITH
+                            (
+                                clerk_type sysname N''$.clerk_type'',
+                                pages_allocated_kb bigint N''$.pages_allocated_kb''
+                            ) AS oj
+                        WHERE hh.severity_level > 1
+                        ORDER BY
+                            hh.snapshot_time DESC,
+                            oj.pages_allocated_kb DESC
+                        FOR XML
+                            PATH(''top_memory_clerks''),
+                            TYPE
+                    );
+                ',
+                N'@health_history_xml xml OUTPUT',
+                @health_history_xml OUTPUT;
+        END;
+
+        IF @health_history_xml IS NULL
+        BEGIN
+            SELECT
+                @health_history_xml =
+                (
+                    SELECT
+                        N'No memory health history available'
+                    FOR XML
+                        PATH(N'history'),
+                        TYPE
+                );
+        END;
+
         IF @log_to_table = 0
         BEGIN
             SELECT
                 low_memory =
-                   @low_memory,
+                    @low_memory,
                 cache_memory =
-                    @cache_xml;
+                    @cache_xml,
+                memory_health_history =
+                    @health_history_xml;
         END;
 
         SELECT
