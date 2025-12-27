@@ -2,6 +2,10 @@
 
 This document outlines the T-SQL coding style preferences for Erik Darling (Darling Data, LLC) and must be strictly followed when writing or modifying SQL code.
 
+## Project Constraints
+
+- **No Additional Dependencies**: Do not create helper functions, procedures, views, or any other database objects as dependencies for stored procedures. All logic must be self-contained within the procedure itself to avoid deployment and dependency management complexity.
+
 ## General Formatting
 
 - **Keywords**: All SQL keywords in UPPERCASE (SELECT, FROM, WHERE, JOIN, etc.)

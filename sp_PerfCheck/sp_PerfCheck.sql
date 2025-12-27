@@ -283,12 +283,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
-        @autogrow_summary nvarchar(max) = N'',
         @has_tables bit = 0,
         /* Determine total waits, uptime, and significant waits */
         @total_waits bigint,
         @uptime_ms bigint,
-        @significant_wait_threshold_pct decimal(5, 2) = 0.5, /* Only waits above 0.5% */
+        @significant_wait_threshold_pct decimal(5, 2) = 10.0, /* Only waits above 10% */
         @significant_wait_threshold_avg decimal(10, 2) = 10.0, /* Or avg wait time > 10ms */
         /* Threshold settings for stolen memory alert */
         @buffer_pool_size_gb decimal(38, 2),
@@ -301,8 +300,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sos_scheduler_yield_ms bigint,
         @signal_wait_ratio decimal(10, 2),
         @sos_scheduler_yield_pct_of_uptime decimal(10, 2),
-        /* I/O stalls variables */
-        @io_stall_summary nvarchar(1000),
         /* First check what columns exist in sys.databases to handle version differences */
         @has_is_ledger bit = 0,
         @has_is_accelerated_database_recovery bit = 0,
@@ -314,7 +311,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* TempDB pagelatch contention variables */
         @pagelatch_wait_hours decimal(20,2),
         @server_uptime_hours decimal(20,2),
-        @pagelatch_ratio_to_uptime decimal(10,4);
+        @pagelatch_ratio_to_uptime decimal(10,4),
+        /* Memory health history variables (SQL Server 2025+) */
+        @health_history_exists bit =
+            CASE
+                WHEN OBJECT_ID('sys.dm_os_memory_health_history') IS NOT NULL
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
+            END,
+        @health_history_count integer = 0;
 
 
     /* Check for VIEW SERVER STATE permission */
@@ -579,6 +584,69 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         category nvarchar(50) NOT NULL
     );
 
+    /* Create temp table for benign waits to filter out */
+    CREATE TABLE
+        #benign_waits
+    (
+        wait_type nvarchar(60) PRIMARY KEY CLUSTERED
+    );
+
+    /* Populate benign waits table */
+    INSERT INTO
+        #benign_waits
+    (
+        wait_type
+    )
+    VALUES
+        (N'BROKER_TASK_STOP'),
+        (N'BROKER_TO_FLUSH'),
+        (N'BROKER_TRANSMITTER'),
+        (N'CHECKPOINT_QUEUE'),
+        (N'CLR_AUTO_EVENT'),
+        (N'CLR_MANUAL_EVENT'),
+        (N'DIRTY_PAGE_POLL'),
+        (N'DISPATCHER_QUEUE_SEMAPHORE'),
+        (N'FSAGENT'),
+        (N'FT_IFTS_SCHEDULER_IDLE_WAIT'),
+        (N'FT_IFTSHC_MUTEX'),
+        (N'HADR_FILESTREAM_IOMGR_IOCOMPLETION'),
+        (N'HADR_LOGCAPTURE_WAIT'),
+        (N'HADR_TIMER_TASK'),
+        (N'HADR_WORK_QUEUE'),
+        (N'LAZYWRITER_SLEEP'),
+        (N'LOGMGR_QUEUE'),
+        (N'MEMORY_ALLOCATION_EXT'),
+        (N'PREEMPTIVE_XE_GETTARGETSTATE'),
+        (N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP'),
+        (N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP'),
+        (N'REQUEST_FOR_DEADLOCK_SEARCH'),
+        (N'RESOURCE_QUEUE'),
+        (N'SERVER_IDLE_CHECK'),
+        (N'SLEEP_DBSTARTUP'),
+        (N'SLEEP_DCOMSTARTUP'),
+        (N'SLEEP_MASTERDBREADY'),
+        (N'SLEEP_MASTERMDREADY'),
+        (N'SLEEP_MASTERUPGRADED'),
+        (N'SLEEP_MSDBSTARTUP'),
+        (N'SLEEP_SYSTEMTASK'),
+        (N'SLEEP_TEMPDBSTARTUP'),
+        (N'SNI_HTTP_ACCEPT'),
+        (N'SP_SERVER_DIAGNOSTICS_SLEEP'),
+        (N'SQLTRACE_BUFFER_FLUSH'),
+        (N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP'),
+        (N'SQLTRACE_WAIT_ENTRIES'),
+        (N'STARTUP_DEPENDENCY_MANAGER'),
+        (N'WAIT_FOR_RESULTS'),
+        (N'WAITFOR'),
+        (N'WAITFOR_TASKSHUTDOWN'),
+        (N'WAIT_XTP_HOST_WAIT'),
+        (N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG'),
+        (N'WAIT_XTP_CKPT_CLOSE'),
+        (N'XE_DISPATCHER_JOIN'),
+        (N'XE_DISPATCHER_WAIT'),
+        (N'XE_LIVE_TARGET_TVF'),
+        (N'XE_TIMER_EVENT');
+
     /* Create temp table for database I/O stalls */
     CREATE TABLE
         #io_stalls_by_db
@@ -819,9 +887,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             COUNT_BIG(*) > 0; /* Only if there are offline schedulers */
     END;
 
-    /* Check for forced grants - requires VIEW SERVER STATE permission */
+    /* Check for forced grants and memory grant timeouts - requires VIEW SERVER STATE permission */
     IF @has_view_server_state = 1
     BEGIN
+        /* Check for forced grants */
         INSERT INTO
             #results
         (
@@ -847,11 +916,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE ders.forced_grant_count > 0
         HAVING
             MAX(ders.forced_grant_count) > 0; /* Only if there are actually forced grants */
-    END;
 
-    /* Check for memory grant timeouts - requires VIEW SERVER STATE permission */
-    IF @has_view_server_state = 1
-    BEGIN
+        /* Check for memory grant timeouts */
         INSERT INTO
             #results
         (
@@ -975,7 +1041,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()), 0))) +
             N' deadlocks per day since startup (' +
             CONVERT(nvarchar(20), p.cntr_value) +
-            ' total deadlocks over ' +
+            N' total deadlocks over ' +
             CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME())) +
             N' days). ' +
             N'High deadlock rates indicate concurrency issues that should be investigated.',
@@ -1608,59 +1674,61 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 COUNT_BIG(*) DESC;
 
             /* Get summary of SLOW autogrow events for server_info */
-            SELECT @autogrow_summary =
-                STUFF
-                (
+            /* Data file autogrows */
+            INSERT INTO
+                #server_info
+            (
+                info_type,
+                value
+            )
+            SELECT
+                info_type = N'Slow Data File Autogrows (7 days)',
+                value =
+                    CONVERT
                     (
-                        SELECT TOP (5)
-                            N', ' +
-                            CONVERT
-                            (
-                                nvarchar(50),
-                                COUNT_BIG(*)
-                            ) +
-                            N' slow ' +
-                            CASE
-                                WHEN te.event_class = 92
-                                THEN N'data file'
-                                WHEN te.event_class = 93
-                                THEN N'log file'
-                            END +
-                            N' autogrows' +
-                            N' (avg ' +
-                            CONVERT
-                            (
-                                nvarchar(20),
-                                AVG(te.duration_ms) / 1000.0
-                            ) +
-                            N' sec)'
-                        FROM #trace_events AS te
-                        WHERE te.event_class IN (92, 93) /* Auto-grow events */
-                        AND   te.duration_ms > @slow_autogrow_ms /* Only slow auto-grows */
-                        GROUP BY
-                            te.event_class
-                        ORDER BY
-                            te.event_class
-                        FOR
-                            XML
-                            PATH('')
-                    ),
-                    1,
-                    2,
-                    N''
-                );
+                        nvarchar(50),
+                        COUNT_BIG(*)
+                    ) +
+                    N' events (avg ' +
+                    CONVERT
+                    (
+                        nvarchar(20),
+                        AVG(te.duration_ms) / 1000.0
+                    ) +
+                    N' sec)'
+            FROM #trace_events AS te
+            WHERE te.event_class = 92 /* Data file auto-grow */
+            AND   te.duration_ms > @slow_autogrow_ms /* Only slow auto-grows */
+            HAVING
+                COUNT_BIG(*) > 0;
 
-            IF @autogrow_summary IS NOT NULL
-            BEGIN
-                INSERT INTO
-                    #server_info 
-                (
-                    info_type, 
-                    value
-                )
-                VALUES
-                    (N'Slow Autogrow Events (7 days)', @autogrow_summary);
-            END;
+            /* Log file autogrows */
+            INSERT INTO
+                #server_info
+            (
+                info_type,
+                value
+            )
+            SELECT
+                info_type = N'Slow Log File Autogrows (7 days)',
+                value =
+                    CONVERT
+                    (
+                        nvarchar(50),
+                        COUNT_BIG(*)
+                    ) +
+                    N' events (avg ' +
+                    CONVERT
+                    (
+                        nvarchar(20),
+                        AVG(te.duration_ms) / 1000.0
+                    ) +
+                    N' sec)'
+            FROM #trace_events AS te
+            WHERE te.event_class = 93 /* Log file auto-grow */
+            AND   te.duration_ms > @slow_autogrow_ms /* Only slow auto-grows */
+            HAVING
+                COUNT_BIG(*) > 0;
         END;
     END;
 
@@ -1689,57 +1757,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     )
                 )
         FROM sys.dm_os_wait_stats AS osw
-        WHERE osw.wait_type NOT IN
+        WHERE NOT EXISTS
         (
-            /* Skip benign waits based on sys.dm_os_wait_stats documentation */
-            N'BROKER_TASK_STOP',
-            N'BROKER_TO_FLUSH',
-            N'BROKER_TRANSMITTER',
-            N'CHECKPOINT_QUEUE',
-            N'CLR_AUTO_EVENT',
-            N'CLR_MANUAL_EVENT',
-            N'DIRTY_PAGE_POLL',
-            N'DISPATCHER_QUEUE_SEMAPHORE',
-            N'FSAGENT',
-            N'FT_IFTS_SCHEDULER_IDLE_WAIT',
-            N'FT_IFTSHC_MUTEX',
-            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
-            N'HADR_LOGCAPTURE_WAIT',
-            N'HADR_TIMER_TASK',
-            N'HADR_WORK_QUEUE',
-            N'LAZYWRITER_SLEEP',
-            N'LOGMGR_QUEUE',
-            N'MEMORY_ALLOCATION_EXT',
-            N'PREEMPTIVE_XE_GETTARGETSTATE',
-            N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
-            N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
-            N'REQUEST_FOR_DEADLOCK_SEARCH',
-            N'RESOURCE_QUEUE',
-            N'SERVER_IDLE_CHECK',
-            N'SLEEP_DBSTARTUP',
-            N'SLEEP_DCOMSTARTUP',
-            N'SLEEP_MASTERDBREADY',
-            N'SLEEP_MASTERMDREADY',
-            N'SLEEP_MASTERUPGRADED',
-            N'SLEEP_MSDBSTARTUP',
-            N'SLEEP_SYSTEMTASK',
-            N'SLEEP_TEMPDBSTARTUP',
-            N'SNI_HTTP_ACCEPT',
-            N'SP_SERVER_DIAGNOSTICS_SLEEP',
-            N'SQLTRACE_BUFFER_FLUSH',
-            N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
-            N'SQLTRACE_WAIT_ENTRIES',
-            N'STARTUP_DEPENDENCY_MANAGER',
-            N'WAIT_FOR_RESULTS',
-            N'WAITFOR',
-            N'WAITFOR_TASKSHUTDOWN',
-            N'WAIT_XTP_HOST_WAIT',
-            N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
-            N'WAIT_XTP_CKPT_CLOSE',
-            N'XE_DISPATCHER_JOIN',
-            N'XE_DISPATCHER_WAIT',
-            N'XE_LIVE_TARGET_TVF',
-            N'XE_TIMER_EVENT'
+            SELECT
+                1/0
+            FROM #benign_waits AS bw
+            WHERE bw.wait_type = osw.wait_type
         );
 
         /* Insert important waits into the temp table */
@@ -1845,7 +1868,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT
                 (
                     decimal(5,2),
-                    dows.wait_time_ms * 100.0 / @total_waits
+                    dows.wait_time_ms * 100.0 / NULLIF(@total_waits, 0)
                 ),
             category =
                 CASE
@@ -1924,7 +1947,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Only include waits that are significant in terms of percentage of uptime or average wait time (>1 second) */
         AND
         (
-             (dows.wait_time_ms * 100.0 / @uptime_ms) > @significant_wait_threshold_pct
+             (dows.wait_time_ms * 100.0 / NULLIF(@uptime_ms, 0)) > @significant_wait_threshold_pct
           OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
         );
 
@@ -1933,9 +1956,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             #wait_stats
         SET
             #wait_stats.wait_time_percent_of_uptime =
-                (wait_time_ms * 100.0 / @uptime_ms);
+                (wait_time_ms * 100.0 / NULLIF(@uptime_ms, 0));
 
-        /* Add only waits that represent >=50% of server uptime */
+        /* Add only waits that represent >=10% of server uptime */
         INSERT INTO
             #results
         (
@@ -1954,7 +1977,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN 20 /* Very high priority if >100% of uptime */
                     WHEN ws.wait_time_percent_of_uptime > 75
                     THEN 30 /* High priority if >75% of uptime */
-                    ELSE 40 /* Medium-high priority otherwise */
+                    WHEN ws.wait_time_percent_of_uptime >= 50
+                    THEN 40 /* Medium-high priority if >=50% of uptime */
+                    ELSE 50 /* Medium priority otherwise */
                 END,
             category = N'Wait Statistics',
             finding =
@@ -1978,43 +2003,39 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ws.description,
             url = N'https://erikdarling.com/sp_PerfCheck#WaitStats'
         FROM #wait_stats AS ws
-        WHERE
-            (
-                 ws.wait_time_percent_of_uptime >= 50.0 /* Only include waits that are at least 50% of uptime */
-              OR ws.avg_wait_ms >= 1000.0 /* Or have average wait time > 1 second */
-            )
+        WHERE ws.wait_time_percent_of_uptime >= 10.0 /* Only include waits that are at least 10% of uptime */
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
     END;
 
     /* Calculate pagelatch wait time for TempDB contention check */
+    /* Check for CPU scheduling pressure (signal wait ratio) */
+    /* Check for stolen memory from buffer pool */
     IF @has_view_server_state = 1
     BEGIN
-        SELECT 
-            @pagelatch_wait_hours = 
+        /* Calculate pagelatch wait time for TempDB contention check */
+        SELECT
+            @pagelatch_wait_hours =
                 SUM
                 (
-                    CASE 
-                        WHEN osw.wait_type IN (N'PAGELATCH_UP', N'PAGELATCH_SH', N'PAGELATCH_EX') 
+                    CASE
+                        WHEN osw.wait_type IN (N'PAGELATCH_UP', N'PAGELATCH_SH', N'PAGELATCH_EX')
                         THEN osw.wait_time_ms / 1000.0 / 3600.0
-                        ELSE 0 
+                        ELSE 0
                     END
                 ),
-            @server_uptime_hours = 
+            @server_uptime_hours =
                 DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0
         FROM sys.dm_os_wait_stats AS osw
         CROSS JOIN sys.dm_os_sys_info AS osi
-        GROUP BY 
+        GROUP BY
             DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0;
 
-        SET @pagelatch_ratio_to_uptime = 
+        SET @pagelatch_ratio_to_uptime =
             @pagelatch_wait_hours / NULLIF(@server_uptime_hours, 0) * 100;
-    END;
 
-    /* Check for CPU scheduling pressure (signal wait ratio) */
-    IF @has_view_server_state = 1
-    BEGIN
+        /* Check for CPU scheduling pressure (signal wait ratio) */
         /* Get total and signal wait times */
         SELECT
             @signal_wait_time_ms =
@@ -2031,57 +2052,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     END
                 )
         FROM sys.dm_os_wait_stats AS osw
-        WHERE osw.wait_type NOT IN
+        WHERE NOT EXISTS
         (
-            /* Skip benign waits based on sys.dm_os_wait_stats documentation */
-            N'BROKER_TASK_STOP',
-            N'BROKER_TO_FLUSH',
-            N'BROKER_TRANSMITTER',
-            N'CHECKPOINT_QUEUE',
-            N'CLR_AUTO_EVENT',
-            N'CLR_MANUAL_EVENT',
-            N'DIRTY_PAGE_POLL',
-            N'DISPATCHER_QUEUE_SEMAPHORE',
-            N'FSAGENT',
-            N'FT_IFTS_SCHEDULER_IDLE_WAIT',
-            N'FT_IFTSHC_MUTEX',
-            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
-            N'HADR_LOGCAPTURE_WAIT',
-            N'HADR_TIMER_TASK',
-            N'HADR_WORK_QUEUE',
-            N'LAZYWRITER_SLEEP',
-            N'LOGMGR_QUEUE',
-            N'MEMORY_ALLOCATION_EXT',
-            N'PREEMPTIVE_XE_GETTARGETSTATE',
-            N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
-            N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
-            N'REQUEST_FOR_DEADLOCK_SEARCH',
-            N'RESOURCE_QUEUE',
-            N'SERVER_IDLE_CHECK',
-            N'SLEEP_DBSTARTUP',
-            N'SLEEP_DCOMSTARTUP',
-            N'SLEEP_MASTERDBREADY',
-            N'SLEEP_MASTERMDREADY',
-            N'SLEEP_MASTERUPGRADED',
-            N'SLEEP_MSDBSTARTUP',
-            N'SLEEP_SYSTEMTASK',
-            N'SLEEP_TEMPDBSTARTUP',
-            N'SNI_HTTP_ACCEPT',
-            N'SP_SERVER_DIAGNOSTICS_SLEEP',
-            N'SQLTRACE_BUFFER_FLUSH',
-            N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
-            N'SQLTRACE_WAIT_ENTRIES',
-            N'STARTUP_DEPENDENCY_MANAGER',
-            N'WAIT_FOR_RESULTS',
-            N'WAITFOR',
-            N'WAITFOR_TASKSHUTDOWN',
-            N'WAIT_XTP_HOST_WAIT',
-            N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
-            N'WAIT_XTP_CKPT_CLOSE',
-            N'XE_DISPATCHER_JOIN',
-            N'XE_DISPATCHER_WAIT',
-            N'XE_LIVE_TARGET_TVF',
-            N'XE_TIMER_EVENT'
+            SELECT
+                1/0
+            FROM #benign_waits AS bw
+            WHERE bw.wait_type = osw.wait_type
         );
 
         /* Calculate signal wait ratio (time spent waiting for CPU vs. total wait time) */
@@ -2119,12 +2095,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                  END
             );
 
-            IF @sos_scheduler_yield_pct_of_uptime > 0
+            IF @sos_scheduler_yield_pct_of_uptime >= 10.0
             BEGIN
                 INSERT INTO
                     #server_info
                 (
-                    info_type, 
+                    info_type,
                     value
                 )
                 VALUES
@@ -2211,11 +2187,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 );
             END;
         END;
-    END;
 
-    /* Check for stolen memory from buffer pool */
-    IF @has_view_server_state = 1
-    BEGIN
+        /* Check for stolen memory from buffer pool */
         /* Get buffer pool size */
         SELECT
             @buffer_pool_size_gb =
@@ -2243,6 +2216,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             SET @stolen_memory_pct =
                     (@stolen_memory_gb / (@buffer_pool_size_gb + @stolen_memory_gb)) * 100.0;
+
+            /* Query memory health history if available (SQL Server 2025+) */
+            IF @health_history_exists = CONVERT(bit, 'true')
+            BEGIN
+                EXECUTE sys.sp_executesql
+                    N'
+                    SELECT
+                        @health_history_count = COUNT_BIG(*)
+                    FROM sys.dm_os_memory_health_history AS hh
+                    WHERE hh.severity_level > 1;
+                    ',
+                    N'@health_history_count integer OUTPUT',
+                    @health_history_count OUTPUT;
+            END;
 
             /* Add buffer pool info to server_info */
             INSERT INTO
@@ -2288,6 +2275,27 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ) +
                 N'%)'
             );
+
+            /* Add memory health history count if available */
+            IF @health_history_count > 0
+            BEGIN
+                INSERT INTO
+                    #server_info
+                (
+                    info_type,
+                    value
+                )
+                VALUES
+                (
+                    N'Memory Health History (Severity > 1)',
+                    CONVERT
+                    (
+                        nvarchar(20),
+                        @health_history_count
+                    ) +
+                    N' events'
+                );
+            END;
 
             /* Add finding if stolen memory exceeds threshold */
             IF @stolen_memory_pct > @stolen_memory_threshold_pct
@@ -2366,11 +2374,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM(domc.pages_kb) DESC;
             END;
         END;
-    END;
 
-    /* Check for I/O stalls per database */
-    IF @has_view_server_state = 1
-    BEGIN
+        /* Check for I/O stalls per database */
         /* First clear any existing data */
         TRUNCATE TABLE
             #io_stalls_by_db;
@@ -2499,78 +2504,57 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             );
         END CATCH;
 
-        /* Format a summary of the worst databases by I/O stalls */
-        WITH
-            io_stall_summary AS
+        /* Add I/O stall summary to server_info - one line per database */
+        INSERT INTO
+            #server_info
         (
-            SELECT TOP (5)
-                i.database_name,
-                i.total_io_stall_ms,
-                i.total_io_mb,
-                i.avg_io_stall_ms,
-                i.read_io_stall_ms,
-                i.read_io_mb,
-                i.avg_read_stall_ms,
-                i.write_io_stall_ms,
-                i.write_io_mb,
-                i.avg_write_stall_ms,
-                i.total_size_mb
-            FROM #io_stalls_by_db AS i
-            WHERE
-            (
-                 i.avg_read_stall_ms >= @slow_read_ms
-              OR i.avg_write_stall_ms >= @slow_write_ms
-            )
-            ORDER BY
-                i.avg_io_stall_ms DESC
+            info_type,
+            value
         )
-        SELECT @io_stall_summary =
-            STUFF
-            (
+        SELECT TOP (5)
+            info_type =
+                N'Database I/O Stall: ' +
+                i.database_name,
+            value =
+                N'Average latency: ' +
+                CONVERT
                 (
-                    SELECT TOP (5)
-                        N', ' +
-                        db.database_name +
-                        N' (' +
-                        CONVERT
-                        (
-                            nvarchar(10),
-                            CONVERT
-                            (
-                                decimal(10, 2),
-                                db.avg_io_stall_ms
-                            )
-                        ) +
-                        N' ms)'
-                    FROM io_stall_summary AS db
-                    ORDER BY
-                        db.avg_io_stall_ms DESC
-                    FOR
-                        XML
-                        PATH('')
-                ),
-                1,
-                2,
-                ''
-            );
-
-        /* Add I/O stall summary to server_info if any significant stalls were found */
-        IF  @io_stall_summary IS NOT NULL
-        AND LEN(@io_stall_summary) > 0
-        BEGIN
-            INSERT INTO
-                #server_info
-            (
-                info_type, 
-                value
-            )
-            VALUES
-            (
-                N'Database I/O Stalls',
-                N'Top databases with high I/O latency: ' +
-                @io_stall_summary
-            );
-        END;
+                    nvarchar(10),
+                    CONVERT
+                    (
+                        decimal(10, 2),
+                        i.avg_io_stall_ms
+                    )
+                ) +
+                N' ms (Read: ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    CONVERT
+                    (
+                        decimal(10, 2),
+                        i.avg_read_stall_ms
+                    )
+                ) +
+                N' ms, Write: ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    CONVERT
+                    (
+                        decimal(10, 2),
+                        i.avg_write_stall_ms
+                    )
+                ) +
+                N' ms)'
+        FROM #io_stalls_by_db AS i
+        WHERE
+        (
+             i.avg_read_stall_ms >= @slow_read_ms
+          OR i.avg_write_stall_ms >= @slow_write_ms
+        )
+        ORDER BY
+            i.avg_io_stall_ms DESC;
 
         /* Add findings for significant I/O stalls */
         INSERT INTO
@@ -4057,21 +4041,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         /* Check each database for accessibility using three-part naming */
         DECLARE
-            db_cursor
-                CURSOR
-                LOCAL
-                FAST_FORWARD
-                READ_ONLY
-            FOR
-            SELECT
-                dl.database_name,
-                dl.database_id
-            FROM #database_list AS dl;
+            @db_cursor CURSOR;
 
-        OPEN db_cursor;
+        SET @db_cursor = 
+            CURSOR 
+            LOCAL 
+            FAST_FORWARD
+        FOR
+        SELECT
+            dl.database_name,
+            dl.database_id
+        FROM #database_list AS dl;
+
+        OPEN @db_cursor;
 
         FETCH NEXT
-        FROM db_cursor
+        FROM @db_cursor
         INTO
             @current_database_name,
             @current_database_id;
@@ -4125,14 +4110,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END CATCH;
 
             FETCH NEXT
-            FROM db_cursor
+            FROM @db_cursor
             INTO
                 @current_database_name,
                 @current_database_id;
         END;
-
-        CLOSE db_cursor;
-        DEALLOCATE db_cursor;
     END;
 
     IF @debug = 1
@@ -4146,22 +4128,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     Database Iteration and Checks
     */
     DECLARE
-        database_cursor
-            CURSOR
-            LOCAL
-            FAST_FORWARD
-            READ_ONLY
-        FOR
-        SELECT
-            dl.database_name,
-            dl.database_id
-        FROM #database_list AS dl
-        WHERE dl.can_access = 1;
+        @database_cursor CURSOR;
 
-    OPEN database_cursor;
+    SET @database_cursor = 
+        CURSOR 
+        LOCAL 
+        FAST_FORWARD
+    FOR
+    SELECT
+        dl.database_name,
+        dl.database_id
+    FROM #database_list AS dl
+    WHERE dl.can_access = 1;
+
+    OPEN @database_cursor;
 
     FETCH NEXT
-    FROM database_cursor
+    FROM @database_cursor
     INTO
         @current_database_name,
         @current_database_id;
@@ -4592,7 +4575,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     (@current_database_id, @current_database_name, 34, N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'', NULL, NULL, 1),
                     (@current_database_id, @current_database_name, 35, N''OPTIMIZED_PLAN_FORCING'', NULL, NULL, 1),
                     (@current_database_id, @current_database_name, 37, N''DOP_FEEDBACK'', NULL, NULL, 1),
-                    (@current_database_id, @current_database_name, 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1);
+                    (@current_database_id, @current_database_name, 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1),
+                    /* SQL Server 2025 options - IDs to be verified against actual SQL Server 2025 instance */
+                    (@current_database_id, @current_database_name, 40, N''PREVIEW_FEATURES'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 41, N''OPTIMIZED_SP_EXECUTESQL'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 42, N''FULLTEXT_INDEX_VERSION'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 43, N''OPTIONAL_PARAMETER_OPTIMIZATION'', NULL, NULL, 1);
 
                 /* Get actual non-default settings */
                 INSERT INTO
@@ -4637,6 +4625,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN sc.name = N''OPTIMIZED_PLAN_FORCING'' AND CONVERT(integer, sc.value) = 1 THEN 1
                         WHEN sc.name = N''DOP_FEEDBACK'' AND CONVERT(integer, sc.value) = 0 THEN 1
                         WHEN sc.name = N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        /* SQL Server 2025 options */
+                        WHEN sc.name = N''PREVIEW_FEATURES'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''OPTIMIZED_SP_EXECUTESQL'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''FULLTEXT_INDEX_VERSION'' AND CONVERT(integer, sc.value) = 2 THEN 1
+                        WHEN sc.name = N''OPTIONAL_PARAMETER_OPTIMIZATION'' AND CONVERT(integer, sc.value) = 1 THEN 1
                         ELSE 0 /* Non-default */
                     END
                 FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_scoped_configurations AS sc
@@ -4644,7 +4637,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       (
                         1, 2, 3, 4, 7, 8, 9,
                         10, 13, 16, 18, 19, 20, 24,
-                        27, 28, 31, 33, 34, 35, 37, 39
+                        27, 28, 31, 33, 34, 35, 37, 39,
+                        40, 41, 42, 43  /* SQL Server 2025 options */
                       );
             END;';
 
@@ -4699,8 +4693,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         CASE
                             WHEN dsc.value_for_secondary IS NOT NULL
                             THEN N' (Secondary: ' +
-                            CONVERT(nvarchar(100), dsc.value_for_secondary) +
-                            N')'
+                                 CONVERT(nvarchar(100), dsc.value_for_secondary) +
+                                 N')'
                             ELSE N''
                         END +
                         N'. ',
@@ -4926,7 +4920,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 @current_database_name;
 
             /* Check for non-optimal log growth increments in SQL Server 2022, Azure SQL DB, or Azure MI */
-            IF @product_version_major >= 16 OR @azure_sql_db = 1 OR @azure_managed_instance = 1
+            IF @product_version_major >= 16 
+            OR @azure_sql_db = 1 
+            OR @azure_managed_instance = 1
             BEGIN
                 SET @sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -5040,14 +5036,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END CATCH;
 
         FETCH NEXT
-        FROM database_cursor
+        FROM @database_cursor
         INTO
             @current_database_name,
             @current_database_id;
     END;
-
-    CLOSE database_cursor;
-    DEALLOCATE database_cursor;
 
     /* Add scan time footer to server info */
     INSERT INTO
