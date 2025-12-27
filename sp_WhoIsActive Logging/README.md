@@ -79,5 +79,5 @@ EXECUTE dbo.sp_WhoIsActiveLogging_CreateViews;
 - Views are automatically refreshed when new tables are created
 - Old tables are automatically dropped based on the retention period
 
-Copyright 2025 Darling Data, LLC  
+Copyright 2026 Darling Data, LLC  
 Released under MIT license

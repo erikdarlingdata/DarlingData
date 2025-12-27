@@ -58,5 +58,5 @@ The script will:
 
 The WhoIsActive Logging procedures are not included in this file, as they have a different installation process and depend on Adam Machanic's sp_WhoIsActive.
 
-Copyright 2025 Darling Data, LLC  
+Copyright 2026 Darling Data, LLC  
 Released under MIT license

@@ -11,7 +11,7 @@ GO
 
 /*
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 This will set delete tables older than a defined retention period, with  default of 10 days.

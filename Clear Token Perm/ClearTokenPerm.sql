@@ -16,7 +16,7 @@ For background on why you might need this:
 
 In short, if your security caches are growing out of control, it can cause all sorts of weird issues with SQL Server.
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:

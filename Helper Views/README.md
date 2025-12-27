@@ -100,5 +100,5 @@ EXECUTE dbo.tempdb_tester;
 
 Some of these scripts (particularly WhatsUpMemory) may cause performance issues if run on busy production servers. Use with caution, especially on servers with large amounts of memory.
 
-Copyright 2025 Darling Data, LLC  
+Copyright 2026 Darling Data, LLC  
 Released under MIT license

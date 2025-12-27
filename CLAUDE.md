@@ -10,11 +10,12 @@ This document outlines the T-SQL coding style preferences for Erik Darling (Darl
 
 - **Keywords**: All SQL keywords in UPPERCASE (SELECT, FROM, WHERE, JOIN, etc.)
 - **Functions**: All SQL functions in UPPERCASE (CONVERT, ISNULL, OBJECT_ID, etc.)
-- **Data types**: 
+- **Data types**:
   - Never abbreviate data types (use INTEGER instead of INT)
   - All data types must be lowercase (varchar, nvarchar, datetime2, bigint, etc.)
   - Length specifications must also be lowercase: nvarchar(max), not nvarchar(MAX)
   - Precision and scale specifications must be lowercase: decimal(38,2), not DECIMAL(38,2)
+  - Always use sysname for SQL Server object names (database names, table names, schema names, column names, index names, etc.) rather than nvarchar(128)
 - **Keywords**: Never abbreviate keywords (use EXECUTE instead of EXEC, TRANSACTION instead of TRAN, PROCEDURE instead of PROC)
 - **Indentation**: 4 spaces for each level of indentation (NEVER use tabs)
 - **Line breaks**: Each statement on a new line

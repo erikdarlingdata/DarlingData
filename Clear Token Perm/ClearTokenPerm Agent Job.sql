@@ -16,7 +16,7 @@ For background on why you might need this:
 
 In short, if your security caches are growing out of control, it can cause all sorts of weird issues with SQL Server.
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -73,7 +73,7 @@ EXECUTE @ReturnCode = msdb.dbo.sp_add_job
     @description = N'For background on why you need this:
 https://www.erikdarling.com/troubleshooting-security-cache-issues-userstore_tokenperm-and-tokenandpermuserstore/
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:

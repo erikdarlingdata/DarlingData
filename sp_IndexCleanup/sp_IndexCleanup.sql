@@ -24,7 +24,7 @@ GO
  ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝
 
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -72,8 +72,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '1.11',
-        @version_date = '20251114';
+        @version = '2.0',
+        @version_date = '20260115';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -214,7 +214,7 @@ BEGIN TRY
         RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -512,12 +512,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_compression_success_count bigint NULL,
         /* Hash column for optimized matching */
         index_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id) +
-                CONVERT(varbinary(8), index_id)
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, index_id))
+                )
             ) PERSISTED
         PRIMARY KEY CLUSTERED
             (database_id, schema_id, object_id, index_id)
@@ -546,12 +550,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         partition_columns nvarchar(max),
         /* Hash column for optimized matching */
         index_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id) +
-                CONVERT(varbinary(8), index_id)
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, index_id))
+                )
             ) PERSISTED
         PRIMARY KEY CLUSTERED
             (database_id, schema_id, object_id, index_id, partition_id)
@@ -597,25 +605,33 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             HASHBYTES
             (
                 'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id) +
-                CONVERT(varbinary(8), index_id)
+                CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                CONVERT(varbinary(8), CONVERT(integer, object_id)) +
+                CONVERT(varbinary(8), CONVERT(integer, index_id))
             ) PERSISTED,
         column_position_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id) +
-                CONVERT(varbinary(max), column_name) +
-                CONVERT(varbinary(8), key_ordinal)
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
+                    CONVERT(varbinary(max), CONVERT(sysname, column_name)) +
+                    CONVERT(varbinary(8), CONVERT(integer, key_ordinal))
+                )
             ) PERSISTED,
         scope_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id)
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, object_id))
+                )
             ) PERSISTED
         PRIMARY KEY CLUSTERED
             (database_id, schema_id, object_id, index_id, column_id)
@@ -656,34 +672,50 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_priority decimal(10,6) NULL,
         /* Hash columns for optimized matching */
         scope_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id)
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, object_id))
+                )
             ) PERSISTED,
         exact_match_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                ISNULL(key_columns, N'') + N'|' +
-                ISNULL(included_columns, N'') + N'|' +
-                ISNULL(filter_definition, N'')
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    ISNULL(key_columns, N'') + N'|' +
+                    ISNULL(included_columns, N'') + N'|' +
+                    ISNULL(filter_definition, N'')
+                )
             ) PERSISTED,
         key_filter_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                ISNULL(key_columns, N'') + N'|' +
-                ISNULL(filter_definition, N'')
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    ISNULL(key_columns, N'') + N'|' +
+                    ISNULL(filter_definition, N'')
+                )
             ) PERSISTED,
         index_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id) +
-                CONVERT(varbinary(8), index_id)
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, index_id))
+                )
             ) PERSISTED
     );
 
@@ -749,12 +781,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         reason nvarchar(200) NULL,
         /* Hash column for optimized matching */
         index_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id) +
-                CONVERT(varbinary(8), index_id)
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, index_id))
+                )
             ) PERSISTED
         PRIMARY KEY CLUSTERED
             (database_id, schema_id, object_id, index_id, can_compress)
@@ -796,18 +832,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_list nvarchar(max) NULL,
         /* Hash columns for optimized matching */
         scope_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id)
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, object_id))
+                )
             ) PERSISTED,
         key_filter_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                ISNULL(base_key_columns, N'') + N'|' +
-                ISNULL(filter_definition, N'')
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    ISNULL(base_key_columns, N'') + N'|' +
+                    ISNULL(filter_definition, N'')
+                )
             ) PERSISTED
     );
 
@@ -822,11 +866,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superset_included_columns nvarchar(max) NULL,
         /* Hash column for optimized matching */
         scope_hash AS
-            HASHBYTES
+            CONVERT
             (
-                'SHA2_256',
-                CONVERT(varbinary(8), database_id) +
-                CONVERT(varbinary(8), object_id)
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                    CONVERT(varbinary(8), CONVERT(integer, object_id))
+                )
             ) PERSISTED
     );
 

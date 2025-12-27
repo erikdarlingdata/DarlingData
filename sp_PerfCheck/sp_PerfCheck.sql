@@ -22,7 +22,7 @@ GO
 ╚██████╗██║  ██║███████╗╚██████╗██║  ██╗
  ╚═════╝╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -63,8 +63,8 @@ BEGIN
     Set version information
     */
     SELECT
-        @version = N'1.11',
-        @version_date = N'20251114';
+        @version = N'2.0',
+        @version_date = N'20260115';
 
     /*
     Help section, for help.
@@ -142,7 +142,7 @@ BEGIN
         RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 

@@ -24,7 +24,7 @@ GO
 ███████╗ ╚████╔╝ ███████╗██║ ╚████║   ██║   ███████║
 ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -88,8 +88,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '6.11',
-    @version_date = '20251114';
+    @version = '7.0',
+    @version_date = '20260115';
 
 IF @help = 1
 BEGIN
@@ -324,7 +324,7 @@ BEGIN
     RAISERROR(N'
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 

@@ -71,5 +71,5 @@ TRUNCATE TABLE dbo.ClearTokenPermLogging;
 
 The DBCC FREESYSTEMCACHE command used in these scripts will clear the security cache, which may cause a temporary performance impact as the cache is rebuilt. Test thoroughly in non-production environments before deploying to production.
 
-Copyright 2025 Darling Data, LLC  
+Copyright 2026 Darling Data, LLC  
 Released under MIT license
