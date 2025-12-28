@@ -3575,13 +3575,13 @@ BEGIN
        @sort_order = N'cpu',
        @sort_order_is_a_wait = 0;
 
-   DELETE 
+   DELETE
    FROM @ColumnDefinitions
    WHERE metric_type IN (N'wait_time', N'top waits');
 
-   UPDATE 
+   UPDATE
        @ColumnDefinitions
-   SET 
+   SET
        column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
    WHERE metric_type = N'n';
 END;
@@ -3696,13 +3696,13 @@ BEGIN
             @sort_order_is_a_wait = 0,
             @wait_filter = NULL;
 
-        DELETE 
+        DELETE
         FROM @ColumnDefinitions
         WHERE metric_type IN (N'wait_time');
 
-        UPDATE 
+        UPDATE
             @ColumnDefinitions
-        SET 
+        SET
             column_source = N'ROW_NUMBER() OVER (PARTITION BY qsrs.plan_id ORDER BY qsrs.avg_cpu_time_ms DESC)'
         WHERE metric_type = N'n';
     END;
@@ -3715,7 +3715,7 @@ IF
     AND @get_all_databases = 0
 )
 BEGIN
-    DELETE 
+    DELETE
     FROM @ColumnDefinitions
     WHERE metric_type IN (N'top_waits');
 END;
@@ -8501,7 +8501,7 @@ FROM
             THEN N'
         qsp.query_plan_hash,'
             ELSE N''
-        END + 
+        END +
         CASE
             WHEN @include_query_hashes IS NOT NULL
             OR   @ignore_query_hashes IS NOT NULL
@@ -8510,7 +8510,7 @@ FROM
             THEN N'
         qsq.query_hash,'
             ELSE N''
-        END + 
+        END +
         CASE
             WHEN @include_sql_handles IS NOT NULL
             OR   @ignore_sql_handles IS NOT NULL

@@ -3064,16 +3064,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 DB_NAME(deqp.dbid),
             [dd hh:mm:ss.mss] =
                 CASE
-                    WHEN e.elapsed_time_ms < 0 
+                    WHEN e.elapsed_time_ms < 0
                     THEN RIGHT(REPLICATE(''0'', 2) + CONVERT(varchar(10), (-1 * e.elapsed_time_ms) / 86400), 2) +
                          '' '' +
-                         RIGHT(CONVERT(varchar(30), DATEADD(second, (-1 * e.elapsed_time_ms), 0), 120), 9) + 
+                         RIGHT(CONVERT(varchar(30), DATEADD(second, (-1 * e.elapsed_time_ms), 0), 120), 9) +
                          ''.000''
-                    ELSE RIGHT(REPLICATE(''0'', 2) + 
+                    ELSE RIGHT(REPLICATE(''0'', 2) +
                          CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
                          '' '' +
                          RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
-                         ''.'' + 
+                         ''.'' +
                          RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
                 END,
             query_text =
@@ -3176,12 +3176,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
         FROM sys.dm_exec_query_memory_grants AS deqmg
         LEFT JOIN sys.dm_exec_requests AS der
           ON der.session_id = deqmg.session_id
-        OUTER APPLY 
+        OUTER APPLY
         (
-            SELECT 
+            SELECT
                 elapsed_time_ms =
                     CASE
-                        WHEN DATEDIFF(HOUR, der.start_time, SYSDATETIME()) > 576 
+                        WHEN DATEDIFF(HOUR, der.start_time, SYSDATETIME()) > 576
                         THEN DATEDIFF(SECOND, SYSDATETIME(), der.start_time)
                         ELSE DATEDIFF(MILLISECOND, der.start_time, SYSDATETIME())
                     END
@@ -3553,13 +3553,13 @@ OPTION(MAXDOP 1, RECOMPILE);',
         CROSS JOIN
         (
             SELECT
-                active_request_count = 
+                active_request_count =
                     SUM(wg.active_request_count),
-                queued_request_count = 
+                queued_request_count =
                     SUM(wg.queued_request_count),
-                blocked_task_count = 
+                blocked_task_count =
                     SUM(wg.blocked_task_count),
-                active_parallel_thread_count = 
+                active_parallel_thread_count =
                     SUM(wg.active_parallel_thread_count)
             FROM sys.dm_resource_governor_workload_groups AS wg
         ) AS wg
@@ -3582,7 +3582,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         (
                             decimal(38,2),
                             (
-                                x.runnable / 
+                                x.runnable /
                                 (1. * NULLIF(x.total, 0))
                             )
                         ) * 100.
@@ -3728,16 +3728,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     DB_NAME(der.database_id),
                 [dd hh:mm:ss.mss] =
                     CASE
-                        WHEN e.elapsed_time_ms < 0 
+                        WHEN e.elapsed_time_ms < 0
                         THEN RIGHT(REPLICATE(''0'', 2) + CONVERT(varchar(10), (-1 * e.elapsed_time_ms) / 86400), 2) +
                              '' '' +
-                             RIGHT(CONVERT(varchar(30), DATEADD(second, (-1 * e.elapsed_time_ms), 0), 120), 9) + 
+                             RIGHT(CONVERT(varchar(30), DATEADD(second, (-1 * e.elapsed_time_ms), 0), 120), 9) +
                              ''.000''
-                        ELSE RIGHT(REPLICATE(''0'', 2) + 
+                        ELSE RIGHT(REPLICATE(''0'', 2) +
                              CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
                              '' '' +
                              RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
-                             ''.'' + 
+                             ''.'' +
                              RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
                     END,
                 query_text =
@@ -3889,12 +3889,12 @@ OPTION(MAXDOP 1, RECOMPILE);',
                       nvarchar(max),
                       N'
             FROM sys.dm_exec_requests AS der
-            OUTER APPLY 
+            OUTER APPLY
             (
-                SELECT 
+                SELECT
                     elapsed_time_ms =
                         CASE
-                            WHEN DATEDIFF(HOUR, der.start_time, SYSDATETIME()) > 576 
+                            WHEN DATEDIFF(HOUR, der.start_time, SYSDATETIME()) > 576
                             THEN DATEDIFF(SECOND, SYSDATETIME(), der.start_time)
                             ELSE DATEDIFF(MILLISECOND, der.start_time, SYSDATETIME())
                         END
