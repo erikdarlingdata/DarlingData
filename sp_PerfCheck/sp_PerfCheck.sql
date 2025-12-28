@@ -59,9 +59,10 @@ BEGIN
     SET NOCOUNT ON;
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-    /*
-    Set version information
-    */
+    BEGIN TRY
+        /*
+        Set version information
+        */
     SELECT
         @version = N'2.0',
         @version_date = N'20260115';
@@ -1036,15 +1037,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         category = N'Concurrency',
         finding = N'High Number of Deadlocks',
         details =
-            N'Server is averaging ' +
-            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value /
-              NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()), 0))) +
-            N' deadlocks per day since startup (' +
-            CONVERT(nvarchar(20), p.cntr_value) +
-            N' total deadlocks over ' +
-            CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME())) +
-            N' days). ' +
-            N'High deadlock rates indicate concurrency issues that should be investigated.',
+            CASE
+                WHEN DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()) >= 1
+                THEN
+                    N'Server is averaging ' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value /
+                      DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()))) +
+                    N' deadlocks per day since startup (' +
+                    CONVERT(nvarchar(20), p.cntr_value) +
+                    N' total deadlocks over ' +
+                    CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME())) +
+                    N' days). ' +
+                    N'High deadlock rates indicate concurrency issues that should be investigated.'
+                ELSE
+                    N'Server has recorded ' +
+                    CONVERT(nvarchar(20), p.cntr_value) +
+                    N' deadlocks in ' +
+                    CONVERT(nvarchar(10), DATEDIFF(HOUR, osi.sqlserver_start_time, SYSDATETIME())) +
+                    N' hours since startup. ' +
+                    N'High deadlock rates indicate concurrency issues that should be investigated.'
+            END,
         url = N'https://erikdarling.com/sp_PerfCheck#Deadlocks'
     FROM sys.dm_os_performance_counters AS p
     CROSS JOIN sys.dm_os_sys_info AS osi
@@ -1094,7 +1106,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         finding = N'Large Security Token Cache',
         details =
             N'TokenAndPermUserStore cache size is ' +
-            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0))) +
+            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), ISNULL(domc.pages_kb, 0) / 1024.0 / 1024.0)) +
             N' GB. Large security caches can consume significant memory and may indicate security-related issues ' +
             N'such as excessive application role usage or frequent permission changes. ' +
             N'Consider using dbo.ClearTokenPerm stored procedure to manage this issue.',
@@ -2261,7 +2273,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT
                 (
                     nvarchar(20),
-                    @stolen_memory_gb
+                    ISNULL(@stolen_memory_gb, 0)
                 ) +
                 N' GB (' +
                 CONVERT
@@ -2270,7 +2282,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     CONVERT
                     (
                         decimal(10, 1),
-                        @stolen_memory_pct
+                        ISNULL(@stolen_memory_pct, 0)
                     )
                 ) +
                 N'%)'
@@ -2323,9 +2335,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'Memory Usage',
                     N'High Stolen Memory Percentage',
                     N'Memory stolen from buffer pool: ' +
-                    CONVERT(nvarchar(20), @stolen_memory_gb) +
+                    CONVERT(nvarchar(20), ISNULL(@stolen_memory_gb, 0)) +
                     N' GB (' +
-                    CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) +
+                    CONVERT(nvarchar(10), CONVERT(decimal(10, 1), ISNULL(@stolen_memory_pct, 0))) +
                     N'% of total memory). This reduces memory available for data caching and can impact performance. ' +
                     N'Consider investigating memory usage by CLR, extended stored procedures, linked servers, or other memory clerks.',
                     N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
@@ -5083,5 +5095,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         r.finding,
         r.database_name,
         r.check_id;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+        BEGIN
+            ROLLBACK;
+        END;
+
+        THROW;
+    END CATCH;
 END;
 GO

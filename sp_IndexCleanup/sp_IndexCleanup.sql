@@ -518,9 +518,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 HASHBYTES
                 (
                     'SHA2_256',
-                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, index_id))
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(8), index_id)
                 )
             ) PERSISTED
         PRIMARY KEY CLUSTERED
@@ -556,9 +556,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 HASHBYTES
                 (
                     'SHA2_256',
-                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, index_id))
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(8), index_id)
                 )
             ) PERSISTED
         PRIMARY KEY CLUSTERED
@@ -616,10 +616,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 HASHBYTES
                 (
                     'SHA2_256',
-                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
-                    CONVERT(varbinary(max), CONVERT(sysname, column_name)) +
-                    CONVERT(varbinary(8), CONVERT(integer, key_ordinal))
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(max), column_name) +
+                    CONVERT(varbinary(8), key_ordinal)
                 )
             ) PERSISTED,
         scope_hash AS
@@ -629,8 +629,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 HASHBYTES
                 (
                     'SHA2_256',
-                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, object_id))
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id)
                 )
             ) PERSISTED
         PRIMARY KEY CLUSTERED
@@ -678,8 +678,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 HASHBYTES
                 (
                     'SHA2_256',
-                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, object_id))
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id)
                 )
             ) PERSISTED,
         exact_match_hash AS
@@ -712,9 +712,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 HASHBYTES
                 (
                     'SHA2_256',
-                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, index_id))
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(8), index_id)
                 )
             ) PERSISTED
     );
@@ -787,9 +787,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 HASHBYTES
                 (
                     'SHA2_256',
-                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, object_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, index_id))
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(8), index_id)
                 )
             ) PERSISTED
         PRIMARY KEY CLUSTERED
@@ -838,8 +838,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 HASHBYTES
                 (
                     'SHA2_256',
-                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, object_id))
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id)
                 )
             ) PERSISTED,
         key_filter_hash AS
@@ -872,8 +872,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 HASHBYTES
                 (
                     'SHA2_256',
-                    CONVERT(varbinary(8), CONVERT(integer, database_id)) +
-                    CONVERT(varbinary(8), CONVERT(integer, object_id))
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id)
                 )
             ) PERSISTED
     );
@@ -1747,15 +1747,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         c.column_id,
         column_name = c.name,
         definition = cc.definition,
+        /*
+        UDF detection: Looks for schema-qualified object references like [schema].[function]
+        Note: This is a heuristic check and may have rare false positives if ].[  appears
+        in string literals or comments within the computed column definition
+        */
         contains_udf =
             CASE
                 WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
+                AND  cc.definition LIKE ''%|].|[%(%'' ESCAPE ''|''
                 THEN 1
                 ELSE 0
             END,
         udf_names =
             CASE
                 WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
+                AND  cc.definition LIKE ''%|].|[%(%'' ESCAPE ''|''
+                AND  CHARINDEX(N''['', cc.definition) > 0
+                AND  CHARINDEX(N''].['', cc.definition) > 0
+                AND  CHARINDEX(N'']'', cc.definition, CHARINDEX(N''].['', cc.definition) + 3) > 0
                 THEN
                     SUBSTRING
                     (
@@ -1834,15 +1844,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         cc.object_id AS constraint_id,
         constraint_name = cc.name,
         definition = cc.definition,
+        /*
+        UDF detection: Looks for schema-qualified object references like [schema].[function]
+        Note: This is a heuristic check and may have rare false positives if ].[  appears
+        in string literals or comments within the computed column definition
+        */
         contains_udf =
             CASE
                 WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
+                AND  cc.definition LIKE ''%|].|[%(%'' ESCAPE ''|''
                 THEN 1
                 ELSE 0
             END,
         udf_names =
             CASE
                 WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
+                AND  cc.definition LIKE ''%|].|[%(%'' ESCAPE ''|''
+                AND  CHARINDEX(N''['', cc.definition) > 0
+                AND  CHARINDEX(N''].['', cc.definition) > 0
+                AND  CHARINDEX(N'']'', cc.definition, CHARINDEX(N''].['', cc.definition) + 3) > 0
                 THEN
                     SUBSTRING
                     (
@@ -2038,7 +2058,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @current_database_id,
         @object_id;
 
-    IF ROWCOUNT_BIG() = 0
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @rc = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -2292,7 +2314,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @object_id,
         @min_rows;
 
-    IF ROWCOUNT_BIG() = 0
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @rc = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -2490,7 +2514,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @current_database_id,
         @object_id;
 
-    IF ROWCOUNT_BIG() = 0
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @rc = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -2725,7 +2751,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id1.is_unique_constraint
     OPTION(RECOMPILE);
 
-    IF ROWCOUNT_BIG() = 0
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @rc = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -3923,6 +3951,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     INSERT INTO
         #index_cleanup_results
+    WITH
+        (TABLOCK)
     (
         result_type,
         sort_order,
@@ -6984,6 +7014,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 END TRY
 BEGIN CATCH
+    IF @@TRANCOUNT > 0
+    BEGIN
+        ROLLBACK;
+    END;
+
     THROW;
 END CATCH;
 END; /*Final End*/
