@@ -1,4 +1,4 @@
--- Compile Date: 12/28/2025 14:31:00 UTC
+-- Compile Date: 12/28/2025 14:49:57 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -17334,172 +17334,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
-
-        /* Special debug for exact duplicates */
-        RAISERROR('Special debug for exact duplicates after rule 2:', 0, 0) WITH NOWAIT;
-        SELECT
-            ia1.index_name AS index1_name,
-            ia1.action AS index1_action,
-            ia1.consolidation_rule AS index1_rule,
-            ia1.index_priority AS index1_priority,
-            ia1.target_index_name AS index1_target,
-            ia1.filter_definition AS index1_filter,
-            ia2.index_name AS index2_name,
-            ia2.action AS index2_action,
-            ia2.consolidation_rule AS index2_rule,
-            ia2.index_priority AS index2_priority,
-            ia2.target_index_name AS index2_target,
-            ia2.filter_definition AS index2_filter
-        FROM #index_analysis AS ia1
-        JOIN #index_analysis AS ia2
-          ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
-          AND ia1.index_name <> ia2.index_name
-          AND ia1.exact_match_hash = ia2.exact_match_hash  /* Exact match: keys + includes + filter */
-        WHERE ia1.consolidation_rule = N'Exact Duplicate'
-           OR ia2.consolidation_rule = N'Exact Duplicate'
-        ORDER BY ia1.index_name
-        OPTION(RECOMPILE);
-    END;
-
-    /* Rule 3: Superset/subset key columns (runs before key duplicates to prioritize subset/superset relationships) */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Rule 3 debug - Testing JOIN conditions for subset/superset:', 0, 0) WITH NOWAIT;
-        SELECT
-            subset_index = ia1.index_name,
-            subset_keys = ia1.key_columns,
-            superset_index = ia2.index_name,
-            superset_keys = ia2.key_columns,
-            pattern_test = REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %',
-            like_match =
-                CASE
-                    WHEN ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'
-                    THEN 'YES'
-                    ELSE 'NO'
-                END,
-            filter_match =
-                CASE
-                    WHEN ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')
-                    THEN 'YES'
-                    ELSE 'NO'
-                END,
-            ia1_eligible =
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT 1/0
-                        FROM #index_details AS id1
-                        WHERE id1.index_hash = ia1.index_hash
-                        AND   id1.is_eligible_for_dedupe = 1
-                    )
-                    THEN 'YES'
-                    ELSE 'NO'
-                END,
-            ia2_eligible =
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT 1/0
-                        FROM #index_details AS id2
-                        WHERE id2.index_hash = ia2.index_hash
-                        AND   id2.is_eligible_for_dedupe = 1
-                    )
-                    THEN 'YES'
-                    ELSE 'NO'
-                END,
-            sort_mismatch =
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT 1/0
-                        FROM #index_details AS id1
-                        JOIN #index_details AS id2
-                          ON id2.column_position_hash = id1.column_position_hash
-                        WHERE id1.index_hash = ia1.index_hash
-                        AND   id2.index_hash = ia2.index_hash
-                        AND   id1.is_descending_key <> id2.is_descending_key
-                    )
-                    THEN 'YES'
-                    ELSE 'NO'
-                END,
-            ia1_consolidation_rule = ISNULL(ia1.consolidation_rule, 'NULL'),
-            ia2_consolidation_rule = ISNULL(ia2.consolidation_rule, 'NULL'),
-            ia1_is_unique_constraint =
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT 1/0
-                        FROM #index_details AS id1_uc
-                        WHERE id1_uc.index_hash = ia1.index_hash
-                        AND   id1_uc.is_unique_constraint = 1
-                    )
-                    THEN 'YES'
-                    ELSE 'NO'
-                END,
-            ia2_is_unique_constraint =
-                CASE
-                    WHEN EXISTS
-                    (
-                        SELECT 1/0
-                        FROM #index_details AS id2_uc
-                        WHERE id2_uc.index_hash = ia2.index_hash
-                        AND   id2_uc.is_unique_constraint = 1
-                    )
-                    THEN 'YES'
-                    ELSE 'NO'
-                END
-        FROM #index_analysis AS ia1
-        JOIN #index_analysis AS ia2
-          ON  ia1.scope_hash = ia2.scope_hash
-          AND ia1.index_name <> ia2.index_name
-          AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'
-          AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')
-          AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
-        WHERE ia1.consolidation_rule IS NULL
-        AND   ia2.consolidation_rule IS NULL
-        AND NOT EXISTS
-        (
-            SELECT 1/0
-            FROM #index_details AS id1_uc
-            WHERE id1_uc.index_hash = ia1.index_hash
-            AND   id1_uc.is_unique_constraint = 1
-        )
-        AND NOT EXISTS
-        (
-            SELECT 1/0
-            FROM #index_details AS id2_uc
-            WHERE id2_uc.index_hash = ia2.index_hash
-            AND   id2_uc.is_unique_constraint = 1
-        )
-        AND EXISTS
-        (
-            SELECT 1/0
-            FROM #index_details AS id1
-            WHERE id1.index_hash = ia1.index_hash
-            AND   id1.is_eligible_for_dedupe = 1
-        )
-        AND EXISTS
-        (
-            SELECT 1/0
-            FROM #index_details AS id2
-            WHERE id2.index_hash = ia2.index_hash
-            AND   id2.is_eligible_for_dedupe = 1
-        )
-        AND NOT EXISTS
-        (
-            SELECT 1/0
-            FROM #index_details AS id1
-            JOIN #index_details AS id2
-              ON id2.column_position_hash = id1.column_position_hash
-            WHERE id1.index_hash = ia1.index_hash
-            AND   id2.index_hash = ia2.index_hash
-            AND   id1.is_descending_key <> id2.is_descending_key
-        )
-        AND   (ia1.index_name LIKE N'IX_Users_%Subset%' AND ia2.index_name LIKE N'IX_Users_%Superset%')
-        ORDER BY
-            ia1.index_name,
-            ia2.index_name
-        OPTION(RECOMPILE);
     END;
 
     UPDATE
@@ -17609,27 +17443,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
-
-        /* Special debug for subset/superset test indexes */
-        RAISERROR('Special debug for #index_details subset/superset eligibility:', 0, 0) WITH NOWAIT;
-        SELECT
-            index_id = id.index_id,
-            index_name = id.index_name,
-            column_name = id.column_name,
-            key_ordinal = id.key_ordinal,
-            is_descending_key = id.is_descending_key,
-            is_included_column = id.is_included_column,
-            is_eligible_for_dedupe = id.is_eligible_for_dedupe,
-            is_unique_constraint = id.is_unique_constraint,
-            is_primary_key = id.is_primary_key
-        FROM #index_details AS id
-        WHERE id.index_name LIKE N'IX_Users_%Subset%'
-        OR    id.index_name LIKE N'IX_Users_%Superset%'
-        ORDER BY
-            id.index_id,
-            id.key_ordinal,
-            id.column_name
-        OPTION(RECOMPILE);
     END;
 
     /* Rule 4: Mark superset indexes for merging with includes from subset */
@@ -17666,73 +17479,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Rule 5: Key duplicates - matching key columns, different includes */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Rule 5 debug - Testing key duplicates with different includes:', 0, 0) WITH NOWAIT;
-        SELECT
-            index1 = ia1.index_name,
-            index1_keys = ia1.key_columns,
-            index1_includes = ia1.included_columns,
-            index2 = ia2.index_name,
-            index2_keys = ia2.key_columns,
-            index2_includes = ia2.included_columns,
-            key_filter_match =
-                CASE
-                    WHEN ia1.key_filter_hash = ia2.key_filter_hash
-                    THEN 'YES'
-                    ELSE 'NO'
-                END,
-            includes_different =
-                CASE
-                    WHEN ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')
-                    THEN 'YES'
-                    ELSE 'NO'
-                END,
-            ia1_consolidation_rule = ISNULL(ia1.consolidation_rule, 'NULL'),
-            ia2_consolidation_rule = ISNULL(ia2.consolidation_rule, 'NULL')
-        FROM #index_analysis AS ia1
-        JOIN #index_analysis AS ia2
-          ON  ia1.scope_hash = ia2.scope_hash
-          AND ia1.index_name <> ia2.index_name
-          AND ia1.key_filter_hash = ia2.key_filter_hash
-          AND ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')
-        WHERE ia1.consolidation_rule IS NULL
-        AND   ia2.consolidation_rule IS NULL
-        AND NOT EXISTS
-        (
-            SELECT 1/0
-            FROM #index_details AS id1_uc
-            WHERE id1_uc.index_hash = ia1.index_hash
-            AND   id1_uc.is_unique_constraint = 1
-        )
-        AND NOT EXISTS
-        (
-            SELECT 1/0
-            FROM #index_details AS id2_uc
-            WHERE id2_uc.index_hash = ia2.index_hash
-            AND   id2_uc.is_unique_constraint = 1
-        )
-        AND EXISTS
-        (
-            SELECT 1/0
-            FROM #index_details AS id1
-            WHERE id1.index_hash = ia1.index_hash
-            AND   id1.is_eligible_for_dedupe = 1
-        )
-        AND EXISTS
-        (
-            SELECT 1/0
-            FROM #index_details AS id2
-            WHERE id2.index_hash = ia2.index_hash
-            AND   id2.is_eligible_for_dedupe = 1
-        )
-        AND (ia1.index_name LIKE N'%DownVotes%' OR ia1.index_name LIKE N'%LastAccess%')
-        ORDER BY
-            ia1.index_name,
-            ia2.index_name
-        OPTION(RECOMPILE);
-    END;
-
     UPDATE
         ia1
     SET
@@ -18080,7 +17826,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND NOT EXISTS
     (
         /* Check if there's a unique constraint with matching keys that points to this index */
-        SELECT 1
+        SELECT
+            1/0
         FROM #index_analysis AS ia_uc
         WHERE ia_uc.scope_hash = ia.scope_hash
         AND   ia_uc.key_columns = ia.key_columns

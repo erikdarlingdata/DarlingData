@@ -3576,7 +3576,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND NOT EXISTS
     (
         /* Check if there's a unique constraint with matching keys that points to this index */
-        SELECT 
+        SELECT
             1/0
         FROM #index_analysis AS ia_uc
         WHERE ia_uc.scope_hash = ia.scope_hash
