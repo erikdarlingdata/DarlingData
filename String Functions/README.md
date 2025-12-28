@@ -96,5 +96,5 @@ FROM dbo.strip_characters_cte(N'abc123!@#', N'^a-z') AS sc;
 - String concatenation is implemented using XML PATH, making the functions independent of SQL Server version
 - The _cte variants don't require an external Numbers table, but may be less efficient for very large strings
 
-Copyright 2025 Darling Data, LLC  
+Copyright 2026 Darling Data, LLC  
 Released under MIT license

@@ -25,7 +25,7 @@ GO
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
 
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -70,8 +70,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '2.11',
-        @version_date = '20251114';
+        @version = '3.0',
+        @version_date = '20260115';
 
     IF @help = 1
     BEGIN
@@ -176,7 +176,7 @@ BEGIN
         RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -929,7 +929,7 @@ AND   ca.utc_timestamp < @end_date';
                     target_kb bigint NULL,
                     reserved_kb bigint NULL,
                     committed_kb bigint NULL,
-                    shared_committed_kb bigint NULL,
+                    shared_committed_kb numeric(38,0) NULL,
                     awe_kb bigint NULL,
                     pages_kb bigint NULL,
                     failure_type nvarchar(256) NULL,
@@ -1023,8 +1023,8 @@ AND   ca.utc_timestamp < @end_date';
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
                     event_time datetime2(7) NULL,
-                    scheduler_id int NULL,
-                    cpu_id int NULL,
+                    scheduler_id integer NULL,
+                    cpu_id integer NULL,
                     status nvarchar(256) NULL,
                     is_online bit NULL,
                     is_runnable bit NULL,
@@ -3479,7 +3479,7 @@ AND   ca.utc_timestamp < @end_date';
             target_kb = w.x.value('(data[@name="target_kb"]/value)[1]', 'bigint'),
             reserved_kb = w.x.value('(data[@name="reserved_kb"]/value)[1]', 'bigint'),
             committed_kb = w.x.value('(data[@name="committed_kb"]/value)[1]', 'bigint'),
-            shared_committed_kb = w.x.value('(data[@name="shared_committed_kb"]/value)[1]', 'bigint'),
+            shared_committed_kb = w.x.value('(data[@name="shared_committed_kb"]/value)[1]', 'numeric(38,0)'),
             awe_kb = w.x.value('(data[@name="awe_kb"]/value)[1]', 'bigint'),
             pages_kb = w.x.value('(data[@name="pages_kb"]/value)[1]', 'bigint'),
             failure_type = w.x.value('(data[@name="failure"]/text)[1]', 'nvarchar(256)'),

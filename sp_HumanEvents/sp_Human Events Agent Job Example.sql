@@ -7,7 +7,7 @@ Remember to scroll down and replace the database and schema names you want to us
 */
 
 /*
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:

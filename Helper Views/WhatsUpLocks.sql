@@ -47,114 +47,135 @@ GO
 ALTER FUNCTION
     dbo.WhatsUpLocks
 (
-    @spid integer
+    @spid integer,
+    @outsider bit = 'false'
 )
-RETURNS table
+RETURNS 
+    table
 AS
 RETURN
 SELECT TOP (9223372036854775807)
-    dtl.request_session_id,
-    blocked_by =
-        ISNULL
-        (
-            (
-                SELECT
-                    der.blocking_session_id
-                FROM sys.dm_exec_requests AS der
-                WHERE dtl.request_session_id = der.session_id
-            ),
-            0
-        ),
-    dtl.request_mode,
-    l.locked_object,
-    index_name = ISNULL(i.name, N'OBJECT'),
-    dtl.resource_type,
-    dtl.request_status,
-    dtl.request_owner_type,
-    hobt_lock_count =
-        SUM
-        (
-            IIF
-            (
-                dtl.resource_associated_entity_id = p.hobt_id,
-                1,
-                0
-            )
-        ),
-    object_locks =
-        SUM
-        (
-            IIF
-            (
-                dtl.resource_type = N'OBJECT',
-                1,
-                0
-            )
-        ),
-    page_locks =
-        SUM
-        (
-            IIF
-            (
-                dtl.resource_type = N'PAGE',
-                1,
-                0
-            )
-        ),
-    row_locks =
-        SUM
-        (
-            IIF
-            (
-                dtl.resource_type IN (N'RID', N'KEY'),
-                1,
-                0
-            )
-        ),
-    total_locks = COUNT_BIG(*)
-FROM sys.dm_tran_locks AS dtl WITH(NOLOCK)
-LEFT JOIN sys.partitions AS p WITH(NOLOCK)
-  ON dtl.resource_associated_entity_id = p.hobt_id
-OUTER APPLY
-(
-    SELECT
-        locked_object = ao.name
-    FROM sys.all_objects AS ao WITH(NOLOCK)
-    WHERE dtl.resource_type = N'OBJECT'
-    AND   dtl.resource_associated_entity_id = ao.object_id
+      dtl.request_session_id,
+      blocked_by =
+          ISNULL
+          (
+              (
+                  SELECT
+                      der.blocking_session_id
+                  FROM sys.dm_exec_requests AS der
+                      WITH(NOLOCK)
+                  WHERE dtl.request_session_id = der.session_id
+              ),
+              0
+          ),
+      dtl.request_mode,
+      l.locked_object,
+      index_name = ISNULL(i.name, N'OBJECT'),
+      dtl.resource_type,
+      dtl.request_status,
+      dtl.request_owner_type,
+      hobt_lock_count =
+          SUM
+          (
+              CASE
+                  WHEN p.hobt_id IS NOT NULL
+                  THEN dtl.lock_count
+                  ELSE 0
+              END
+          ),
+      object_locks =
+          SUM
+          (
+              CASE
+                  WHEN dtl.resource_type = N'OBJECT'
+                  THEN dtl.lock_count
+                  ELSE 0
+              END
+          ),
+      page_locks =
+          SUM
+          (
+              CASE
+                  WHEN dtl.resource_type = N'PAGE'
+                  THEN dtl.lock_count
+                  ELSE 0
+              END
+          ),
+      row_locks =
+          SUM
+          (
+              CASE
+                  WHEN dtl.resource_type IN (N'RID', N'KEY')
+                  THEN dtl.lock_count
+                  ELSE 0
+              END
+          ),
+      total_locks = SUM(dtl.lock_count)
+  FROM
+  (
+      SELECT
+          dtl.request_session_id,
+          dtl.request_mode,
+          dtl.resource_type,
+          dtl.request_status,
+          dtl.request_owner_type,
+          dtl.resource_associated_entity_id,
+          lock_count = COUNT_BIG(*)
+      FROM sys.dm_tran_locks AS dtl
+          WITH(NOLOCK)
+      WHERE (dtl.request_session_id = @spid OR @spid IS NULL)
+      AND   (dtl.request_request_id = CURRENT_REQUEST_ID() OR @spid IS NULL OR @outsider = 'true')
+      AND   (dtl.request_owner_id = CURRENT_TRANSACTION_ID() OR @spid IS NULL OR @outsider = 'true')
+      AND    dtl.resource_type <> N'DATABASE'
+      GROUP BY
+          dtl.request_session_id,
+          dtl.request_mode,
+          dtl.resource_type,
+          dtl.request_status,
+          dtl.request_owner_type,
+          dtl.resource_associated_entity_id
+  ) AS dtl
+  LEFT JOIN sys.partitions AS p
+      WITH(NOLOCK)
+    ON dtl.resource_associated_entity_id = p.hobt_id
+  OUTER APPLY
+  (
+      SELECT TOP (1)
+          locked_object = ao.name
+      FROM sys.all_objects AS ao
+          WITH(NOLOCK)
+      WHERE dtl.resource_type = N'OBJECT'
+      AND   dtl.resource_associated_entity_id = ao.object_id
 
-    UNION ALL
+      UNION ALL
 
-    SELECT
-        locked_object = ao.name
-    FROM sys.all_objects AS ao WITH(NOLOCK)
-    WHERE dtl.resource_type <> N'OBJECT'
-    AND   p.object_id = ao.object_id
-) AS l
-OUTER APPLY
-(
-    SELECT TOP (1)
-        i.name
-    FROM sys.indexes AS i WITH(NOLOCK)
-    WHERE i.object_id = p.object_id
-    AND   i.index_id = p.index_id
-) AS i
-WHERE (dtl.request_session_id = @spid OR @spid IS NULL)
-AND   (dtl.request_request_id = CURRENT_REQUEST_ID() OR @spid IS NULL)
-AND   (dtl.request_owner_id = CURRENT_TRANSACTION_ID() OR @spid IS NULL)
-AND    dtl.resource_type <> N'DATABASE'
-AND    l.locked_object   <> N'WhatsUpLocks'
-GROUP BY
-    dtl.request_session_id,
-    dtl.resource_type,
-    dtl.request_mode,
-    dtl.request_status,
-    dtl.request_owner_type,
-    l.locked_object,
-    i.name
-ORDER BY
-    dtl.request_session_id,
-    l.locked_object,
-    index_name,
-    total_locks DESC;
-GO
+      SELECT TOP (1)
+          locked_object = ao.name
+      FROM sys.all_objects AS ao
+          WITH(NOLOCK)
+      WHERE dtl.resource_type <> N'OBJECT'
+      AND   p.object_id = ao.object_id
+  ) AS l
+  OUTER APPLY
+  (
+      SELECT TOP (1)
+          i.name
+      FROM sys.indexes AS i
+          WITH(NOLOCK)
+      WHERE i.object_id = p.object_id
+      AND   i.index_id = p.index_id
+  ) AS i
+  WHERE l.locked_object <> N'WhatsUpLocks'
+  GROUP BY
+      dtl.request_session_id,
+      dtl.resource_type,
+      dtl.request_mode,
+      dtl.request_status,
+      dtl.request_owner_type,
+      l.locked_object,
+      i.name
+  ORDER BY
+      dtl.request_session_id,
+      l.locked_object,
+      index_name,
+      total_locks DESC;

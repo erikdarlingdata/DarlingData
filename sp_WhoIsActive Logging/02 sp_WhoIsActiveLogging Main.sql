@@ -11,7 +11,7 @@ GO
 
 /*
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 This will log sp_WhoIsActive to a table.

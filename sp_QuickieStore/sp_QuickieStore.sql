@@ -25,7 +25,7 @@ GO
 ███████║   ██║   ╚██████╔╝██║  ██║███████╗██╗
 ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -117,31 +117,11 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN TRY
 /*
-If this column doesn't exist, you're not on a good version of SQL Server
-*/
-IF NOT EXISTS
-   (
-       SELECT
-           1/0
-       FROM sys.all_columns AS ac
-       WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_stats', N'V')
-       AND   ac.name = N'total_spills'
-   )
-BEGIN
-    RAISERROR('This procedure only runs on supported versions of SQL Server:
-* 2016 SP2+
-* 2017 CU3+
-* 2019+
-* Probably Azure?', 11, 1) WITH NOWAIT;
-    RETURN;
-END;
-
-/*
 These are for your outputs.
 */
 SELECT
-    @version = '5.11',
-    @version_date = '20251114';
+    @version = '6.0',
+    @version_date = '20260115';
 
 /*
 Helpful section! For help.
@@ -423,7 +403,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -2961,33 +2941,6 @@ AND @engine NOT IN (5, 8)
 )
 BEGIN
     RAISERROR('Not all Azure offerings are supported, please try avoiding memes', 11, 1) WITH NOWAIT;
-    IF @debug = 1
-    BEGIN
-        GOTO DEBUG;
-    END;
-    ELSE
-    BEGIN
-        RETURN;
-    END;
-END;
-
-/*
-Database are you compatible?
-*/
-IF
-(
-    @azure = 1
-    AND EXISTS
-        (
-            SELECT
-                1/0
-             FROM sys.databases AS d
-             WHERE d.database_id = @database_id
-             AND   d.compatibility_level < 130
-        )
-)
-BEGIN
-    RAISERROR('Azure databases in compatibility levels under 130 are not supported', 11, 1) WITH NOWAIT;
     IF @debug = 1
     BEGIN
         GOTO DEBUG;
@@ -8684,49 +8637,7 @@ FROM
     CONVERT
     (
         nvarchar(max),
-        N',
-            g = geometry::STGeomFromText
-                (
-                    N''POLYGON(('' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms) +
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms + (count_executions * 90000)) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms) +
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms + (count_executions * 90000)) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms + (count_executions * 90000)) +
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms + (count_executions * 90000)) +
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms) +
-                    ''))'',
-                    0
-                ),
-            p = geometry::STGeomFromText
-                (
-                    ''POLYGON
-                      (('' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms) +
-                    ''))'',
-                    0
-                )
+        N'
     FROM #query_store_runtime_stats AS qsrs'
     );
 

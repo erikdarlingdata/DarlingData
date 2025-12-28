@@ -11,7 +11,7 @@ GO
 
 This script will set up alerts for high severity and corruption errors in SQL Server.
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:

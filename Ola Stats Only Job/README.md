@@ -40,5 +40,5 @@ Simply run the script in SQL Server Management Studio after ensuring you have th
 
 This script focuses exclusively on statistics updates. If you also need index reorganization or rebuilds, you should consider using Ola's full maintenance solution.
 
-Copyright 2025 Darling Data, LLC  
+Copyright 2026 Darling Data, LLC  
 Released under MIT license

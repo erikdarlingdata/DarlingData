@@ -13,7 +13,7 @@ GO
 
 This generates some semi-random tempdb activity
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
