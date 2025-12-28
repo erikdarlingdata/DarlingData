@@ -1,4 +1,4 @@
--- Compile Date: 11/22/2025 16:25:37 UTC
+-- Compile Date: 12/28/2025 13:51:30 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -26,7 +26,7 @@ GO
 ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
 
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For support, head over to GitHub:
@@ -71,8 +71,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '2.11',
-        @version_date = '20251114';
+        @version = '3.0',
+        @version_date = '20260115';
 
     IF @help = 1
     BEGIN
@@ -177,7 +177,7 @@ BEGIN
         RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -930,7 +930,7 @@ AND   ca.utc_timestamp < @end_date';
                     target_kb bigint NULL,
                     reserved_kb bigint NULL,
                     committed_kb bigint NULL,
-                    shared_committed_kb bigint NULL,
+                    shared_committed_kb numeric(38,0) NULL,
                     awe_kb bigint NULL,
                     pages_kb bigint NULL,
                     failure_type nvarchar(256) NULL,
@@ -1024,8 +1024,8 @@ AND   ca.utc_timestamp < @end_date';
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
                     event_time datetime2(7) NULL,
-                    scheduler_id int NULL,
-                    cpu_id int NULL,
+                    scheduler_id integer NULL,
+                    cpu_id integer NULL,
                     status nvarchar(256) NULL,
                     is_online bit NULL,
                     is_runnable bit NULL,
@@ -3480,7 +3480,7 @@ AND   ca.utc_timestamp < @end_date';
             target_kb = w.x.value('(data[@name="target_kb"]/value)[1]', 'bigint'),
             reserved_kb = w.x.value('(data[@name="reserved_kb"]/value)[1]', 'bigint'),
             committed_kb = w.x.value('(data[@name="committed_kb"]/value)[1]', 'bigint'),
-            shared_committed_kb = w.x.value('(data[@name="shared_committed_kb"]/value)[1]', 'bigint'),
+            shared_committed_kb = w.x.value('(data[@name="shared_committed_kb"]/value)[1]', 'numeric(38,0)'),
             awe_kb = w.x.value('(data[@name="awe_kb"]/value)[1]', 'bigint'),
             pages_kb = w.x.value('(data[@name="pages_kb"]/value)[1]', 'bigint'),
             failure_type = w.x.value('(data[@name="failure"]/text)[1]', 'nvarchar(256)'),
@@ -5568,7 +5568,7 @@ GO
 ███████╗ ╚████╔╝ ███████╗██║ ╚████║   ██║   ███████║
 ╚══════╝  ╚═══╝  ╚══════╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -5618,6 +5618,7 @@ ALTER PROCEDURE
     @delete_retention_days integer = 3,
     @cleanup bit = 0,
     @max_memory_kb bigint = 102400,
+    @target_output sysname = N'ring_buffer', /*output target for extended events: ring_buffer or event_file*/
     @version varchar(30) = NULL OUTPUT,
     @version_date datetime = NULL OUTPUT,
     @debug bit = 0,
@@ -5631,8 +5632,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '6.11',
-    @version_date = '20251114';
+    @version = '7.0',
+    @version_date = '20260115';
 
 IF @help = 1
 BEGIN
@@ -5706,6 +5707,7 @@ BEGIN
                 WHEN N'@delete_retention_days' THEN N'how many days of logged data you want to keep'
                 WHEN N'@cleanup' THEN N'deletes all sessions, tables, and views. requires output database and schema.'
                 WHEN N'@max_memory_kb' THEN N'set a max ring buffer size to log data to'
+                WHEN N'@target_output' THEN N'choose between ring_buffer or event_file (not available for Azure SQL DB or Managed Instance)'
                 WHEN N'@help' THEN N'well you''re here so you figured this one out'
                 WHEN N'@version' THEN N'to make sure you have the most recent bits'
                 WHEN N'@version_date' THEN N'to make sure you have the most recent bits'
@@ -5739,6 +5741,7 @@ BEGIN
                WHEN N'@delete_retention_days' THEN N'a POSITIVE integer'
                WHEN N'@cleanup' THEN N'1 or 0'
                WHEN N'@max_memory_kb' THEN N'an integer'
+               WHEN N'@target_output' THEN N'ring_buffer, event_file'
                WHEN N'@help' THEN N'1 or 0'
                WHEN N'@version' THEN N'none, output'
                WHEN N'@version_date' THEN N'none, output'
@@ -5772,6 +5775,7 @@ BEGIN
                WHEN N'@debug' THEN N'0'
                WHEN N'@cleanup' THEN N'0'
                WHEN N'@max_memory_kb' THEN N'102400'
+               WHEN N'@target_output' THEN N'ring_buffer'
                WHEN N'@help' THEN N'0'
                WHEN N'@version' THEN N'none, output'
                WHEN N'@version_date' THEN N'none, output'
@@ -5864,7 +5868,7 @@ BEGIN
     RAISERROR(N'
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -6231,8 +6235,15 @@ END;
 
 /* session create options */
 SET @session_with = N'
-ADD TARGET package0.ring_buffer
-        ( SET max_memory = ' + RTRIM(@max_memory_kb) + N' )
+ADD TARGET ' +
+    CASE
+        WHEN LOWER(@target_output) = N'ring_buffer'
+        THEN N'package0.ring_buffer
+        ( SET max_memory = ' + RTRIM(@max_memory_kb) + N' )'
+        WHEN LOWER(@target_output) = N'event_file'
+        THEN N'package0.event_file
+        ( SET filename = N''' + @session_name + N'.xel'', max_file_size = 1024, max_rollover_files = 5 )'
+    END + N'
 WITH
         (
             MAX_MEMORY = ' + RTRIM(@max_memory_kb) + N'KB,
@@ -6393,6 +6404,25 @@ BEGIN
     RAISERROR(N'
 You have chosen a value for @event_type... poorly. use @help = 1 to see valid arguments.
 What on earth is %s?', 11, 1, @event_type) WITH NOWAIT;
+    RETURN;
+END;
+
+
+IF @debug = 1 BEGIN RAISERROR(N'Checking target_output parameter', 0, 1) WITH NOWAIT; END;
+IF LOWER(@target_output) NOT IN
+(
+    N'ring_buffer',
+    N'event_file'
+)
+BEGIN
+    RAISERROR(N'You have chosen an invalid value for @target_output: %s. Valid options are ring_buffer or event_file.', 11, 1, @target_output) WITH NOWAIT;
+    RETURN;
+END;
+
+IF LOWER(@target_output) = N'event_file'
+AND @azure = 1
+BEGIN
+    RAISERROR(N'The event_file target is not supported for Azure SQL Database or Azure SQL Managed Instance because additional setup is required that this procedure cannot complete. Please use ring_buffer instead.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -10373,7 +10403,7 @@ GO
  ╚████╔╝ ██║███████╗╚███╔███╔╝███████╗██║  ██║
   ╚═══╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚═╝  ╚═╝
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -10428,8 +10458,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '4.11',
-    @version_date = '20251114';
+    @version = '5.0',
+    @version_date = '20260115';
 
 IF @help = 1
 BEGIN
@@ -10584,7 +10614,7 @@ ON SERVER
     RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -14136,7 +14166,7 @@ GO
  ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝
 
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -14171,8 +14201,8 @@ ALTER PROCEDURE
     @min_rows bigint = 0, /*only look at indexes with a minimum number of rows*/
     @dedupe_only bit = 'false', /*only perform deduplication, don't mark unused indexes for removal*/
     @get_all_databases bit = 'false', /*looks for all accessible user databases and returns combined results*/
-    @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
-    @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
+    @include_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
+    @exclude_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
     @help bit = 'false', /*learn about the procedure and parameters*/
     @debug bit = 'false', /*print dynamic sql, show temp table contents*/
     @version varchar(20) = NULL OUTPUT, /*script version number*/
@@ -14184,8 +14214,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '1.11',
-        @version_date = '20251114';
+        @version = '2.0',
+        @version_date = '20260115';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -14326,7 +14356,7 @@ BEGIN TRY
         RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -14353,7 +14383,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     DECLARE
         /*general script variables*/
-        @sql nvarchar(max) = N'',
+        @sql nvarchar(MAX) = N'',
         @object_id integer = NULL,
         @full_object_name nvarchar(768) = NULL,
         @uptime_warning bit = 0, /* Will set after @uptime_days is calculated */
@@ -14428,6 +14458,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        /* Temporal tables support (SQL 2016+, Azure SQL DB, and Managed Instance) */
+        @supports_temporal_tables bit =
+            CASE
+                /* Azure SQL DB or Managed Instance */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
+                THEN 1
+                /* SQL Server 2016+ */
+                WHEN CONVERT
+                     (
+                         integer,
+                         SUBSTRING
+                         (
+                             CONVERT
+                             (
+                                 varchar(20),
+                                 SERVERPROPERTY('ProductVersion')
+                             ),
+                             1,
+                             2
+                         )
+                     ) >= 13
+                THEN 1
+                ELSE 0
+            END,
         @uptime_days nvarchar(10) =
         (
             SELECT
@@ -14443,7 +14497,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @current_database_name sysname,
         @current_database_id integer,
         @error_msg nvarchar(2048),
-        @conflict_list nvarchar(max) = N'',
+        @conflict_list nvarchar(MAX) = N'',
         @rc bigint;
 
     /* Set uptime warning flag after @uptime_days is calculated */
@@ -14598,6 +14652,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         page_io_latch_wait_in_ms bigint NULL,
         page_compression_attempt_count bigint NULL,
         page_compression_success_count bigint NULL,
+        /* Hash column for optimized matching */
+        index_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(8), index_id)
+                )
+            ) PERSISTED
         PRIMARY KEY CLUSTERED
             (database_id, schema_id, object_id, index_id)
     );
@@ -14622,7 +14689,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         data_compression_desc nvarchar(60) NULL,
         built_on sysname NULL,
         partition_function_name sysname NULL,
-        partition_columns nvarchar(max)
+        partition_columns nvarchar(max),
+        /* Hash column for optimized matching */
+        index_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(8), index_id)
+                )
+            ) PERSISTED
         PRIMARY KEY CLUSTERED
             (database_id, schema_id, object_id, index_id, partition_id)
     );
@@ -14639,7 +14719,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NULL,
         column_name sysname NOT NULL,
-        column_id int NOT NULL,
+        column_id integer NOT NULL,
         is_primary_key bit NULL,
         is_unique bit NULL,
         is_unique_constraint bit NULL,
@@ -14661,7 +14741,40 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         last_user_scan datetime NULL,
         last_user_lookup datetime NULL,
         last_user_update datetime NULL,
-        is_eligible_for_dedupe bit NOT NULL
+        is_eligible_for_dedupe bit NOT NULL,
+        /* Hash columns for optimized matching */
+        index_hash AS
+            HASHBYTES
+            (
+                'SHA2_256',
+                CONVERT(varbinary(8), CONVERT(integer, database_id)) +
+                CONVERT(varbinary(8), CONVERT(integer, object_id)) +
+                CONVERT(varbinary(8), CONVERT(integer, index_id))
+            ) PERSISTED,
+        column_position_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(max), column_name) +
+                    CONVERT(varbinary(8), key_ordinal)
+                )
+            ) PERSISTED,
+        scope_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id)
+                )
+            ) PERSISTED
         PRIMARY KEY CLUSTERED
             (database_id, schema_id, object_id, index_id, column_id)
     );
@@ -14698,13 +14811,102 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* When this is a target, the index which points to it as a supersedes in consolidation */
         superseded_by nvarchar(4000) NULL,
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
-        index_priority decimal(10,6) NULL
+        index_priority decimal(10,6) NULL,
+        /* Hash columns for optimized matching */
+        scope_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id)
+                )
+            ) PERSISTED,
+        exact_match_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    ISNULL(key_columns, N'') + N'|' +
+                    ISNULL(included_columns, N'') + N'|' +
+                    ISNULL(filter_definition, N'')
+                )
+            ) PERSISTED,
+        key_filter_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    ISNULL(key_columns, N'') + N'|' +
+                    ISNULL(filter_definition, N'')
+                )
+            ) PERSISTED,
+        index_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(8), index_id)
+                )
+            ) PERSISTED
     );
 
     CREATE CLUSTERED INDEX
         index_analysis
     ON #index_analysis
         (database_id, schema_id, object_id, index_id);
+
+    /*
+    Nonclustered indexes on hash columns for optimized matching.
+    These support faster joins in consolidation rules by reducing
+    multi-column comparisons to single hash comparisons.
+    */
+    CREATE INDEX
+        scope_hash
+    ON #index_analysis
+        (scope_hash)
+    INCLUDE
+        (index_name);
+
+    CREATE INDEX
+        exact_match_hash
+    ON #index_analysis
+        (exact_match_hash);
+
+    CREATE INDEX
+        key_filter_hash
+    ON #index_analysis
+        (key_filter_hash);
+
+    /*
+    Nonclustered indexes on #index_details hash columns.
+    These support faster correlation in EXISTS clauses by reducing
+    multi-column comparisons to single hash comparisons.
+    */
+    CREATE INDEX
+        index_hash
+    ON #index_details
+        (index_hash);
+
+    CREATE INDEX
+        column_position_hash
+    ON #index_details
+        (column_position_hash);
+
+    CREATE INDEX
+        scope_hash
+    ON #index_details
+        (scope_hash);
 
     CREATE TABLE
         #compression_eligibility
@@ -14719,6 +14921,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_name sysname NOT NULL,
         can_compress bit NOT NULL,
         reason nvarchar(200) NULL,
+        /* Hash column for optimized matching */
+        index_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id) +
+                    CONVERT(varbinary(8), index_id)
+                )
+            ) PERSISTED
         PRIMARY KEY CLUSTERED
             (database_id, schema_id, object_id, index_id, can_compress)
     );
@@ -14756,7 +14971,30 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         base_key_columns nvarchar(max) NULL,
         filter_definition nvarchar(max) NULL,
         winning_index_name sysname NULL,
-        index_list nvarchar(max) NULL
+        index_list nvarchar(max) NULL,
+        /* Hash columns for optimized matching */
+        scope_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id)
+                )
+            ) PERSISTED,
+        key_filter_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    ISNULL(base_key_columns, N'') + N'|' +
+                    ISNULL(filter_definition, N'')
+                )
+            ) PERSISTED
     );
 
     CREATE TABLE
@@ -14767,7 +15005,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         subset_index_name sysname NULL,
         superset_index_name sysname NULL,
         subset_included_columns nvarchar(max) NULL,
-        superset_included_columns nvarchar(max) NULL
+        superset_included_columns nvarchar(max) NULL,
+        /* Hash column for optimized matching */
+        scope_hash AS
+            CONVERT
+            (
+                varbinary(32),
+                HASHBYTES
+                (
+                    'SHA2_256',
+                    CONVERT(varbinary(8), database_id) +
+                    CONVERT(varbinary(8), object_id)
+                )
+            ) PERSISTED
     );
 
     /* Create a new temp table for detailed reporting statistics */
@@ -14789,6 +15039,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         unused_size_gb decimal(38, 4) NULL,
         indexes_to_disable integer NULL,
         indexes_to_merge integer NULL,
+        compressable_indexes integer NULL,
         avg_indexes_per_table decimal(10, 2) NULL,
         space_saved_gb decimal(10, 4) NULL,
         compression_min_savings_gb decimal(10, 4) NULL,
@@ -14841,7 +15092,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         #databases
     (
         database_name sysname NOT NULL PRIMARY KEY CLUSTERED,
-        database_id int NOT NULL
+        database_id integer NOT NULL
     );
 
     CREATE TABLE
@@ -15182,17 +15433,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
-    /*
-    Set up database cursor processing
-    */
+    /*Set up database cursor processing*/
 
     /* Create a cursor to process each database */
     SET @database_cursor =
-            CURSOR
-            LOCAL
-            SCROLL
-            DYNAMIC
-            READ_ONLY
+        CURSOR
+        LOCAL
+        SCROLL
+        DYNAMIC
+        READ_ONLY
     FOR
     SELECT
         d.database_name,
@@ -15292,10 +15541,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         SELECT
             @sql = N'
-        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-        SELECT
-            @sql = N'
         SELECT DISTINCT
             @database_id,
             database_name = DB_NAME(@database_id),
@@ -15327,31 +15574,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND us.database_id = @database_id
         WHERE (t.object_id IS NULL OR t.is_ms_shipped = 0)
         AND   (t.object_id IS NULL OR t.type <> N''TF'')
-        AND i.is_disabled = 0
-        AND i.is_hypothetical = 0';
+        AND    i.is_disabled = 0
+        AND    i.is_hypothetical = 0';
 
-    IF /* Check for temporal tables support */
-    (
-        CONVERT
-        (
-            integer,
-            SERVERPROPERTY('EngineEdition')
-        ) IN (5, 8) /* Azure SQL DB or Managed Instance */
-    OR  CONVERT
-        (
-            integer,
-            SUBSTRING
-            (
-                CONVERT
-                (
-                    varchar(20),
-                    SERVERPROPERTY('ProductVersion')
-                ),
-                1,
-                2
-            )
-        ) >= 13
-    ) /* SQL 2016+ */
+    IF @supports_temporal_tables = 1
     BEGIN
         IF @debug = 1
         BEGIN
@@ -15583,10 +15809,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
             WHERE c.object_id = ce.object_id
-            AND
-            (
-                 c.is_sparse = 1
-            )
+            AND   c.is_sparse = 1
         )
         OPTION(RECOMPILE);
         ';
@@ -15614,19 +15837,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE ce.can_compress = 1
           AND i.type = 1
           AND EXISTS
-        (
-            SELECT
-                1/0
-            FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
-            JOIN ' + QUOTENAME(@current_database_name) + N'.sys.types AS t
-              ON c.user_type_id = t.user_type_id
-            WHERE c.object_id = ce.object_id
-            AND
-            (
-                 t.name IN (N''text'', N''ntext'', N''image'')
-            )
-        )
-        OPTION(RECOMPILE);
+          (
+              SELECT
+                  1/0
+              FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
+              JOIN ' + QUOTENAME(@current_database_name) + N'.sys.types AS t
+                ON c.user_type_id = t.user_type_id
+              WHERE c.object_id = ce.object_id
+              AND   t.name IN
+                    (
+                        N''text'',
+                        N''ntext'',
+                        N''image''
+                    )
+          )
+          OPTION(RECOMPILE);
         ';
 
         IF @debug = 1
@@ -15664,15 +15889,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         c.column_id,
         column_name = c.name,
         definition = cc.definition,
+        /*
+        UDF detection: Looks for schema-qualified object references like [schema].[function]
+        Note: This is a heuristic check and may have rare false positives if ].[  appears
+        in string literals or comments within the computed column definition
+        */
         contains_udf =
             CASE
                 WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
+                AND  cc.definition LIKE ''%|].|[%(%'' ESCAPE ''|''
                 THEN 1
                 ELSE 0
             END,
         udf_names =
             CASE
                 WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
+                AND  cc.definition LIKE ''%|].|[%(%'' ESCAPE ''|''
+                AND  CHARINDEX(N''['', cc.definition) > 0
+                AND  CHARINDEX(N''].['', cc.definition) > 0
+                AND  CHARINDEX(N'']'', cc.definition, CHARINDEX(N''].['', cc.definition) + 3) > 0
                 THEN
                     SUBSTRING
                     (
@@ -15751,15 +15986,25 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         cc.object_id AS constraint_id,
         constraint_name = cc.name,
         definition = cc.definition,
+        /*
+        UDF detection: Looks for schema-qualified object references like [schema].[function]
+        Note: This is a heuristic check and may have rare false positives if ].[  appears
+        in string literals or comments within the computed column definition
+        */
         contains_udf =
             CASE
                 WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
+                AND  cc.definition LIKE ''%|].|[%(%'' ESCAPE ''|''
                 THEN 1
                 ELSE 0
             END,
         udf_names =
             CASE
                 WHEN cc.definition LIKE ''%|].|[%'' ESCAPE ''|''
+                AND  cc.definition LIKE ''%|].|[%(%'' ESCAPE ''|''
+                AND  CHARINDEX(N''['', cc.definition) > 0
+                AND  CHARINDEX(N''].['', cc.definition) > 0
+                AND  CHARINDEX(N'']'', cc.definition, CHARINDEX(N''].['', cc.definition) + 3) > 0
                 THEN
                     SUBSTRING
                     (
@@ -15822,10 +16067,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         @sql = N'
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-    SELECT
-        @sql += N'
     SELECT
         os.database_id,
         database_name = DB_NAME(os.database_id),
@@ -15957,7 +16200,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @current_database_id,
         @object_id;
 
-    IF ROWCOUNT_BIG() = 0
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @rc = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -15978,10 +16223,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         @sql = N'
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-    SELECT
-        @sql += N'
     SELECT
         database_id = @database_id,
         database_name = DB_NAME(@database_id),
@@ -16213,7 +16456,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @object_id,
         @min_rows;
 
-    IF ROWCOUNT_BIG() = 0
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @rc = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -16233,10 +16478,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     SELECT
         @sql = N'
-    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;';
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-    SELECT
-        @sql += N'
     SELECT
         database_id = @database_id,
         database_name = DB_NAME(@database_id),
@@ -16413,7 +16656,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @current_database_id,
         @object_id;
 
-    IF ROWCOUNT_BIG() = 0
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @rc = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -16648,7 +16893,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id1.is_unique_constraint
     OPTION(RECOMPILE);
 
-    IF ROWCOUNT_BIG() = 0
+    SET @rc = ROWCOUNT_BIG();
+
+    IF @rc = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -16668,7 +16915,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Analyze filtered indexes to identify columns used in filters that should be included */
-    SET @sql = N'
+    SELECT
+        @sql = N'
+    SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
     SELECT DISTINCT
         ia.database_id,
         ia.database_name,
@@ -16747,7 +16997,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         PRINT @sql;
     END;
 
-    /* The correct pattern: INSERT ... EXECUTE */
     INSERT INTO
         #filtered_index_columns_analysis
     WITH
@@ -16799,8 +17048,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SELECT
                         1/0
                     FROM #index_details AS id_uc
-                    WHERE id_uc.index_id = #index_analysis.index_id
-                    AND   id_uc.object_id = #index_analysis.object_id
+                    WHERE id_uc.index_hash = #index_analysis.index_hash
                     AND   id_uc.is_unique_constraint = 1
                 ) THEN 500
                 /* Unique constraints get lower priority */
@@ -16809,8 +17057,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SELECT
                         1/0
                     FROM #index_details AS id_uc
-                    WHERE id_uc.index_id = #index_analysis.index_id
-                    AND   id_uc.object_id = #index_analysis.object_id
+                    WHERE id_uc.index_hash = #index_analysis.index_hash
                     AND   id_uc.is_unique_constraint = 1
                 ) THEN 50
                 ELSE 0
@@ -16822,8 +17069,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SELECT
                         1/0
                     FROM #index_details AS id
-                    WHERE id.index_id = #index_analysis.index_id
-                    AND   id.object_id = #index_analysis.object_id
+                    WHERE id.index_hash = #index_analysis.index_hash
                     AND   id.user_seeks > 0
                 ) THEN 200
                 ELSE 0
@@ -16835,8 +17081,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SELECT
                         1/0
                     FROM #index_details AS id
-                    WHERE id.index_id = #index_analysis.index_id
-                    AND   id.object_id = #index_analysis.object_id
+                    WHERE id.index_hash = #index_analysis.index_hash
                     AND   id.user_scans > 0
                 ) THEN 100 ELSE 0
             END /* Indexes with scans get some priority */
@@ -16876,9 +17121,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 1/0
             FROM #index_details id
-            WHERE id.database_id = #index_analysis.database_id
-            AND   id.object_id = #index_analysis.object_id
-            AND   id.index_id = #index_analysis.index_id
+            WHERE id.index_hash = #index_analysis.index_hash
             AND   id.user_seeks = 0
             AND   id.user_scans = 0
             AND   id.user_lookups = 0
@@ -16924,12 +17167,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #index_analysis AS ia1
     JOIN #index_analysis AS ia2
-      ON  ia1.database_id = ia2.database_id
-      AND ia1.object_id = ia2.object_id
+      ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
       AND ia1.index_name <> ia2.index_name
-      AND ia1.key_columns = ia2.key_columns  /* Exact key match */
-      AND ISNULL(ia1.included_columns, '') = ISNULL(ia2.included_columns, '')  /* Exact includes match */
-      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+      AND ia1.exact_match_hash = ia2.exact_match_hash  /* Exact match: keys + includes + filter */
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
     /* Exclude unique constraints - we'll handle those separately in Rule 7 */
@@ -16938,9 +17178,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id1_uc
-        WHERE id1_uc.database_id = ia1.database_id
-        AND   id1_uc.object_id = ia1.object_id
-        AND   id1_uc.index_id = ia1.index_id
+        WHERE id1_uc.index_hash = ia1.index_hash
         AND   id1_uc.is_unique_constraint = 1
     )
     AND NOT EXISTS
@@ -16948,9 +17186,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id2_uc
-        WHERE id2_uc.database_id = ia2.database_id
-        AND   id2_uc.object_id = ia2.object_id
-        AND   id2_uc.index_id = ia2.index_id
+        WHERE id2_uc.index_hash = ia2.index_hash
         AND   id2_uc.is_unique_constraint = 1
     )
     AND EXISTS
@@ -16958,9 +17194,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id1
-        WHERE id1.database_id = ia1.database_id
-        AND   id1.object_id = ia1.object_id
-        AND   id1.index_id = ia1.index_id
+        WHERE id1.index_hash = ia1.index_hash
         AND   id1.is_eligible_for_dedupe = 1
     )
     AND EXISTS
@@ -16968,9 +17202,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id2
-        WHERE id2.database_id = ia2.database_id
-        AND   id2.object_id = ia2.object_id
-        AND   id2.index_id = ia2.index_id
+        WHERE id2.index_hash = ia2.index_hash
         AND   id2.is_eligible_for_dedupe = 1
     )
     AND NOT EXISTS
@@ -16979,17 +17211,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
              1/0
          FROM #index_details AS id1
          JOIN #index_details AS id2
-           ON  id2.database_id = id1.database_id
-           AND id2.object_id = id1.object_id
-           AND id2.column_name = id1.column_name
-           AND id2.key_ordinal = id1.key_ordinal
-         WHERE id1.database_id = ia1.database_id
-           AND id1.object_id = ia1.object_id
-           AND id1.index_id = ia1.index_id
-           AND id2.database_id = ia2.database_id
-           AND id2.object_id = ia2.object_id
-           AND id2.index_id = ia2.index_id
-           AND id1.is_descending_key <> id2.is_descending_key  /* Different sort direction */
+           ON id2.column_position_hash = id1.column_position_hash  /* Same table + column + position */
+         WHERE id1.index_hash = ia1.index_hash  /* Specific index from ia1 */
+           AND id2.index_hash = ia2.index_hash  /* Specific index from ia2 */
+           AND id1.is_descending_key <> id2.is_descending_key
+           /* Different sort direction */
     )
     OPTION(RECOMPILE);
 
@@ -17018,19 +17244,387 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ia2.filter_definition AS index2_filter
         FROM #index_analysis AS ia1
         JOIN #index_analysis AS ia2
-          ON  ia1.database_id = ia2.database_id
-          AND ia1.object_id = ia2.object_id
+          ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
           AND ia1.index_name <> ia2.index_name
-          AND ia1.key_columns = ia2.key_columns  /* Exact key match */
-          AND ISNULL(ia1.included_columns, '') = ISNULL(ia2.included_columns, '')  /* Exact includes match */
-          AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+          AND ia1.exact_match_hash = ia2.exact_match_hash  /* Exact match: keys + includes + filter */
         WHERE ia1.consolidation_rule = N'Exact Duplicate'
            OR ia2.consolidation_rule = N'Exact Duplicate'
         ORDER BY ia1.index_name
         OPTION(RECOMPILE);
     END;
 
-    /* Rule 3: Key duplicates - matching key columns, different includes */
+    /* Rule 3: Superset/subset key columns (runs before key duplicates to prioritize subset/superset relationships) */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Rule 3 debug - Testing JOIN conditions for subset/superset:', 0, 0) WITH NOWAIT;
+        SELECT
+            subset_index = ia1.index_name,
+            subset_keys = ia1.key_columns,
+            superset_index = ia2.index_name,
+            superset_keys = ia2.key_columns,
+            pattern_test = REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %',
+            like_match =
+                CASE
+                    WHEN ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'
+                    THEN 'YES'
+                    ELSE 'NO'
+                END,
+            filter_match =
+                CASE
+                    WHEN ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')
+                    THEN 'YES'
+                    ELSE 'NO'
+                END,
+            ia1_eligible =
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT 1/0
+                        FROM #index_details AS id1
+                        WHERE id1.index_hash = ia1.index_hash
+                        AND   id1.is_eligible_for_dedupe = 1
+                    )
+                    THEN 'YES'
+                    ELSE 'NO'
+                END,
+            ia2_eligible =
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT 1/0
+                        FROM #index_details AS id2
+                        WHERE id2.index_hash = ia2.index_hash
+                        AND   id2.is_eligible_for_dedupe = 1
+                    )
+                    THEN 'YES'
+                    ELSE 'NO'
+                END,
+            sort_mismatch =
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT 1/0
+                        FROM #index_details AS id1
+                        JOIN #index_details AS id2
+                          ON id2.column_position_hash = id1.column_position_hash
+                        WHERE id1.index_hash = ia1.index_hash
+                        AND   id2.index_hash = ia2.index_hash
+                        AND   id1.is_descending_key <> id2.is_descending_key
+                    )
+                    THEN 'YES'
+                    ELSE 'NO'
+                END,
+            ia1_consolidation_rule = ISNULL(ia1.consolidation_rule, 'NULL'),
+            ia2_consolidation_rule = ISNULL(ia2.consolidation_rule, 'NULL'),
+            ia1_is_unique_constraint =
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT 1/0
+                        FROM #index_details AS id1_uc
+                        WHERE id1_uc.index_hash = ia1.index_hash
+                        AND   id1_uc.is_unique_constraint = 1
+                    )
+                    THEN 'YES'
+                    ELSE 'NO'
+                END,
+            ia2_is_unique_constraint =
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT 1/0
+                        FROM #index_details AS id2_uc
+                        WHERE id2_uc.index_hash = ia2.index_hash
+                        AND   id2_uc.is_unique_constraint = 1
+                    )
+                    THEN 'YES'
+                    ELSE 'NO'
+                END
+        FROM #index_analysis AS ia1
+        JOIN #index_analysis AS ia2
+          ON  ia1.scope_hash = ia2.scope_hash
+          AND ia1.index_name <> ia2.index_name
+          AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'
+          AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')
+          AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
+        WHERE ia1.consolidation_rule IS NULL
+        AND   ia2.consolidation_rule IS NULL
+        AND NOT EXISTS
+        (
+            SELECT 1/0
+            FROM #index_details AS id1_uc
+            WHERE id1_uc.index_hash = ia1.index_hash
+            AND   id1_uc.is_unique_constraint = 1
+        )
+        AND NOT EXISTS
+        (
+            SELECT 1/0
+            FROM #index_details AS id2_uc
+            WHERE id2_uc.index_hash = ia2.index_hash
+            AND   id2_uc.is_unique_constraint = 1
+        )
+        AND EXISTS
+        (
+            SELECT 1/0
+            FROM #index_details AS id1
+            WHERE id1.index_hash = ia1.index_hash
+            AND   id1.is_eligible_for_dedupe = 1
+        )
+        AND EXISTS
+        (
+            SELECT 1/0
+            FROM #index_details AS id2
+            WHERE id2.index_hash = ia2.index_hash
+            AND   id2.is_eligible_for_dedupe = 1
+        )
+        AND NOT EXISTS
+        (
+            SELECT 1/0
+            FROM #index_details AS id1
+            JOIN #index_details AS id2
+              ON id2.column_position_hash = id1.column_position_hash
+            WHERE id1.index_hash = ia1.index_hash
+            AND   id2.index_hash = ia2.index_hash
+            AND   id1.is_descending_key <> id2.is_descending_key
+        )
+        AND   (ia1.index_name LIKE N'IX_Users_%Subset%' AND ia2.index_name LIKE N'IX_Users_%Superset%')
+        ORDER BY
+            ia1.index_name,
+            ia2.index_name
+        OPTION(RECOMPILE);
+    END;
+
+    UPDATE
+        ia1
+    SET
+        ia1.consolidation_rule = N'Key Subset',
+        ia1.target_index_name =
+        (
+            /* Select the closest superset (fewest extra columns) for deterministic results */
+            SELECT TOP (1)
+                ia2_inner.index_name
+            FROM #index_analysis AS ia2_inner
+            WHERE ia2_inner.scope_hash = ia1.scope_hash
+            AND   ia2_inner.index_name <> ia1.index_name
+            AND   ia2_inner.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'
+            AND   ISNULL(ia2_inner.filter_definition, N'') = ISNULL(ia1.filter_definition, N'')
+            AND   NOT (ia1.is_unique = 1 AND ia2_inner.is_unique = 0)
+            AND   ia2_inner.consolidation_rule IS NULL
+            AND EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #index_details AS id2_inner
+                WHERE id2_inner.index_hash = ia2_inner.index_hash
+                AND   id2_inner.is_eligible_for_dedupe = 1
+            )
+            AND NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #index_details AS id1_check
+                JOIN #index_details AS id2_check
+                  ON id2_check.column_position_hash = id1_check.column_position_hash  /* Same table + column + position */
+                WHERE id1_check.index_hash = ia1.index_hash  /* Specific index from ia1 */
+                AND   id2_check.index_hash = ia2_inner.index_hash  /* Specific index from ia2_inner */
+                AND   id1_check.is_descending_key <> id2_check.is_descending_key  /* Different sort direction */
+            )
+            ORDER BY
+                LEN(ia2_inner.key_columns),  /* Prefer shorter key columns (closest superset) */
+                ia2_inner.index_name  /* Then alphabetically for stability */
+        ),
+        ia1.action = N'DISABLE'  /* The narrower index gets disabled */
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2
+      ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
+      AND ia1.index_name <> ia2.index_name
+      AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'  /* ia2 has wider key that starts with ia1's key */
+      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
+      /* Exception: If narrower index is unique and wider is not, they should not be merged */
+      AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
+    WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
+    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    /* Exclude unique constraints - we'll handle those separately in Rule 7 */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id1_uc
+        WHERE id1_uc.index_hash = ia1.index_hash
+        AND   id1_uc.is_unique_constraint = 1
+    )
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id2_uc
+        WHERE id2_uc.index_hash = ia2.index_hash
+        AND   id2_uc.is_unique_constraint = 1
+    )
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id1
+        WHERE id1.index_hash = ia1.index_hash
+        AND   id1.is_eligible_for_dedupe = 1
+    )
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id2
+        WHERE id2.index_hash = ia2.index_hash
+        AND   id2.is_eligible_for_dedupe = 1
+    )
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id1
+        JOIN #index_details AS id2
+          ON id2.column_position_hash = id1.column_position_hash  /* Same table + column + position */
+        WHERE id1.index_hash = ia1.index_hash  /* Specific index from ia1 */
+        AND   id2.index_hash = ia2.index_hash  /* Specific index from ia2 */
+        AND   id1.is_descending_key <> id2.is_descending_key  /* Different sort direction */
+    )
+    OPTION(RECOMPILE);
+
+    DECLARE @rule3_rowcount bigint = @@ROWCOUNT;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Rule 3 UPDATE completed - rows affected: %I64d', 0, 0, @rule3_rowcount) WITH NOWAIT;
+
+        SELECT
+            table_name = '#index_analysis after rule 3',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+
+        /* Special debug for subset/superset test indexes */
+        RAISERROR('Special debug for #index_details subset/superset eligibility:', 0, 0) WITH NOWAIT;
+        SELECT
+            index_id = id.index_id,
+            index_name = id.index_name,
+            column_name = id.column_name,
+            key_ordinal = id.key_ordinal,
+            is_descending_key = id.is_descending_key,
+            is_included_column = id.is_included_column,
+            is_eligible_for_dedupe = id.is_eligible_for_dedupe,
+            is_unique_constraint = id.is_unique_constraint,
+            is_primary_key = id.is_primary_key
+        FROM #index_details AS id
+        WHERE id.index_name LIKE N'IX_Users_%Subset%'
+        OR    id.index_name LIKE N'IX_Users_%Superset%'
+        ORDER BY
+            id.index_id,
+            id.key_ordinal,
+            id.column_name
+        OPTION(RECOMPILE);
+    END;
+
+    /* Rule 4: Mark superset indexes for merging with includes from subset */
+    UPDATE
+        ia2
+    SET
+        ia2.consolidation_rule = N'Key Superset',
+        ia2.action = N'MERGE INCLUDES',  /* The wider index gets merged with includes */
+        ia2.superseded_by =
+            ISNULL
+            (
+                ia2.superseded_by +
+                ', ',
+                ''
+            ) +
+            N'Supersedes ' +
+            ia1.index_name
+    FROM #index_analysis AS ia1
+    JOIN #index_analysis AS ia2
+      ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
+      AND ia1.target_index_name = ia2.index_name  /* Link from Rule 3 */
+    WHERE ia1.consolidation_rule = N'Key Subset'
+    AND   ia1.action = N'DISABLE'
+    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 4',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
+
+    /* Rule 5: Key duplicates - matching key columns, different includes */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Rule 5 debug - Testing key duplicates with different includes:', 0, 0) WITH NOWAIT;
+        SELECT
+            index1 = ia1.index_name,
+            index1_keys = ia1.key_columns,
+            index1_includes = ia1.included_columns,
+            index2 = ia2.index_name,
+            index2_keys = ia2.key_columns,
+            index2_includes = ia2.included_columns,
+            key_filter_match =
+                CASE
+                    WHEN ia1.key_filter_hash = ia2.key_filter_hash
+                    THEN 'YES'
+                    ELSE 'NO'
+                END,
+            includes_different =
+                CASE
+                    WHEN ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')
+                    THEN 'YES'
+                    ELSE 'NO'
+                END,
+            ia1_consolidation_rule = ISNULL(ia1.consolidation_rule, 'NULL'),
+            ia2_consolidation_rule = ISNULL(ia2.consolidation_rule, 'NULL')
+        FROM #index_analysis AS ia1
+        JOIN #index_analysis AS ia2
+          ON  ia1.scope_hash = ia2.scope_hash
+          AND ia1.index_name <> ia2.index_name
+          AND ia1.key_filter_hash = ia2.key_filter_hash
+          AND ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')
+        WHERE ia1.consolidation_rule IS NULL
+        AND   ia2.consolidation_rule IS NULL
+        AND NOT EXISTS
+        (
+            SELECT 1/0
+            FROM #index_details AS id1_uc
+            WHERE id1_uc.index_hash = ia1.index_hash
+            AND   id1_uc.is_unique_constraint = 1
+        )
+        AND NOT EXISTS
+        (
+            SELECT 1/0
+            FROM #index_details AS id2_uc
+            WHERE id2_uc.index_hash = ia2.index_hash
+            AND   id2_uc.is_unique_constraint = 1
+        )
+        AND EXISTS
+        (
+            SELECT 1/0
+            FROM #index_details AS id1
+            WHERE id1.index_hash = ia1.index_hash
+            AND   id1.is_eligible_for_dedupe = 1
+        )
+        AND EXISTS
+        (
+            SELECT 1/0
+            FROM #index_details AS id2
+            WHERE id2.index_hash = ia2.index_hash
+            AND   id2.is_eligible_for_dedupe = 1
+        )
+        AND (ia1.index_name LIKE N'%DownVotes%' OR ia1.index_name LIKE N'%LastAccess%')
+        ORDER BY
+            ia1.index_name,
+            ia2.index_name
+        OPTION(RECOMPILE);
+    END;
+
     UPDATE
         ia1
     SET
@@ -17076,12 +17670,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #index_analysis AS ia1
     JOIN #index_analysis AS ia2
-      ON  ia1.database_id = ia2.database_id
-      AND ia1.object_id = ia2.object_id
+      ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
       AND ia1.index_name <> ia2.index_name
-      AND ia1.key_columns = ia2.key_columns  /* Exact key match */
+      AND ia1.key_filter_hash = ia2.key_filter_hash  /* Same keys and filter */
       AND ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')  /* Different includes */
-      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
     /* Exclude pairs where either one is a unique constraint (we'll handle those separately in Rule 7) */
@@ -17090,9 +17682,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id1_uc
-        WHERE id1_uc.database_id = ia1.database_id
-        AND   id1_uc.object_id = ia1.object_id
-        AND   id1_uc.index_id = ia1.index_id
+        WHERE id1_uc.index_hash = ia1.index_hash
         AND   id1_uc.is_unique_constraint = 1
     )
     AND NOT EXISTS
@@ -17100,9 +17690,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id2_uc
-        WHERE id2_uc.database_id = ia2.database_id
-        AND   id2_uc.object_id = ia2.object_id
-        AND   id2_uc.index_id = ia2.index_id
+        WHERE id2_uc.index_hash = ia2.index_hash
         AND   id2_uc.is_unique_constraint = 1
     )
     AND EXISTS
@@ -17110,9 +17698,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id1
-        WHERE id1.database_id = ia1.database_id
-        AND   id1.object_id = ia1.object_id
-        AND   id1.index_id = ia1.index_id
+        WHERE id1.index_hash = ia1.index_hash
         AND   id1.is_eligible_for_dedupe = 1
     )
     AND EXISTS
@@ -17120,116 +17706,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id2
-        WHERE id2.database_id = ia2.database_id
-        AND   id2.object_id = ia2.object_id
-        AND   id2.index_id = ia2.index_id
+        WHERE id2.index_hash = ia2.index_hash
         AND   id2.is_eligible_for_dedupe = 1
     )
     OPTION(RECOMPILE);
 
-    IF @debug = 1
-    BEGIN
-        SELECT
-            table_name = '#index_analysis after rule 3',
-            ia.*
-        FROM #index_analysis AS ia
-        OPTION(RECOMPILE);
-    END;
-
-    /* Rule 4: Superset/subset key columns */
-    UPDATE
-        ia1
-    SET
-        ia1.consolidation_rule = N'Key Subset',
-        ia1.target_index_name = ia2.index_name,
-        ia1.action = N'DISABLE'  /* The narrower index gets disabled */
-    FROM #index_analysis AS ia1
-    JOIN #index_analysis AS ia2
-      ON  ia1.database_id = ia2.database_id
-      AND ia1.object_id = ia2.object_id
-      AND ia1.index_name <> ia2.index_name
-      AND ia2.key_columns LIKE (ia1.key_columns + '%')  /* ia2 has wider key that starts with ia1's key */
-      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
-      /* Exception: If narrower index is unique and wider is not, they should not be merged */
-      AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
-    WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
-    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    AND EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details AS id1
-        WHERE id1.database_id = ia1.database_id
-        AND   id1.object_id = ia1.object_id
-        AND   id1.index_id = ia1.index_id
-        AND   id1.is_eligible_for_dedupe = 1
-    )
-    AND EXISTS
-    (
-        SELECT
-            1/0
-        FROM #index_details AS id2
-        WHERE id2.database_id = ia2.database_id
-        AND   id2.object_id = ia2.object_id
-        AND   id2.index_id = ia2.index_id
-        AND   id2.is_eligible_for_dedupe = 1
-    )
-     AND NOT EXISTS
-     (
-      SELECT
-          1/0
-      FROM #index_details AS id1
-      JOIN #index_details AS id2
-        ON  id2.database_id = id1.database_id
-        AND id2.object_id = id1.object_id
-        AND id2.column_name = id1.column_name
-        AND id2.key_ordinal = id1.key_ordinal
-      WHERE id1.database_id = ia1.database_id
-        AND id1.object_id = ia1.object_id
-        AND id1.index_id = ia1.index_id
-        AND id2.database_id = ia2.database_id
-        AND id2.object_id = ia2.object_id
-        AND id2.index_id = ia2.index_id
-        AND id1.is_descending_key <> id2.is_descending_key  /* Different sort direction */
-    )
-    OPTION(RECOMPILE);
+    DECLARE @rule5_rowcount bigint = @@ROWCOUNT;
 
     IF @debug = 1
     BEGIN
-        SELECT
-            table_name = '#index_analysis after rule 4',
-            ia.*
-        FROM #index_analysis AS ia
-        OPTION(RECOMPILE);
-    END;
+        RAISERROR('Rule 5 UPDATE completed - rows affected: %I64d', 0, 0, @rule5_rowcount) WITH NOWAIT;
 
-    /* Rule 5: Mark superset indexes for merging with includes from subset */
-    UPDATE
-        ia2
-    SET
-        ia2.consolidation_rule = N'Key Superset',
-        ia2.action = N'MERGE INCLUDES',  /* The wider index gets merged with includes */
-        ia2.superseded_by =
-            ISNULL
-            (
-                ia2.superseded_by +
-                ', ',
-                ''
-            ) +
-            N'Supersedes ' +
-            ia1.index_name
-    FROM #index_analysis AS ia1
-    JOIN #index_analysis AS ia2
-      ON  ia1.database_id = ia2.database_id
-      AND ia1.object_id = ia2.object_id
-      AND ia1.target_index_name = ia2.index_name  /* Link from Rule 4 */
-    WHERE ia1.consolidation_rule = N'Key Subset'
-    AND   ia1.action = N'DISABLE'
-    AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    OPTION(RECOMPILE);
-
-    IF @debug = 1
-    BEGIN
         SELECT
             table_name = '#index_analysis after rule 5',
             ia.*
@@ -17246,12 +17733,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             superset.object_id,
             superset.index_id,
             superset.index_name,
+            superset.index_hash,
             superset.included_columns AS superset_includes,
             subset.included_columns AS subset_includes
         FROM #index_analysis AS superset
         JOIN #index_analysis AS subset
-          ON  superset.database_id = subset.database_id
-          AND superset.object_id = subset.object_id
+          ON  superset.scope_hash = subset.scope_hash
           AND subset.target_index_name = superset.index_name
         WHERE superset.action = N'MERGE INCLUDES'
         AND   subset.action = N'DISABLE'
@@ -17322,9 +17809,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END
     FROM #index_analysis AS ia
     JOIN KeySubsetSuperset AS kss
-      ON  ia.database_id = kss.database_id
-      AND ia.object_id = kss.object_id
-      AND ia.index_id = kss.index_id
+      ON ia.index_hash = kss.index_hash
     WHERE ia.action = N'MERGE INCLUDES'
     OPTION(RECOMPILE);
 
@@ -17346,8 +17831,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ia1.index_name
     FROM #index_analysis AS ia1
     JOIN #index_analysis AS ia2
-      ON  ia1.database_id = ia2.database_id
-      AND ia1.object_id = ia2.object_id
+      ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
       AND ia1.index_name <> ia2.index_name
       AND ia2.key_columns LIKE (ia1.key_columns + N'%')  /* ia2 has wider key that starts with ia1's key */
       AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
@@ -17386,9 +17870,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id1
-        WHERE id1.database_id = ia1.database_id
-        AND   id1.object_id = ia1.object_id
-        AND   id1.index_id = ia1.index_id
+        WHERE id1.index_hash = ia1.index_hash
         AND   id1.is_eligible_for_dedupe = 1
     )
     AND EXISTS
@@ -17397,8 +17879,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id2
-        WHERE id2.database_id = ia1.database_id
-        AND   id2.object_id = ia1.object_id
+        WHERE id2.scope_hash = ia1.scope_hash
         AND   id2.is_unique_constraint = 1
         AND NOT EXISTS
         (
@@ -17406,9 +17887,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 id2_inner.column_name
             FROM #index_details AS id2_inner
-            WHERE id2_inner.database_id = id2.database_id
-            AND   id2_inner.object_id = id2.object_id
-            AND   id2_inner.index_id = id2.index_id
+            WHERE id2_inner.index_hash = id2.index_hash
             AND   id2_inner.is_included_column = 0
 
             EXCEPT
@@ -17416,9 +17895,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 id1_inner.column_name
             FROM #index_details AS id1_inner
-            WHERE id1_inner.database_id = ia1.database_id
-            AND   id1_inner.object_id = ia1.object_id
-            AND   id1_inner.index_id = ia1.index_id
+            WHERE id1_inner.index_hash = ia1.index_hash
             AND   id1_inner.is_included_column = 0
         )
     )
@@ -17443,17 +17920,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia_uc.target_index_name = ia_nc.index_name /* Point to the nonclustered index that will replace it */
     FROM #index_analysis AS ia_uc /* Unique constraint */
     JOIN #index_details AS id_uc /* Join to get unique constraint details */
-      ON  id_uc.database_id = ia_uc.database_id
-      AND id_uc.object_id = ia_uc.object_id
-      AND id_uc.index_id = ia_uc.index_id
+      ON  id_uc.index_hash = ia_uc.index_hash
       AND id_uc.is_unique_constraint = 1 /* This is a unique constraint */
     JOIN #index_analysis AS ia_nc /* Join to find nonclustered index */
-      ON  ia_nc.database_id = ia_uc.database_id
-      AND ia_nc.object_id = ia_uc.object_id
+      ON  ia_nc.scope_hash = ia_uc.scope_hash  /* Same database and object */
       AND ia_nc.index_name <> ia_uc.index_name /* Different index */
-    WHERE
-        /* Verify key columns EXACT match between index and unique constraint */
-        ia_uc.key_columns = ia_nc.key_columns
+      AND ia_uc.key_columns = ia_nc.key_columns  /* Verify key columns EXACT match */
     OPTION(RECOMPILE);
 
     /* Second, mark nonclustered indexes to be made unique */
@@ -17466,9 +17938,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia_nc.target_index_name = NULL
     FROM #index_analysis AS ia_nc /* Nonclustered index */
     JOIN #index_details AS id_nc /* Join to get nonclustered index details */
-      ON  id_nc.database_id = ia_nc.database_id
-      AND id_nc.object_id = ia_nc.object_id
-      AND id_nc.index_id = ia_nc.index_id
+      ON  id_nc.index_hash = ia_nc.index_hash
       AND id_nc.is_unique_constraint = 0 /* This is not a unique constraint */
     WHERE
         /* Two conditions for matching:
@@ -17481,12 +17951,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM #index_analysis AS ia_uc
             JOIN #index_details AS id_uc
-              ON  id_uc.database_id = ia_uc.database_id
-              AND id_uc.object_id = ia_uc.object_id
-              AND id_uc.index_id = ia_uc.index_id
+              ON  id_uc.index_hash = ia_uc.index_hash
               AND id_uc.is_unique_constraint = 1
-            WHERE ia_uc.database_id = ia_nc.database_id
-            AND   ia_uc.object_id = ia_nc.object_id
+            WHERE ia_uc.scope_hash = ia_nc.scope_hash
                   /* Check that both indexes have EXACTLY the same key columns */
             AND   ia_uc.key_columns = ia_nc.key_columns
         )
@@ -17502,12 +17969,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         target_index_name = NULL
     FROM #index_analysis AS ia
     WHERE ia.action = N'MAKE UNIQUE'
-    AND NOT EXISTS (
+    AND NOT EXISTS
+    (
         /* Check if there's a unique constraint with matching keys that points to this index */
         SELECT 1
         FROM #index_analysis AS ia_uc
-        WHERE ia_uc.database_id = ia.database_id
-        AND   ia_uc.object_id = ia.object_id
+        WHERE ia_uc.scope_hash = ia.scope_hash
         AND   ia_uc.key_columns = ia.key_columns
         AND   ia_uc.action = N'DISABLE'
         AND   ia_uc.target_index_name = ia.index_name
@@ -17528,8 +17995,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #index_analysis AS ia_nc
     JOIN #index_analysis AS ia_uc
-      ON  ia_uc.database_id = ia_nc.database_id
-      AND ia_uc.object_id = ia_nc.object_id
+      ON  ia_uc.scope_hash = ia_nc.scope_hash  /* Same database and object */
       AND ia_uc.action = N'DISABLE'
       AND ia_uc.target_index_name = ia_nc.index_name
     WHERE ia_nc.action = N'MAKE UNIQUE'
@@ -17555,8 +18021,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia1.target_index_name = ia2.index_name  /* Reference the partner index */
     FROM #index_analysis AS ia1
     JOIN #index_analysis AS ia2
-      ON  ia1.database_id = ia2.database_id
-      AND ia1.object_id = ia2.object_id
+      ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
       AND ia1.index_name < ia2.index_name  /* Only process each pair once */
       AND ia1.consolidation_rule IS NULL  /* Not already processed */
       AND ia2.consolidation_rule IS NULL  /* Not already processed */
@@ -17568,15 +18033,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM #index_details AS id1
             JOIN #index_details AS id2
-              ON  id1.database_id = id2.database_id
-              AND id1.object_id = id2.object_id
-              AND id1.column_name = id2.column_name
-              AND id1.key_ordinal = 1
-              AND id2.key_ordinal = 1
-            WHERE id1.database_id = ia1.database_id
-            AND   id1.object_id = ia1.object_id
-            AND   id1.index_id = ia1.index_id
-            AND   id2.index_id = ia2.index_id
+              ON id2.column_position_hash = id1.column_position_hash
+            WHERE id1.index_hash = ia1.index_hash
+            AND   id2.index_hash = ia2.index_hash
+            AND   id1.key_ordinal = 1
         )
         /* Same set of key columns but in different order */
         AND NOT EXISTS
@@ -17585,9 +18045,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 id1.column_name
             FROM #index_details AS id1
-            WHERE id1.database_id = ia1.database_id
-            AND   id1.object_id = ia1.object_id
-            AND   id1.index_id = ia1.index_id
+            WHERE id1.index_hash = ia1.index_hash
             AND   id1.is_included_column = 0
             AND   id1.key_ordinal > 0
 
@@ -17596,9 +18054,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SELECT
                 id2.column_name
             FROM #index_details AS id2
-            WHERE id2.database_id = ia2.database_id
-            AND   id2.object_id = ia2.object_id
-            AND   id2.index_id = ia2.index_id
+            WHERE id2.index_hash = ia2.index_hash
             AND   id2.is_included_column = 0
             AND   id2.key_ordinal > 0
         )
@@ -17610,16 +18066,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 1/0
             FROM #index_details AS id1
             JOIN #index_details AS id2
-              ON  id1.database_id = id2.database_id
-              AND id1.object_id = id2.object_id
-              AND id1.column_name = id2.column_name
-              AND id1.key_ordinal <> id2.key_ordinal
+              ON  id2.scope_hash = id1.scope_hash
+              AND id2.column_name = id1.column_name
+              AND id2.key_ordinal <> id1.key_ordinal
               AND id1.key_ordinal > 1  /* After the first column */
               AND id2.key_ordinal > 1  /* After the first column */
-            WHERE id1.database_id = ia1.database_id
-            AND   id1.object_id = ia1.object_id
-            AND   id1.index_id = ia1.index_id
-            AND   id2.index_id = ia2.index_id
+            WHERE id1.index_hash = ia1.index_hash
+            AND   id2.index_hash = ia2.index_hash
         )
     OPTION(RECOMPILE);
 
@@ -17640,6 +18093,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     INSERT INTO
         #index_cleanup_results
+    WITH
+        (TABLOCK)
     (
         result_type,
         sort_order,
@@ -17765,22 +18220,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         filter_definition = ISNULL(ia.filter_definition, N''),
         /* Choose the index with most included columns as the winner (or first alphabetically if tied) */
         winning_index_name =
-        (
-            SELECT TOP (1)
-                candidate.index_name
-            FROM #index_analysis AS candidate
-            WHERE candidate.database_id = ia.database_id
-              AND candidate.object_id = ia.object_id
-              AND candidate.key_columns = ia.key_columns
-              AND ISNULL(candidate.filter_definition, '') = ISNULL(ia.filter_definition, '')
-              AND candidate.action = N'MERGE INCLUDES'
-              AND candidate.consolidation_rule = N'Key Duplicate'
-            ORDER BY
-                /* Then prefer indexes with more included columns (by length as a proxy) */
-                LEN(ISNULL(candidate.included_columns, '')) DESC,
-                /* Then alphabetically for stability */
-                candidate.index_name
-        ),
+            (
+                SELECT TOP (1)
+                    candidate.index_name
+                FROM #index_analysis AS candidate
+                WHERE candidate.scope_hash = ia.scope_hash
+                AND   candidate.key_filter_hash = ia.key_filter_hash
+                AND   candidate.action = N'MERGE INCLUDES'
+                AND   candidate.consolidation_rule = N'Key Duplicate'
+                ORDER BY
+                    /* Then prefer indexes with more included columns (by length as a proxy) */
+                    LEN(ISNULL(candidate.included_columns, '')) DESC,
+                    /* Then alphabetically for stability */
+                    candidate.index_name
+            ),
         /* Build a list of other indexes in this group */
         index_list =
             STUFF
@@ -17790,14 +18243,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N', ' +
                     inner_ia.index_name
                 FROM #index_analysis AS inner_ia
-                WHERE inner_ia.database_id = ia.database_id
-                  AND inner_ia.object_id = ia.object_id
-                  AND inner_ia.key_columns = ia.key_columns
-                  AND ISNULL(inner_ia.filter_definition, '') = ISNULL(ia.filter_definition, '')
+                WHERE inner_ia.scope_hash = ia.scope_hash
+                  AND inner_ia.key_filter_hash = ia.key_filter_hash
                   AND inner_ia.action = N'MERGE INCLUDES'
                   AND inner_ia.consolidation_rule = N'Key Duplicate'
                 GROUP BY
-                    inner_ia.index_name
+                    inner_ia.index_name,
+                    inner_ia.scope_hash,
+                    inner_ia.key_filter_hash
                 ORDER BY
                     inner_ia.index_name
                 FOR
@@ -17816,7 +18269,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia.database_id,
         ia.object_id,
         ia.key_columns,
-        ia.filter_definition
+        ia.filter_definition,
+        ia.scope_hash,
+        ia.key_filter_hash
     HAVING
         COUNT_BIG(*) > 1
     OPTION(RECOMPILE); /* Only groups with multiple MERGE INCLUDES */
@@ -17835,10 +18290,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia.superseded_by = NULL
     FROM #index_analysis AS ia
     JOIN #key_duplicate_dedupe AS kdd
-      ON  ia.database_id = kdd.database_id
-      AND ia.object_id = kdd.object_id
-      AND ia.key_columns = kdd.base_key_columns
-      AND ISNULL(ia.filter_definition, N'') = kdd.filter_definition
+      ON  ia.scope_hash = kdd.scope_hash
+      AND ia.key_filter_hash = kdd.key_filter_hash
     WHERE ia.index_name <> kdd.winning_index_name
     AND   ia.action = N'MERGE INCLUDES'
     AND   ia.consolidation_rule = N'Key Duplicate'
@@ -17857,10 +18310,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ) /* Remove self from list if present */
     FROM #index_analysis AS ia
     JOIN #key_duplicate_dedupe AS kdd
-      ON  ia.database_id = kdd.database_id
-      AND ia.object_id = kdd.object_id
-      AND ia.key_columns = kdd.base_key_columns
-      AND ISNULL(ia.filter_definition, '') = kdd.filter_definition
+      ON  ia.scope_hash = kdd.scope_hash
+      AND ia.key_filter_hash = kdd.key_filter_hash
     WHERE ia.index_name = kdd.winning_index_name
     OPTION(RECOMPILE);
 
@@ -17878,20 +18329,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             winner.object_id,
             winner.index_id,
             winner.index_name,
+            winner.index_hash,
             winner.included_columns AS winner_includes,
             loser.included_columns AS loser_includes
         FROM #index_analysis AS winner
         JOIN #key_duplicate_dedupe AS kdd
-          ON  winner.database_id = kdd.database_id
-          AND winner.object_id = kdd.object_id
-          AND winner.key_columns = kdd.base_key_columns
-          AND ISNULL(winner.filter_definition, '') = kdd.filter_definition
+          ON  winner.scope_hash = kdd.scope_hash
+          AND winner.key_filter_hash = kdd.key_filter_hash
           AND winner.index_name = kdd.winning_index_name
         JOIN #index_analysis AS loser
-          ON  loser.database_id = kdd.database_id
-          AND loser.object_id = kdd.object_id
-          AND loser.key_columns = kdd.base_key_columns
-          AND ISNULL(loser.filter_definition, '') = kdd.filter_definition
+          ON  loser.scope_hash = kdd.scope_hash
+          AND loser.key_filter_hash = kdd.key_filter_hash
           AND loser.index_name <> kdd.winning_index_name
           AND loser.action = N'DISABLE'
           AND loser.consolidation_rule = N'Key Duplicate'
@@ -17924,9 +18372,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                         N'</c>'
                                     )
                                 FROM KeyDuplicateIncludes AS kdi
-                                WHERE kdi.database_id = ia.database_id
-                                AND   kdi.object_id = ia.object_id
-                                AND   kdi.index_id = ia.index_id
+                                WHERE kdi.index_hash = ia.index_hash
                                 AND   kdi.winner_includes IS NOT NULL
 
                                 UNION ALL
@@ -17941,9 +18387,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                         N'</c>'
                                     )
                                 FROM KeyDuplicateIncludes AS kdi
-                                WHERE kdi.database_id = ia.database_id
-                                AND   kdi.object_id = ia.object_id
-                                AND   kdi.index_id = ia.index_id
+                                WHERE kdi.index_hash = ia.index_hash
                                 AND   kdi.loser_includes IS NOT NULL
                             ) AS a
                             /* Split XML into individual columns */
@@ -17967,8 +18411,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #key_duplicate_dedupe AS kdd
-        WHERE kdd.database_id = ia.database_id
-        AND   kdd.object_id = ia.object_id
+        WHERE kdd.scope_hash = ia.scope_hash
         AND   kdd.winning_index_name = ia.index_name
     )
     OPTION(RECOMPILE);
@@ -18000,10 +18443,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia2.included_columns AS superset_included_columns
     FROM #index_analysis AS ia1
     JOIN #index_analysis AS ia2
-      ON  ia1.database_id = ia2.database_id
-      AND ia1.object_id = ia2.object_id
-      AND ia1.key_columns = ia2.key_columns
-      AND ISNULL(ia1.filter_definition, N'') = ISNULL(ia2.filter_definition, N'')
+      ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
+      AND ia1.key_filter_hash = ia2.key_filter_hash  /* Same keys and filter */
       AND ia1.index_name <> ia2.index_name
       AND ia1.action = N'MERGE INCLUDES'
       AND ia2.action = N'MERGE INCLUDES'
@@ -18038,8 +18479,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia.superseded_by = NULL
     FROM #index_analysis AS ia
     JOIN #include_subset_dedupe AS isd
-      ON  ia.database_id = isd.database_id
-      AND ia.object_id = isd.object_id
+      ON  ia.scope_hash = isd.scope_hash
       AND ia.index_name = isd.subset_index_name
     OPTION(RECOMPILE);
 
@@ -18058,8 +18498,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #index_analysis AS ia
     JOIN #include_subset_dedupe AS isd
-      ON  ia.database_id = isd.database_id
-      AND ia.object_id = isd.object_id
+      ON  ia.scope_hash = isd.scope_hash
       AND ia.index_name = isd.superset_index_name
     OPTION(RECOMPILE);
 
@@ -18079,8 +18518,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_analysis AS ia_subset
-        WHERE ia_subset.database_id = ia.database_id
-        AND   ia_subset.object_id = ia.object_id
+        WHERE ia_subset.scope_hash = ia.scope_hash
         AND   ia_subset.key_columns = ia.key_columns
         AND   ia_subset.action = N'DISABLE'
         AND   ia_subset.target_index_name = ia.index_name
@@ -18225,6 +18663,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.database_id,
             ps.object_id,
             ps.index_id,
+            ps.index_hash,
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
@@ -18233,17 +18672,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.database_id,
             ps.object_id,
             ps.index_id,
+            ps.index_hash,
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
     ) AS ps
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
+      ON ia.index_hash = ps.index_hash
     JOIN #compression_eligibility AS ce
-      ON  ia.database_id = ce.database_id
-      AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id
+      ON ia.index_hash = ce.index_hash
     WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
     AND   ce.can_compress = 1
     /* Only create merge scripts for the indexes that should remain after merging */
@@ -18295,9 +18731,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SELECT
                             1/0
                         FROM #index_details AS id
-                        WHERE id.database_id = ia.database_id
-                        AND   id.object_id = ia.object_id
-                        AND   id.index_id = ia.index_id
+                        WHERE id.index_hash = ia.index_hash
                         AND   id.is_unique_constraint = 1
                     )
                     THEN 'YES'
@@ -18310,8 +18744,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SELECT
                             1/0
                         FROM #index_analysis AS ia_make
-                        WHERE ia_make.database_id = ia.database_id
-                        AND   ia_make.object_id = ia.object_id
+                        WHERE ia_make.scope_hash = ia.scope_hash
                         AND   ia_make.action = N'MAKE UNIQUE'
                         AND   ia_make.target_index_name = ia.index_name
                     )
@@ -18325,17 +18758,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     (
                         SELECT 1
                         FROM #index_details AS id_uc
-                        WHERE id_uc.database_id = ia.database_id
-                        AND id_uc.object_id = ia.object_id
-                        AND id_uc.index_id = ia.index_id
+                        WHERE id_uc.index_hash = ia.index_hash
                         AND id_uc.is_unique_constraint = 1
                     )
                     THEN 'YES'
                     ELSE 'NO'
                 END
         FROM #index_analysis AS ia
-        WHERE ia.index_name LIKE 'ix_filtered_%'
-        OR    ia.index_name LIKE 'ix_desc_%'
         ORDER BY
             ia.index_name
         OPTION(RECOMPILE);
@@ -18430,13 +18859,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id.user_updates
     FROM #index_analysis AS ia
     LEFT JOIN #partition_stats AS ps
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
+      ON ia.index_hash = ps.index_hash
     LEFT JOIN #index_details AS id
-      ON  id.database_id = ia.database_id
-      AND id.object_id = ia.object_id
-      AND id.index_id = ia.index_id
+      ON  id.index_hash = ia.index_hash
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     WHERE ia.action = N'DISABLE'
@@ -18446,9 +18871,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_details AS id_uc
-        WHERE id_uc.database_id = ia.database_id
-        AND   id_uc.object_id = ia.object_id
-        AND   id_uc.index_id = ia.index_id
+        WHERE id_uc.index_hash = ia.index_hash
         AND   id_uc.is_unique_constraint = 1
     )
     /* Also exclude any index that is also going to be made unique in rule 7.5 */
@@ -18457,8 +18880,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             1/0
         FROM #index_analysis AS ia_unique
-        WHERE ia_unique.database_id = ia.database_id
-        AND   ia_unique.object_id = ia.object_id
+        WHERE ia_unique.scope_hash = ia.scope_hash
         AND   ia_unique.index_name = ia.index_name
         AND   ia_unique.action = N'MAKE UNIQUE'
     )
@@ -18759,9 +19181,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SELECT
                         1/0
                     FROM #index_details AS id_ofsk
-                    WHERE id_ofsk.database_id = ia.database_id
-                    AND   id_ofsk.object_id = ia.object_id
-                    AND   id_ofsk.index_id = ia.index_id
+                    WHERE id_ofsk.index_hash = ia.index_hash
                     AND   id_ofsk.optimize_for_sequential_key = 1
                 )
                 THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
@@ -18786,6 +19206,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.database_id,
             ps.object_id,
             ps.index_id,
+            ps.index_hash,
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
@@ -18794,28 +19215,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.database_id,
             ps.object_id,
             ps.index_id,
+            ps.index_hash,
             ps.built_on,
             ps.partition_function_name,
             ps.partition_columns
-    )
-      AS ps
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
+    ) AS ps
+      ON ia.index_hash = ps.index_hash
     LEFT JOIN #partition_stats AS ps_full
-      ON  ia.database_id = ps_full.database_id
-      AND ia.object_id = ps_full.object_id
-      AND ia.index_id = ps_full.index_id
+      ON ia.index_hash = ps_full.index_hash
     LEFT JOIN #index_details AS id
-      ON  id.database_id = ia.database_id
-      AND id.object_id = ia.object_id
-      AND id.index_id = ia.index_id
+      ON  id.index_hash = ia.index_hash
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     JOIN #compression_eligibility AS ce
-      ON  ia.database_id = ce.database_id
-      AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id
+      ON ia.index_hash = ce.index_hash
     WHERE
         /* Indexes that are not being disabled or merged */
         (ia.action IS NULL OR ia.action = N'KEEP')
@@ -18879,20 +19292,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id2.user_updates
     FROM #index_analysis AS ia_uc
     JOIN #index_details AS id
-      ON  id.database_id = ia_uc.database_id
-      AND id.object_id = ia_uc.object_id
-      AND id.index_id = ia_uc.index_id
+      ON  id.index_hash = ia_uc.index_hash
       AND id.is_unique_constraint = 1
     LEFT JOIN #index_details AS id2
-      ON  id2.database_id = ia_uc.database_id
-      AND id2.object_id = ia_uc.object_id
-      AND id2.index_id = ia_uc.index_id
+      ON  id2.index_hash = ia_uc.index_hash
       AND id2.is_included_column = 0 /* Get only one row per index */
       AND id2.key_ordinal > 0
     LEFT JOIN #partition_stats AS ps
-      ON  ia_uc.database_id = ps.database_id
-      AND ia_uc.object_id = ps.object_id
-      AND ia_uc.index_id = ps.index_id
+      ON ia_uc.index_hash = ps.index_hash
     WHERE
         /* Only constraints that are marked for disabling */
         ia_uc.action = N'DISABLE'
@@ -18969,9 +19376,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         SELECT
                             1/0
                         FROM #index_details AS id_ofsk
-                        WHERE id_ofsk.database_id = ia.database_id
-                        AND   id_ofsk.object_id = ia.object_id
-                        AND   id_ofsk.index_id = ia.index_id
+                        WHERE id_ofsk.index_hash = ia.index_hash
                         AND   id_ofsk.optimize_for_sequential_key = 1
                     )
                     THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
@@ -19011,19 +19416,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id.user_updates
     FROM #index_analysis AS ia
     JOIN #partition_stats AS ps
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
+      ON ia.index_hash = ps.index_hash
     LEFT JOIN #index_details AS id
-      ON  id.database_id = ia.database_id
-      AND id.object_id = ia.object_id
-      AND id.index_id = ia.index_id
+      ON  id.index_hash = ia.index_hash
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     JOIN #compression_eligibility AS ce
-      ON  ia.database_id = ce.database_id
-      AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id
+      ON ia.index_hash = ce.index_hash
     WHERE
         /* Only partitioned indexes */
         ps.partition_function_name IS NOT NULL
@@ -19151,13 +19550,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id.user_updates
     FROM #index_analysis AS ia
     LEFT JOIN #partition_stats AS ps
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
+      ON ia.index_hash = ps.index_hash
     LEFT JOIN #index_details AS id
-      ON  id.database_id = ia.database_id
-      AND id.object_id = ia.object_id
-      AND id.index_id = ia.index_id
+      ON  id.index_hash = ia.index_hash
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     WHERE ia.action = N'REVIEW'
@@ -19211,9 +19606,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         additional_info =
             CASE
                 WHEN ia.superseded_by IS NOT NULL
-                THEN 'This index supersedes other indexes and already has all needed columns'
+                THEN N'This index supersedes other indexes and already has all needed columns'
                 WHEN ia.action = N'KEEP'
-                THEN 'This index is being kept'
+                THEN N'This index is being kept'
+                WHEN ia.action IS NULL
+                THEN N'No consolidation or optimization opportunities found'
                 ELSE NULL
             END,
         /* Original index definition for validation */
@@ -19251,9 +19648,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END
     FROM #index_analysis AS ia
     LEFT JOIN #partition_stats AS ps
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
+      ON ia.index_hash = ps.index_hash
     LEFT JOIN
     (
         /* Get the partition info for each index */
@@ -19268,15 +19663,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.object_id,
             ps.index_id,
             ps.partition_function_name
-    )
-      AS ps_part
+    ) AS ps_part
       ON  ia.database_id = ps_part.database_id
       AND ia.object_id = ps_part.object_id
       AND ia.index_id = ps_part.index_id
     LEFT JOIN #index_details AS id
-      ON  id.database_id = ia.database_id
-      AND id.object_id = ia.object_id
-      AND id.index_id = ia.index_id
+      ON  id.index_hash = ia.index_hash
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     LEFT JOIN #compression_eligibility AS ce
@@ -19293,7 +19685,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ir.schema_name = ia.schema_name
         AND   ir.table_name = ia.table_name
         AND   ir.index_name = ia.index_name
-        AND   ir.script_type NOT LIKE N'COMPRESSION%'
+        /* Exclude if already has a non-compression entry OR already has a compression script */
+        AND   (ir.script_type NOT LIKE N'COMPRESSION%' OR ir.result_type = N'COMPRESS')
     )
     /* Include only indexes that should be kept */
     AND
@@ -19326,6 +19719,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         total_size_gb,
         indexes_to_disable,
         indexes_to_merge,
+        compressable_indexes,
         avg_indexes_per_table,
         space_saved_gb,
         compression_min_savings_gb,
@@ -19356,6 +19750,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             (
                 CASE
                     WHEN ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+                    THEN 1
+                    ELSE 0
+                END
+            ),
+        compressable_indexes =
+            SUM
+            (
+                CASE
+                    WHEN ce.can_compress = 1
                     THEN 1
                     ELSE 0
                 END
@@ -19451,9 +19854,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     FROM #index_analysis AS ia
     LEFT JOIN #partition_stats AS ps
-      ON  ia.database_id = ps.database_id
-      AND ia.object_id = ps.object_id
-      AND ia.index_id = ps.index_id
+      ON ia.index_hash = ps.index_hash
     LEFT JOIN #compression_eligibility AS ce
       ON  ia.database_id = ce.database_id
       AND ia.object_id = ce.object_id
@@ -19484,6 +19885,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         total_size_gb,
         total_rows,
         indexes_to_merge,
+        compressable_indexes,
         unused_indexes,
         unused_size_gb,
         compression_min_savings_gb,
@@ -19530,6 +19932,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
                 AND   ia.database_id = ps.database_id
             ),
+        compressable_indexes =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #compression_eligibility AS ce
+                WHERE ce.can_compress = 1
+                AND   ce.database_id = ps.database_id
+            ),
         /* Use count from analysis to keep consistent with SUMMARY level */
         unused_indexes =
             (
@@ -19545,9 +19955,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM(subps.total_space_gb)
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 WHERE subia.action = N'DISABLE'
                 AND   subia.database_id = ps.database_id
             ),
@@ -19558,13 +19966,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM(subps.total_space_gb * 0.20)
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 JOIN #compression_eligibility AS subce
-                  ON  subce.database_id = subia.database_id
-                  AND subce.object_id = subia.object_id
-                  AND subce.index_id = subia.index_id
+                  ON subce.index_hash = subia.index_hash
                 WHERE (subia.action IS NULL OR subia.action = N'KEEP')
                 AND   subce.can_compress = 1
                 AND   subia.database_id = ps.database_id
@@ -19576,13 +19980,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM(subps.total_space_gb * 0.60)
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 JOIN #compression_eligibility AS subce
-                  ON  subce.database_id = subia.database_id
-                  AND subce.object_id = subia.object_id
-                  AND subce.index_id = subia.index_id
+                  ON subce.index_hash = subia.index_hash
                 WHERE (subia.action IS NULL OR subia.action = N'KEEP')
                 AND   subce.can_compress = 1
                 AND   subia.database_id = ps.database_id
@@ -19604,13 +20004,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     )
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 LEFT JOIN #compression_eligibility AS subce
-                  ON  subce.database_id = subia.database_id
-                  AND subce.object_id = subia.object_id
-                  AND subce.index_id = subia.index_id
+                  ON subce.index_hash = subia.index_hash
                 WHERE subia.database_id = ps.database_id
             ),
         /* Total optimistic savings */
@@ -19630,13 +20026,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     )
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 LEFT JOIN #compression_eligibility AS subce
-                  ON  subce.database_id = subia.database_id
-                  AND subce.object_id = subia.object_id
-                  AND subce.index_id = subia.index_id
+                  ON subce.index_hash = subia.index_hash
                 WHERE subia.database_id = ps.database_id
             ),
         total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
@@ -19663,15 +20055,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         leaf_delete_count = SUM(os.leaf_delete_count)
     FROM #partition_stats AS ps
     LEFT JOIN #index_details AS id
-      ON  id.database_id = ps.database_id
-      AND id.object_id = ps.object_id
-      AND id.index_id = ps.index_id
+      ON  id.index_hash = ps.index_hash
       AND id.is_included_column = 0
       AND id.key_ordinal > 0
     LEFT JOIN #operational_stats AS os
-      ON  os.database_id = ps.database_id
-      AND os.object_id = ps.object_id
-      AND os.index_id = ps.index_id
+      ON os.index_hash = ps.index_hash
     OUTER APPLY
     (
         /* Get actual row count per table using MAX from clustered index/heap */
@@ -19716,6 +20104,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         total_size_gb,
         total_rows,
         indexes_to_merge,
+        compressable_indexes,
         unused_indexes,
         unused_size_gb,
         compression_min_savings_gb,
@@ -19772,6 +20161,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 AND   ia.schema_id = ps.schema_id
                 AND   ia.object_id = ps.object_id
             ),
+        compressable_indexes =
+            (
+                SELECT
+                    COUNT_BIG(*)
+                FROM #compression_eligibility AS ce
+                WHERE ce.can_compress = 1
+                AND   ce.database_id = ps.database_id
+                AND   ce.schema_id = ps.schema_id
+                AND   ce.object_id = ps.object_id
+            ),
         /* Use count from analysis to keep consistent with SUMMARY level */
         unused_indexes =
             (
@@ -19789,9 +20188,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM(subps.total_space_gb)
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 WHERE subia.action = N'DISABLE'
                 AND   subia.database_id = ps.database_id
                 AND   subia.schema_id = ps.schema_id
@@ -19804,13 +20201,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM(subps.total_space_gb * 0.20)
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 JOIN #compression_eligibility AS subce
-                  ON  subce.database_id = subia.database_id
-                  AND subce.object_id = subia.object_id
-                  AND subce.index_id = subia.index_id
+                  ON subce.index_hash = subia.index_hash
                 WHERE (subia.action IS NULL OR subia.action = N'KEEP')
                 AND   subce.can_compress = 1
                 AND   subia.database_id = ps.database_id
@@ -19824,13 +20217,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM(subps.total_space_gb * 0.60)
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 JOIN #compression_eligibility AS subce
-                  ON  subce.database_id = subia.database_id
-                  AND subce.object_id = subia.object_id
-                  AND subce.index_id = subia.index_id
+                  ON subce.index_hash = subia.index_hash
                 WHERE (subia.action IS NULL OR subia.action = N'KEEP')
                 AND   subce.can_compress = 1
                 AND   subia.database_id = ps.database_id
@@ -19854,13 +20243,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     )
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 LEFT JOIN #compression_eligibility AS subce
-                  ON  subce.database_id = subia.database_id
-                  AND subce.object_id = subia.object_id
-                  AND subce.index_id = subia.index_id
+                  ON subce.index_hash = subia.index_hash
                 WHERE subia.database_id = ps.database_id
                 AND   subia.schema_id = ps.schema_id
                 AND   subia.object_id = ps.object_id
@@ -19882,13 +20267,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     )
                 FROM #partition_stats AS subps
                 JOIN #index_analysis AS subia
-                  ON  subps.database_id = subia.database_id
-                  AND subps.object_id = subia.object_id
-                  AND subps.index_id = subia.index_id
+                  ON subps.index_hash = subia.index_hash
                 LEFT JOIN #compression_eligibility AS subce
-                  ON  subce.database_id = subia.database_id
-                  AND subce.object_id = subia.object_id
-                  AND subce.index_id = subia.index_id
+                  ON subce.index_hash = subia.index_hash
                 WHERE subia.database_id = ps.database_id
                 AND   subia.schema_id = ps.schema_id
                 AND   subia.object_id = ps.object_id
@@ -19917,15 +20298,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         leaf_delete_count = SUM(os.leaf_delete_count)
     FROM #partition_stats AS ps
     LEFT JOIN #index_details AS id
-      ON  id.database_id = ps.database_id
-      AND id.object_id = ps.object_id
-      AND id.index_id = ps.index_id
+      ON  id.index_hash = ps.index_hash
       AND id.is_included_column = 0
       AND id.key_ordinal > 0
     LEFT JOIN #operational_stats AS os
-      ON  os.database_id = ps.database_id
-      AND os.object_id = ps.object_id
-      AND os.index_id = ps.index_id
+      ON os.index_hash = ps.index_hash
     GROUP BY
         ps.database_name,
         ps.database_id,
@@ -20099,574 +20476,549 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating #index_reporting_stats, REPORT', 0, 0) WITH NOWAIT;
     END;
 
+    /*
+    Pre-calculate server uptime for use in daily calculations
+    */
+    DECLARE
+        @server_uptime_days decimal(38,2) =
+        (
+            SELECT TOP (1)
+                irs.server_uptime_days
+            FROM #index_reporting_stats AS irs
+            WHERE irs.summary_level = 'SUMMARY'
+        );
+
+    /*
+    UNION ALL approach: Three separate queries for each summary level
+    This eliminates complex CASE logic and makes each level's reporting clear
+    */
     SELECT
-        /* Basic identification with enhanced naming */
-        level =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'ANALYZED OBJECT DETAILS'
-                ELSE irs.summary_level
-            END,
-
-        /* Server info (for summary) or database name */
-        database_info =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                AND  irs.uptime_warning = 1
-                THEN 'WARNING: Server uptime only ' +
-                     CONVERT(varchar(10), irs.server_uptime_days) +
-                     ' days - usage data may be incomplete!'
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'Server uptime: ' +
-                     CONVERT(varchar(10), irs.server_uptime_days) +
-                     ' days'
-                ELSE irs.database_name
-            END,
-
-        /* Schema and table names (except for summary) */
-        schema_name =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN ISNULL(irs.schema_name, 'ALWAYS TEST THESE RECOMMENDATIONS')
-                WHEN irs.summary_level = 'DATABASE'
-                THEN N'N/A'
-                ELSE irs.schema_name
-            END,
-        table_name =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN ISNULL(irs.table_name, 'IN A NON-PRODUCTION ENVIRONMENT FIRST!')
-                WHEN irs.summary_level = 'DATABASE'
-                THEN N'N/A'
-                ELSE irs.table_name
-            END,
-
-        /* ===== Section 1: Index Counts ===== */
-        /* Tables analyzed (summary only) */
-        tables_analyzed =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN FORMAT(irs.tables_analyzed, 'N0')
-                WHEN irs.summary_level = 'DATABASE'
-                THEN FORMAT
-                     (
-                       (
-                           SELECT
-                               COUNT_BIG(DISTINCT CONCAT(ia.schema_id, N'.', ia.object_id))
-                           FROM #index_analysis AS ia
-                           WHERE ia.database_name = irs.database_name
-                       ),
-                       'N0'
-                     )
-                WHEN irs.summary_level = 'TABLE'
-                THEN FORMAT(1, 'N0') /* Each table row represents 1 analyzed table */
-                ELSE FORMAT(0, 'N0') /* Show 0 instead of NULL */
-            END,
-
-        /* Total indexes */
-        total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
-
-        /* Removable indexes - report consistent values across levels */
-        removable_indexes =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN FORMAT(ISNULL(irs.indexes_to_disable, 0), 'N0') /* Indexes that will be disabled based on analysis */
-                ELSE FORMAT(ISNULL(irs.unused_indexes, 0), 'N0') /* Unused indexes at database/table level */
-            END,
-
-        /* Show mergeable indexes across all levels */
-        mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
-
-        /* Percent of indexes that can be removed */
-        percent_removable =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                AND  irs.index_count > 0
-                THEN FORMAT(100.0 * ISNULL(irs.indexes_to_disable, 0)
-                     / NULLIF(irs.index_count, 0), 'N1') + '%'
-                WHEN irs.index_count > 0
-                THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0)
-                     / NULLIF(irs.index_count, 0), 'N1') + '%'
-                ELSE '0.0%'
-            END,
-
-        /* ===== Section 2: Size and Space Savings with Before/After comparison ===== */
-        /* Current size in GB */
-        current_size_gb = FORMAT(ISNULL(irs.total_size_gb, 0), 'N2'),
-
-        /* Size after cleanup - added this as new metric */
-        size_after_cleanup_gb =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.space_saved_gb, 0), 'N2')
-                ELSE FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.unused_size_gb, 0), 'N2')
-            END,
-
-        /* Size that can be saved through cleanup */
-        space_saved_gb =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN FORMAT(ISNULL(irs.space_saved_gb, 0), 'N2')
-                ELSE FORMAT(ISNULL(irs.unused_size_gb, 0), 'N2')
-            END,
-
-        /* Space reduction percentage - added this as new metric */
-        space_reduction_percent =
-            CASE
-                WHEN ISNULL(irs.total_size_gb, 0) > 0
-                THEN
-                    CASE
-                        WHEN irs.summary_level = 'SUMMARY'
-                        THEN FORMAT((ISNULL(irs.space_saved_gb, 0) /
-                             NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
-                        ELSE FORMAT((ISNULL(irs.unused_size_gb, 0) /
-                             NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
-                    END
-                ELSE '0.0%'
-            END,
-
-        /* ===== Additional Space Savings from Compression ===== */
-        /* Conservative compression estimate (20%) */
-        compression_savings_potential =
-            N'minimum: ' +
-            FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2') +
-            N' GB maximum ' +
-            FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2')
-            + N'GB',
-        compression_savings_potential_total =
-            N'total minimum: ' +
-            FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2') +
-            N' GB total maximum: ' +
-            FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2') +
-            N'GB',
-
-        /* ===== Section for Computed Columns with UDFs ===== */
-        computed_columns_with_udfs =
-            CASE
-                WHEN irs.summary_level = 'TABLE'
-                THEN
-                    CONVERT
+        x.level,
+        x.database_info,
+        x.schema_name,
+        x.table_name,
+        x.tables_analyzed,
+        x.total_indexes,
+        x.removable_indexes,
+        x.mergeable_indexes,
+        x.compressable_indexes,
+        x.percent_removable,
+        x.current_size_gb,
+        x.size_after_cleanup_gb,
+        x.space_saved_gb,
+        x.space_reduction_percent,
+        x.compression_savings_potential,
+        x.compression_savings_potential_total,
+        x.computed_columns_with_udfs,
+        x.check_constraints_with_udfs,
+        x.filtered_indexes_needing_includes,
+        x.total_rows,
+        x.reads_breakdown,
+        x.writes,
+        x.daily_write_ops_saved,
+        x.lock_wait_count,
+        x.daily_lock_waits_saved,
+        x.avg_lock_wait_ms,
+        x.latch_wait_count,
+        x.daily_latch_waits_saved,
+        x.avg_latch_wait_ms
+    FROM
+    (
+        /* ===== SUMMARY LEVEL ===== */
+        SELECT
+            level = 'ANALYZED OBJECT DETAILS',
+            database_info =
+                CASE
+                    WHEN irs.uptime_warning = 1
+                    THEN 'WARNING: Server uptime only ' +
+                         CONVERT(varchar(10), irs.server_uptime_days) +
+                         ' days - usage data may be incomplete!'
+                    ELSE 'Server uptime: ' +
+                         CONVERT(varchar(10), irs.server_uptime_days) +
+                         ' days'
+                END,
+            schema_name = 'ALWAYS TEST THESE RECOMMENDATIONS',
+            table_name = 'IN A NON-PRODUCTION ENVIRONMENT FIRST!',
+            tables_analyzed = FORMAT(irs.tables_analyzed, 'N0'),
+            total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
+            removable_indexes = FORMAT(ISNULL(irs.indexes_to_disable, 0), 'N0'),
+            mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
+            compressable_indexes = FORMAT(ISNULL(irs.compressable_indexes, 0), 'N0'),
+            percent_removable =
+                CASE
+                    WHEN irs.index_count > 0
+                    THEN FORMAT(100.0 * ISNULL(irs.indexes_to_disable, 0) / NULLIF(irs.index_count, 0), 'N1') + '%'
+                    ELSE '0.0%'
+                END,
+            current_size_gb = FORMAT(ISNULL(irs.total_size_gb, 0), 'N2'),
+            size_after_cleanup_gb = FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.space_saved_gb, 0), 'N2'),
+            space_saved_gb = FORMAT(ISNULL(irs.space_saved_gb, 0), 'N2'),
+            space_reduction_percent =
+                CASE
+                    WHEN ISNULL(irs.total_size_gb, 0) > 0
+                    THEN FORMAT((ISNULL(irs.space_saved_gb, 0) / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                    ELSE '0.0%'
+                END,
+            compression_savings_potential =
+                N'minimum: ' +
+                FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2') +
+                N' GB maximum ' +
+                FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2') +
+                N'GB',
+            compression_savings_potential_total =
+                N'total minimum: ' +
+                FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2') +
+                N' GB total maximum: ' +
+                FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2') +
+                N'GB',
+            computed_columns_with_udfs =
+                CONVERT
+                (
+                    nvarchar(20),
                     (
-                        nvarchar(20),
-                        (
-                          SELECT
-                              COUNT_BIG(*)
-                          FROM #computed_columns_analysis AS cca
-                          WHERE cca.database_name = irs.database_name
-                          AND   cca.schema_name = irs.schema_name
-                          AND   cca.table_name = irs.table_name
-                          AND   cca.contains_udf = 1
-                        )
+                        SELECT
+                            COUNT_BIG(*)
+                        FROM #computed_columns_analysis AS cca
+                        WHERE cca.contains_udf = 1
                     )
-                WHEN irs.summary_level = 'DATABASE'
-                THEN
-                    CONVERT
+                ),
+            check_constraints_with_udfs =
+                CONVERT
+                (
+                    nvarchar(20),
                     (
-                        nvarchar(20),
-                        (
-                          SELECT
-                              COUNT_BIG(*)
-                          FROM #computed_columns_analysis AS cca
-                          WHERE cca.database_name = irs.database_name
-                          AND   cca.contains_udf = 1
-                        )
+                        SELECT
+                            COUNT_BIG(*)
+                        FROM #check_constraints_analysis AS cca
+                        WHERE cca.contains_udf = 1
                     )
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN
-                    CONVERT
+                ),
+            filtered_indexes_needing_includes =
+                CONVERT
+                (
+                    nvarchar(20),
                     (
-                        nvarchar(20),
-                        (
-                          SELECT
-                              COUNT_BIG(*)
-                          FROM #computed_columns_analysis AS cca
-                          WHERE cca.contains_udf = 1
-                        )
+                        SELECT
+                            COUNT_BIG(*)
+                        FROM #filtered_index_columns_analysis AS fica
+                        WHERE fica.should_include_filter_columns = 1
                     )
-                ELSE '0'
-            END,
+                ),
+            total_rows = FORMAT(ISNULL(irs.total_rows, 0), 'N0'),
+            reads_breakdown = 'N/A',
+            writes = 'N/A',
+            daily_write_ops_saved = 'N/A',
+            lock_wait_count = 'N/A',
+            daily_lock_waits_saved = 'N/A',
+            avg_lock_wait_ms = 'N/A',
+            latch_wait_count = 'N/A',
+            daily_latch_waits_saved = 'N/A',
+            avg_latch_wait_ms = 'N/A',
+            /* Hidden sort columns */
+            sort_database = irs.database_name,
+            sort_level = 0,
+            sort_unused_size = 0.0,
+            sort_total_size = 0.0
+        FROM #index_reporting_stats AS irs
+        WHERE irs.summary_level = 'SUMMARY'
 
-        /* ===== Section for Check Constraints with UDFs ===== */
-        check_constraints_with_udfs =
-            CASE
-                WHEN irs.summary_level = 'TABLE'
-                THEN
-                    CONVERT
-                    (
-                        nvarchar(20),
-                        (
-                          SELECT
-                              COUNT_BIG(*)
-                          FROM #check_constraints_analysis AS cca
-                          WHERE cca.database_name = irs.database_name
-                          AND   cca.schema_name = irs.schema_name
-                          AND   cca.table_name = irs.table_name
-                          AND   cca.contains_udf = 1
-                        )
-                    )
-                WHEN irs.summary_level = 'DATABASE'
-                THEN
-                    CONVERT
-                    (
-                        nvarchar(20),
-                        (
-                          SELECT
-                              COUNT_BIG(*)
-                          FROM #check_constraints_analysis AS cca
-                          WHERE cca.database_name = irs.database_name
-                          AND   cca.contains_udf = 1
-                        )
-                    )
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN
-                    CONVERT
-                    (
-                        nvarchar(20),
-                        (
-                          SELECT
-                              COUNT_BIG(*)
-                          FROM #check_constraints_analysis AS cca
-                          WHERE cca.contains_udf = 1
-                        )
-                    )
-                ELSE '0'
-            END,
+        UNION ALL
 
-        /* ===== Section for Filtered Indexes Analysis ===== */
-        filtered_indexes_needing_includes =
-            CASE
-                WHEN irs.summary_level = 'TABLE'
-                THEN
-                    CONVERT
+        /* ===== DATABASE LEVEL ===== */
+        SELECT
+            level = 'DATABASE',
+            database_info = irs.database_name,
+            schema_name = N'N/A',
+            table_name = N'N/A',
+            tables_analyzed =
+                FORMAT
+                (
                     (
-                        nvarchar(20),
-                        (
-                          SELECT
-                              COUNT_BIG(*)
-                          FROM #filtered_index_columns_analysis AS fica
-                          WHERE fica.database_name = irs.database_name
-                          AND   fica.schema_name = irs.schema_name
-                          AND   fica.table_name = irs.table_name
-                          AND   fica.should_include_filter_columns = 1
-                        )
-                    )
-                WHEN irs.summary_level = 'DATABASE'
-                THEN
-                    CONVERT
+                        SELECT
+                            COUNT_BIG(DISTINCT CONCAT(ia.schema_id, N'.', ia.object_id))
+                        FROM #index_analysis AS ia
+                        WHERE ia.database_name = irs.database_name
+                    ),
+                    'N0'
+                ),
+            total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
+            removable_indexes = FORMAT(ISNULL(irs.unused_indexes, 0), 'N0'),
+            mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
+            compressable_indexes = FORMAT(ISNULL(irs.compressable_indexes, 0), 'N0'),
+            percent_removable =
+                CASE
+                    WHEN irs.index_count > 0
+                    THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0) / NULLIF(irs.index_count, 0), 'N1') + '%'
+                    ELSE '0.0%'
+                END,
+            current_size_gb = FORMAT(ISNULL(irs.total_size_gb, 0), 'N2'),
+            size_after_cleanup_gb = FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.unused_size_gb, 0), 'N2'),
+            space_saved_gb = FORMAT(ISNULL(irs.unused_size_gb, 0), 'N2'),
+            space_reduction_percent =
+                CASE
+                    WHEN ISNULL(irs.total_size_gb, 0) > 0
+                    THEN FORMAT((ISNULL(irs.unused_size_gb, 0) / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                    ELSE '0.0%'
+                END,
+            compression_savings_potential =
+                N'minimum: ' +
+                FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2') +
+                N' GB maximum ' +
+                FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2') +
+                N'GB',
+            compression_savings_potential_total =
+                N'total minimum: ' +
+                FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2') +
+                N' GB total maximum: ' +
+                FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2') +
+                N'GB',
+            computed_columns_with_udfs =
+                CONVERT
+                (
+                    nvarchar(20),
                     (
-                        nvarchar(20),
-                        (
-                          SELECT
-                              COUNT_BIG(*)
-                          FROM #filtered_index_columns_analysis AS fica
-                          WHERE fica.database_name = irs.database_name
-                          AND   fica.should_include_filter_columns = 1
-                        )
+                        SELECT
+                            COUNT_BIG(*)
+                        FROM #computed_columns_analysis AS cca
+                        WHERE cca.database_name = irs.database_name
+                        AND   cca.contains_udf = 1
                     )
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN
-                    CONVERT
+                ),
+            check_constraints_with_udfs =
+                CONVERT
+                (
+                    nvarchar(20),
                     (
-                        nvarchar(20),
-                        (
-                          SELECT
-                              COUNT_BIG(*)
-                          FROM #filtered_index_columns_analysis AS fica
-                          WHERE fica.should_include_filter_columns = 1
-                        )
+                        SELECT
+                            COUNT_BIG(*)
+                        FROM #check_constraints_analysis AS cca
+                        WHERE cca.database_name = irs.database_name
+                        AND   cca.contains_udf = 1
                     )
-                ELSE '0'
-            END,
+                ),
+            filtered_indexes_needing_includes =
+                CONVERT
+                (
+                    nvarchar(20),
+                    (
+                        SELECT
+                            COUNT_BIG(*)
+                        FROM #filtered_index_columns_analysis AS fica
+                        WHERE fica.database_name = irs.database_name
+                        AND   fica.should_include_filter_columns = 1
+                    )
+                ),
+            total_rows = FORMAT(ISNULL(irs.total_rows, 0), 'N0'),
+            reads_breakdown =
+                FORMAT(ISNULL(irs.total_reads, 0), 'N0') +
+                ' (' +
+                FORMAT(ISNULL(irs.user_seeks, 0), 'N0') +
+                ' seeks, ' +
+                FORMAT(ISNULL(irs.user_scans, 0), 'N0') +
+                ' scans, ' +
+                FORMAT(ISNULL(irs.user_lookups, 0), 'N0') +
+                ' lookups)',
+            writes = FORMAT(ISNULL(irs.total_writes, 0), 'N0'),
+            daily_write_ops_saved = 'N/A',
+            lock_wait_count =
+                FORMAT(ISNULL(irs.row_lock_wait_count, 0) +
+                       ISNULL(irs.page_lock_wait_count, 0), 'N0'),
+            daily_lock_waits_saved = 'N/A',
+            avg_lock_wait_ms =
+                CASE
+                    WHEN (ISNULL(irs.row_lock_wait_count, 0) + ISNULL(irs.page_lock_wait_count, 0)) > 0
+                    THEN FORMAT(1.0 * (ISNULL(irs.row_lock_wait_in_ms, 0) +
+                         ISNULL(irs.page_lock_wait_in_ms, 0)) /
+                         NULLIF(ISNULL(irs.row_lock_wait_count, 0) +
+                         ISNULL(irs.page_lock_wait_count, 0), 0), 'N2')
+                    ELSE '0'
+                END,
+            latch_wait_count =
+                FORMAT(ISNULL(irs.page_latch_wait_count, 0) +
+                       ISNULL(irs.page_io_latch_wait_count, 0), 'N0'),
+            daily_latch_waits_saved = 'N/A',
+            avg_latch_wait_ms =
+                CASE
+                    WHEN (ISNULL(irs.page_latch_wait_count, 0) + ISNULL(irs.page_io_latch_wait_count, 0)) > 0
+                    THEN FORMAT(1.0 * (ISNULL(irs.page_latch_wait_in_ms, 0) +
+                         ISNULL(irs.page_io_latch_wait_in_ms, 0)) /
+                         NULLIF(ISNULL(irs.page_latch_wait_count, 0) +
+                         ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
+                    ELSE '0'
+                END,
+            /* Hidden sort columns */
+            sort_database = irs.database_name,
+            sort_level = 1,
+            sort_unused_size = 0.0,
+            sort_total_size = 0.0
+        FROM #index_reporting_stats AS irs
+        WHERE irs.summary_level = 'DATABASE'
 
-        /* ===== Section 3: Table and Usage Statistics ===== */
-        /* Row count */
-        total_rows = FORMAT(ISNULL(irs.total_rows, 0), 'N0'),
+        UNION ALL
 
-        /* Total reads - combined total and breakdown */
-        reads_breakdown =
-            CASE
-                WHEN irs.summary_level <> 'SUMMARY'
-                THEN FORMAT(ISNULL(irs.total_reads, 0), 'N0') +
-                     ' (' +
-                     FORMAT(ISNULL(irs.user_seeks, 0), 'N0') +
-                     ' seeks, ' +
-                     FORMAT(ISNULL(irs.user_scans, 0), 'N0') +
-                     ' scans, ' +
-                     FORMAT(ISNULL(irs.user_lookups, 0), 'N0') +
-                     ' lookups)'
-                ELSE 'N/A'
-            END,
-
-        /* Total writes */
-        writes =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'N/A'
-                WHEN irs.summary_level <> 'SUMMARY'
-                THEN FORMAT(ISNULL(irs.total_writes, 0), 'N0')
-                ELSE '0'
-            END,
-
-        /* Write operations saved - added as new metric */
-        daily_write_ops_saved =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
-                WHEN irs.summary_level = 'DATABASE'
-                THEN 'N/A'
-                WHEN irs.summary_level = 'TABLE'
-                THEN
-                    /* For TABLE rows, calculate estimated savings */
-                    CASE
-                        WHEN ISNULL(irs.unused_indexes, 0) > 0
-                        THEN FORMAT
+        /* ===== TABLE LEVEL ===== */
+        SELECT
+            level = 'TABLE',
+            database_info = irs.database_name,
+            schema_name = irs.schema_name,
+            table_name = irs.table_name,
+            tables_analyzed = FORMAT(1, 'N0'),
+            total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
+            removable_indexes = FORMAT(ISNULL(irs.unused_indexes, 0), 'N0'),
+            mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
+            compressable_indexes = FORMAT(ISNULL(irs.compressable_indexes, 0), 'N0'),
+            percent_removable =
+                CASE
+                    WHEN irs.index_count > 0
+                    THEN FORMAT(100.0 * ISNULL(irs.unused_indexes, 0) / NULLIF(irs.index_count, 0), 'N1') + '%'
+                    ELSE '0.0%'
+                END,
+            current_size_gb = FORMAT(ISNULL(irs.total_size_gb, 0), 'N2'),
+            size_after_cleanup_gb = FORMAT(ISNULL(irs.total_size_gb, 0) - ISNULL(irs.unused_size_gb, 0), 'N2'),
+            space_saved_gb = FORMAT(ISNULL(irs.unused_size_gb, 0), 'N2'),
+            space_reduction_percent =
+                CASE
+                    WHEN ISNULL(irs.total_size_gb, 0) > 0
+                    THEN FORMAT((ISNULL(irs.unused_size_gb, 0) / NULLIF(irs.total_size_gb, 0)) * 100, 'N1') + '%'
+                    ELSE '0.0%'
+                END,
+            compression_savings_potential =
+                N'minimum: ' +
+                FORMAT(ISNULL(irs.compression_min_savings_gb, 0), 'N2') +
+                N' GB maximum ' +
+                FORMAT(ISNULL(irs.compression_max_savings_gb, 0), 'N2') +
+                N'GB',
+            compression_savings_potential_total =
+                N'total minimum: ' +
+                FORMAT(ISNULL(irs.total_min_savings_gb, 0), 'N2') +
+                N' GB total maximum: ' +
+                FORMAT(ISNULL(irs.total_max_savings_gb, 0), 'N2') +
+                N'GB',
+            computed_columns_with_udfs =
+                CONVERT
+                (
+                    nvarchar(20),
+                    (
+                        SELECT
+                            COUNT_BIG(*)
+                        FROM #computed_columns_analysis AS cca
+                        WHERE cca.database_name = irs.database_name
+                        AND   cca.schema_name = irs.schema_name
+                        AND   cca.table_name = irs.table_name
+                        AND   cca.contains_udf = 1
+                    )
+                ),
+            check_constraints_with_udfs =
+                CONVERT
+                (
+                    nvarchar(20),
+                    (
+                        SELECT
+                            COUNT_BIG(*)
+                        FROM #check_constraints_analysis AS cca
+                        WHERE cca.database_name = irs.database_name
+                        AND   cca.schema_name = irs.schema_name
+                        AND   cca.table_name = irs.table_name
+                        AND   cca.contains_udf = 1
+                    )
+                ),
+            filtered_indexes_needing_includes =
+                CONVERT
+                (
+                    nvarchar(20),
+                    (
+                        SELECT
+                            COUNT_BIG(*)
+                        FROM #filtered_index_columns_analysis AS fica
+                        WHERE fica.database_name = irs.database_name
+                        AND   fica.schema_name = irs.schema_name
+                        AND   fica.table_name = irs.table_name
+                        AND   fica.should_include_filter_columns = 1
+                    )
+                ),
+            total_rows = FORMAT(ISNULL(irs.total_rows, 0), 'N0'),
+            reads_breakdown =
+                FORMAT(ISNULL(irs.total_reads, 0), 'N0') +
+                ' (' +
+                FORMAT(ISNULL(irs.user_seeks, 0), 'N0') +
+                ' seeks, ' +
+                FORMAT(ISNULL(irs.user_scans, 0), 'N0') +
+                ' scans, ' +
+                FORMAT(ISNULL(irs.user_lookups, 0), 'N0') +
+                ' lookups)',
+            writes = FORMAT(ISNULL(irs.total_writes, 0), 'N0'),
+            daily_write_ops_saved =
+                CASE
+                    WHEN ISNULL(irs.unused_indexes, 0) > 0
+                    THEN FORMAT
+                         (
+                             CONVERT
                              (
-                                 CONVERT
+                                 decimal(38,2),
+                                 ISNULL
                                  (
-                                     decimal(38,2),
-                                     ISNULL
+                                     irs.user_updates /
+                                     NULLIF
                                      (
-                                         irs.user_updates /
+                                         CONVERT
+                                         (
+                                             decimal(38,2),
+                                             @server_uptime_days
+                                         ),
+                                         0
+                                     ) *
+                                     (
+                                         ISNULL
+                                         (
+                                             irs.unused_indexes,
+                                             0
+                                         ) /
                                          NULLIF
                                          (
                                              CONVERT
                                              (
                                                  decimal(38,2),
-                                                 (
-                                                   SELECT TOP (1)
-                                                       irs2.server_uptime_days
-                                                   FROM #index_reporting_stats AS irs2
-                                                   WHERE irs2.summary_level = 'SUMMARY'
-                                                 )
+                                                 irs.index_count
                                              ),
                                              0
-                                         ) *
+                                         )
+                                     ),
+                                     0
+                                 )
+                             ),
+                             'N0'
+                         )
+                    ELSE '0'
+                END,
+            lock_wait_count =
+                FORMAT
+                (
+                    ISNULL(irs.row_lock_wait_count,  0) +
+                    ISNULL(irs.page_lock_wait_count, 0),
+                    'N0'
+                ),
+            daily_lock_waits_saved =
+                CASE
+                    WHEN ISNULL(irs.unused_indexes, 0) > 0
+                    THEN FORMAT
+                         (
+                             CONVERT
+                             (
+                                 decimal(38,2),
+                                 ISNULL
+                                 (
+                                     (irs.row_lock_wait_count + irs.page_lock_wait_count) /
+                                     NULLIF
+                                     (
+                                         CONVERT
                                          (
-                                           ISNULL
-                                           (
-                                               irs.unused_indexes,
-                                               0
-                                           ) /
-                                           NULLIF
-                                           (
-                                               CONVERT
-                                               (
-                                                   decimal(38,2),
-                                                   irs.index_count
-                                               ),
-                                               0
-                                           )
+                                             decimal(38,2),
+                                             @server_uptime_days
                                          ),
                                          0
-                                     )
-                                 ),
-                                 'N0'
-                             )
-                        /* Rows without unused indexes have no savings */
-                        ELSE '0'
-                    END
-                ELSE '0'
-            END,
-
-        /* ===== Section 4: Consolidated Performance Metrics ===== */
-        /* Total count of lock waits (row + page) */
-        lock_wait_count =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'N/A'
-                WHEN irs.summary_level <> 'SUMMARY'
-                THEN FORMAT(ISNULL(irs.row_lock_wait_count, 0) +
-                     ISNULL(irs.page_lock_wait_count, 0), 'N0')
-                ELSE '0'
-            END,
-
-        /* Lock waits saved - new column */
-        daily_lock_waits_saved =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
-                WHEN irs.summary_level = 'DATABASE'
-                THEN 'N/A'
-                WHEN irs.summary_level = 'TABLE'
-                THEN
-                    /* For TABLE rows, calculate estimated savings */
-                    CASE
-                        WHEN ISNULL(irs.unused_indexes, 0) > 0
-                        THEN
-                            FORMAT
-                            (
-                                CONVERT
-                                (
-                                    decimal(38,2),
-                                    ISNULL
-                                    (
-                                        (irs.row_lock_wait_count + irs.page_lock_wait_count) /
-                                        NULLIF
-                                        (
-                                            CONVERT
-                                            (
-                                                decimal(38,2),
-                                                (
-                                                  SELECT TOP (1)
-                                                      irs2.server_uptime_days
-                                                  FROM #index_reporting_stats AS irs2
-                                                  WHERE irs2.summary_level = 'SUMMARY'
-                                                )
-                                            ),
-                                            0
-                                        ) *
-                                        (
-                                          ISNULL
-                                          (
-                                              irs.unused_indexes,
-                                              0
-                                          ) /
-                                          NULLIF
-                                          (
-                                              CONVERT
-                                              (
-                                                  decimal(38,2),
-                                                  irs.index_count
-                                              ),
-                                              0
-                                          )
-                                        ),
-                                        0
-                                    )
-                                ),
-                                'N0'
-                            )
-                        /* Rows without unused indexes have no savings */
-                        ELSE '0'
-                    END
-                ELSE '0'
-            END,
-
-        /* Average lock wait time in ms */
-        avg_lock_wait_ms =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'N/A'
-                WHEN irs.summary_level <> 'SUMMARY'
-                AND (ISNULL(irs.row_lock_wait_count, 0) +
-                     ISNULL(irs.page_lock_wait_count, 0)) > 0
-                THEN FORMAT(1.0 * (ISNULL(irs.row_lock_wait_in_ms, 0) +
-                     ISNULL(irs.page_lock_wait_in_ms, 0)) /
-                     NULLIF(ISNULL(irs.row_lock_wait_count, 0) +
-                     ISNULL(irs.page_lock_wait_count, 0), 0), 'N2')
-                ELSE '0'
-            END,
-
-        /* Total count of latch waits (page + io) - new column */
-        latch_wait_count =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'N/A'
-                WHEN irs.summary_level <> 'SUMMARY'
-                THEN FORMAT(ISNULL(irs.page_latch_wait_count, 0) +
-                     ISNULL(irs.page_io_latch_wait_count, 0), 'N0')
-                ELSE '0'
-            END,
-
-        /* Latch waits saved - new column */
-        daily_latch_waits_saved =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'N/A' /* For SUMMARY row, use N/A to be consistent with other metrics */
-                WHEN irs.summary_level = 'DATABASE'
-                THEN 'N/A'
-                WHEN irs.summary_level = 'TABLE'
-                THEN
-                    /* For TABLE rows, calculate estimated savings */
-                    CASE
-                        WHEN ISNULL(irs.unused_indexes, 0) > 0
-                        THEN
-                            FORMAT
-                            (
-                                CONVERT
-                                (
-                                    decimal(38,2),
-                                    ISNULL
-                                    (
-                                        (irs.page_latch_wait_count + irs.page_io_latch_wait_count) /
-                                        NULLIF
-                                        (
-                                            CONVERT
-                                            (
-                                                decimal(38,2),
-                                                (
-                                                  SELECT TOP (1)
-                                                      irs2.server_uptime_days
-                                                  FROM #index_reporting_stats AS irs2
-                                                  WHERE irs2.summary_level = 'SUMMARY'
-                                                )
-                                            ),
-                                            0
-                                        ) *
-                                        (
-                                            ISNULL
-                                            (
-                                                irs.unused_indexes,
-                                                0
-                                            ) /
-                                            NULLIF
-                                            (
-                                                CONVERT
-                                                (
-                                                    decimal(38,2),
-                                                    irs.index_count
-                                                ),
-                                                0
-                                            )
-                                        ),
-                                        0
-                                    )
-                                ),
-                                'N0'
-                            )
-                        /* Rows without unused indexes have no savings */
-                        ELSE '0'
-                    END
-                ELSE '0'
-            END,
-
-        /* Combined latch wait time in ms */
-        avg_latch_wait_ms =
-            CASE
-                WHEN irs.summary_level = 'SUMMARY'
-                THEN 'N/A'
-                WHEN irs.summary_level <> 'SUMMARY'
-                AND (ISNULL(irs.page_latch_wait_count, 0) +
-                     ISNULL(irs.page_io_latch_wait_count, 0)) > 0
-                THEN FORMAT(1.0 * (ISNULL(irs.page_latch_wait_in_ms, 0) +
-                     ISNULL(irs.page_io_latch_wait_in_ms, 0)) /
-                     NULLIF(ISNULL(irs.page_latch_wait_count, 0) +
-                     ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
-                ELSE '0'
-            END
-    FROM #index_reporting_stats AS irs
+                                     ) *
+                                     (
+                                         ISNULL
+                                         (
+                                             irs.unused_indexes,
+                                             0
+                                         ) /
+                                         NULLIF
+                                         (
+                                             CONVERT
+                                             (
+                                                 decimal(38,2),
+                                                 irs.index_count
+                                             ),
+                                             0
+                                         )
+                                     ),
+                                     0
+                                 )
+                             ),
+                             'N0'
+                         )
+                    ELSE '0'
+                END,
+            avg_lock_wait_ms =
+                CASE
+                    WHEN (ISNULL(irs.row_lock_wait_count, 0) + ISNULL(irs.page_lock_wait_count, 0)) > 0
+                    THEN FORMAT(1.0 * (ISNULL(irs.row_lock_wait_in_ms, 0) +
+                         ISNULL(irs.page_lock_wait_in_ms, 0)) /
+                         NULLIF(ISNULL(irs.row_lock_wait_count, 0) +
+                         ISNULL(irs.page_lock_wait_count, 0), 0), 'N2')
+                    ELSE '0'
+                END,
+            latch_wait_count =
+                FORMAT(ISNULL(irs.page_latch_wait_count, 0) +
+                       ISNULL(irs.page_io_latch_wait_count, 0), 'N0'),
+            daily_latch_waits_saved =
+                CASE
+                    WHEN ISNULL(irs.unused_indexes, 0) > 0
+                    THEN FORMAT
+                         (
+                             CONVERT
+                             (
+                                 decimal(38,2),
+                                 ISNULL
+                                 (
+                                     (irs.page_latch_wait_count + irs.page_io_latch_wait_count) /
+                                     NULLIF
+                                     (
+                                         CONVERT
+                                         (
+                                             decimal(38,2),
+                                             @server_uptime_days
+                                         ),
+                                         0
+                                     ) *
+                                     (
+                                         ISNULL
+                                         (
+                                             irs.unused_indexes,
+                                             0
+                                         ) /
+                                         NULLIF
+                                         (
+                                             CONVERT
+                                             (
+                                                 decimal(38,2),
+                                                 irs.index_count
+                                             ),
+                                             0
+                                         )
+                                     ),
+                                     0
+                                 )
+                             ),
+                             'N0'
+                         )
+                    ELSE '0'
+                END,
+            avg_latch_wait_ms =
+                CASE
+                    WHEN (ISNULL(irs.page_latch_wait_count, 0) + ISNULL(irs.page_io_latch_wait_count, 0)) > 0
+                    THEN FORMAT(1.0 * (ISNULL(irs.page_latch_wait_in_ms, 0) +
+                         ISNULL(irs.page_io_latch_wait_in_ms, 0)) /
+                         NULLIF(ISNULL(irs.page_latch_wait_count, 0) +
+                         ISNULL(irs.page_io_latch_wait_count, 0), 0), 'N2')
+                    ELSE '0'
+                END,
+            /* Hidden sort columns */
+            sort_database = irs.database_name,
+            sort_level = 2,
+            sort_unused_size = ISNULL(irs.unused_size_gb, 0),
+            sort_total_size = ISNULL(irs.total_size_gb, 0)
+        FROM #index_reporting_stats AS irs
+        WHERE irs.summary_level = 'TABLE'
+    ) AS x
     ORDER BY
-        /* Order by database name */
-        irs.database_name,
-        /* Then order by level - summary first */
-        CASE
-            WHEN irs.summary_level = 'SUMMARY' THEN 0
-            WHEN irs.summary_level = 'DATABASE' THEN 1
-            WHEN irs.summary_level = 'TABLE' THEN 2
-            ELSE 3
-        END,
-        /* For tables, sort by potential savings and size */
-        CASE
-            WHEN irs.summary_level = 'TABLE' THEN irs.unused_size_gb
-            ELSE 0
-        END DESC,
-        CASE
-            WHEN irs.summary_level = 'TABLE' THEN irs.total_size_gb
-            ELSE 0
-        END DESC,
-        /* Then by schema, table */
-        irs.schema_name,
-        irs.table_name
+        x.sort_database,
+        x.sort_level,
+        x.sort_unused_size DESC,
+        x.sort_total_size DESC,
+        x.schema_name,
+        x.table_name
     OPTION(RECOMPILE);
 
     /* Output message for dedupe_only mode */
@@ -20804,6 +21156,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 END TRY
 BEGIN CATCH
+    IF @@TRANCOUNT > 0
+    BEGIN
+        ROLLBACK;
+    END;
+
     THROW;
 END CATCH;
 END; /*Final End*/
@@ -20834,7 +21191,7 @@ GO
 ██║  ██║╚██████╔╝██║ ╚████║   ██║   ███████╗██║  ██║
 ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -20883,8 +21240,8 @@ SET DATEFORMAT MDY;
 
 BEGIN
     SELECT
-        @version = '2.11',
-        @version_date = '20251114';
+        @version = '3.0',
+        @version_date = '20260115';
 
     IF @help = 1
     BEGIN
@@ -20961,7 +21318,7 @@ BEGIN
         RAISERROR('
     MIT License
 
-    Copyright 2025 Darling Data, LLC
+    Copyright 2026 Darling Data, LLC
 
     https://www.erikdarling.com/
 
@@ -21573,7 +21930,7 @@ GO
 ╚██████╗██║  ██║███████╗╚██████╗██║  ██╗
  ╚═════╝╚═╝  ╚═╝╚══════╝ ╚═════╝╚═╝  ╚═╝
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -21610,12 +21967,13 @@ BEGIN
     SET NOCOUNT ON;
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
-    /*
-    Set version information
-    */
+    BEGIN TRY
+        /*
+        Set version information
+        */
     SELECT
-        @version = N'1.11',
-        @version_date = N'20251114';
+        @version = N'2.0',
+        @version_date = N'20260115';
 
     /*
     Help section, for help.
@@ -21693,7 +22051,7 @@ BEGIN
         RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -21834,12 +22192,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
-        @autogrow_summary nvarchar(max) = N'',
         @has_tables bit = 0,
         /* Determine total waits, uptime, and significant waits */
         @total_waits bigint,
         @uptime_ms bigint,
-        @significant_wait_threshold_pct decimal(5, 2) = 0.5, /* Only waits above 0.5% */
+        @significant_wait_threshold_pct decimal(5, 2) = 10.0, /* Only waits above 10% */
         @significant_wait_threshold_avg decimal(10, 2) = 10.0, /* Or avg wait time > 10ms */
         /* Threshold settings for stolen memory alert */
         @buffer_pool_size_gb decimal(38, 2),
@@ -21852,8 +22209,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sos_scheduler_yield_ms bigint,
         @signal_wait_ratio decimal(10, 2),
         @sos_scheduler_yield_pct_of_uptime decimal(10, 2),
-        /* I/O stalls variables */
-        @io_stall_summary nvarchar(1000),
         /* First check what columns exist in sys.databases to handle version differences */
         @has_is_ledger bit = 0,
         @has_is_accelerated_database_recovery bit = 0,
@@ -21865,7 +22220,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* TempDB pagelatch contention variables */
         @pagelatch_wait_hours decimal(20,2),
         @server_uptime_hours decimal(20,2),
-        @pagelatch_ratio_to_uptime decimal(10,4);
+        @pagelatch_ratio_to_uptime decimal(10,4),
+        /* Memory health history variables (SQL Server 2025+) */
+        @health_history_exists bit =
+            CASE
+                WHEN OBJECT_ID('sys.dm_os_memory_health_history') IS NOT NULL
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
+            END,
+        @health_history_count integer = 0;
 
 
     /* Check for VIEW SERVER STATE permission */
@@ -22130,6 +22493,69 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         category nvarchar(50) NOT NULL
     );
 
+    /* Create temp table for benign waits to filter out */
+    CREATE TABLE
+        #benign_waits
+    (
+        wait_type nvarchar(60) PRIMARY KEY CLUSTERED
+    );
+
+    /* Populate benign waits table */
+    INSERT INTO
+        #benign_waits
+    (
+        wait_type
+    )
+    VALUES
+        (N'BROKER_TASK_STOP'),
+        (N'BROKER_TO_FLUSH'),
+        (N'BROKER_TRANSMITTER'),
+        (N'CHECKPOINT_QUEUE'),
+        (N'CLR_AUTO_EVENT'),
+        (N'CLR_MANUAL_EVENT'),
+        (N'DIRTY_PAGE_POLL'),
+        (N'DISPATCHER_QUEUE_SEMAPHORE'),
+        (N'FSAGENT'),
+        (N'FT_IFTS_SCHEDULER_IDLE_WAIT'),
+        (N'FT_IFTSHC_MUTEX'),
+        (N'HADR_FILESTREAM_IOMGR_IOCOMPLETION'),
+        (N'HADR_LOGCAPTURE_WAIT'),
+        (N'HADR_TIMER_TASK'),
+        (N'HADR_WORK_QUEUE'),
+        (N'LAZYWRITER_SLEEP'),
+        (N'LOGMGR_QUEUE'),
+        (N'MEMORY_ALLOCATION_EXT'),
+        (N'PREEMPTIVE_XE_GETTARGETSTATE'),
+        (N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP'),
+        (N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP'),
+        (N'REQUEST_FOR_DEADLOCK_SEARCH'),
+        (N'RESOURCE_QUEUE'),
+        (N'SERVER_IDLE_CHECK'),
+        (N'SLEEP_DBSTARTUP'),
+        (N'SLEEP_DCOMSTARTUP'),
+        (N'SLEEP_MASTERDBREADY'),
+        (N'SLEEP_MASTERMDREADY'),
+        (N'SLEEP_MASTERUPGRADED'),
+        (N'SLEEP_MSDBSTARTUP'),
+        (N'SLEEP_SYSTEMTASK'),
+        (N'SLEEP_TEMPDBSTARTUP'),
+        (N'SNI_HTTP_ACCEPT'),
+        (N'SP_SERVER_DIAGNOSTICS_SLEEP'),
+        (N'SQLTRACE_BUFFER_FLUSH'),
+        (N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP'),
+        (N'SQLTRACE_WAIT_ENTRIES'),
+        (N'STARTUP_DEPENDENCY_MANAGER'),
+        (N'WAIT_FOR_RESULTS'),
+        (N'WAITFOR'),
+        (N'WAITFOR_TASKSHUTDOWN'),
+        (N'WAIT_XTP_HOST_WAIT'),
+        (N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG'),
+        (N'WAIT_XTP_CKPT_CLOSE'),
+        (N'XE_DISPATCHER_JOIN'),
+        (N'XE_DISPATCHER_WAIT'),
+        (N'XE_LIVE_TARGET_TVF'),
+        (N'XE_TIMER_EVENT');
+
     /* Create temp table for database I/O stalls */
     CREATE TABLE
         #io_stalls_by_db
@@ -22370,9 +22796,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             COUNT_BIG(*) > 0; /* Only if there are offline schedulers */
     END;
 
-    /* Check for forced grants - requires VIEW SERVER STATE permission */
+    /* Check for forced grants and memory grant timeouts - requires VIEW SERVER STATE permission */
     IF @has_view_server_state = 1
     BEGIN
+        /* Check for forced grants */
         INSERT INTO
             #results
         (
@@ -22398,11 +22825,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE ders.forced_grant_count > 0
         HAVING
             MAX(ders.forced_grant_count) > 0; /* Only if there are actually forced grants */
-    END;
 
-    /* Check for memory grant timeouts - requires VIEW SERVER STATE permission */
-    IF @has_view_server_state = 1
-    BEGIN
+        /* Check for memory grant timeouts */
         INSERT INTO
             #results
         (
@@ -22521,15 +22945,26 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         category = N'Concurrency',
         finding = N'High Number of Deadlocks',
         details =
-            N'Server is averaging ' +
-            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value /
-              NULLIF(DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()), 0))) +
-            N' deadlocks per day since startup (' +
-            CONVERT(nvarchar(20), p.cntr_value) +
-            ' total deadlocks over ' +
-            CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME())) +
-            N' days). ' +
-            N'High deadlock rates indicate concurrency issues that should be investigated.',
+            CASE
+                WHEN DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()) >= 1
+                THEN
+                    N'Server is averaging ' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(10, 2), 1.0 * p.cntr_value /
+                      DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME()))) +
+                    N' deadlocks per day since startup (' +
+                    CONVERT(nvarchar(20), p.cntr_value) +
+                    N' total deadlocks over ' +
+                    CONVERT(nvarchar(10), DATEDIFF(DAY, osi.sqlserver_start_time, SYSDATETIME())) +
+                    N' days). ' +
+                    N'High deadlock rates indicate concurrency issues that should be investigated.'
+                ELSE
+                    N'Server has recorded ' +
+                    CONVERT(nvarchar(20), p.cntr_value) +
+                    N' deadlocks in ' +
+                    CONVERT(nvarchar(10), DATEDIFF(HOUR, osi.sqlserver_start_time, SYSDATETIME())) +
+                    N' hours since startup. ' +
+                    N'High deadlock rates indicate concurrency issues that should be investigated.'
+            END,
         url = N'https://erikdarling.com/sp_PerfCheck#Deadlocks'
     FROM sys.dm_os_performance_counters AS p
     CROSS JOIN sys.dm_os_sys_info AS osi
@@ -22579,7 +23014,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         finding = N'Large Security Token Cache',
         details =
             N'TokenAndPermUserStore cache size is ' +
-            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0))) +
+            CONVERT(nvarchar(20), CONVERT(decimal(10, 2), ISNULL(domc.pages_kb, 0) / 1024.0 / 1024.0)) +
             N' GB. Large security caches can consume significant memory and may indicate security-related issues ' +
             N'such as excessive application role usage or frequent permission changes. ' +
             N'Consider using dbo.ClearTokenPerm stored procedure to manage this issue.',
@@ -23159,59 +23594,61 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 COUNT_BIG(*) DESC;
 
             /* Get summary of SLOW autogrow events for server_info */
-            SELECT @autogrow_summary =
-                STUFF
-                (
+            /* Data file autogrows */
+            INSERT INTO
+                #server_info
+            (
+                info_type,
+                value
+            )
+            SELECT
+                info_type = N'Slow Data File Autogrows (7 days)',
+                value =
+                    CONVERT
                     (
-                        SELECT TOP (5)
-                            N', ' +
-                            CONVERT
-                            (
-                                nvarchar(50),
-                                COUNT_BIG(*)
-                            ) +
-                            N' slow ' +
-                            CASE
-                                WHEN te.event_class = 92
-                                THEN N'data file'
-                                WHEN te.event_class = 93
-                                THEN N'log file'
-                            END +
-                            N' autogrows' +
-                            N' (avg ' +
-                            CONVERT
-                            (
-                                nvarchar(20),
-                                AVG(te.duration_ms) / 1000.0
-                            ) +
-                            N' sec)'
-                        FROM #trace_events AS te
-                        WHERE te.event_class IN (92, 93) /* Auto-grow events */
-                        AND   te.duration_ms > @slow_autogrow_ms /* Only slow auto-grows */
-                        GROUP BY
-                            te.event_class
-                        ORDER BY
-                            te.event_class
-                        FOR
-                            XML
-                            PATH('')
-                    ),
-                    1,
-                    2,
-                    N''
-                );
+                        nvarchar(50),
+                        COUNT_BIG(*)
+                    ) +
+                    N' events (avg ' +
+                    CONVERT
+                    (
+                        nvarchar(20),
+                        AVG(te.duration_ms) / 1000.0
+                    ) +
+                    N' sec)'
+            FROM #trace_events AS te
+            WHERE te.event_class = 92 /* Data file auto-grow */
+            AND   te.duration_ms > @slow_autogrow_ms /* Only slow auto-grows */
+            HAVING
+                COUNT_BIG(*) > 0;
 
-            IF @autogrow_summary IS NOT NULL
-            BEGIN
-                INSERT INTO
-                    #server_info
-                (
-                    info_type,
-                    value
-                )
-                VALUES
-                    (N'Slow Autogrow Events (7 days)', @autogrow_summary);
-            END;
+            /* Log file autogrows */
+            INSERT INTO
+                #server_info
+            (
+                info_type,
+                value
+            )
+            SELECT
+                info_type = N'Slow Log File Autogrows (7 days)',
+                value =
+                    CONVERT
+                    (
+                        nvarchar(50),
+                        COUNT_BIG(*)
+                    ) +
+                    N' events (avg ' +
+                    CONVERT
+                    (
+                        nvarchar(20),
+                        AVG(te.duration_ms) / 1000.0
+                    ) +
+                    N' sec)'
+            FROM #trace_events AS te
+            WHERE te.event_class = 93 /* Log file auto-grow */
+            AND   te.duration_ms > @slow_autogrow_ms /* Only slow auto-grows */
+            HAVING
+                COUNT_BIG(*) > 0;
         END;
     END;
 
@@ -23240,57 +23677,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     )
                 )
         FROM sys.dm_os_wait_stats AS osw
-        WHERE osw.wait_type NOT IN
+        WHERE NOT EXISTS
         (
-            /* Skip benign waits based on sys.dm_os_wait_stats documentation */
-            N'BROKER_TASK_STOP',
-            N'BROKER_TO_FLUSH',
-            N'BROKER_TRANSMITTER',
-            N'CHECKPOINT_QUEUE',
-            N'CLR_AUTO_EVENT',
-            N'CLR_MANUAL_EVENT',
-            N'DIRTY_PAGE_POLL',
-            N'DISPATCHER_QUEUE_SEMAPHORE',
-            N'FSAGENT',
-            N'FT_IFTS_SCHEDULER_IDLE_WAIT',
-            N'FT_IFTSHC_MUTEX',
-            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
-            N'HADR_LOGCAPTURE_WAIT',
-            N'HADR_TIMER_TASK',
-            N'HADR_WORK_QUEUE',
-            N'LAZYWRITER_SLEEP',
-            N'LOGMGR_QUEUE',
-            N'MEMORY_ALLOCATION_EXT',
-            N'PREEMPTIVE_XE_GETTARGETSTATE',
-            N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
-            N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
-            N'REQUEST_FOR_DEADLOCK_SEARCH',
-            N'RESOURCE_QUEUE',
-            N'SERVER_IDLE_CHECK',
-            N'SLEEP_DBSTARTUP',
-            N'SLEEP_DCOMSTARTUP',
-            N'SLEEP_MASTERDBREADY',
-            N'SLEEP_MASTERMDREADY',
-            N'SLEEP_MASTERUPGRADED',
-            N'SLEEP_MSDBSTARTUP',
-            N'SLEEP_SYSTEMTASK',
-            N'SLEEP_TEMPDBSTARTUP',
-            N'SNI_HTTP_ACCEPT',
-            N'SP_SERVER_DIAGNOSTICS_SLEEP',
-            N'SQLTRACE_BUFFER_FLUSH',
-            N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
-            N'SQLTRACE_WAIT_ENTRIES',
-            N'STARTUP_DEPENDENCY_MANAGER',
-            N'WAIT_FOR_RESULTS',
-            N'WAITFOR',
-            N'WAITFOR_TASKSHUTDOWN',
-            N'WAIT_XTP_HOST_WAIT',
-            N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
-            N'WAIT_XTP_CKPT_CLOSE',
-            N'XE_DISPATCHER_JOIN',
-            N'XE_DISPATCHER_WAIT',
-            N'XE_LIVE_TARGET_TVF',
-            N'XE_TIMER_EVENT'
+            SELECT
+                1/0
+            FROM #benign_waits AS bw
+            WHERE bw.wait_type = osw.wait_type
         );
 
         /* Insert important waits into the temp table */
@@ -23396,7 +23788,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT
                 (
                     decimal(5,2),
-                    dows.wait_time_ms * 100.0 / @total_waits
+                    dows.wait_time_ms * 100.0 / NULLIF(@total_waits, 0)
                 ),
             category =
                 CASE
@@ -23475,7 +23867,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Only include waits that are significant in terms of percentage of uptime or average wait time (>1 second) */
         AND
         (
-             (dows.wait_time_ms * 100.0 / @uptime_ms) > @significant_wait_threshold_pct
+             (dows.wait_time_ms * 100.0 / NULLIF(@uptime_ms, 0)) > @significant_wait_threshold_pct
           OR (dows.wait_time_ms * 1.0 / NULLIF(dows.waiting_tasks_count, 0)) > 1000.0 /* Average wait time > 1 second */
         );
 
@@ -23484,9 +23876,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             #wait_stats
         SET
             #wait_stats.wait_time_percent_of_uptime =
-                (wait_time_ms * 100.0 / @uptime_ms);
+                (wait_time_ms * 100.0 / NULLIF(@uptime_ms, 0));
 
-        /* Add only waits that represent >=50% of server uptime */
+        /* Add only waits that represent >=10% of server uptime */
         INSERT INTO
             #results
         (
@@ -23505,7 +23897,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN 20 /* Very high priority if >100% of uptime */
                     WHEN ws.wait_time_percent_of_uptime > 75
                     THEN 30 /* High priority if >75% of uptime */
-                    ELSE 40 /* Medium-high priority otherwise */
+                    WHEN ws.wait_time_percent_of_uptime >= 50
+                    THEN 40 /* Medium-high priority if >=50% of uptime */
+                    ELSE 50 /* Medium priority otherwise */
                 END,
             category = N'Wait Statistics',
             finding =
@@ -23529,19 +23923,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ws.description,
             url = N'https://erikdarling.com/sp_PerfCheck#WaitStats'
         FROM #wait_stats AS ws
-        WHERE
-            (
-                 ws.wait_time_percent_of_uptime >= 50.0 /* Only include waits that are at least 50% of uptime */
-              OR ws.avg_wait_ms >= 1000.0 /* Or have average wait time > 1 second */
-            )
+        WHERE ws.wait_time_percent_of_uptime >= 10.0 /* Only include waits that are at least 10% of uptime */
         AND   ws.wait_type <> N'SLEEP_TASK'
         ORDER BY
             ws.wait_time_percent_of_uptime DESC;
     END;
 
     /* Calculate pagelatch wait time for TempDB contention check */
+    /* Check for CPU scheduling pressure (signal wait ratio) */
+    /* Check for stolen memory from buffer pool */
     IF @has_view_server_state = 1
     BEGIN
+        /* Calculate pagelatch wait time for TempDB contention check */
         SELECT
             @pagelatch_wait_hours =
                 SUM
@@ -23561,11 +23954,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         SET @pagelatch_ratio_to_uptime =
             @pagelatch_wait_hours / NULLIF(@server_uptime_hours, 0) * 100;
-    END;
 
-    /* Check for CPU scheduling pressure (signal wait ratio) */
-    IF @has_view_server_state = 1
-    BEGIN
+        /* Check for CPU scheduling pressure (signal wait ratio) */
         /* Get total and signal wait times */
         SELECT
             @signal_wait_time_ms =
@@ -23582,57 +23972,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     END
                 )
         FROM sys.dm_os_wait_stats AS osw
-        WHERE osw.wait_type NOT IN
+        WHERE NOT EXISTS
         (
-            /* Skip benign waits based on sys.dm_os_wait_stats documentation */
-            N'BROKER_TASK_STOP',
-            N'BROKER_TO_FLUSH',
-            N'BROKER_TRANSMITTER',
-            N'CHECKPOINT_QUEUE',
-            N'CLR_AUTO_EVENT',
-            N'CLR_MANUAL_EVENT',
-            N'DIRTY_PAGE_POLL',
-            N'DISPATCHER_QUEUE_SEMAPHORE',
-            N'FSAGENT',
-            N'FT_IFTS_SCHEDULER_IDLE_WAIT',
-            N'FT_IFTSHC_MUTEX',
-            N'HADR_FILESTREAM_IOMGR_IOCOMPLETION',
-            N'HADR_LOGCAPTURE_WAIT',
-            N'HADR_TIMER_TASK',
-            N'HADR_WORK_QUEUE',
-            N'LAZYWRITER_SLEEP',
-            N'LOGMGR_QUEUE',
-            N'MEMORY_ALLOCATION_EXT',
-            N'PREEMPTIVE_XE_GETTARGETSTATE',
-            N'QDS_PERSIST_TASK_MAIN_LOOP_SLEEP',
-            N'QDS_CLEANUP_STALE_QUERIES_TASK_MAIN_LOOP_SLEEP',
-            N'REQUEST_FOR_DEADLOCK_SEARCH',
-            N'RESOURCE_QUEUE',
-            N'SERVER_IDLE_CHECK',
-            N'SLEEP_DBSTARTUP',
-            N'SLEEP_DCOMSTARTUP',
-            N'SLEEP_MASTERDBREADY',
-            N'SLEEP_MASTERMDREADY',
-            N'SLEEP_MASTERUPGRADED',
-            N'SLEEP_MSDBSTARTUP',
-            N'SLEEP_SYSTEMTASK',
-            N'SLEEP_TEMPDBSTARTUP',
-            N'SNI_HTTP_ACCEPT',
-            N'SP_SERVER_DIAGNOSTICS_SLEEP',
-            N'SQLTRACE_BUFFER_FLUSH',
-            N'SQLTRACE_INCREMENTAL_FLUSH_SLEEP',
-            N'SQLTRACE_WAIT_ENTRIES',
-            N'STARTUP_DEPENDENCY_MANAGER',
-            N'WAIT_FOR_RESULTS',
-            N'WAITFOR',
-            N'WAITFOR_TASKSHUTDOWN',
-            N'WAIT_XTP_HOST_WAIT',
-            N'WAIT_XTP_OFFLINE_CKPT_NEW_LOG',
-            N'WAIT_XTP_CKPT_CLOSE',
-            N'XE_DISPATCHER_JOIN',
-            N'XE_DISPATCHER_WAIT',
-            N'XE_LIVE_TARGET_TVF',
-            N'XE_TIMER_EVENT'
+            SELECT
+                1/0
+            FROM #benign_waits AS bw
+            WHERE bw.wait_type = osw.wait_type
         );
 
         /* Calculate signal wait ratio (time spent waiting for CPU vs. total wait time) */
@@ -23670,7 +24015,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                  END
             );
 
-            IF @sos_scheduler_yield_pct_of_uptime > 0
+            IF @sos_scheduler_yield_pct_of_uptime >= 10.0
             BEGIN
                 INSERT INTO
                     #server_info
@@ -23762,11 +24107,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 );
             END;
         END;
-    END;
 
-    /* Check for stolen memory from buffer pool */
-    IF @has_view_server_state = 1
-    BEGIN
+        /* Check for stolen memory from buffer pool */
         /* Get buffer pool size */
         SELECT
             @buffer_pool_size_gb =
@@ -23794,6 +24136,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         BEGIN
             SET @stolen_memory_pct =
                     (@stolen_memory_gb / (@buffer_pool_size_gb + @stolen_memory_gb)) * 100.0;
+
+            /* Query memory health history if available (SQL Server 2025+) */
+            IF @health_history_exists = CONVERT(bit, 'true')
+            BEGIN
+                EXECUTE sys.sp_executesql
+                    N'
+                    SELECT
+                        @health_history_count = COUNT_BIG(*)
+                    FROM sys.dm_os_memory_health_history AS hh
+                    WHERE hh.severity_level > 1;
+                    ',
+                    N'@health_history_count integer OUTPUT',
+                    @health_history_count OUTPUT;
+            END;
 
             /* Add buffer pool info to server_info */
             INSERT INTO
@@ -23825,7 +24181,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT
                 (
                     nvarchar(20),
-                    @stolen_memory_gb
+                    ISNULL(@stolen_memory_gb, 0)
                 ) +
                 N' GB (' +
                 CONVERT
@@ -23834,11 +24190,32 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     CONVERT
                     (
                         decimal(10, 1),
-                        @stolen_memory_pct
+                        ISNULL(@stolen_memory_pct, 0)
                     )
                 ) +
                 N'%)'
             );
+
+            /* Add memory health history count if available */
+            IF @health_history_count > 0
+            BEGIN
+                INSERT INTO
+                    #server_info
+                (
+                    info_type,
+                    value
+                )
+                VALUES
+                (
+                    N'Memory Health History (Severity > 1)',
+                    CONVERT
+                    (
+                        nvarchar(20),
+                        @health_history_count
+                    ) +
+                    N' events'
+                );
+            END;
 
             /* Add finding if stolen memory exceeds threshold */
             IF @stolen_memory_pct > @stolen_memory_threshold_pct
@@ -23866,9 +24243,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'Memory Usage',
                     N'High Stolen Memory Percentage',
                     N'Memory stolen from buffer pool: ' +
-                    CONVERT(nvarchar(20), @stolen_memory_gb) +
+                    CONVERT(nvarchar(20), ISNULL(@stolen_memory_gb, 0)) +
                     N' GB (' +
-                    CONVERT(nvarchar(10), CONVERT(decimal(10, 1), @stolen_memory_pct)) +
+                    CONVERT(nvarchar(10), CONVERT(decimal(10, 1), ISNULL(@stolen_memory_pct, 0))) +
                     N'% of total memory). This reduces memory available for data caching and can impact performance. ' +
                     N'Consider investigating memory usage by CLR, extended stored procedures, linked servers, or other memory clerks.',
                     N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
@@ -23917,11 +24294,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM(domc.pages_kb) DESC;
             END;
         END;
-    END;
 
-    /* Check for I/O stalls per database */
-    IF @has_view_server_state = 1
-    BEGIN
+        /* Check for I/O stalls per database */
         /* First clear any existing data */
         TRUNCATE TABLE
             #io_stalls_by_db;
@@ -24050,78 +24424,57 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             );
         END CATCH;
 
-        /* Format a summary of the worst databases by I/O stalls */
-        WITH
-            io_stall_summary AS
+        /* Add I/O stall summary to server_info - one line per database */
+        INSERT INTO
+            #server_info
         (
-            SELECT TOP (5)
-                i.database_name,
-                i.total_io_stall_ms,
-                i.total_io_mb,
-                i.avg_io_stall_ms,
-                i.read_io_stall_ms,
-                i.read_io_mb,
-                i.avg_read_stall_ms,
-                i.write_io_stall_ms,
-                i.write_io_mb,
-                i.avg_write_stall_ms,
-                i.total_size_mb
-            FROM #io_stalls_by_db AS i
-            WHERE
-            (
-                 i.avg_read_stall_ms >= @slow_read_ms
-              OR i.avg_write_stall_ms >= @slow_write_ms
-            )
-            ORDER BY
-                i.avg_io_stall_ms DESC
+            info_type,
+            value
         )
-        SELECT @io_stall_summary =
-            STUFF
-            (
+        SELECT TOP (5)
+            info_type =
+                N'Database I/O Stall: ' +
+                i.database_name,
+            value =
+                N'Average latency: ' +
+                CONVERT
                 (
-                    SELECT TOP (5)
-                        N', ' +
-                        db.database_name +
-                        N' (' +
-                        CONVERT
-                        (
-                            nvarchar(10),
-                            CONVERT
-                            (
-                                decimal(10, 2),
-                                db.avg_io_stall_ms
-                            )
-                        ) +
-                        N' ms)'
-                    FROM io_stall_summary AS db
-                    ORDER BY
-                        db.avg_io_stall_ms DESC
-                    FOR
-                        XML
-                        PATH('')
-                ),
-                1,
-                2,
-                ''
-            );
-
-        /* Add I/O stall summary to server_info if any significant stalls were found */
-        IF  @io_stall_summary IS NOT NULL
-        AND LEN(@io_stall_summary) > 0
-        BEGIN
-            INSERT INTO
-                #server_info
-            (
-                info_type,
-                value
-            )
-            VALUES
-            (
-                N'Database I/O Stalls',
-                N'Top databases with high I/O latency: ' +
-                @io_stall_summary
-            );
-        END;
+                    nvarchar(10),
+                    CONVERT
+                    (
+                        decimal(10, 2),
+                        i.avg_io_stall_ms
+                    )
+                ) +
+                N' ms (Read: ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    CONVERT
+                    (
+                        decimal(10, 2),
+                        i.avg_read_stall_ms
+                    )
+                ) +
+                N' ms, Write: ' +
+                CONVERT
+                (
+                    nvarchar(10),
+                    CONVERT
+                    (
+                        decimal(10, 2),
+                        i.avg_write_stall_ms
+                    )
+                ) +
+                N' ms)'
+        FROM #io_stalls_by_db AS i
+        WHERE
+        (
+             i.avg_read_stall_ms >= @slow_read_ms
+          OR i.avg_write_stall_ms >= @slow_write_ms
+        )
+        ORDER BY
+            i.avg_io_stall_ms DESC;
 
         /* Add findings for significant I/O stalls */
         INSERT INTO
@@ -25608,21 +25961,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
         /* Check each database for accessibility using three-part naming */
         DECLARE
-            db_cursor
-                CURSOR
-                LOCAL
-                FAST_FORWARD
-                READ_ONLY
-            FOR
-            SELECT
-                dl.database_name,
-                dl.database_id
-            FROM #database_list AS dl;
+            @db_cursor CURSOR;
 
-        OPEN db_cursor;
+        SET @db_cursor =
+            CURSOR
+            LOCAL
+            FAST_FORWARD
+        FOR
+        SELECT
+            dl.database_name,
+            dl.database_id
+        FROM #database_list AS dl;
+
+        OPEN @db_cursor;
 
         FETCH NEXT
-        FROM db_cursor
+        FROM @db_cursor
         INTO
             @current_database_name,
             @current_database_id;
@@ -25676,14 +26030,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             END CATCH;
 
             FETCH NEXT
-            FROM db_cursor
+            FROM @db_cursor
             INTO
                 @current_database_name,
                 @current_database_id;
         END;
-
-        CLOSE db_cursor;
-        DEALLOCATE db_cursor;
     END;
 
     IF @debug = 1
@@ -25697,22 +26048,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     Database Iteration and Checks
     */
     DECLARE
-        database_cursor
-            CURSOR
-            LOCAL
-            FAST_FORWARD
-            READ_ONLY
-        FOR
-        SELECT
-            dl.database_name,
-            dl.database_id
-        FROM #database_list AS dl
-        WHERE dl.can_access = 1;
+        @database_cursor CURSOR;
 
-    OPEN database_cursor;
+    SET @database_cursor =
+        CURSOR
+        LOCAL
+        FAST_FORWARD
+    FOR
+    SELECT
+        dl.database_name,
+        dl.database_id
+    FROM #database_list AS dl
+    WHERE dl.can_access = 1;
+
+    OPEN @database_cursor;
 
     FETCH NEXT
-    FROM database_cursor
+    FROM @database_cursor
     INTO
         @current_database_name,
         @current_database_id;
@@ -26143,7 +26495,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     (@current_database_id, @current_database_name, 34, N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'', NULL, NULL, 1),
                     (@current_database_id, @current_database_name, 35, N''OPTIMIZED_PLAN_FORCING'', NULL, NULL, 1),
                     (@current_database_id, @current_database_name, 37, N''DOP_FEEDBACK'', NULL, NULL, 1),
-                    (@current_database_id, @current_database_name, 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1);
+                    (@current_database_id, @current_database_name, 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1),
+                    /* SQL Server 2025 options - IDs to be verified against actual SQL Server 2025 instance */
+                    (@current_database_id, @current_database_name, 40, N''PREVIEW_FEATURES'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 41, N''OPTIMIZED_SP_EXECUTESQL'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 42, N''FULLTEXT_INDEX_VERSION'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 43, N''OPTIONAL_PARAMETER_OPTIMIZATION'', NULL, NULL, 1);
 
                 /* Get actual non-default settings */
                 INSERT INTO
@@ -26188,6 +26545,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN sc.name = N''OPTIMIZED_PLAN_FORCING'' AND CONVERT(integer, sc.value) = 1 THEN 1
                         WHEN sc.name = N''DOP_FEEDBACK'' AND CONVERT(integer, sc.value) = 0 THEN 1
                         WHEN sc.name = N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        /* SQL Server 2025 options */
+                        WHEN sc.name = N''PREVIEW_FEATURES'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''OPTIMIZED_SP_EXECUTESQL'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        WHEN sc.name = N''FULLTEXT_INDEX_VERSION'' AND CONVERT(integer, sc.value) = 2 THEN 1
+                        WHEN sc.name = N''OPTIONAL_PARAMETER_OPTIMIZATION'' AND CONVERT(integer, sc.value) = 1 THEN 1
                         ELSE 0 /* Non-default */
                     END
                 FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_scoped_configurations AS sc
@@ -26195,7 +26557,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       (
                         1, 2, 3, 4, 7, 8, 9,
                         10, 13, 16, 18, 19, 20, 24,
-                        27, 28, 31, 33, 34, 35, 37, 39
+                        27, 28, 31, 33, 34, 35, 37, 39,
+                        40, 41, 42, 43  /* SQL Server 2025 options */
                       );
             END;';
 
@@ -26250,8 +26613,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         CASE
                             WHEN dsc.value_for_secondary IS NOT NULL
                             THEN N' (Secondary: ' +
-                            CONVERT(nvarchar(100), dsc.value_for_secondary) +
-                            N')'
+                                 CONVERT(nvarchar(100), dsc.value_for_secondary) +
+                                 N')'
                             ELSE N''
                         END +
                         N'. ',
@@ -26477,7 +26840,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 @current_database_name;
 
             /* Check for non-optimal log growth increments in SQL Server 2022, Azure SQL DB, or Azure MI */
-            IF @product_version_major >= 16 OR @azure_sql_db = 1 OR @azure_managed_instance = 1
+            IF @product_version_major >= 16
+            OR @azure_sql_db = 1
+            OR @azure_managed_instance = 1
             BEGIN
                 SET @sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -26591,14 +26956,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END CATCH;
 
         FETCH NEXT
-        FROM database_cursor
+        FROM @database_cursor
         INTO
             @current_database_name,
             @current_database_id;
     END;
-
-    CLOSE database_cursor;
-    DEALLOCATE database_cursor;
 
     /* Add scan time footer to server info */
     INSERT INTO
@@ -26641,6 +27003,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         r.finding,
         r.database_name,
         r.check_id;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+        BEGIN
+            ROLLBACK;
+        END;
+
+        THROW;
+    END CATCH;
 END;
 GO
 SET ANSI_NULLS ON;
@@ -26670,7 +27041,7 @@ GO
 ██████╔╝███████╗   ██║   ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
 ╚═════╝ ╚══════╝   ╚═╝   ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -26722,8 +27093,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '5.11',
-    @version_date = '20251114';
+    @version = '6.0',
+    @version_date = '20260115';
 
 
 IF @help = 1
@@ -26835,7 +27206,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -26950,8 +27321,8 @@ END; /*End help section*/
                         integer,
                         SERVERPROPERTY('EngineEdition')
                     ) = 5
-                THEN 1
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @pool_sql nvarchar(max) = N'',
         @pages_kb bit =
@@ -26964,8 +27335,8 @@ END; /*End help section*/
                     WHERE ac.object_id = OBJECT_ID(N'sys.dm_os_memory_clerks')
                     AND   ac.name = N'pages_kb'
                 ) = 1
-                THEN 1
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @mem_sql nvarchar(max) = N'',
         @helpful_new_columns bit =
@@ -26982,8 +27353,8 @@ END; /*End help section*/
                               N'used_worker_count'
                           )
                 ) = 2
-                THEN 1
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @cpu_sql nvarchar(max) = N'',
         @cool_new_columns bit =
@@ -27000,8 +27371,8 @@ END; /*End help section*/
                             N'parallel_worker_count'
                         )
                 ) = 2
-                THEN 1
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @reserved_worker_count_out varchar(10) = '0',
         @reserved_worker_count nvarchar(max) = N'
@@ -27038,12 +27409,19 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @total_physical_memory_gb bigint,
         @cpu_utilization xml = N'',
         @low_memory xml = N'',
+        @health_history bit =
+            CASE
+                WHEN OBJECT_ID('sys.dm_os_memory_health_history') IS NOT NULL
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
+            END,
+        @health_history_xml xml,
         @disk_check nvarchar(max) = N'',
         @live_plans bit =
             CASE
                 WHEN OBJECT_ID('sys.dm_exec_query_statistics_xml') IS NOT NULL
-                THEN CONVERT(bit, 1)
-                ELSE 0
+                THEN CONVERT(bit, 'true')
+                ELSE CONVERT(bit, 'false')
             END,
         @waitfor varchar(20) =
             CONVERT
@@ -29430,13 +29808,66 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
         END;
 
+        IF @health_history = 'true'
+        BEGIN
+            EXECUTE sys.sp_executesql
+                N'
+                SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+                SELECT
+                    @health_history_xml =
+                    (
+                        SELECT TOP (9223372036854775807)
+                            hh.snapshot_time,
+                            hh.severity_level,
+                            hh.allocation_potential_memory_mb,
+                            hh.reclaimable_cache_memory_mb,
+                            oj.clerk_type,
+                            oj.pages_allocated_kb
+                        FROM sys.dm_os_memory_health_history AS hh
+                        CROSS APPLY
+                            OPENJSON
+                                (hh.top_memory_clerks)
+                            WITH
+                            (
+                                clerk_type sysname N''$.clerk_type'',
+                                pages_allocated_kb bigint N''$.pages_allocated_kb''
+                            ) AS oj
+                        WHERE hh.severity_level > 1
+                        ORDER BY
+                            hh.snapshot_time DESC,
+                            oj.pages_allocated_kb DESC
+                        FOR XML
+                            PATH(''health_history''),
+                            TYPE
+                    );
+                ',
+                N'@health_history_xml xml OUTPUT',
+                @health_history_xml OUTPUT;
+        END;
+
+        IF @health_history_xml IS NULL
+        BEGIN
+            SELECT
+                @health_history_xml =
+                (
+                    SELECT
+                        N'No memory health history available'
+                    FOR XML
+                        PATH(N'history'),
+                        TYPE
+                );
+        END;
+
         IF @log_to_table = 0
         BEGIN
             SELECT
                 low_memory =
-                   @low_memory,
+                    @low_memory,
                 cache_memory =
-                    @cache_xml;
+                    @cache_xml,
+                memory_health_history =
+                    @health_history_xml;
         END;
 
         SELECT
@@ -30806,8 +31237,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '0.11',
-    @version_date = '20251114';
+    @version = '1.0',
+    @version_date = '20260115';
 
 /*Help*/
 IF @help = 1
@@ -34408,7 +34839,7 @@ GO
 ███████║   ██║   ╚██████╔╝██║  ██║███████╗██╗
 ╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 https://www.erikdarling.com/
 
 For usage and licensing details, run:
@@ -34500,31 +34931,11 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 BEGIN TRY
 /*
-If this column doesn't exist, you're not on a good version of SQL Server
-*/
-IF NOT EXISTS
-   (
-       SELECT
-           1/0
-       FROM sys.all_columns AS ac
-       WHERE ac.object_id = OBJECT_ID(N'sys.dm_exec_query_stats', N'V')
-       AND   ac.name = N'total_spills'
-   )
-BEGIN
-    RAISERROR('This procedure only runs on supported versions of SQL Server:
-* 2016 SP2+
-* 2017 CU3+
-* 2019+
-* Probably Azure?', 11, 1) WITH NOWAIT;
-    RETURN;
-END;
-
-/*
 These are for your outputs.
 */
 SELECT
-    @version = '5.11',
-    @version_date = '20251114';
+    @version = '6.0',
+    @version_date = '20260115';
 
 /*
 Helpful section! For help.
@@ -34806,7 +35217,7 @@ BEGIN
     RAISERROR('
 MIT License
 
-Copyright 2025 Darling Data, LLC
+Copyright 2026 Darling Data, LLC
 
 https://www.erikdarling.com/
 
@@ -37344,33 +37755,6 @@ AND @engine NOT IN (5, 8)
 )
 BEGIN
     RAISERROR('Not all Azure offerings are supported, please try avoiding memes', 11, 1) WITH NOWAIT;
-    IF @debug = 1
-    BEGIN
-        GOTO DEBUG;
-    END;
-    ELSE
-    BEGIN
-        RETURN;
-    END;
-END;
-
-/*
-Database are you compatible?
-*/
-IF
-(
-    @azure = 1
-    AND EXISTS
-        (
-            SELECT
-                1/0
-             FROM sys.databases AS d
-             WHERE d.database_id = @database_id
-             AND   d.compatibility_level < 130
-        )
-)
-BEGIN
-    RAISERROR('Azure databases in compatibility levels under 130 are not supported', 11, 1) WITH NOWAIT;
     IF @debug = 1
     BEGIN
         GOTO DEBUG;
@@ -43067,49 +43451,7 @@ FROM
     CONVERT
     (
         nvarchar(max),
-        N',
-            g = geometry::STGeomFromText
-                (
-                    N''POLYGON(('' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms) +
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms + (count_executions * 90000)) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms) +
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms + (count_executions * 90000)) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms + (count_executions * 90000)) +
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms + (count_executions * 90000)) +
-                    '','' +
-                    CONVERT(NVARCHAR(20), total_cpu_time_ms) +
-                    '' '' +
-                    CONVERT(NVARCHAR(20), total_duration_ms) +
-                    ''))'',
-                    0
-                ),
-            p = geometry::STGeomFromText
-                (
-                    ''POLYGON
-                      (('' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms + (count_executions * 100000)) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms + (count_executions * 50000)) + '','' +
-                        CONVERT(NVARCHAR(20), min_cpu_time_ms) + '' '' +
-                        CONVERT(NVARCHAR(20), max_cpu_time_ms) +
-                    ''))'',
-                    0
-                )
+        N'
     FROM #query_store_runtime_stats AS qsrs'
     );
 
