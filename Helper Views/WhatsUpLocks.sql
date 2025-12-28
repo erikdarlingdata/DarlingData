@@ -50,7 +50,7 @@ ALTER FUNCTION
     @spid integer,
     @outsider bit = 'false'
 )
-RETURNS 
+RETURNS
     table
 AS
 RETURN

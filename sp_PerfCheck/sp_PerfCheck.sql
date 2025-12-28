@@ -4055,9 +4055,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         DECLARE
             @db_cursor CURSOR;
 
-        SET @db_cursor = 
-            CURSOR 
-            LOCAL 
+        SET @db_cursor =
+            CURSOR
+            LOCAL
             FAST_FORWARD
         FOR
         SELECT
@@ -4142,9 +4142,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     DECLARE
         @database_cursor CURSOR;
 
-    SET @database_cursor = 
-        CURSOR 
-        LOCAL 
+    SET @database_cursor =
+        CURSOR
+        LOCAL
         FAST_FORWARD
     FOR
     SELECT
@@ -4932,8 +4932,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 @current_database_name;
 
             /* Check for non-optimal log growth increments in SQL Server 2022, Azure SQL DB, or Azure MI */
-            IF @product_version_major >= 16 
-            OR @azure_sql_db = 1 
+            IF @product_version_major >= 16
+            OR @azure_sql_db = 1
             OR @azure_managed_instance = 1
             BEGIN
                 SET @sql = N'
