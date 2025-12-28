@@ -1418,12 +1418,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ELSE 0
                 END
         FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
-		LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
+        LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
           ON i.object_id = t.object_id
-		LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
+        LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
           ON i.object_id = v.object_id
         JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
-          ON ISNULL(t.schema_id, v.schema_id) = s.schema_id 
+          ON ISNULL(t.schema_id, v.schema_id) = s.schema_id
         JOIN ' + QUOTENAME(@current_database_name) + N'.sys.partitions AS p
           ON  i.object_id = p.object_id
           AND i.index_id = p.index_id
@@ -1975,7 +1975,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ) AS os
     LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
       ON os.object_id = t.object_id
-	LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
+    LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
       ON os.object_id = v.object_id
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
       ON ISNULL(t.schema_id, v.schema_id) = s.schema_id
@@ -2183,11 +2183,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 )
                 THEN 0
             END
-	FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
+    FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
     LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
-	  ON i.object_id = t.object_id
-	LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
-	  ON i.object_id = v.object_id
+      ON i.object_id = t.object_id
+    LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
+      ON i.object_id = v.object_id
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
       ON ISNULL(t.schema_id, v.schema_id) = s.schema_id
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.index_columns AS ic
@@ -2379,9 +2379,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             reserved_row_overflow_gb = SUM(ps.row_overflow_reserved_page_count) * 8. / 1024. / 1024.0, /* Convert directly to GB */
             p.data_compression_desc,
             i.data_space_id
-		FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
+        FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
         LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.tables AS t
-		  ON i.object_id = t.object_id
+          ON i.object_id = t.object_id
         LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.views AS v
           ON i.object_id = v.object_id
         JOIN ' + QUOTENAME(@current_database_name) + N'.sys.schemas AS s
@@ -6988,7 +6988,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
     )
     BEGIN
-        WITH 
+        WITH
             empty_databases AS
         (
             SELECT

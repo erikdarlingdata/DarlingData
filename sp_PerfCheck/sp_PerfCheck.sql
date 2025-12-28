@@ -706,8 +706,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         N' (' +
         CONVERT
         (
-            varchar(10), 
-            @version_date, 
+            varchar(10),
+            @version_date,
             101
         ) +
         N')'
@@ -722,7 +722,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     VALUES
         (N'Server Name', @server_name);
-            
+
     /* Using product version and level variables declared earlier */
     INSERT INTO
         #server_info
@@ -738,7 +738,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @product_level +
         N')'
     );
-            
+
     /* Using product edition variable declared earlier */
     INSERT INTO
         #server_info
@@ -753,7 +753,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     INSERT INTO
         #server_info
     (
-        info_type, 
+        info_type,
         value
     )
     SELECT
@@ -774,7 +774,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         SELECT
@@ -818,7 +818,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -1153,7 +1153,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SELECT
             N'Memory Model',
             osi.sql_memory_model_desc
-        FROM sys.dm_os_sys_info AS osi;   
+        FROM sys.dm_os_sys_info AS osi;
     END;
 
     /* Check if Instant File Initialization is enabled (on-prem only) */
@@ -1163,9 +1163,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND @has_view_server_state = 1
     BEGIN
         INSERT INTO
-            #server_info 
+            #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         SELECT
@@ -1212,9 +1212,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM sys.resource_governor_configuration AS rgc WHERE rgc.is_enabled = 1)
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             SELECT
@@ -1257,9 +1257,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ELSE
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             SELECT
@@ -1316,9 +1316,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         IF EXISTS (SELECT 1/0 FROM #trace_flags AS tf WHERE tf.global = 1)
         BEGIN
             INSERT INTO
-                #server_info 
+                #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             SELECT
@@ -1346,9 +1346,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /* Memory information - works on all platforms */
     INSERT INTO
-        #server_info 
+        #server_info
     (
-        info_type, 
+        info_type,
         value
     )
     SELECT
@@ -2090,7 +2090,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #server_info
              (
-                 info_type, 
+                 info_type,
                  value
              )
             VALUES
@@ -2247,7 +2247,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             VALUES
@@ -2264,7 +2264,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             VALUES
@@ -2910,7 +2910,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             INSERT INTO
                 #server_info
             (
-                info_type, 
+                info_type,
                 value
             )
             EXECUTE sys.sp_executesql
@@ -2920,9 +2920,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN CATCH
         /* If we can't access the files due to permissions */
         INSERT INTO
-            #server_info 
+            #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -2959,7 +2959,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -2972,7 +2972,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -2996,7 +2996,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -3008,7 +3008,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         INSERT INTO
             #server_info
         (
-            info_type, 
+            info_type,
             value
         )
         VALUES
@@ -3307,10 +3307,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 50, /* High priority */
                 N'TempDB Configuration',
                 N'Single TempDB Data File',
-                N'TempDB has only one data file on a ' + CONVERT(nvarchar(10), @processors) + 
+                N'TempDB has only one data file on a ' + CONVERT(nvarchar(10), @processors) +
                 N'-core system. This creates allocation contention. Recommendation: Add ' +
-                CASE 
-                    WHEN @processors > 8 THEN N'8' 
+                CASE
+                    WHEN @processors > 8 THEN N'8'
                     ELSE CONVERT(nvarchar(10), @processors)
                 END + N' data files total.',
                 N'https://erikdarling.com/sp_PerfCheck#tempdb'
@@ -3428,7 +3428,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'https://erikdarling.com/sp_PerfCheck#tempdb'
             );
         END;
-        
+
         /* Check for percentage growth in tempdb */
         IF @has_percent_growth = 1
         BEGIN
@@ -3455,7 +3455,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /* Check for TempDB allocation contention based on pagelatch waits */
-        IF  @tempdb_data_file_count <= @processors 
+        IF  @tempdb_data_file_count <= @processors
         AND @tempdb_data_file_count < 8
         AND @has_view_server_state = 1
         AND @pagelatch_ratio_to_uptime >= 1.0
@@ -3476,14 +3476,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 40, /* High priority */
                 N'TempDB Performance',
                 N'TempDB Allocation Contention Detected',
-                N'Server has spent ' + 
-                CONVERT(nvarchar(20), CONVERT(decimal(10,2), @pagelatch_wait_hours)) + 
-                N' hours (' + 
-                CONVERT(nvarchar(10), CONVERT(decimal(5,2), @pagelatch_ratio_to_uptime)) + 
-                N'% of uptime) waiting on page latches. TempDB has ' + 
-                CONVERT(nvarchar(10), @tempdb_data_file_count) + 
+                N'Server has spent ' +
+                CONVERT(nvarchar(20), CONVERT(decimal(10,2), @pagelatch_wait_hours)) +
+                N' hours (' +
+                CONVERT(nvarchar(10), CONVERT(decimal(5,2), @pagelatch_ratio_to_uptime)) +
+                N'% of uptime) waiting on page latches. TempDB has ' +
+                CONVERT(nvarchar(10), @tempdb_data_file_count) +
                 N' data files. Consider adding files up to ' +
-                CASE 
+                CASE
                     WHEN @processors > 8 THEN N'8'
                     ELSE CONVERT(nvarchar(10), @processors)
                 END + N' total to reduce allocation contention.',
@@ -4414,7 +4414,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               N'@current_database_name sysname',
                 @current_database_name;
         END;
-        
+
         /* Check for Query Store in problematic state */
         BEGIN TRY
             SET @sql = N'
@@ -4993,10 +4993,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 object_name = mf.name,
                 details =
                     ''Database file is using a very large fixed growth increment of '' +
-                    CONVERT(nvarchar(20), 
-                    CONVERT(decimal(18, 2), mf.growth * 
-                    CONVERT(decimal(18, 2), 8.0) / 
-                    CONVERT(decimal(18, 2), 1024.0) / 
+                    CONVERT(nvarchar(20),
+                    CONVERT(decimal(18, 2), mf.growth *
+                    CONVERT(decimal(18, 2), 8.0) /
+                    CONVERT(decimal(18, 2), 1024.0) /
                     CONVERT(decimal(18, 2), 1024.0))) +
                     '' GB. Very large growth increments can lead to excessive space allocation. '' +
                     CASE
@@ -5008,8 +5008,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 url = N''https://erikdarling.com/sp_PerfCheck#LargeGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 0
-            AND   mf.growth * CONVERT(decimal(18, 2), 8.0) / 
-                  CONVERT(decimal(18, 2), 1024.0) / 
+            AND   mf.growth * CONVERT(decimal(18, 2), 8.0) /
+                  CONVERT(decimal(18, 2), 1024.0) /
                   CONVERT(decimal(18, 2), 1024.0) > 10.0; /* Growth > 10GB */';
 
             IF @debug = 1

@@ -29,7 +29,7 @@ CREATE OR ALTER PROCEDURE
     @version varchar(30) = NULL OUTPUT, /*OUTPUT; for support*/
     @version_date datetime = NULL OUTPUT /*OUTPUT; for support*/
 )
-WITH 
+WITH
     RECOMPILE
 AS
 BEGIN
@@ -145,8 +145,8 @@ DECLARE
     @query_store_exists bit = 'true',
     @procedure_name_quoted nvarchar(1024),
     @procedure_exists bit = 0,
-    @isolation_level nvarchar(100) = 
-        N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' + 
+    @isolation_level nvarchar(100) =
+        N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' +
         NCHAR(10),
     @nc10 nchar(1) = NCHAR(10),
     @where_clause nvarchar(MAX) = N'',
@@ -837,8 +837,8 @@ CREATE TABLE
                         (
                             REPLACE
                             (
-                                query_sql_text, 
-                                NCHAR(13), 
+                                query_sql_text,
+                                NCHAR(13),
                                 N' '
                             ),
                             NCHAR(10),
@@ -1344,7 +1344,7 @@ BEGIN
 
     EXECUTE sys.sp_executesql
         @sql,
-      N'@query_text_search nvarchar(4000), 
+      N'@query_text_search nvarchar(4000),
         @procedure_name_quoted nvarchar(1024)',
         @query_text_search,
         @procedure_name_quoted;
@@ -3067,7 +3067,7 @@ SELECT
         (
             SELECT
                 N'/*' + NCHAR(10) +
-                N'Query ID: ' + 
+                N'Query ID: ' +
                 RTRIM(qsp.query_id) + NCHAR(10) +
                 N'Plan ID: ' + RTRIM(qsp.plan_id) + NCHAR(10) +
                 ISNULL(
@@ -3078,8 +3078,8 @@ SELECT
                             (
                                 (
                                     SELECT
-                                        NCHAR(10) + 
-                                        N' - ' + 
+                                        NCHAR(10) +
+                                        N' - ' +
                                         rw.warning_message
                                     FROM #reproduction_warnings AS rw
                                     WHERE rw.plan_id = qsp.plan_id
@@ -3102,7 +3102,7 @@ SELECT
                     WHEN @azure = 0
                     THEN
                         N'USE ' +
-                        QUOTENAME(@database_name) + 
+                        QUOTENAME(@database_name) +
                         N';'
                     ELSE N''
                 END +
@@ -3117,10 +3117,10 @@ SELECT
                 ) +
                 ISNULL
                 (
-                    N'SET LANGUAGE ' + 
-                    lang.name + 
-                    N';' + 
-                    NCHAR(10), 
+                    N'SET LANGUAGE ' +
+                    lang.name +
+                    N';' +
+                    NCHAR(10),
                     N''
                 ) +
                 ISNULL
@@ -3134,17 +3134,17 @@ SELECT
                          WHEN 4 THEN N'myd'
                          WHEN 5 THEN N'dym'
                          ELSE N'mdy'
-                    END + 
-                    N';' + 
-                    NCHAR(10), 
+                    END +
+                    N';' +
+                    NCHAR(10),
                     N''
                 ) +
                 ISNULL
                 (
-                    N'SET DATEFIRST ' + 
-                    RTRIM(qcs.date_first) + 
-                    N';' + 
-                    NCHAR(10), 
+                    N'SET DATEFIRST ' +
+                    RTRIM(qcs.date_first) +
+                    N';' +
+                    NCHAR(10),
                     N''
                 ) +
                 NCHAR(10) +
@@ -3397,7 +3397,7 @@ SELECT
     qsrs.max_num_physical_io_reads_mb,
     qsrs.total_num_physical_io_reads_mb,
     qsrs.last_num_physical_io_reads_mb
-FROM 
+FROM
 (
    SELECT DISTINCT
        rq.plan_id,
@@ -3431,8 +3431,8 @@ CROSS APPLY
       qsq.*
   FROM #query_store_query AS qsq
   WHERE qsq.query_id = rq.query_id
-  ORDER BY 
-      qsq.query_id DESC 
+  ORDER BY
+      qsq.query_id DESC
 ) AS qsq
 CROSS APPLY
 (
@@ -3440,8 +3440,8 @@ CROSS APPLY
       qsqt.*
   FROM  #query_store_query_text AS qsqt
   WHERE qsqt.query_text_id = qsq.query_text_id
-  ORDER BY 
-      qsqt.query_text_id DESC 
+  ORDER BY
+      qsqt.query_text_id DESC
 ) AS qsqt
 OUTER APPLY
 (
@@ -3454,7 +3454,7 @@ OUTER APPLY
         MaximumWaitTime = MAX(qsws.max_query_wait_time_ms)
     FROM #query_store_wait_stats AS qsws
     WHERE qsws.plan_id = rq.plan_id
-    GROUP BY 
+    GROUP BY
         qsws.plan_id,
         qsws.wait_category_desc
     ORDER BY
@@ -3488,7 +3488,7 @@ BEGIN CATCH
     END;
 
     THROW;
-END CATCH 
+END CATCH
 
 IF @debug = 1
 BEGIN
@@ -3503,7 +3503,7 @@ BEGIN
     ORDER BY
         qsrs.plan_id
     OPTION(RECOMPILE);
-    
+
     SELECT
         table_name =
             N'#query_store_plan',
@@ -3512,7 +3512,7 @@ BEGIN
     ORDER BY
         qsp.plan_id
     OPTION(RECOMPILE);
-    
+
     SELECT
         table_name =
             N'#query_store_query_text',
@@ -3521,7 +3521,7 @@ BEGIN
     ORDER BY
         qsqt.query_text_id
     OPTION(RECOMPILE);
-    
+
     SELECT
         table_name =
             N'#query_store_query',
@@ -3530,7 +3530,7 @@ BEGIN
     ORDER BY
         qsq.query_id
     OPTION(RECOMPILE);
-    
+
     SELECT
         table_name =
             N'#query_context_settings',
@@ -3557,7 +3557,7 @@ BEGIN
     ORDER BY
         qspf.plan_feedback_id
     OPTION(RECOMPILE);
-    
+
     SELECT
         table_name =
             N'#query_store_query_variant',
@@ -3566,7 +3566,7 @@ BEGIN
     ORDER BY
         qsqv.query_variant_query_id
     OPTION(RECOMPILE);
-    
+
     SELECT
         table_name =
             N'#query_store_query_hints',
@@ -3585,7 +3585,7 @@ BEGIN
         qp.plan_id,
         qp.parameter_name
     OPTION(RECOMPILE);
-    
+
     SELECT
         table_name =
             N'#reproduction_warnings',

@@ -47,12 +47,12 @@ ORDER BY
 Any value that appears fewer than 100 times (according to
 statistics) is considered very uncommon.
 
-That means that if the *least* common value appears 100 times, 
-it will *not* be considered very uncommon and will get the 
+That means that if the *least* common value appears 100 times,
+it will *not* be considered very uncommon and will get the
 'everything else' variant.
 
-Only values that don't appear in the histogram or are otherwise 
-estimated (between steps) to match fewer than 100 times would 
+Only values that don't appear in the histogram or are otherwise
+estimated (between steps) to match fewer than 100 times would
 trigger the 'very uncommon' variant in that scenario.
 
 1. Very uncommon = fewer than 100 times
@@ -64,23 +64,23 @@ trigger the 'very uncommon' variant in that scenario.
 
 /*Some heuristics stuff*/
 SELECT
-    EqualityLow = 
+    EqualityLow =
        MIN(dss.equality_rows),
-    EqualityHigh = 
+    EqualityHigh =
         MAX(dss.equality_rows),
     IsEligible =
-        CASE 
-            WHEN MAX(dss.equality_rows) > 
+        CASE
+            WHEN MAX(dss.equality_rows) >
                  MIN(dss.equality_rows) * 100000
             THEN 'Yes'
             ELSE 'No'
         END,
-    VeryUncommon = 
+    VeryUncommon =
         '< 100',
-    VeryCommon = 
+    VeryCommon =
         POWER
         (
-            10, 
+            10,
             FLOOR
             (
                 LOG10
@@ -103,7 +103,7 @@ WHERE c.Score = @Score;
 N'@Score integer',
 0;
 
-/* 
+/*
 Optional extra examples (might be mundane)
 */
 
@@ -163,9 +163,9 @@ WHERE c.Id BETWEEN 1 AND 167991
 ';
 
 
-/* 
+/*
 Make sure you set this up to be repeatable 4 u.
-With DOP 1 FULLSCAN stats on Comments, I found 
+With DOP 1 FULLSCAN stats on Comments, I found
 the tipping point to be (163769, 163770)
 
 */
@@ -234,12 +234,12 @@ N'
 @Score3 integer,
 @Score4 integer
 ',
-0, 
-0, 
+0,
+0,
 0,
 0;
 
-/* 
+/*
 Also variant 27, just more compact:
 
 */
@@ -280,7 +280,7 @@ WHERE @Score = c.Score
 N'@Score integer',
 0;
 
-/* 
+/*
 The other main reason you might not see PSPO
 is a compilation time exceeding 1000ms.
 

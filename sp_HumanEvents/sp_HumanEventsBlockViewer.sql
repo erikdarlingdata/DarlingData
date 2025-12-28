@@ -948,7 +948,7 @@ BEGIN
         JOIN sys.dm_xe_session_targets AS t
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        ORDER BY 
+        ORDER BY
             t.target_name
         OPTION(RECOMPILE);
     END;
@@ -962,7 +962,7 @@ BEGIN
         JOIN sys.dm_xe_database_session_targets AS t
           ON s.address = t.event_session_address
         WHERE s.name = @session_name
-        ORDER BY 
+        ORDER BY
             t.target_name
         OPTION(RECOMPILE);
     END;
@@ -1163,7 +1163,7 @@ BEGIN
         CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
         WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
         AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
-        ORDER BY 
+        ORDER BY
             event_timestamp DESC
     ) AS most_recent
     OPTION(RECOMPILE);
@@ -1195,7 +1195,7 @@ BEGIN
         CROSS APPLY x.x.nodes('/event') AS e(x)
         WHERE e.x.exist('@name[ .= "blocked_process_report"]') = 1
         AND   e.x.exist('@timestamp[. >= sql:variable("@start_date") and .< sql:variable("@end_date")]') = 1
-        ORDER BY 
+        ORDER BY
             event_timestamp DESC
     ) AS most_recent
     OPTION(RECOMPILE);
@@ -1293,7 +1293,7 @@ BEGIN
             event_timestamp = w.x.value('(//@timestamp)[1]', 'datetime2')
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
-        ORDER BY 
+        ORDER BY
             event_timestamp DESC
     ) AS most_recent
     OPTION(RECOMPILE);
@@ -2156,7 +2156,7 @@ WITH
                 varchar(400),
                 blocking_desc +
                 ' </* ' +
-                blocked_desc 
+                blocked_desc
             )
     FROM #blocking AS b
     WHERE NOT EXISTS
@@ -2902,26 +2902,26 @@ BEGIN
     SELECT
         check_id = -1,
         database_name = N'erikdarling.com',
-        object_name = 
-            N'sp_HumanEventsBlockViewer version ' + 
-            CONVERT(nvarchar(30), @version) + 
+        object_name =
+            N'sp_HumanEventsBlockViewer version ' +
+            CONVERT(nvarchar(30), @version) +
             N'.',
         finding_group = N'https://code.erikdarling.com',
-        finding = 
-            N'blocking events from ' + 
-            CONVERT(nvarchar(30), @actual_start_date, 126) + 
-            N' to ' + 
-            CONVERT(nvarchar(30), @actual_end_date, 126) + 
-            N' (' + CONVERT(nvarchar(30), @actual_event_count) + 
-            N' total events' + 
-            CASE 
-                WHEN @max_blocking_events > 0 
-                AND  @actual_event_count >= @max_blocking_events 
-                THEN N', limited to most recent ' + 
-                     CONVERT(nvarchar(30), @max_blocking_events) + 
-                     N')' 
-                ELSE N')' 
-            END + 
+        finding =
+            N'blocking events from ' +
+            CONVERT(nvarchar(30), @actual_start_date, 126) +
+            N' to ' +
+            CONVERT(nvarchar(30), @actual_end_date, 126) +
+            N' (' + CONVERT(nvarchar(30), @actual_event_count) +
+            N' total events' +
+            CASE
+                WHEN @max_blocking_events > 0
+                AND  @actual_event_count >= @max_blocking_events
+                THEN N', limited to most recent ' +
+                     CONVERT(nvarchar(30), @max_blocking_events) +
+                     N')'
+                ELSE N')'
+            END +
             N'.',
         1;
 
@@ -3751,8 +3751,8 @@ BEGIN
     SELECT
         check_id = 2147483647,
         database_name = N'erikdarling.com',
-        object_name = 
-            N'sp_HumanEventsBlockViewer version ' + 
+        object_name =
+            N'sp_HumanEventsBlockViewer version ' +
             CONVERT(nvarchar(30), @version) + N'.',
         finding_group = N'https://code.erikdarling.com',
         finding = N'thanks for using me!',

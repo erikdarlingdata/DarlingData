@@ -2804,7 +2804,7 @@ AND   ca.utc_timestamp < @end_date';
                                  '.'
                             ELSE 'no cpu issues found!'
                         END
-        
+
                 RAISERROR('No scheduler data found', 0, 0) WITH NOWAIT;
             END;
         END;
@@ -2831,7 +2831,7 @@ AND   ca.utc_timestamp < @end_date';
                     sd.hasDeadlockedSchedulersOccurred,
                     sd.didBlockingOccur
                 FROM #scheduler_details AS sd';
-        
+
             /* Add the WHERE clause only for table logging */
             IF @log_to_table = 1
             BEGIN
@@ -2848,28 +2848,28 @@ AND   ca.utc_timestamp < @end_date';
                         '{date_column}',
                         'event_time'
                     );
-        
+
                 IF @debug = 1
                 BEGIN
                     PRINT @mdsql_execute;
                 END;
-        
+
                 EXECUTE sys.sp_executesql
                     @mdsql_execute,
                   N'@max_event_time datetime2(7) OUTPUT',
                     @max_event_time OUTPUT;
-        
+
                 SET @dsql += N'
             WHERE sd.event_time > @max_event_time';
             END;
-        
+
             /* Add the ORDER BY clause */
             SET @dsql += N'
             ORDER BY
                 sd.event_time DESC
             OPTION(RECOMPILE);
             ';
-        
+
             /* Handle table logging */
             IF @log_to_table = 1
             BEGIN
@@ -2890,18 +2890,18 @@ AND   ca.utc_timestamp < @end_date';
                     didBlockingOccur
                 )' +
                     @dsql;
-        
+
                 IF @debug = 1
                 BEGIN
                     PRINT @insert_sql;
                 END;
-        
+
                 EXECUTE sys.sp_executesql
                     @insert_sql,
                   N'@max_event_time datetime2(7)',
                     @max_event_time;
             END;
-        
+
             /* Execute the query for client results */
             IF @log_to_table = 0
             BEGIN
@@ -2909,11 +2909,11 @@ AND   ca.utc_timestamp < @end_date';
                 BEGIN
                     PRINT @dsql;
                 END;
-        
+
                 EXECUTE sys.sp_executesql
                     @dsql;
             END;
-        END; 
+        END;
     END;/*End CPU*/
 
     /*Grab memory details*/

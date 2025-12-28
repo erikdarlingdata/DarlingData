@@ -1,10 +1,10 @@
-﻿USE StackOverflow2013;
+USE StackOverflow2013;
 SET NOCOUNT ON;
 EXECUTE dbo.DropIndexes;
 DBCC FREEPROCCACHE;
-ALTER DATABASE StackOverflow2013 
+ALTER DATABASE StackOverflow2013
 SET COMPATIBILITY_LEVEL = 160;
-GO 
+GO
 
 /*
 Notes for Erik:
@@ -53,29 +53,29 @@ WITH
 GO
 
 
-/*                                                                                                                                                                                                                     
-██████╗  █████╗ ██████╗  █████╗ ███╗   ███╗███████╗████████╗███████╗██████╗    
-██╔══██╗██╔══██╗██╔══██╗██╔══██╗████╗ ████║██╔════╝╚══██╔══╝██╔════╝██╔══██╗   
-██████╔╝███████║██████╔╝███████║██╔████╔██║█████╗     ██║   █████╗  ██████╔╝   
-██╔═══╝ ██╔══██║██╔══██╗██╔══██║██║╚██╔╝██║██╔══╝     ██║   ██╔══╝  ██╔══██╗   
-██║     ██║  ██║██║  ██║██║  ██║██║ ╚═╝ ██║███████╗   ██║   ███████╗██║  ██║   
-╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   
-                                                                               
+/*
+██████╗  █████╗ ██████╗  █████╗ ███╗   ███╗███████╗████████╗███████╗██████╗
+██╔══██╗██╔══██╗██╔══██╗██╔══██╗████╗ ████║██╔════╝╚══██╔══╝██╔════╝██╔══██╗
+██████╔╝███████║██████╔╝███████║██╔████╔██║█████╗     ██║   █████╗  ██████╔╝
+██╔═══╝ ██╔══██║██╔══██╗██╔══██║██║╚██╔╝██║██╔══╝     ██║   ██╔══╝  ██╔══██╗
+██║     ██║  ██║██║  ██║██║  ██║██║ ╚═╝ ██║███████╗   ██║   ███████╗██║  ██║
+╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝   ╚═╝   ╚══════╝╚═╝  ╚═╝
+
 ███████╗███████╗███╗   ██╗███████╗██╗████████╗██╗██╗   ██╗██╗████████╗██╗   ██╗
 ██╔════╝██╔════╝████╗  ██║██╔════╝██║╚══██╔══╝██║██║   ██║██║╚══██╔══╝╚██╗ ██╔╝
-███████╗█████╗  ██╔██╗ ██║███████╗██║   ██║   ██║██║   ██║██║   ██║    ╚████╔╝ 
-╚════██║██╔══╝  ██║╚██╗██║╚════██║██║   ██║   ██║╚██╗ ██╔╝██║   ██║     ╚██╔╝  
-███████║███████╗██║ ╚████║███████║██║   ██║   ██║ ╚████╔╝ ██║   ██║      ██║   
-╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝   ╚═╝   ╚═╝  ╚═══╝  ╚═╝   ╚═╝      ╚═╝   
-                                                                               
-████████╗██████╗  █████╗ ██╗███╗   ██╗██╗███╗   ██╗ ██████╗                    
-╚══██╔══╝██╔══██╗██╔══██╗██║████╗  ██║██║████╗  ██║██╔════╝                    
-   ██║   ██████╔╝███████║██║██╔██╗ ██║██║██╔██╗ ██║██║  ███╗                   
-   ██║   ██╔══██╗██╔══██║██║██║╚██╗██║██║██║╚██╗██║██║   ██║                   
-   ██║   ██║  ██║██║  ██║██║██║ ╚████║██║██║ ╚████║╚██████╔╝                   
-   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚═╝╚═╝  ╚═══╝ ╚═════╝                                                                                                        
+███████╗█████╗  ██╔██╗ ██║███████╗██║   ██║   ██║██║   ██║██║   ██║    ╚████╔╝
+╚════██║██╔══╝  ██║╚██╗██║╚════██║██║   ██║   ██║╚██╗ ██╔╝██║   ██║     ╚██╔╝
+███████║███████╗██║ ╚████║███████║██║   ██║   ██║ ╚████╔╝ ██║   ██║      ██║
+╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝   ╚═╝   ╚═╝  ╚═══╝  ╚═╝   ╚═╝      ╚═╝
 
-               Erik Darling                
+████████╗██████╗  █████╗ ██╗███╗   ██╗██╗███╗   ██╗ ██████╗
+╚══██╔══╝██╔══██╗██╔══██╗██║████╗  ██║██║████╗  ██║██╔════╝
+   ██║   ██████╔╝███████║██║██╔██╗ ██║██║██╔██╗ ██║██║  ███╗
+   ██║   ██╔══██╗██╔══██║██║██║╚██╗██║██║██║╚██╗██║██║   ██║
+   ██║   ██║  ██║██║  ██║██║██║ ╚████║██║██║ ╚████║╚██████╔╝
+   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝╚═╝  ╚═══╝╚═╝╚═╝  ╚═══╝ ╚═════╝
+
+               Erik Darling
 (Consultare Maximus - Rationabile Pretium)
 
 W: https://erikdarling.com
@@ -85,8 +85,8 @@ T: https://www.tiktok.com/@darling.data
 L: https://www.linkedin.com/company/darling-data/
 Y: https://www.youtube.com/@ErikDarlingData
 
-Demos: 
-Database: https://go.erikdarling.com/Stack2013 
+Demos:
+Database: https://go.erikdarling.com/Stack2013
 
 */
 
@@ -96,37 +96,37 @@ Let's start by defining some important terms here:
 
 Parameter Sniffing:
  * When the optimizer uses the value(s) assigned
-   to one or more formal parameters for cardinality 
-   estimation in order to compile (and cache!) a 
+   to one or more formal parameters for cardinality
+   estimation in order to compile (and cache!) a
    query's execution plan for reuse in the future.
-   
+
    This is generally a good thing, as it reduces
-   plan compilation overhead on busy OLTP systems. 
+   plan compilation overhead on busy OLTP systems.
 
 
 Parameter Sensitivity:
- * When a cached execution plan involving one or 
+ * When a cached execution plan involving one or
    more formal parameter values has far different
-   cardinality estimates than the current runtime 
-   parameter value(s) would produce, to the point 
-   that a different query execution plan would be 
+   cardinality estimates than the current runtime
+   parameter value(s) would produce, to the point
+   that a different query execution plan would be
    more appropriate and perform better than current.
-   
+
    This is the problem that we're talking about today.
-   
+
 
 General Performance Issues:
  * When people do all manner of terrible things to
-   their SQL Server, and spend all day wondering if 
-   it's parameter sniffing, including but not limited 
-   to: local variables, table variables, scalar UDFs, 
+   their SQL Server, and spend all day wondering if
+   it's parameter sniffing, including but not limited
+   to: local variables, table variables, scalar UDFs,
    multi-statement table valued functions, non-SARGable
-   predicates, implicit conversions, XML, JSON, string 
-   splitting, any ORM, and poorly conceived tables, 
+   predicates, implicit conversions, XML, JSON, string
+   splitting, any ORM, and poorly conceived tables,
    columns, and indexes (or lack of indexes, probably),
    and not keeping statistics reasonably up to date.
-   
-   We also need to separate "sometimes slow" queries 
+
+   We also need to separate "sometimes slow" queries
    that are "sometimes slow" for other reasons, like
    being blocked, reading from disk, and many others.
 
@@ -217,12 +217,12 @@ The two most common vehicles for parameterized code
 in SQL Server are Stored Procedures and queries that
 are executed via sp_executesql (dynamic or application).
 
-The main distinction between formal parameters & local 
-variables is an important one for our purposes, since 
-values assigned to variables are not currently sniffed 
+The main distinction between formal parameters & local
+variables is an important one for our purposes, since
+values assigned to variables are not currently sniffed
 at compile or execution time (without recompiling, yes).
 
-*/ 
+*/
 
 /*We've got this index.*/
 CREATE INDEX
@@ -242,7 +242,7 @@ SELECT
     c = COUNT_BIG(*)
 FROM dbo.Posts AS p
 WHERE p.ParentId = @ParentId;
-GO 
+GO
 
 /*Sometimes it doesn't.*/
 DECLARE
@@ -274,31 +274,31 @@ EXECUTE dbo.DropIndexes
 /*
 How it works, in great detail:
  * https://go.erikdarling.com/LocalVariables
- 
+
 But Why?
 
 What actually happens now:
  * Compile an executable plan faster, but with
    an unknown estimate for the COUNT query that
    uses it in the where clause (cardinality!)
- 
+
 What could happen in the future:
  * Defer compilation: Don't compile a plan for the
    COUNT query until the variable has been assigned.
     * Doing this every time: Lots of recompiling
     * Doing this once: Feels like parameter sniffing
 
-The internals are there to do the second option, but 
-it has not been exposed to us yet. This does the same 
+The internals are there to do the second option, but
+it has not been exposed to us yet. This does the same
 general thing as table variable deferred compilation.
 
-People historically used local variables to avoid 
+People historically used local variables to avoid
 sniffing, so T.P.T.B. decided not to break this.
 
 Despite having no problem breaking many other things.
 
 Before we move on, it's worth talking about the thing
-everyone always talks about when talking about the 
+everyone always talks about when talking about the
 thing we're talking about: RECOMPILE!
 
 I am very much in favor of the recompile technique.
@@ -311,81 +311,81 @@ But there's something people frequently mess up:
 
 */
 
-CREATE INDEX 
+CREATE INDEX
     OwnerUserId_Score
 ON dbo.Posts
     (OwnerUserId, Score DESC)
 INCLUDE
-    (PostTypeId) 
+    (PostTypeId)
 WITH
     (SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);
 GO
 
 
-CREATE OR ALTER PROCEDURE 
-    dbo.WhereToRecompile 
+CREATE OR ALTER PROCEDURE
+    dbo.WhereToRecompile
 (
-    @OwnerUserId integer = NULL, 
-    @CreationDate datetime = NULL, 
+    @OwnerUserId integer = NULL,
+    @CreationDate datetime = NULL,
     @PostTypeId integer = NULL,
     @Score integer = NULL
 )
-WITH 
+WITH
     RECOMPILE /*This sucks.*/
 AS
 BEGIN
     SET NOCOUNT, XACT_ABORT ON;
-  
-    SELECT TOP (5000) 
+
+    SELECT TOP (5000)
         p.OwnerUserId,
         p.Score,
         Tags = ISNULL(p.Tags, N'N/A: Question'),
-        Title = ISNULL(p.Title, N'N/A: Question'), 
-        p.CreationDate, 
-        p.LastActivityDate, 
+        Title = ISNULL(p.Title, N'N/A: Question'),
+        p.CreationDate,
+        p.LastActivityDate,
         p.Body
     FROM dbo.Posts AS p
     WHERE (p.OwnerUserId = @OwnerUserId OR @OwnerUserId IS NULL)
     AND   (p.CreationDate >= @CreationDate OR @CreationDate IS NULL)
     AND   (p.PostTypeId = @PostTypeId OR @PostTypeId IS NULL)
     AND   (p.Score >= @Score OR @Score IS NULL)
-    ORDER BY 
+    ORDER BY
         p.Score DESC,
         p.Id;
 
-    SELECT TOP (5000) 
+    SELECT TOP (5000)
         p.OwnerUserId,
         p.Score,
         Tags = ISNULL(p.Tags, N'N/A: Question'),
-        Title = ISNULL(p.Title, N'N/A: Question'), 
-        p.CreationDate, 
-        p.LastActivityDate, 
+        Title = ISNULL(p.Title, N'N/A: Question'),
+        p.CreationDate,
+        p.LastActivityDate,
         p.Body
     FROM dbo.Posts AS p
     WHERE (p.OwnerUserId = @OwnerUserId OR @OwnerUserId IS NULL)
     AND   (p.CreationDate >= @CreationDate OR @CreationDate IS NULL)
     AND   (p.PostTypeId = @PostTypeId OR @PostTypeId IS NULL)
     AND   (p.Score >= @Score OR @Score IS NULL)
-    ORDER BY 
+    ORDER BY
         p.Score DESC,
         p.Id
     OPTION(RECOMPILE); /*This doesn't suck.*/
 END;
-GO 
+GO
 
 /*Example executions to get both query plans here.*/
-EXECUTE dbo.WhereToRecompile 
+EXECUTE dbo.WhereToRecompile
     @OwnerUserId = 22656;
-GO 
+GO
 
 /*Changes.*/
-EXECUTE dbo.WhereToRecompile 
-    @CreationDate = '20131231'; 
+EXECUTE dbo.WhereToRecompile
+    @CreationDate = '20131231';
 GO
 
 /*
 This is the parameter embedding optimization, and it's
-only available with statement level recompile. This is an 
+only available with statement level recompile. This is an
 important difference, and why procedure level recompiles
 (while they do recompile all plans) do not embed values.
 
@@ -402,10 +402,10 @@ and it uses a similar framework to another feature (PSPO).
 
 /*Show option recompile effect on cached values*/
 DECLARE
-    @start_date date = 
+    @start_date date =
         CONVERT
         (
-            date, 
+            date,
             SYSDATETIME()
         );
 
@@ -451,7 +451,7 @@ BEGIN
       ON p.OwnerUserId = u.Id
     WHERE u.DisplayName LIKE @DisplayName
     AND   p.Score > 0
-    GROUP BY 
+    GROUP BY
         u.Id,
         u.DisplayName
     HAVING
@@ -459,7 +459,7 @@ BEGIN
     ORDER BY
         TotalScore DESC;
 END;
-GO 
+GO
 
 
 /*Resetter*/
@@ -502,10 +502,10 @@ This isn't possible with with plan cache
 */
 
 DECLARE
-    @start_date date = 
+    @start_date date =
         CONVERT
         (
-            date, 
+            date,
             SYSDATETIME()
         );
 
@@ -545,14 +545,14 @@ JOIN dbo.Posts AS p
   ON p.OwnerUserId = u.Id
 WHERE u.DisplayName LIKE @DisplayName
 AND   p.Score > 0
-GROUP BY 
+GROUP BY
     u.Id,
     u.DisplayName
 HAVING
     SUM(p.Score) >= 5000
 ORDER BY
     TotalScore DESC;
-GO 
+GO
 
 /*
 Getting the same plan for both values isn't helpful.
@@ -560,7 +560,7 @@ Getting the same plan for both values isn't helpful.
 This isn't sniffing, this is local variable behavior.
 The values are just not sniffed at all. Remember that.
 
-Either make a copy of the procedure for testing, a 
+Either make a copy of the procedure for testing, a
 temporary stored procedure, or parameterized dynamic
 SQL to test things out. Local variables <> Adequate.
 
@@ -578,7 +578,7 @@ BEGIN
     FROM dbo.Users AS u
     WHERE u.DisplayName LIKE @DisplayName;
 END;
-GO 
+GO
 
 EXECUTE #DisplayNameSearcher
     @DisplayName = N'John%';
@@ -602,10 +602,10 @@ Get it done quickly
 */
 
 DECLARE
-    @start_date date = 
+    @start_date date =
         CONVERT
         (
-            date, 
+            date,
             SYSDATETIME()
         );
 
@@ -639,7 +639,7 @@ We live in rather funny times for parameter sniffing.
          * That means a total of 27 plan variants
          * If you have 3 qualifying parameters
      * Kicks in ~heuristically~
-       * Skewness: is the most common value 100k times 
+       * Skewness: is the most common value 100k times
          more common than the least common value is?
        * 1:100k ratio, so if the least common value
          has 10 rows, most common needs 1 million rows.
@@ -647,11 +647,11 @@ We live in rather funny times for parameter sniffing.
      * No built-in way to force the issue
 */
 
-SELECT 
-    mv.map_value 
+SELECT
+    mv.map_value
 FROM sys.dm_xe_map_values AS mv
-WHERE mv.name = N'psp_skipped_reason_enum' 
-ORDER BY 
+WHERE mv.name = N'psp_skipped_reason_enum'
+ORDER BY
     mv.map_key;
 
 /*
@@ -721,7 +721,7 @@ This is not so fast of course, because many Comments
 
 Performance isn't too horrible at ~3.5 seconds, but
 you can see the extra time spent in the Seek into
-the Clustered index, ~2.9 seconds, and that the Sort 
+the Clustered index, ~2.9 seconds, and that the Sort
 now spills because the memory grant was insufficient.
 
 */
@@ -744,7 +744,7 @@ WITH
 The reason why this procedure is parameter-sensitive
 is that we don't have one index for both predicates.
 
-Lookups can often be faster than clustered index scans, 
+Lookups can often be faster than clustered index scans,
 so you shouldn't focus on fixing all of them. Always
 get the actual execution plan and validate slow points.
 
@@ -752,7 +752,7 @@ Look at operator times. Do not trust costs. Not even
 in Actual Execution Plans. They're still estimates,
 and not durable performance metrics. Useless liars.
 
-Predicate lookups are different, because they're a sign 
+Predicate lookups are different, because they're a sign
 you have incomplete indexes for what your queries need
 to accomplish. These are usually worth noting when doing
 execution plan analysis for parameter sensitivity issues.
@@ -780,7 +780,7 @@ Now we'll look at problems with PSPO.
 One might think that with a feature name like the
  ~*~*~PARAMETER SENSITIVE PLAN OPTIMIZATION~*~*~
 that it would act sanely and rationally in its effort
-to optimize parameter sensitive plans. One might 
+to optimize parameter sensitive plans. One might
 need reminding that Availability Groups rarely make
 things more available. Usually they're less so.
 
@@ -835,7 +835,7 @@ BEGIN
 
     SELECT
         UserId = ISNULL(v.UserId, 0),
-        Votes2013 = 
+        Votes2013 =
             SUM
             (
                 CASE
@@ -845,7 +845,7 @@ BEGIN
                     ELSE 0
                 END
             ),
-        TotalBounty = 
+        TotalBounty =
             SUM
             (
                 CASE
@@ -868,7 +868,7 @@ BEGIN
             WHERE  p.OwnerUserId = v.UserId
             AND    p.PostTypeId = 1
         )
-    GROUP BY 
+    GROUP BY
         v.UserId
     ORDER BY
         PostCount DESC;
@@ -887,11 +887,11 @@ DBCC SHOW_STATISTICS
 )
 WITH
     HISTOGRAM;
-GO 
+GO
 
 /*Oh, right.*/
 SELECT
-    EQ_ROWS = 
+    EQ_ROWS =
         FORMAT
         (
             CONVERT(bigint, 3.733213E+07),
@@ -920,11 +920,11 @@ EXECUTE sys.sp_recompile
 
 /*Does fine to start!*/
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 4; 
+    @VoteTypeId = 4;
 
 /*For a little texture. Not bad.*/
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 1; 
+    @VoteTypeId = 1;
 
 /*
 Show saved plan, totally eats it.
@@ -936,7 +936,7 @@ Show saved plan, totally eats it.
 
 */
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 2; 
+    @VoteTypeId = 2;
 
 
 /*This really sucks*/
@@ -946,20 +946,20 @@ EXECUTE sys.sp_recompile
 
 /*Much better start, I think.*/
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 2; 
+    @VoteTypeId = 2;
 
 /*For a little texture. Much better!*/
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 1; 
+    @VoteTypeId = 1;
 
 /*This plan is a total waste.*/
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 4; 
+    @VoteTypeId = 4;
 GO
 
 /*
 It's not that it's "slow", but it takes around
-100ms, when the original plan for 4 took 0ms, 
+100ms, when the original plan for 4 took 0ms,
 and used very little resource-wise. This is a big
 ol' parallel plan that uses ~3GB for a memory grant.
 
@@ -969,12 +969,12 @@ adding a dummy row to the votes table! Sketchy, huh?
 Now we'll meet the skewness threshold, statistically.
 
   1 * 100,000 = 100,000
-  
+
   37,332,130 > 100,000
 
 */
 
-SET IDENTITY_INSERT 
+SET IDENTITY_INSERT
   dbo.Votes ON;
 
 INSERT
@@ -997,13 +997,13 @@ VALUES
     '99991231'
 );
 
-SET IDENTITY_INSERT 
+SET IDENTITY_INSERT
   dbo.Votes OFF;
 
 
 /*This is to avoid anything dumb*/
-UPDATE STATISTICS 
-    dbo.Votes 
+UPDATE STATISTICS
+    dbo.Votes
     VoteTypeId_UserId_PostId
 WITH
     FULLSCAN;
@@ -1014,26 +1014,26 @@ EXECUTE sys.sp_recompile
 
 /*QueryVariantID = 1!*/
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 0; 
+    @VoteTypeId = 0;
 
 /*QueryVariantID = 2!*/
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 4; 
+    @VoteTypeId = 4;
 
 /*QueryVariantID = 3!*/
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 2; 
+    @VoteTypeId = 2;
 
 /*QueryVariantID = ?!*/
 EXECUTE dbo.VoteSniffing
-    @VoteTypeId = 1; 
+    @VoteTypeId = 1;
 
 
 /*Unfortunate*/
 SELECT
     v.VoteTypeId,
     Total = FORMAT(COUNT_BIG(*), 'N0'),
-    QueryVariantId = 
+    QueryVariantId =
         CASE
             WHEN v.VoteTypeId = 2
             THEN '3: Unusually Common'
@@ -1049,7 +1049,7 @@ ORDER BY
 
 
 /*Remove Dummy*/
-DELETE 
+DELETE
     v
 FROM dbo.Votes AS v
 WHERE v.VoteTypeId = 0
@@ -1057,12 +1057,12 @@ AND   v.CreationDate >= CONVERT(datetime, '99991231', 112);
 
 
 /*Remove Dummy*/
-UPDATE STATISTICS 
-    dbo.Votes 
+UPDATE STATISTICS
+    dbo.Votes
     VoteTypeId_UserId_PostId
 WITH
     FULLSCAN;
-GO 
+GO
 
 /*Dummy Removal Check*/
 DBCC SHOW_STATISTICS
@@ -1072,23 +1072,23 @@ DBCC SHOW_STATISTICS
 )
 WITH
     HISTOGRAM;
-GO 
+GO
 
 /*
-I know what you're thinking here! 
+I know what you're thinking here!
 
-Erik! Query Store! Surely we can just force one of 
-these queries to use a different variant. Surely! 
+Erik! Query Store! Surely we can just force one of
+these queries to use a different variant. Surely!
 
 Wrong.
 
 */
 
 DECLARE
-    @start_date date = 
+    @start_date date =
         CONVERT
         (
-            date, 
+            date,
             SYSDATETIME()
         );
 
@@ -1134,15 +1134,15 @@ Some common things to be aware of in sensitive plans:
 
 For this procedure, we have a rather convenient tactic.
 
-There's one parameter that causes all of our problems, 
-and this may be true of procedures you deal with too. 
-It might just be less obvious because you have more 
-than one parameter. Like I've said, this is a tough 
-problem to solve because of all the *stuff* people 
+There's one parameter that causes all of our problems,
+and this may be true of procedures you deal with too.
+It might just be less obvious because you have more
+than one parameter. Like I've said, this is a tough
+problem to solve because of all the *stuff* people
 do at once to their queries. But I have faith in you!
 
-We can isolate the parameter sensitive portion of the 
-query by sticking it into a #temp table... sometimes. 
+We can isolate the parameter sensitive portion of the
+query by sticking it into a #temp table... sometimes.
 
 More on that in a moment.
 
@@ -1167,7 +1167,7 @@ BEGIN
     );
 
     INSERT
-        #votes 
+        #votes
     (
         UserId,
         Votes2013,
@@ -1176,7 +1176,7 @@ BEGIN
     )
     SELECT
         UserId = v.UserId,
-        Votes2013 = 
+        Votes2013 =
            SUM
            (
                CASE
@@ -1186,7 +1186,7 @@ BEGIN
                    ELSE 0
                END
            ),
-        TotalBounty = 
+        TotalBounty =
             SUM
             (
                 CASE
@@ -1198,7 +1198,7 @@ BEGIN
         PostCount = COUNT(DISTINCT v.PostId)
     FROM dbo.Votes AS v
     WHERE v.VoteTypeId = @VoteTypeId
-    GROUP BY 
+    GROUP BY
         v.UserId;
 
     SELECT
@@ -1218,7 +1218,7 @@ BEGIN
               WHERE  p.OwnerUserId = v.UserId
               AND    p.PostTypeId = 1
           )
-    ORDER BY 
+    ORDER BY
         v.PostCount DESC;
 END;
 GO
@@ -1253,7 +1253,7 @@ EXECUTE sys.sp_recompile
 
 EXECUTE dbo.VoteSniffing
     @VoteTypeId = 2;
-GO 
+GO
 
 /*
 What do we do here?
@@ -1284,16 +1284,16 @@ BEGIN
     IF @VoteTypeId = 2
     BEGIN
         EXECUTE dbo.VoteSniffingProcedure
-            @VoteTypeId = @VoteTypeId;        
+            @VoteTypeId = @VoteTypeId;
     END;
-    
+
     IF @VoteTypeId <> 2
     BEGIN
         EXECUTE dbo.VoteSniffingTempTable
-            @VoteTypeId = @VoteTypeId;        
+            @VoteTypeId = @VoteTypeId;
     END;
 END;
-GO 
+GO
 
 
 /*A normal procedure call*/
@@ -1305,10 +1305,10 @@ CREATE OR ALTER PROCEDURE
 AS
 BEGIN
     SET XACT_ABORT, NOCOUNT ON;
-    
+
     SELECT
         UserId = ISNULL(v.UserId, 0),
-        Votes2013 = 
+        Votes2013 =
             SUM
             (
                 CASE
@@ -1318,7 +1318,7 @@ BEGIN
                     ELSE 0
                 END
             ),
-        TotalBounty = 
+        TotalBounty =
             SUM
             (
                 CASE
@@ -1341,7 +1341,7 @@ BEGIN
             WHERE p.OwnerUserId = v.UserId
             AND   p.PostTypeId = 1
         )
-    GROUP BY 
+    GROUP BY
         v.UserId
     ORDER BY
         PostCount DESC;
@@ -1543,7 +1543,7 @@ BEGIN
         @sql + N'
 OPTION
 (
-    OPTIMIZE FOR 
+    OPTIMIZE FOR
     (
         @VoteTypeId = 1
     )
@@ -1556,7 +1556,7 @@ BEGIN
         @sql + N'
 OPTION
 (
-    OPTIMIZE FOR 
+    OPTIMIZE FOR
     (
         @VoteTypeId = 2
     )
@@ -1569,7 +1569,7 @@ BEGIN
         @sql + N'
 OPTION
 (
-    OPTIMIZE FOR 
+    OPTIMIZE FOR
     (
         @VoteTypeId = 15
     )
@@ -1587,7 +1587,7 @@ FROM dbo.Votes AS v
 WHERE v.VoteTypeId = @VoteTypeId
 OPTION
 (
-    OPTIMIZE FOR 
+    OPTIMIZE FOR
     (
         @VoteTypeId = {@VoteTypeId}
     )
@@ -1647,17 +1647,17 @@ Dynamic SQL is your friend.
    ██║   ██╔══██║██╔══██║██║╚██╗██║██╔═██╗
    ██║   ██║  ██║██║  ██║██║ ╚████║██║  ██╗
    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝
-                                          
-██╗   ██╗ ██████╗ ██╗   ██╗██╗            
-╚██╗ ██╔╝██╔═══██╗██║   ██║██║            
- ╚████╔╝ ██║   ██║██║   ██║██║            
-  ╚██╔╝  ██║   ██║██║   ██║╚═╝            
-   ██║   ╚██████╔╝╚██████╔╝██╗            
+
+██╗   ██╗ ██████╗ ██╗   ██╗██╗
+╚██╗ ██╔╝██╔═══██╗██║   ██║██║
+ ╚████╔╝ ██║   ██║██║   ██║██║
+  ╚██╔╝  ██║   ██║██║   ██║╚═╝
+   ██║   ╚██████╔╝╚██████╔╝██╗
    ╚═╝    ╚═════╝  ╚═════╝ ╚═╝
 
-               Erik Darling                
+               Erik Darling
 (Consultare Maximus - Rationabile Pretium)
-                                          
+
 W: https://erikdarling.com
 E: mailto:erik@erikdarling.com
 T: https://twitter.com/erikdarlingdata
