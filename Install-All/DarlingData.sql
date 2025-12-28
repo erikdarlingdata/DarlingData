@@ -1,4 +1,4 @@
--- Compile Date: 12/28/2025 13:51:30 UTC
+-- Compile Date: 12/28/2025 14:31:00 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -5920,6 +5920,12 @@ CREATE TABLE
 );
 
 CREATE TABLE
+    #human_events_xml
+(
+    human_events_xml xml
+);
+
+CREATE TABLE
     #wait
 (
     wait_type sysname
@@ -7299,8 +7305,55 @@ WAITFOR DELAY @waitfor;
 
 
 /* Dump whatever we got into a temp table */
-IF @azure = 0
+IF LOWER(@target_output) = N'ring_buffer'
 BEGIN
+    IF @azure = 0
+    BEGIN
+        INSERT
+            #x WITH(TABLOCK)
+        (
+            x
+        )
+        SELECT
+            x =
+                CONVERT
+                (
+                    xml,
+                    t.target_data
+                )
+        FROM sys.dm_xe_session_targets AS t
+        JOIN sys.dm_xe_sessions AS s
+          ON s.address = t.event_session_address
+        WHERE s.name = @session_name
+        AND   t.target_name = N'ring_buffer';
+    END;
+    ELSE
+    BEGIN
+        INSERT
+            #x WITH(TABLOCK)
+        (
+            x
+        )
+        SELECT
+            x =
+                CONVERT
+                (
+                    xml,
+                    t.target_data
+                )
+        FROM sys.dm_xe_database_session_targets AS t
+        JOIN sys.dm_xe_database_sessions AS s
+          ON s.address = t.event_session_address
+        WHERE s.name = @session_name
+        AND   t.target_name = N'ring_buffer';
+    END;
+END;
+ELSE IF LOWER(@target_output) = N'event_file'
+BEGIN
+    /*
+    Read from event file target
+    Azure SQL Database and Managed Instance are not supported for event_file
+    */
     INSERT
         #x WITH(TABLOCK)
     (
@@ -7311,41 +7364,46 @@ BEGIN
             CONVERT
             (
                 xml,
-                t.target_data
+                f.event_data
             )
-    FROM sys.dm_xe_session_targets AS t
-    JOIN sys.dm_xe_sessions AS s
-      ON s.address = t.event_session_address
-    WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer';
+    FROM sys.fn_xe_file_target_read_file
+    (
+        @session_name + N'*.xel',
+        NULL,
+        NULL,
+        NULL
+    ) AS f;
 END;
-ELSE
+
+
+/*
+Parse XML events based on target output type
+ring_buffer wraps events in RingBufferTarget node, event_file does not
+*/
+IF LOWER(@target_output) = N'ring_buffer'
 BEGIN
     INSERT
-        #x WITH(TABLOCK)
+        #human_events_xml WITH(TABLOCK)
     (
-        x
+        human_events_xml
     )
     SELECT
-        x =
-            CONVERT
-            (
-                xml,
-                t.target_data
-            )
-    FROM sys.dm_xe_database_session_targets AS t
-    JOIN sys.dm_xe_database_sessions AS s
-      ON s.address = t.event_session_address
-    WHERE s.name = @session_name
-    AND   t.target_name = N'ring_buffer';
+        human_events_xml = e.x.query('.')
+    FROM #x AS x
+    CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x);
 END;
-
-
-SELECT
-    human_events_xml = e.x.query('.')
-INTO #human_events_xml
-FROM #x AS x
-CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x);
+ELSE IF LOWER(@target_output) = N'event_file'
+BEGIN
+    INSERT
+        #human_events_xml WITH(TABLOCK)
+    (
+        human_events_xml
+    )
+    SELECT
+        human_events_xml = e.x.query('.')
+    FROM #x AS x
+    CROSS APPLY x.x.nodes('/event') AS e(x);
+END;
 
 
 IF @debug = 1
@@ -10068,28 +10126,55 @@ ORDER BY
                   );
 
             /* this table is only used for the inserts, hence the "internal" in the name */
-            IF @azure = 0
+            IF LOWER(@target_output) = N'ring_buffer'
             BEGIN
-                INSERT
-                    #x WITH(TABLOCK)
-                (
-                    x
-                )
-                SELECT
-                    x =
-                        CONVERT
-                        (
-                            xml,
-                            t.target_data
-                        )
-                FROM sys.dm_xe_session_targets AS t
-                JOIN sys.dm_xe_sessions AS s
-                  ON s.address = t.event_session_address
-                WHERE s.name = @event_type_check
-                AND   t.target_name = N'ring_buffer';
+                IF @azure = 0
+                BEGIN
+                    INSERT
+                        #x WITH(TABLOCK)
+                    (
+                        x
+                    )
+                    SELECT
+                        x =
+                            CONVERT
+                            (
+                                xml,
+                                t.target_data
+                            )
+                    FROM sys.dm_xe_session_targets AS t
+                    JOIN sys.dm_xe_sessions AS s
+                      ON s.address = t.event_session_address
+                    WHERE s.name = @event_type_check
+                    AND   t.target_name = N'ring_buffer';
+                END;
+                ELSE
+                BEGIN
+                    INSERT
+                        #x WITH(TABLOCK)
+                    (
+                        x
+                    )
+                    SELECT
+                        x =
+                            CONVERT
+                            (
+                                xml,
+                                t.target_data
+                            )
+                    FROM sys.dm_xe_database_session_targets AS t
+                    JOIN sys.dm_xe_database_sessions AS s
+                      ON s.address = t.event_session_address
+                    WHERE s.name = @event_type_check
+                    AND   t.target_name = N'ring_buffer';
+                END;
             END;
-            ELSE
+            ELSE IF LOWER(@target_output) = N'event_file'
             BEGIN
+                /*
+                Read from event file target
+                Azure SQL Database and Managed Instance are not supported for event_file
+                */
                 INSERT
                     #x WITH(TABLOCK)
                 (
@@ -10100,26 +10185,49 @@ ORDER BY
                         CONVERT
                         (
                             xml,
-                            t.target_data
+                            f.event_data
                         )
-                FROM sys.dm_xe_database_session_targets AS t
-                JOIN sys.dm_xe_database_sessions AS s
-                  ON s.address = t.event_session_address
-                WHERE s.name = @event_type_check
-                AND   t.target_name = N'ring_buffer';
+                FROM sys.fn_xe_file_target_read_file
+                (
+                    @event_type_check + N'*.xel',
+                    NULL,
+                    NULL,
+                    NULL
+                ) AS f;
             END;
 
-            INSERT
-                #human_events_xml_internal WITH(TABLOCK)
-            (
-                human_events_xml
-            )
-            SELECT
-                human_events_xml =
-                    e.x.query('.')
-                FROM #x AS x
-            CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
-            WHERE e.x.exist('@timestamp[. > sql:variable("@date_filter")]') = 1;
+            /*
+            Parse XML events based on target output type
+            ring_buffer wraps events in RingBufferTarget node, event_file does not
+            */
+            IF LOWER(@target_output) = N'ring_buffer'
+            BEGIN
+                INSERT
+                    #human_events_xml_internal WITH(TABLOCK)
+                (
+                    human_events_xml
+                )
+                SELECT
+                    human_events_xml =
+                        e.x.query('.')
+                    FROM #x AS x
+                CROSS APPLY x.x.nodes('/RingBufferTarget/event') AS e(x)
+                WHERE e.x.exist('@timestamp[. > sql:variable("@date_filter")]') = 1;
+            END;
+            ELSE IF LOWER(@target_output) = N'event_file'
+            BEGIN
+                INSERT
+                    #human_events_xml_internal WITH(TABLOCK)
+                (
+                    human_events_xml
+                )
+                SELECT
+                    human_events_xml =
+                        e.x.query('.')
+                    FROM #x AS x
+                CROSS APPLY x.x.nodes('/event') AS e(x)
+                WHERE e.x.exist('@timestamp[. > sql:variable("@date_filter")]') = 1;
+            END;
 
             IF @debug = 1
             BEGIN
