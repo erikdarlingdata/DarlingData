@@ -263,7 +263,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @max_event_time datetime2(7),
         @dsql nvarchar(max) = N'',
         @mdsql_template nvarchar(max) = N'',
-        @mdsql_execute nvarchar(MAX) = N'';
+        @mdsql_execute nvarchar(max) = N'',
+        @start_date_debug nvarchar(50),
+        @end_date_debug nvarchar(50);
 
     IF @azure = 1
     BEGIN
@@ -276,68 +278,38 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Fixing parameters and variables', 0, 0) WITH NOWAIT;
     END;
 
+    /*
+    Normalize dates to UTC offset for comparison with system_health events
+    When dates are NULL, use SYSUTCDATETIME() which is already UTC
+    When dates are provided, SWITCHOFFSET converts from any timezone to UTC
+    This matches sp_QuickieStore pattern for handling date conversions
+    */
     SELECT
         @start_date =
-            CASE
-                WHEN @start_date IS NULL
-                THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        DATEDIFF
-                        (
-                            MINUTE,
-                            SYSDATETIME(),
-                            GETUTCDATE()
-                        ),
-                        DATEADD
-                        (
-                            DAY,
-                            -7,
-                            SYSDATETIME()
-                        )
-                    )
-                ELSE
-                    DATEADD
-                    (
-                        MINUTE,
-                        DATEDIFF
-                        (
-                            MINUTE,
-                            SYSDATETIME(),
-                            GETUTCDATE()
-                        ),
-                        @start_date
-                    )
-            END,
+            ISNULL
+            (
+                SWITCHOFFSET
+                (
+                    @start_date,
+                    '+00:00'
+                ),
+                DATEADD
+                (
+                    DAY,
+                    -7,
+                    SYSUTCDATETIME()
+                )
+            ),
         @end_date =
-            CASE
-                WHEN @end_date IS NULL
-                THEN
-                    DATEADD
-                    (
-                        MINUTE,
-                        DATEDIFF
-                        (
-                            MINUTE,
-                            SYSDATETIME(),
-                            GETUTCDATE()
-                        ),
-                        SYSDATETIME()
-                    )
-                ELSE
-                    DATEADD
-                    (
-                        MINUTE,
-                        DATEDIFF
-                        (
-                            MINUTE,
-                            SYSDATETIME(),
-                            GETUTCDATE()
-                        ),
-                        @end_date
-                    )
-            END,
+            ISNULL
+            (
+                SWITCHOFFSET
+                (
+                    @end_date,
+                    '+00:00'
+                ),
+                SYSUTCDATETIME()
+            ),
         @wait_round_interval_minutes = /*do this i guess?*/
             CASE
                 WHEN @wait_round_interval_minutes < 1
@@ -407,33 +379,37 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     OPTION(RECOMPILE);
 ',
         @mdsql_template = N'
-            IF OBJECT_ID(''{table_check}'', ''U'') IS NOT NULL
-            BEGIN
-                SELECT
-                    @max_event_time =
-                        ISNULL
+    IF OBJECT_ID(''{table_check}'', ''U'') IS NOT NULL
+    BEGIN
+        SELECT
+            @max_event_time =
+                ISNULL
+                (
+                    MAX({date_column}),
+                    DATEADD
+                    (
+                        MINUTE,
+                        DATEDIFF
                         (
-                            MAX({date_column}),
-                            DATEADD
-                            (
-                                MINUTE,
-                                DATEDIFF
-                                (
-                                    MINUTE,
-                                    SYSDATETIME(),
-                                    GETUTCDATE()
-                                ),
-                                DATEADD
-                                (
-                                    DAY,
-                                    -1,
-                                    SYSDATETIME()
-                                )
-                            )
+                            MINUTE,
+                            SYSDATETIME(),
+                            GETUTCDATE()
+                        ),
+                        DATEADD
+                        (
+                            DAY,
+                            -1,
+                            SYSDATETIME()
                         )
-                FROM {table_check};
-            END;
-            ';
+                    )
+                )
+        FROM {table_check};
+    END;
+';
+
+    SELECT
+        @start_date_debug = @start_date,
+        @end_date_debug = @end_date;
 
     IF @timestamp_utc_mode = 0
     BEGIN
@@ -1414,7 +1390,7 @@ AND   ca.utc_timestamp < @end_date';
 
         IF @debug = 1
         BEGIN
-            RAISERROR('Executing collection SQL', 0, 0) WITH NOWAIT;
+            RAISERROR('Executing collection SQL for dates between %s and %s', 0, 0, @start_date_debug, @end_date_debug) WITH NOWAIT;
             SET STATISTICS XML ON;
         END;
 

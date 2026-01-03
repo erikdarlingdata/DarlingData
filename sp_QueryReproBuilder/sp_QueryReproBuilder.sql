@@ -1,4 +1,4 @@
-SET ANSI_NULLS ON;
+﻿SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
@@ -9,8 +9,49 @@ SET IMPLICIT_TRANSACTIONS OFF;
 SET STATISTICS TIME, IO OFF;
 GO
 
+/*
+ ██████╗ ██╗   ██╗███████╗██████╗ ██╗   ██╗         
+██╔═══██╗██║   ██║██╔════╝██╔══██╗╚██╗ ██╔╝         
+██║   ██║██║   ██║█████╗  ██████╔╝ ╚████╔╝          
+██║▄▄ ██║██║   ██║██╔══╝  ██╔══██╗  ╚██╔╝           
+╚██████╔╝╚██████╔╝███████╗██║  ██║   ██║            
+ ╚══▀▀═╝  ╚═════╝ ╚══════╝╚═╝  ╚═╝   ╚═╝            
+                                                    
+██████╗ ███████╗██████╗ ██████╗  ██████╗            
+██╔══██╗██╔════╝██╔══██╗██╔══██╗██╔═══██╗           
+██████╔╝█████╗  ██████╔╝██████╔╝██║   ██║           
+██╔══██╗██╔══╝  ██╔═══╝ ██╔══██╗██║   ██║           
+██║  ██║███████╗██║     ██║  ██║╚██████╔╝           
+╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝ ╚═════╝            
+                                                    
+██████╗ ██╗   ██╗██╗██╗     ██████╗ ███████╗██████╗ 
+██╔══██╗██║   ██║██║██║     ██╔══██╗██╔════╝██╔══██╗
+██████╔╝██║   ██║██║██║     ██║  ██║█████╗  ██████╔╝
+██╔══██╗██║   ██║██║██║     ██║  ██║██╔══╝  ██╔══██╗
+██████╔╝╚██████╔╝██║███████╗██████╔╝███████╗██║  ██║
+╚═════╝  ╚═════╝ ╚═╝╚══════╝╚═════╝ ╚══════╝╚═╝  ╚═╝
+   
+Copyright 2026 Darling Data, LLC
+https://www.erikdarling.com/
 
-CREATE OR ALTER PROCEDURE
+For usage and licensing details, run:
+EXECUTE sp_QueryReproBuilder
+    @help = 1;
+
+For working through errors:
+EXECUTE sp_QueryReproBuilder
+    @debug = 1;
+
+For support, head over to GitHub:
+https://code.erikdarling.com   
+
+*/
+
+IF OBJECT_ID(N'dbo.sp_QueryReproBuilder', N'P') IS NULL
+    EXECUTE (N'CREATE PROCEDURE dbo.sp_QueryReproBuilder AS RETURN 138;');
+GO
+
+ALTER PROCEDURE
     dbo.sp_QueryReproBuilder
 (
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
