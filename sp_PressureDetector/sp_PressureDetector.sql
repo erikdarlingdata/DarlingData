@@ -63,6 +63,7 @@ ALTER PROCEDURE
     @log_table_name_prefix sysname = 'PressureDetector', /*prefix for all logging tables*/
     @log_retention_days integer = 30, /*Number of days to keep logs, 0 = keep indefinitely*/
     @help bit = 0, /*how you got here*/
+    @troubleshoot_blocking bit = 0, /*show blocking chains instead of pressure analysis*/
     @debug bit = 0, /*prints dynamic sql, displays parameter and variable values, and table contents*/
     @version varchar(5) = NULL OUTPUT, /*OUTPUT; for support*/
     @version_date datetime = NULL OUTPUT /*OUTPUT; for support*/
@@ -122,6 +123,7 @@ BEGIN
                 WHEN N'@log_table_name_prefix' THEN N'prefix for all logging tables'
                 WHEN N'@log_retention_days' THEN N'how many days of data to retain'
                 WHEN N'@help' THEN N'how you got here'
+                WHEN N'@troubleshoot_blocking' THEN N'show blocking chains instead of pressure analysis'
                 WHEN N'@debug' THEN N'prints dynamic sql, displays parameter and variable values, and table contents'
                 WHEN N'@version' THEN N'OUTPUT; for support'
                 WHEN N'@version_date' THEN N'OUTPUT; for support'
@@ -143,6 +145,7 @@ BEGIN
                 WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
                 WHEN N'@log_retention_days' THEN N'a positive integer'
                 WHEN N'@help' THEN N'0 or 1'
+                WHEN N'@troubleshoot_blocking' THEN N'0 or 1'
                 WHEN N'@debug' THEN N'0 or 1'
                 WHEN N'@version' THEN N'none'
                 WHEN N'@version_date' THEN N'none'
@@ -164,6 +167,7 @@ BEGIN
                 WHEN N'@log_table_name_prefix' THEN N'PressureDetector'
                 WHEN N'@log_retention_days' THEN N'30'
                 WHEN N'@help' THEN N'0'
+                WHEN N'@troubleshoot_blocking' THEN N'0'
                 WHEN N'@debug' THEN N'0'
                 WHEN N'@version' THEN N'none; OUTPUT'
                 WHEN N'@version_date' THEN N'none; OUTPUT'
@@ -209,6 +213,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     RETURN;
 END; /*End help section*/
+
+/*
+If @troubleshoot_blocking = 1, skip all other analysis and go directly to blocking analysis
+*/
+IF @troubleshoot_blocking = 1
+BEGIN
+    GOTO troubleshoot_blocking;
+END;
 
     /*
     Fix parameters and check the values, etc.
@@ -4024,6 +4036,309 @@ OPTION(MAXDOP 1, RECOMPILE);',
         WAITFOR DELAY @waitfor;
         GOTO DO_OVER;
     END;
+
+    troubleshoot_blocking:
+    IF @troubleshoot_blocking = 1
+    BEGIN
+        /*
+        Blocking chain analysis - mimics sp_WhoIsActive @find_block_leaders = 1
+        Uses sys.sysprocesses to find both active and idle blockers
+        Uses recursive CTE to walk blocking chains
+        */
+
+        /*
+        Table variable to hold lead blockers (anchor rows)
+        This improves performance by materializing the anchor set once
+        */
+        DECLARE
+            @lead_blockers table
+        (
+            session_id smallint NOT NULL
+                PRIMARY KEY WITH (IGNORE_DUP_KEY = ON),
+            blocking_session_id smallint NOT NULL,
+            blocking_chain nvarchar(4000) NOT NULL
+        );
+
+        /*
+        Find lead blockers: sessions that are blocking others
+        but not blocked themselves (includes idle sessions with open transactions)
+        */
+        INSERT
+            @lead_blockers
+        (
+            session_id,
+            blocking_session_id,
+            blocking_chain
+        )
+        SELECT
+            session_id = sp.spid,
+            blocking_session_id = sp.blocked,
+            blocking_chain =
+                CONVERT
+                (
+                    nvarchar(4000),
+                    CONVERT(nvarchar(20), sp.spid) + N' lead blocker'
+                )
+        FROM sys.sysprocesses AS sp
+        WHERE sp.blocked = 0
+        AND   EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM sys.sysprocesses AS sp2
+                  WHERE sp2.blocked = sp.spid
+              );
+
+        /*
+        Recursive CTE to walk blocking chains
+        Anchor: lead blockers from table variable
+        Recursive: sessions blocked by current level
+        */
+        WITH
+            blockers
+        (
+            session_id,
+            blocking_session_id,
+            blocking_level,
+            top_level_blocker,
+            blocking_chain,
+            visited_path
+        ) AS
+        (
+            /*
+            Anchor: Lead blockers from table variable
+            */
+            SELECT
+                session_id = lb.session_id,
+                blocking_session_id = lb.blocking_session_id,
+                blocking_level = 0,
+                top_level_blocker = lb.session_id,
+                blocking_chain = lb.blocking_chain,
+                visited_path =
+                    CONVERT
+                    (
+                        nvarchar(4000),
+                        N'.' + CONVERT(nvarchar(20), lb.session_id) + N'.'
+                    )
+            FROM @lead_blockers AS lb
+
+            UNION ALL
+
+            /*
+            Recursive: Walk down the blocking chain
+            */
+            SELECT
+                session_id = sp.spid,
+                blocking_session_id = sp.blocked,
+                blocking_level = b.blocking_level + 1,
+                top_level_blocker = b.top_level_blocker,
+                blocking_chain =
+                    CONVERT
+                    (
+                        nvarchar(4000),
+                        REPLICATE(N' > ', b.blocking_level + 1) +
+                        CONVERT(nvarchar(20), sp.blocked) +
+                        N' blocking ' +
+                        CONVERT(nvarchar(20), sp.spid)
+                    ),
+                visited_path =
+                    CONVERT
+                    (
+                        nvarchar(4000),
+                        b.visited_path + CONVERT(nvarchar(20), sp.spid) + N'.'
+                    )
+            FROM blockers AS b
+            JOIN sys.sysprocesses AS sp
+              ON sp.blocked = b.session_id
+            WHERE b.visited_path NOT LIKE
+                  N'%.' + CONVERT(nvarchar(20), sp.spid) + N'.%'
+        ),
+            blocking_info
+        (
+            session_id,
+            blocking_session_id,
+            blocking_level,
+            top_level_blocker,
+            blocking_chain,
+            blocked_session_count,
+            last_batch,
+            status,
+            wait_type,
+            wait_time,
+            wait_resource,
+            cpu_time,
+            physical_io,
+            memusage,
+            open_transaction_count,
+            database_name,
+            command,
+            sql_handle,
+            statement_start_offset,
+            statement_end_offset,
+            login_name,
+            host_name,
+            program_name,
+            login_time
+        ) AS
+        (
+            /*
+            Join blocking chain results to sysprocesses for session details
+            SQL text and query plans are NOT retrieved here - done in final SELECT
+            */
+            SELECT
+                b.session_id,
+                b.blocking_session_id,
+                b.blocking_level,
+                b.top_level_blocker,
+                b.blocking_chain,
+                blocked_session_count =
+                (
+                    SELECT
+                        COUNT_BIG(*)
+                    FROM blockers AS b2
+                    WHERE b2.visited_path LIKE
+                          N'%.' + CONVERT(nvarchar(20), b.session_id) + N'.%'
+                    AND   b2.session_id <> b.session_id
+                ),
+                sp.last_batch,
+                sp.status,
+                wait_type = sp.lastwaittype,
+                wait_time = sp.waittime,
+                wait_resource = sp.waitresource,
+                cpu_time = sp.cpu,
+                physical_io = sp.physical_io,
+                sp.memusage,
+                open_transaction_count = sp.open_tran,
+                database_name = DB_NAME(sp.dbid),
+                command = sp.cmd,
+                sp.sql_handle,
+                statement_start_offset = sp.stmt_start,
+                statement_end_offset = sp.stmt_end,
+                login_name = sp.loginame,
+                host_name = sp.hostname,
+                program_name = sp.program_name,
+                sp.login_time
+            FROM blockers AS b
+            JOIN sys.sysprocesses AS sp
+              ON sp.spid = b.session_id
+        )
+        /*
+        Final SELECT: retrieve SQL text and query plans last for performance
+        Column order matches sp_WhoIsActive where possible
+        */
+        SELECT
+            [dd hh:mm:ss.mss] =
+                CASE
+                    WHEN e.elapsed_time_ms < 0
+                    THEN RIGHT(REPLICATE('0', 2) + CONVERT(varchar(10), (-1 * e.elapsed_time_ms) / 86400), 2) +
+                         ' ' +
+                         RIGHT(CONVERT(varchar(30), DATEADD(SECOND, (-1 * e.elapsed_time_ms), 0), 120), 9) +
+                         '.000'
+                    ELSE RIGHT(REPLICATE('0', 2) +
+                         CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
+                         ' ' +
+                         RIGHT(CONVERT(varchar(30), DATEADD(SECOND, e.elapsed_time_ms / 1000, 0), 120), 9) +
+                         '.' +
+                         RIGHT('000' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
+                END,
+            bi.session_id,
+            blocking_session_id = NULLIF(bi.blocking_session_id, 0),
+            bi.blocking_level,
+            bi.top_level_blocker,
+            bi.blocking_chain,
+            bi.blocked_session_count,
+            query_text =
+            (
+                SELECT
+                    [processing-instruction(query)] =
+                        SUBSTRING
+                        (
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            REPLACE(
+                                dest.text COLLATE Latin1_General_BIN2,
+                            NCHAR(31), N'?'), NCHAR(30), N'?'), NCHAR(29), N'?'), NCHAR(28), N'?'), NCHAR(27), N'?'), NCHAR(26), N'?'), NCHAR(25), N'?'), NCHAR(24), N'?'), NCHAR(23), N'?'), NCHAR(22), N'?'),
+                            NCHAR(21), N'?'), NCHAR(20), N'?'), NCHAR(19), N'?'), NCHAR(18), N'?'), NCHAR(17), N'?'), NCHAR(16), N'?'), NCHAR(15), N'?'), NCHAR(14), N'?'), NCHAR(12), N'?'),
+                            NCHAR(11), N'?'), NCHAR(8), N'?'), NCHAR(7), N'?'), NCHAR(6), N'?'), NCHAR(5), N'?'), NCHAR(4), N'?'), NCHAR(3), N'?'), NCHAR(2), N'?'), NCHAR(1), N'?'), NCHAR(0), N''),
+                            N'<?', N'??'), N'?>', N'??'),
+                            (bi.statement_start_offset / 2) + 1,
+                            (
+                                (
+                                    CASE bi.statement_end_offset
+                                        WHEN -1
+                                        THEN DATALENGTH(dest.text)
+                                        ELSE bi.statement_end_offset
+                                    END - bi.statement_start_offset
+                                ) / 2
+                            ) + 1
+                        )
+                FOR XML PATH(''),
+                    TYPE
+            ),
+            query_plan =
+                CASE
+                    WHEN TRY_CAST(deqp.query_plan AS xml) IS NOT NULL
+                    THEN TRY_CAST(deqp.query_plan AS xml)
+                    WHEN TRY_CAST(deqp.query_plan AS xml) IS NULL
+                    THEN
+                    (
+                        SELECT
+                            [processing-instruction(query_plan)] =
+                                N'-- ' + NCHAR(13) + NCHAR(10) +
+                                N'-- This is a huge query plan.' + NCHAR(13) + NCHAR(10) +
+                                N'-- Remove the headers and footers, save it as a .sqlplan file, and re-open it.' + NCHAR(13) + NCHAR(10) +
+                                NCHAR(13) + NCHAR(10) +
+                                REPLACE(deqp.query_plan, N'<RelOp', NCHAR(13) + NCHAR(10) + N'<RelOp') +
+                                NCHAR(13) + NCHAR(10) COLLATE Latin1_General_Bin2
+                        FOR XML PATH(N''),
+                            TYPE
+                    )
+                END,
+            bi.login_name,
+            wait_time_ms = bi.wait_time,
+            wait_type = NULLIF(bi.wait_type, N'MISCELLANEOUS'),
+            bi.wait_resource,            
+            reads = ISNULL(der.reads, 0),
+            writes = ISNULL(der.writes, 0),
+            physical_reads = ISNULL(der.logical_reads, bi.physical_io),
+            cpu_time = ISNULL(der.cpu_time, bi.cpu_time),
+            used_memory = ISNULL(der.granted_query_memory, bi.memusage),
+            bi.status,
+            bi.open_transaction_count,
+            bi.host_name,
+            bi.database_name,
+            bi.program_name,
+            bi.last_batch,
+            bi.login_time
+        FROM blocking_info AS bi
+        LEFT JOIN sys.dm_exec_requests AS der
+          ON der.session_id = bi.session_id
+        OUTER APPLY
+        (
+            SELECT
+                elapsed_time_ms =
+                    CASE
+                        WHEN DATEDIFF(HOUR, ISNULL(der.start_time, bi.last_batch), SYSDATETIME()) > 576
+                        THEN DATEDIFF(SECOND, SYSDATETIME(), ISNULL(der.start_time, bi.last_batch))
+                        ELSE DATEDIFF(MILLISECOND, ISNULL(der.start_time, bi.last_batch), SYSDATETIME())
+                    END
+        ) AS e
+        OUTER APPLY sys.dm_exec_sql_text(bi.sql_handle) AS dest
+        OUTER APPLY sys.dm_exec_text_query_plan
+        (
+            der.plan_handle,
+            der.statement_start_offset,
+            der.statement_end_offset
+        ) AS deqp
+        ORDER BY
+            bi.top_level_blocker,
+            bi.blocking_level,
+            bi.session_id
+        OPTION(MAXRECURSION 0);
+
+        RETURN;
+    END; /*End troubleshoot_blocking*/
 
     IF @debug = 1
     BEGIN
