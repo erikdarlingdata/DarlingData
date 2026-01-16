@@ -8875,34 +8875,34 @@ ORDER BY
          THEN
              CASE WHEN @regression_mode = 1
                   AND @regression_direction IN ('improved', 'better')
-                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) ASC,
+                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS decimal(19,2)) ASC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
                   WHEN @regression_mode = 1
                   AND @regression_direction IN ('regressed', 'worse')
-                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) DESC,
+                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS decimal(19,2)) DESC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
                   WHEN @regression_mode = 1
                   AND @regression_direction IN ('magnitude', 'absolute')
-                  THEN 'ABS(TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money)) DESC,
+                  THEN 'ABS(TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS decimal(19,2))) DESC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
              ELSE
              CASE @sort_order
-                  WHEN 'cpu' THEN N'TRY_PARSE(x.avg_cpu_time_ms AS money)'
-                  WHEN 'logical reads' THEN N'TRY_PARSE(x.avg_logical_io_reads_mb AS money)'
-                  WHEN 'physical reads' THEN N'TRY_PARSE(x.avg_physical_io_reads_mb AS money)'
-                  WHEN 'writes' THEN N'TRY_PARSE(x.avg_logical_io_writes_mb AS money)'
-                  WHEN 'duration' THEN N'TRY_PARSE(x.avg_duration_ms AS money)'
-                  WHEN 'memory' THEN N'TRY_PARSE(x.avg_query_max_used_memory_mb AS money)'
-                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)' END
-                  WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
+                  WHEN 'cpu' THEN N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))'
+                  WHEN 'logical reads' THEN N'TRY_PARSE(x.avg_logical_io_reads_mb AS decimal(19,2))'
+                  WHEN 'physical reads' THEN N'TRY_PARSE(x.avg_physical_io_reads_mb AS decimal(19,2))'
+                  WHEN 'writes' THEN N'TRY_PARSE(x.avg_logical_io_writes_mb AS decimal(19,2))'
+                  WHEN 'duration' THEN N'TRY_PARSE(x.avg_duration_ms AS decimal(19,2))'
+                  WHEN 'memory' THEN N'TRY_PARSE(x.avg_query_max_used_memory_mb AS decimal(19,2))'
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
+                  WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS decimal(19,2))'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  WHEN 'rows' THEN N'TRY_PARSE(x.avg_rowcount AS money)'
-                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC,
+                  WHEN 'rows' THEN N'TRY_PARSE(x.avg_rowcount AS decimal(19,2))'
+                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS decimal(19,2)) DESC,
     x.query_hash_from_hash_counting'
-                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)' END
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
              END END
     END
              + N' DESC

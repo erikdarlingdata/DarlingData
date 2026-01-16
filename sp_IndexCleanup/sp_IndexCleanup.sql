@@ -1704,10 +1704,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               JOIN ' + QUOTENAME(@current_database_name) + N'.sys.types AS t
                 ON c.user_type_id = t.user_type_id
               WHERE c.object_id = ce.object_id
-              AND   t.name IN 
+              AND   t.name IN
                     (
-                        N''text'', 
-                        N''ntext'', 
+                        N''text'',
+                        N''ntext'',
                         N''image''
                     )
           )
@@ -2775,10 +2775,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Analyze filtered indexes to identify columns used in filters that should be included */
-    SELECT 
+    SELECT
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-    
+
     SELECT DISTINCT
         ia.database_id,
         ia.database_name,
@@ -3575,10 +3575,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         target_index_name = NULL
     FROM #index_analysis AS ia
     WHERE ia.action = N'MAKE UNIQUE'
-    AND NOT EXISTS 
+    AND NOT EXISTS
     (
         /* Check if there's a unique constraint with matching keys that points to this index */
-        SELECT 
+        SELECT
             1/0
         FROM #index_analysis AS ia_uc
         WHERE ia_uc.scope_hash = ia.scope_hash
@@ -6228,9 +6228,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             sort_total_size = 0.0
         FROM #index_reporting_stats AS irs
         WHERE irs.summary_level = 'SUMMARY'
-        
+
         UNION ALL
-        
+
         /* ===== DATABASE LEVEL ===== */
         SELECT
             level = 'DATABASE',
@@ -6360,9 +6360,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             sort_total_size = 0.0
         FROM #index_reporting_stats AS irs
         WHERE irs.summary_level = 'DATABASE'
-        
+
         UNION ALL
-        
+
         /* ===== TABLE LEVEL ===== */
         SELECT
             level = 'TABLE',
@@ -6501,7 +6501,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 FORMAT
                 (
                     ISNULL(irs.row_lock_wait_count,  0) +
-                    ISNULL(irs.page_lock_wait_count, 0), 
+                    ISNULL(irs.page_lock_wait_count, 0),
                     'N0'
                 ),
             daily_lock_waits_saved =
