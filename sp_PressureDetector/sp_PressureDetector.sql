@@ -232,7 +232,10 @@ END;
         @minimum_disk_latency_ms = ISNULL(@minimum_disk_latency_ms, 100),
         @cpu_utilization_threshold = ISNULL(@cpu_utilization_threshold, 50),
         @skip_waits = ISNULL(@skip_waits, 0),
+        @skip_perfmon = ISNULL(@skip_perfmon, 0),
         @sample_seconds = ISNULL(@sample_seconds, 0),
+        @log_to_table = ISNULL(@log_to_table, 0),
+        @troubleshoot_blocking = ISNULL(@troubleshoot_blocking, 0),
         @help = ISNULL(@help, 0),
         @debug = ISNULL(@debug, 0);
 
@@ -844,7 +847,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     plan_handle varbinary(64) NULL,
                     sql_text xml NULL,
                     query_plan_xml xml NULL,
-                    live_query_plan xml NULL
+                    live_query_plan xml NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
                 IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory queries logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_MemoryQueries') + N''') WITH NOWAIT; END;
@@ -913,14 +916,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
             @log_table_name_prefix,
             @debug;
 
-        EXECUTE sys.sp_executesql
-            @create_sql,
-          N'@schema_name sysname,
-            @table_name sysname,
-            @debug bit',
-            @log_schema_name,
-            @log_table_name_prefix,
-            @debug;
 
         /* CPU Utilization Events table */
         SET @create_sql = N'
@@ -1268,8 +1263,6 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     WHEN dows.wait_type = N'HTMEMO'
                     THEN N'Potential batch mode performance issues'
                     WHEN dows.wait_type = N'HTDELETE'
-                    THEN N'Potential batch mode performance issues'
-                    WHEN dows.wait_type = N'HTREINIT'
                     THEN N'Potential batch mode performance issues'
                     WHEN dows.wait_type = N'HTREINIT'
                     THEN N'Potential batch mode performance issues'
@@ -2110,11 +2103,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             FORMAT
                             (
                                 dopc.cntr_value /
-                                DATEDIFF
+                                ISNULL
                                 (
-                                    SECOND,
-                                    dopc.sample_time,
-                                    SYSDATETIME()
+                                    DATEDIFF
+                                    (
+                                        SECOND,
+                                        dopc.sample_time,
+                                        SYSDATETIME()
+                                    ),
+                                    1
                                 ),
                                 'N0'
                             )
@@ -2157,7 +2154,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             FORMAT((dopc2.cntr_value - dopc.cntr_value), 'N0'),
                         total_difference_per_second =
                             FORMAT((dopc2.cntr_value - dopc.cntr_value) /
-                            DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 'N0'),
+                            ISNULL(DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time), 1), 'N0'),
                         sample_seconds =
                             DATEDIFF(SECOND, dopc.sample_time, dopc2.sample_time),
                         first_sample_time =
@@ -2605,7 +2602,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             SELECT
                 @total_physical_memory_gb =
                     SUM(osi.committed_target_kb / 1024. / 1024.)
-            FROM sys.dm_os_sys_info osi
+            FROM sys.dm_os_sys_info AS osi
             OPTION(MAXDOP 1, RECOMPILE);
         END;
 
@@ -3217,7 +3214,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             CASE
                 WHEN @live_plans = 1
                 THEN N'
-        OUTER APPLY sys.dm_exec_query_statistics_xml(deqmg.plan_handle) AS deqs'
+        OUTER APPLY sys.dm_exec_query_statistics_xml(deqmg.session_id) AS deqs'
                 ELSE N''
             END +
        N'
@@ -3695,7 +3692,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 dowt.wait_duration_ms DESC
             OPTION(MAXDOP 1, RECOMPILE);
 
-            IF @@ROWCOUNT = 0
+            IF ROWCOUNT_BIG() = 0
             BEGIN
                 SELECT
                     THREADPOOL = N'No current THREADPOOL waits';
@@ -3921,7 +3918,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 CASE
                     WHEN @live_plans = 1
                     THEN N'
-            OUTER APPLY sys.dm_exec_query_statistics_xml(der.plan_handle) AS deqs'
+            OUTER APPLY sys.dm_exec_query_statistics_xml(der.session_id) AS deqs'
                     ELSE N''
                 END +
             N'

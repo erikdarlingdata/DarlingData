@@ -108,7 +108,7 @@ BEGIN
                      WHEN N'@days_back' THEN 'an integer; will be converted to a negative number automatically'
                      WHEN N'@start_date' THEN 'a datetime value'
                      WHEN N'@end_date' THEN 'a datetime value'
-                     WHEN N'@custom_message' THEN 'something specific you want to search for. no wildcards or substitions.'
+                     WHEN N'@custom_message' THEN 'something specific you want to search for. no wildcards or substitutions.'
                      WHEN N'@custom_message_only' THEN 'NULL, 0, 1'
                      WHEN N'@first_log_only' THEN 'NULL, 0, 1'
                      WHEN N'@language_id' THEN 'SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id;'
@@ -269,9 +269,8 @@ BEGIN
         @c nvarchar(4000) /*holds the command to execute*/,
         @l_log integer = 0 /*low log file id*/,
         @h_log integer = 0 /*high log file id*/,
-        @t_searches integer = 0 /*total number of searches to run*/,
+        @t_searches bigint = 0 /*total number of searches to run*/,
         @l_count integer = 1 /*loop count*/,
-        @stopper bit = 0, /*stop loop execution safety*/
         @is_rds bit =
             CASE
                 WHEN OBJECT_ID(N'rdsadmin.dbo.rds_read_error_log', N'P') IS NOT NULL
@@ -548,7 +547,6 @@ BEGIN
 
         IF @debug = 1 BEGIN RAISERROR('Entering WHILE loop', 0, 1) WITH NOWAIT; END;
         WHILE @@FETCH_STATUS = 0
-        AND   @stopper = 0
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Entering cursor', 0, 1) WITH NOWAIT; END;
 
@@ -642,7 +640,6 @@ BEGIN
         IF @l_log IS NULL
         BEGIN
             IF @debug = 1 BEGIN RAISERROR('Breaking', 0, 1) WITH NOWAIT; END;
-            SET @stopper = 1;
             BREAK;
         END;
         IF @debug = 1 BEGIN RAISERROR('Ended WHILE loop', 0, 1) WITH NOWAIT; END;

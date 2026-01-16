@@ -154,7 +154,7 @@ BEGIN
                 WHEN N'@object_schema' THEN N'(inclusive) the schema of the object you want to filter to; only needed with blocking events'
                 WHEN N'@requested_memory_mb' THEN N'(>=) the memory grant a query must ask for to have data collected'
                 WHEN N'@seconds_sample' THEN N'the duration in seconds to run the event session for'
-                WHEN N'@gimme_danger' THEN N'used to override default minimums for query, wait, and blocking durations. only use if you''re okay with potentially adding a lot of observer overhead on your system, or for testing purposes.'
+                WHEN N'@gimme_danger' THEN N'used to override default duration minimums for wait events, including zero-duration waits. only use if you''re okay with potentially adding a lot of observer overhead on your system, or for testing purposes.'
                 WHEN N'@debug' THEN N'use to print out dynamic SQL'
                 WHEN N'@keep_alive' THEN N'creates a permanent session, either to watch live or log to a table from'
                 WHEN N'@custom_name' THEN N'if you want to custom name a permanent session'
@@ -395,8 +395,8 @@ CREATE TABLE
     event_type_short sysname NOT NULL,
     is_table_created bit NOT NULL DEFAULT 0,
     is_view_created bit NOT NULL DEFAULT 0,
-    last_checked datetime NOT NULL DEFAULT '19000101',
-    last_updated datetime NOT NULL DEFAULT '19000101',
+    last_checked datetime2(7) NOT NULL DEFAULT '19000101',
+    last_updated datetime2(7) NOT NULL DEFAULT '19000101',
     output_database sysname NOT NULL,
     output_schema sysname NOT NULL,
     output_table nvarchar(400) NOT NULL
@@ -515,7 +515,7 @@ DECLARE
     @spe nvarchar(max) = N'.sys.sp_executesql ',
     @view_sql nvarchar(max) = N'',
     @view_database sysname = N'',
-    @date_filter datetime,
+    @date_filter datetime2(7),
     @Time time,
     @delete_tracker integer,
     @the_deleter_must_awaken nvarchar(max) = N'',
@@ -994,7 +994,7 @@ BEGIN
           );
 
     /* If we find any invalid waits, let people know */
-    IF @@ROWCOUNT > 0
+    IF ROWCOUNT_BIG() > 0
     BEGIN
         SELECT
             invalid_waits =
@@ -1236,9 +1236,9 @@ END;
 
 /* I'M LOOKING AT YOU */
 IF @debug = 1 BEGIN RAISERROR(N'Someone is going to try it.', 0, 1) WITH NOWAIT; END;
-IF @delete_retention_days < 0
+IF @delete_retention_days < 1
 BEGIN
-    SET @delete_retention_days *= -1;
+    SET @delete_retention_days = CASE WHEN @delete_retention_days < 0 THEN @delete_retention_days * -1 ELSE 1 END;
     IF @debug = 1 BEGIN RAISERROR(N'Stay positive', 0, 1) WITH NOWAIT; END;
 END;
 
@@ -1338,7 +1338,7 @@ END;
 
 IF @requested_memory_mb > 0
 BEGIN
-    SET @requested_memory_kb = @requested_memory_mb / 1024.;
+    SET @requested_memory_kb = @requested_memory_mb * 1024.;
     SET @requested_memory_mb_filter += N'     AND requested_memory_kb >= ' + @requested_memory_kb + @nc10;
 END;
 
@@ -2828,7 +2828,7 @@ BEGIN
         isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
         log_used = bd.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
+        clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
         currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
         currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
@@ -2923,7 +2923,7 @@ BEGIN
         isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
         log_used = bg.value('(process/@logused)[1]', 'bigint'),
         clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
-        clientoption2 = bg.value('(process/@clientoption1)[1]', 'bigint'),
+        clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
         currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
         currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
@@ -3215,7 +3215,7 @@ BEGIN
                 )
         FROM #blocking AS bg
         WHERE (bg.database_name = @database_name
-               OR @database_name IS NULL)
+               OR @database_name = N'')
 
         UNION ALL
 
@@ -3229,7 +3229,7 @@ BEGIN
                 )
         FROM #blocked AS bd
         WHERE (bd.database_name = @database_name
-               OR @database_name IS NULL)
+               OR @database_name = N'')
     ) AS kheb
     OPTION(RECOMPILE);
 
@@ -3282,7 +3282,7 @@ BEGIN
     ) AS b
     WHERE b.n = 1
     AND   (b.contentious_object = @object_name
-           OR @object_name IS NULL)
+           OR @object_name = N'')
     ORDER BY
         b.sort_order,
         CASE
@@ -3316,9 +3316,9 @@ BEGIN
         FROM #blocks AS b
         CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.database_name = @database_name
-                OR @database_name IS NULL)
+                OR @database_name = N'')
         AND  (b.contentious_object = @object_name
-                OR @object_name IS NULL)
+                OR @object_name = N'')
 
         UNION ALL
 
@@ -3339,11 +3339,11 @@ BEGIN
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
-        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE (b.database_name = @database_name
-                OR @database_name IS NULL)
+                OR @database_name = N'')
         AND  (b.contentious_object = @object_name
-                OR @object_name IS NULL)
+                OR @object_name = N'')
     ) AS b
     OPTION(RECOMPILE);
 
@@ -3360,11 +3360,11 @@ BEGIN
         total_worker_time_ms =
             deqs.total_worker_time / 1000.,
         avg_worker_time_ms =
-            CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
+            CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / NULLIF(deqs.execution_count, 0)),
         total_elapsed_time_ms =
             deqs.total_elapsed_time / 1000.,
         avg_elapsed_time =
-            CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
+            CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
         executions_per_second =
             ISNULL
             (
@@ -3528,6 +3528,7 @@ IF @debug = 1 BEGIN RAISERROR(N'Starting data collection.', 0, 1) WITH NOWAIT; E
 
 WHILE 1 = 1
 BEGIN
+    SET @the_sleeper_must_awaken = N'';
     IF @azure = 0
     BEGIN
         IF NOT EXISTS
@@ -3582,21 +3583,22 @@ BEGIN
                 N' ON DATABASE STATE = START;' +
                 @nc10
         FROM sys.database_event_sessions AS ses
-        JOIN sys.dm_xe_database_sessions AS dxs
+        LEFT JOIN sys.dm_xe_database_sessions AS dxs
           ON dxs.name = ses.name
-        WHERE ses.name LIKE N'keeper_HumanEvents_%';
+        WHERE ses.name LIKE N'keeper_HumanEvents_%'
+        AND   dxs.create_time IS NULL;
     END;
 
     IF LEN(@the_sleeper_must_awaken) > 0
     BEGIN
-     IF @debug = 1
-     BEGIN
-        RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT;
-        RAISERROR(N'Starting keeper_HumanEvents... inactive sessions', 0, 1) WITH NOWAIT;
-     END;
-
-     EXECUTE sys.sp_executesql
-         @the_sleeper_must_awaken;
+        IF @debug = 1
+        BEGIN
+           RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT;
+           RAISERROR(N'Starting keeper_HumanEvents... inactive sessions', 0, 1) WITH NOWAIT;
+        END;
+        
+        EXECUTE sys.sp_executesql
+            @the_sleeper_must_awaken;
     END;
 
     IF
@@ -4702,7 +4704,7 @@ ORDER BY
             /* this executes the insert */
             EXECUTE sys.sp_executesql
                 @table_sql,
-              N'@date_filter datetime',
+              N'@date_filter datetime2(7)',
                 @date_filter;
 
             /*Update the worker table's last checked, and conditionally, updated dates*/
@@ -4713,7 +4715,7 @@ ORDER BY
                     SYSDATETIME(),
                 hew.last_updated =
                     CASE
-                        WHEN @@ROWCOUNT > 0
+                        WHEN ROWCOUNT_BIG() > 0
                         THEN SYSDATETIME()
                         ELSE hew.last_updated
                     END
@@ -4773,6 +4775,7 @@ BEGIN
         OR @delete_tracker <> DATEPART(HOUR, @Time)
     )
     BEGIN
+        SET @the_deleter_must_awaken = N'';
         SELECT
             @the_deleter_must_awaken +=
                 N' DELETE FROM ' +
@@ -4794,7 +4797,7 @@ BEGIN
         /* execute the delete */
         EXECUTE sys.sp_executesql
             @the_deleter_must_awaken,
-          N'@delete_retention_days INT',
+          N'@delete_retention_days integer',
             @delete_retention_days;
 
         /* set this to the hour it was last checked */
@@ -4813,17 +4816,33 @@ BEGIN
 
     SET @executer = QUOTENAME(@output_database_name) + N'.sys.sp_executesql ';
 
-    /*Clean up sessions, this isn't database-specific*/
-    SELECT
-        @cleanup_sessions +=
-            N'DROP EVENT SESSION ' +
-            ses.name +
-            N' ON SERVER;' +
-            @nc10
-    FROM sys.server_event_sessions AS ses
-    LEFT JOIN sys.dm_xe_sessions AS dxs
-      ON dxs.name = ses.name
-    WHERE ses.name LIKE N'%HumanEvents_%';
+    /*Clean up sessions*/
+    IF @azure = 0
+    BEGIN
+        SELECT
+            @cleanup_sessions +=
+                N'DROP EVENT SESSION ' +
+                ses.name +
+                N' ON SERVER;' +
+                @nc10
+        FROM sys.server_event_sessions AS ses
+        LEFT JOIN sys.dm_xe_sessions AS dxs
+          ON dxs.name = ses.name
+        WHERE ses.name LIKE N'%HumanEvents_%';
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            @cleanup_sessions +=
+                N'DROP EVENT SESSION ' +
+                ses.name +
+                N' ON DATABASE;' +
+                @nc10
+        FROM sys.database_event_sessions AS ses
+        LEFT JOIN sys.dm_xe_database_sessions AS dxs
+          ON dxs.name = ses.name
+        WHERE ses.name LIKE N'%HumanEvents_%';
+    END;
 
     EXECUTE sys.sp_executesql
         @cleanup_sessions;
@@ -4922,7 +4941,6 @@ BEGIN CATCH
 
             THROW;
 
-            RETURN -138;
     END;
 END CATCH;
 END;

@@ -106,7 +106,7 @@ BEGIN
             valid_inputs =
                 CASE
                     ap.name
-                    WHEN N'@database_name' THEN 'the name of a database you care about indexes in'
+                    WHEN N'@database_name' THEN 'the name of a database you wish to check'
                     WHEN N'@help' THEN '0 or 1'
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
@@ -118,7 +118,7 @@ BEGIN
                     ap.name
                     WHEN N'@database_name' THEN 'NULL'
                     WHEN N'@help' THEN 'false'
-                    WHEN N'@debug' THEN 'true'
+                    WHEN N'@debug' THEN 'false'
                     WHEN N'@version' THEN 'NULL'
                     WHEN N'@version_date' THEN 'NULL'
                     ELSE NULL
@@ -843,6 +843,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
             N' NUMA node(s)'
         FROM sys.dm_os_sys_info AS osi;
+
+        /* Store processor count for TempDB file count checks */
+        SELECT
+            @processors = osi.cpu_count
+        FROM sys.dm_os_sys_info AS osi;
     END
     ELSE
     BEGIN
@@ -1115,6 +1120,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE domc.type = N'USERSTORE_TOKENPERM'
     AND   domc.name = N'TokenAndPermUserStore'
     AND   domc.pages_kb >= 500000; /* Only if bigger than 500MB */
+
+    /* Get physical memory for LPIM check */
+    SELECT
+        @physical_memory_gb =
+            CONVERT
+            (
+                decimal(10, 2),
+                osi.physical_memory_kb / 1024.0 / 1024.0
+            )
+    FROM sys.dm_os_sys_info AS osi;
 
     /* Check if Lock Pages in Memory is enabled (on-prem and managed instances only) */
     IF  @azure_sql_db = 0
@@ -1417,7 +1432,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             VALUES
             (
-                5001,
+                5000,
                 50,
                 N'Default Trace Permissions',
                 N'Inadequate permissions',
@@ -1488,6 +1503,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 spid = t.SPID
             FROM sys.fn_trace_gettable(@trace_path, DEFAULT) AS t
             WHERE
+            (
                 /* Auto-grow and auto-shrink events */
                 t.EventClass IN (92, 93, 94, 95)
                 /* DBCC Events */
@@ -1508,8 +1524,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 OR t.EventClass = 137
                 /* Deadlock events - typically not in default trace but including for completeness */
                 OR t.EventClass = 148
-                /* Look back at the past 7 days of events at most */
-                AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
+            )
+            /* Look back at the past 7 days of events at most */
+            AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
 
             /* Update event names from map */
             UPDATE
@@ -2903,7 +2920,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             IF @debug = 1
             BEGIN
-                PRINT @file_io_sql;
+                PRINT @db_size_sql;
             END;
 
             /* For non-Azure SQL DB, get size across all accessible databases */

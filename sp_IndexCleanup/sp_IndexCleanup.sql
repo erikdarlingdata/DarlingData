@@ -184,12 +184,12 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN '0'
                     WHEN N'@min_size_gb' THEN '0'
                     WHEN N'@min_rows' THEN '0'
-                    WHEN N'@dedupe_only' THEN '0'
-                    WHEN N'@get_all_databases' THEN '0'
+                    WHEN N'@dedupe_only' THEN 'false'
+                    WHEN N'@get_all_databases' THEN 'false'
                     WHEN N'@include_databases' THEN 'NULL'
                     WHEN N'@exclude_databases' THEN 'NULL'
                     WHEN N'@help' THEN 'false'
-                    WHEN N'@debug' THEN 'true'
+                    WHEN N'@debug' THEN 'false'
                     WHEN N'@version' THEN 'NULL'
                     WHEN N'@version_date' THEN 'NULL'
                     ELSE NULL
@@ -297,8 +297,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* Azure SQL DB or Managed Instance */
                 WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
                 THEN 1
-                /* SQL Server 2019+ */
-                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) = 3
+                /* SQL Server 2019+ (Enterprise or Standard) */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (2, 3)
                      AND CONVERT
                          (
                              integer,
@@ -1061,55 +1061,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
     END;
 
-    IF  @get_all_databases = 1
-    AND @include_databases IS NOT NULL
-    BEGIN
-        INSERT INTO
-            #requested_but_skipped_databases
-        WITH
-            (TABLOCK)
-        (
-            database_name,
-            reason
-        )
-        SELECT
-            id.database_name,
-            reason =
-                CASE
-                    WHEN d.name IS NULL
-                    THEN 'Database does not exist'
-                    WHEN d.state <> 0
-                    THEN 'Database not online'
-                    WHEN d.is_in_standby = 1
-                    THEN 'Database is in standby'
-                    WHEN d.is_read_only = 1
-                    THEN 'Database is read-only'
-                    WHEN d.database_id <= 4
-                    THEN 'System database'
-                    ELSE 'Other issue'
-                END
-        FROM #include_databases AS id
-        LEFT JOIN sys.databases AS d
-          ON id.database_name = d.name
-        WHERE NOT EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #databases AS db
-                  WHERE db.database_name = id.database_name
-              )
-        OPTION(RECOMPILE);
-
-        IF @debug = 1
-        BEGIN
-            SELECT
-                table_name = '#requested_but_skipped_databases',
-                rbsd.*
-            FROM #requested_but_skipped_databases AS rbsd
-            OPTION(RECOMPILE);
-        END;
-    END;
-
     /* Parse @exclude_databases comma-separated list */
     IF  @get_all_databases = 1
     AND @exclude_databases IS NOT NULL
@@ -1291,6 +1242,59 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
+    /*
+    Identify databases that were requested but couldn't be processed.
+    This must happen AFTER #databases is populated.
+    */
+    IF  @get_all_databases = 1
+    AND @include_databases IS NOT NULL
+    BEGIN
+        INSERT INTO
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            id.database_name,
+            reason =
+                CASE
+                    WHEN d.name IS NULL
+                    THEN 'Database does not exist'
+                    WHEN d.state <> 0
+                    THEN 'Database not online'
+                    WHEN d.is_in_standby = 1
+                    THEN 'Database is in standby'
+                    WHEN d.is_read_only = 1
+                    THEN 'Database is read-only'
+                    WHEN d.database_id <= 4
+                    THEN 'System database'
+                    ELSE 'Other issue'
+                END
+        FROM #include_databases AS id
+        LEFT JOIN sys.databases AS d
+          ON id.database_name = d.name
+        WHERE NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #databases AS db
+                  WHERE db.database_name = id.database_name
+              )
+        OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            SELECT
+                table_name = '#requested_but_skipped_databases',
+                rbsd.*
+            FROM #requested_but_skipped_databases AS rbsd
+            OPTION(RECOMPILE);
+        END;
+    END;
+
     /*Set up database cursor processing*/
 
     /* Create a cursor to process each database */
@@ -1427,9 +1431,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         JOIN ' + QUOTENAME(@current_database_name) + N'.sys.partitions AS p
           ON  i.object_id = p.object_id
           AND i.index_id = p.index_id
-        LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_index_usage_stats AS us
-          ON  i.object_id = us.object_id
-          AND us.database_id = @database_id
+        /* LEFT JOIN to dm_db_index_usage_stats removed 2026-01-15 - was dead code with no columns selected */
         WHERE (t.object_id IS NULL OR t.is_ms_shipped = 0)
         AND   (t.object_id IS NULL OR t.type <> N''TF'')
         AND    i.is_disabled = 0
@@ -2309,7 +2311,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql,
       N'@database_id integer,
         @object_id integer,
-        @min_rows integer',
+        @min_rows bigint',
         @current_database_id,
         @object_id,
         @min_rows;
@@ -3182,7 +3184,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
 
-    DECLARE @rule3_rowcount bigint = @@ROWCOUNT;
+    DECLARE @rule3_rowcount bigint = ROWCOUNT_BIG();
 
     IF @debug = 1
     BEGIN
@@ -3315,7 +3317,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
 
-    DECLARE @rule5_rowcount bigint = @@ROWCOUNT;
+    DECLARE @rule5_rowcount bigint = ROWCOUNT_BIG();
 
     IF @debug = 1
     BEGIN
@@ -4622,7 +4624,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         THEN N'UNIQUE '
                         ELSE N''
                     END +
-                N'CLUSTERED INDEX' +
+                N'CLUSTERED INDEX ' +
                 QUOTENAME(fo.index_name) +
                 N' ON ' +
                 QUOTENAME(fo.database_name) +
@@ -6036,7 +6038,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     irs.index_name,
                     irs.script_type
                 ORDER BY
-                    irs.result_type DESC /* Prefer non-NULL result types */
+                    irs.result_type DESC
             ) AS rn
         FROM #index_cleanup_results AS irs
     ) AS ir
