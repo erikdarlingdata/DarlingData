@@ -4334,32 +4334,33 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 7005,
             priority = 50, /* Medium priority */
             category = N'Database Configuration',
-            finding = N'Non-Standard ANSI Settings',
+            finding = N'ANSI Settings Require Review',
             database_name = d.name,
             details =
-                N'Database has non-standard ANSI settings: ' +
-                      CASE WHEN d.is_ansi_null_default_on = 1 THEN N'ANSI_NULL_DEFAULT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_nulls_on = 1 THEN N'ANSI_NULLS ON, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_padding_on = 1 THEN N'ANSI_PADDING ON, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_warnings_on = 1 THEN N'ANSI_WARNINGS ON, ' ELSE N'' END +
-                      CASE WHEN d.is_arithabort_on = 1 THEN N'ARITHABORT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_concat_null_yields_null_on = 1 THEN N'CONCAT_NULL_YIELDS_NULL ON, ' ELSE N'' END +
-                      CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_quoted_identifier_on = 1 THEN N'QUOTED_IDENTIFIER ON, ' ELSE N'' END +
-                N'which can cause unexpected application behavior and compatibility issues.',
+                N'One or more ANSI settings differ from recommended best practices: ' +
+                CASE WHEN d.is_ansi_null_default_on = 0 THEN N'ANSI_NULL_DEFAULT OFF (recommended ON), ' ELSE N'' END +
+                CASE WHEN d.is_ansi_nulls_on = 0 THEN N'ANSI_NULLS OFF (recommended ON), ' ELSE N'' END +
+                CASE WHEN d.is_ansi_padding_on = 0 THEN N'ANSI_PADDING OFF (recommended ON), ' ELSE N'' END +
+                CASE WHEN d.is_ansi_warnings_on = 0 THEN N'ANSI_WARNINGS OFF (recommended ON), ' ELSE N'' END +
+                CASE WHEN d.is_arithabort_on = 0 THEN N'ARITHABORT OFF (recommended ON in many contexts), ' ELSE N'' END +
+                CASE WHEN d.is_concat_null_yields_null_on = 0 THEN N'CONCAT_NULL_YIELDS_NULL OFF (recommended ON), ' ELSE N'' END +
+                CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON (recommended OFF), ' ELSE N'' END +
+                CASE WHEN d.is_quoted_identifier_on = 0 THEN N'QUOTED_IDENTIFIER OFF (recommended ON), ' ELSE N'' END +
+                N'These settings may lead to inconsistent behavior, reduced feature compatibility, or unexpected query results ' +
+                N'if they do not align with recommended best practices.',
             url = N'https://erikdarling.com/sp_PerfCheck#ANSISettings'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND
         (
-             d.is_ansi_null_default_on = 1
-          OR d.is_ansi_nulls_on = 1
-          OR d.is_ansi_padding_on = 1
-          OR d.is_ansi_warnings_on = 1
-          OR d.is_arithabort_on = 1
-          OR d.is_concat_null_yields_null_on = 1
-          OR d.is_numeric_roundabort_on = 1
-          OR d.is_quoted_identifier_on = 1
+               d.is_ansi_null_default_on = 0
+            OR d.is_ansi_nulls_on = 0
+            OR d.is_ansi_padding_on = 0
+            OR d.is_ansi_warnings_on = 0
+            OR d.is_arithabort_on = 0
+            OR d.is_concat_null_yields_null_on = 0
+            OR d.is_numeric_roundabort_on = 1
+            OR d.is_quoted_identifier_on = 0
         );
 
         /* Check Query Store Status */
