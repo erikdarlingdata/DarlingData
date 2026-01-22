@@ -3100,7 +3100,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #index_analysis AS ia2_inner
             WHERE ia2_inner.scope_hash = ia1.scope_hash
             AND   ia2_inner.index_name <> ia1.index_name
-            AND   ia2_inner.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'
+            AND   ia2_inner.key_columns LIKE (REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]'), '_', '~_'), '%', '~%') + N', %') ESCAPE '~'
             AND   ISNULL(ia2_inner.filter_definition, N'') = ISNULL(ia1.filter_definition, N'')
             AND   NOT (ia1.is_unique = 1 AND ia2_inner.is_unique = 0)
             AND   ia2_inner.consolidation_rule IS NULL
@@ -3132,7 +3132,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #index_analysis AS ia2
       ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
       AND ia1.index_name <> ia2.index_name
-      AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'  /* ia2 has wider key that starts with ia1's key */
+      AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]'), '_', '~_'), '%', '~%') + N', %') ESCAPE '~'  /* ia2 has wider key that starts with ia1's key */
       AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
       /* Exception: If narrower index is unique and wider is not, they should not be merged */
       AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
@@ -3331,92 +3331,114 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Rule 6: Merge includes from subset to superset indexes */
-    WITH
-        KeySubsetSuperset AS
-    (
+    /* Pre-compute merged includes in a temp table to handle multiple subsets per superset */
+    IF @debug = 1
+    BEGIN
         SELECT
-            superset.database_id,
-            superset.object_id,
-            superset.index_id,
-            superset.index_name,
-            superset.index_hash,
-            superset.included_columns AS superset_includes,
-            subset.included_columns AS subset_includes
+            debug_label = 'Subsets for Rule 6 merge',
+            superset_name = superset.index_name,
+            subset_name = subset.index_name,
+            subset_includes = subset.included_columns
         FROM #index_analysis AS superset
         JOIN #index_analysis AS subset
-          ON  superset.scope_hash = subset.scope_hash
+          ON  subset.scope_hash = superset.scope_hash
           AND subset.target_index_name = superset.index_name
+          AND subset.action = N'DISABLE'
+          AND subset.consolidation_rule = N'Key Subset'
         WHERE superset.action = N'MERGE INCLUDES'
-        AND   subset.action = N'DISABLE'
         AND   superset.consolidation_rule = N'Key Superset'
-        AND   subset.consolidation_rule = N'Key Subset'
+        OPTION(RECOMPILE);
+    END;
+
+    CREATE TABLE
+        #merged_includes
+    (
+        scope_hash bigint NOT NULL,
+        index_name sysname NOT NULL,
+        key_columns nvarchar(max) NOT NULL,
+        merged_includes nvarchar(max) NULL,
+        PRIMARY KEY (scope_hash, index_name)
+    );
+
+    /* Gather all supersets that need include merging */
+    INSERT INTO
+        #merged_includes
+    WITH
+        (TABLOCK)
+    (
+        scope_hash,
+        index_name,
+        key_columns,
+        merged_includes
     )
+    SELECT
+        superset.scope_hash,
+        superset.index_name,
+        superset.key_columns,
+        merged_includes =
+            STUFF
+            (
+                (
+                    SELECT DISTINCT
+                        N', ' +
+                        t.c.value('.', 'sysname')
+                    FROM
+                    (
+                        /* Superset's own includes */
+                        SELECT
+                            x = CONVERT
+                            (
+                                xml,
+                                N'<c>' +
+                                REPLACE(superset.included_columns, N', ', N'</c><c>') +
+                                N'</c>'
+                            )
+                        WHERE superset.included_columns IS NOT NULL
+
+                        UNION ALL
+
+                        /* ALL subsets' includes */
+                        SELECT
+                            x = CONVERT
+                            (
+                                xml,
+                                N'<c>' +
+                                REPLACE(subset.included_columns, N', ', N'</c><c>') +
+                                N'</c>'
+                            )
+                        FROM #index_analysis AS subset
+                        WHERE subset.scope_hash = superset.scope_hash
+                        AND   subset.target_index_name = superset.index_name
+                        AND   subset.action = N'DISABLE'
+                        AND   subset.consolidation_rule = N'Key Subset'
+                        AND   subset.included_columns IS NOT NULL
+                    ) AS a
+                    CROSS APPLY a.x.nodes('/c') AS t(c)
+                    /* Filter out columns already in superset's key */
+                    WHERE CHARINDEX(t.c.value('.', 'sysname'), superset.key_columns) = 0
+                    AND   LEN(t.c.value('.', 'sysname')) > 0
+                    FOR
+                        XML
+                        PATH('')
+                ),
+                1,
+                2,
+                ''
+            )
+    FROM #index_analysis AS superset
+    WHERE superset.action = N'MERGE INCLUDES'
+    AND   superset.consolidation_rule = N'Key Superset'
+    OPTION(RECOMPILE);
+
+    /* Apply the pre-computed merged includes */
     UPDATE
         ia
     SET
-        ia.included_columns =
-        CASE
-            /* If both have includes, combine them without duplicates */
-            WHEN kss.superset_includes IS NOT NULL
-            AND  kss.subset_includes IS NOT NULL
-            THEN
-                /* Create combined includes using XML method that works with all SQL Server versions */
-                (
-                    SELECT
-                        /* Combine both sets of includes */
-                        combined_cols =
-                            STUFF
-                            (
-                                (
-                                    SELECT DISTINCT
-                                        N', ' +
-                                        t.c.value('.', 'sysname')
-                                    FROM
-                                    (
-                                        /* Create XML from superset includes */
-                                        SELECT
-                                            x = CONVERT
-                                            (
-                                                xml,
-                                                N'<c>' +
-                                                REPLACE(kss.superset_includes, N', ', N'</c><c>') +
-                                                N'</c>'
-                                            )
-
-                                        UNION ALL
-
-                                        /* Create XML from subset includes */
-                                        SELECT
-                                            x = CONVERT
-                                            (
-                                                xml,
-                                                N'<c>' +
-                                                REPLACE(kss.subset_includes, N', ', N'</c><c>') +
-                                                N'</c>'
-                                            )
-                                    ) AS a
-                                    /* Split XML into individual columns */
-                                    CROSS APPLY a.x.nodes('/c') AS t(c)
-                                    FOR
-                                        XML
-                                        PATH('')
-                                ),
-                                1,
-                                2,
-                                ''
-                            )
-                )
-            /* If only subset has includes, use those */
-            WHEN kss.superset_includes IS NULL
-            AND  kss.subset_includes IS NOT NULL
-            THEN kss.subset_includes
-            /* If only superset has includes or neither has includes, keep superset's includes */
-            ELSE kss.superset_includes
-        END
+        ia.included_columns = mi.merged_includes
     FROM #index_analysis AS ia
-    JOIN KeySubsetSuperset AS kss
-      ON ia.index_hash = kss.index_hash
-    WHERE ia.action = N'MERGE INCLUDES'
+    JOIN #merged_includes AS mi
+      ON  mi.scope_hash = ia.scope_hash
+      AND mi.index_name = ia.index_name
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -3439,7 +3461,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #index_analysis AS ia2
       ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
       AND ia1.index_name <> ia2.index_name
-      AND ia2.key_columns LIKE (ia1.key_columns + N'%')  /* ia2 has wider key that starts with ia1's key */
+      AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]'), '_', '~_'), '%', '~%') + N'%') ESCAPE '~'  /* ia2 has wider key that starts with ia1's key */
       AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
       /* Exception: If narrower index is unique and wider is not, they should not be merged */
       AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
@@ -4118,20 +4140,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_analysis AS ia
     WHERE ia.action = N'MERGE INCLUDES'
     AND   ia.superseded_by IS NOT NULL
-    /* This should indicate it already has all the needed includes */
+    /* Only change to KEEP if Rule 6 didn't compute merged includes for this index */
     AND NOT EXISTS
     (
-        /* Find any indexes it supersedes that have includes not in this index */
         SELECT
             1/0
-        FROM #index_analysis AS ia_subset
-        WHERE ia_subset.scope_hash = ia.scope_hash
-        AND   ia_subset.key_columns = ia.key_columns
-        AND   ia_subset.action = N'DISABLE'
-        AND   ia_subset.target_index_name = ia.index_name
-        /* This complex check handles cases where the superset doesn't contain all subset columns */
-        AND   CHARINDEX(ISNULL(ia_subset.included_columns, N''), ISNULL(ia.included_columns, N'')) = 0
-        AND   ISNULL(ia_subset.included_columns, N'') <> N''
+        FROM #merged_includes AS mi
+        WHERE mi.scope_hash = ia.scope_hash
+        AND   mi.index_name = ia.index_name
     )
     OPTION(RECOMPILE);
 
@@ -4236,7 +4252,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN ps.partition_function_name IS NOT NULL
                 THEN N' ON ' +
-                     QUOTENAME(ps.partition_function_name) +
+                     QUOTENAME(ps.built_on) +
                      N'(' +
                      ISNULL(ps.partition_columns, N'') +
                      N')'
@@ -4887,7 +4903,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             QUOTENAME(ia_uc.schema_name) +
             N'.' +
             QUOTENAME(ia_uc.table_name) +
-            N' NOCHECK CONSTRAINT ' +
+            N' DROP CONSTRAINT ' +
             QUOTENAME(ia_uc.index_name) +
             N';',
         /* Original index definition for validation */
