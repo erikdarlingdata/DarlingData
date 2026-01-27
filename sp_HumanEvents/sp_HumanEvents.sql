@@ -3596,7 +3596,7 @@ BEGIN
            RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT;
            RAISERROR(N'Starting keeper_HumanEvents... inactive sessions', 0, 1) WITH NOWAIT;
         END;
-        
+
         EXECUTE sys.sp_executesql
             @the_sleeper_must_awaken;
     END;

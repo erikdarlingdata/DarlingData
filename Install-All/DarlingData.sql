@@ -1,4 +1,4 @@
-﻿-- Compile Date: 1/24/2026 8:58:26 PM UTC
+-- Compile Date: 01/27/2026 18:38:37 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -71,7 +71,7 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '3.1',
+        @version = '3.2',
         @version_date = '20260201';
 
     IF @help = 1
@@ -5618,7 +5618,7 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '7.1',
+    @version = '7.2',
     @version_date = '20260201';
 
 IF @help = 1
@@ -9126,7 +9126,7 @@ BEGIN
            RAISERROR(@the_sleeper_must_awaken, 0, 1) WITH NOWAIT;
            RAISERROR(N'Starting keeper_HumanEvents... inactive sessions', 0, 1) WITH NOWAIT;
         END;
-        
+
         EXECUTE sys.sp_executesql
             @the_sleeper_must_awaken;
     END;
@@ -10570,7 +10570,7 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.1',
+    @version = '5.2',
     @version_date = '20260201';
 
 IF @help = 1
@@ -14324,7 +14324,7 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.1',
+        @version = '2.2',
         @version_date = '20260201';
 
     IF
@@ -21115,7 +21115,7 @@ SET DATEFORMAT MDY;
 
 BEGIN
     SELECT
-        @version = '3.1',
+        @version = '3.2',
         @version_date = '20260201';
 
     IF @help = 1
@@ -21844,7 +21844,7 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.1',
+        @version = N'2.2',
         @version_date = N'20260201';
 
     /*
@@ -26984,7 +26984,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '6.1',
+    @version = '6.2',
     @version_date = '20260201';
 
 
@@ -31201,7 +31201,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             bi.login_name,
             wait_time_ms = bi.wait_time,
             wait_type = NULLIF(bi.wait_type, N'MISCELLANEOUS'),
-            bi.wait_resource,            
+            bi.wait_resource,
             reads = ISNULL(der.reads, 0),
             writes = ISNULL(der.writes, 0),
             physical_reads = ISNULL(der.logical_reads, bi.physical_io),
@@ -31480,8 +31480,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.0',
-    @version_date = '20260115';
+    @version = '1.2',
+    @version_date = '20260201';
 
 /*Help*/
 IF @help = 1
@@ -35392,7 +35392,7 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.1',
+    @version = '6.2',
     @version_date = '20260201';
 
 /*
