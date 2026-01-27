@@ -64,8 +64,8 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.0',
-        @version_date = N'20260115';
+        @version = N'2.2',
+        @version_date = N'20260201';
 
     /*
     Help section, for help.
@@ -106,7 +106,7 @@ BEGIN
             valid_inputs =
                 CASE
                     ap.name
-                    WHEN N'@database_name' THEN 'the name of a database you care about indexes in'
+                    WHEN N'@database_name' THEN 'the name of a database you wish to check'
                     WHEN N'@help' THEN '0 or 1'
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
@@ -118,7 +118,7 @@ BEGIN
                     ap.name
                     WHEN N'@database_name' THEN 'NULL'
                     WHEN N'@help' THEN 'false'
-                    WHEN N'@debug' THEN 'true'
+                    WHEN N'@debug' THEN 'false'
                     WHEN N'@version' THEN 'NULL'
                     WHEN N'@version_date' THEN 'NULL'
                     ELSE NULL
@@ -843,6 +843,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nvarchar(10), ISNULL(osi.numa_node_count, 1)) +
             N' NUMA node(s)'
         FROM sys.dm_os_sys_info AS osi;
+
+        /* Store processor count for TempDB file count checks */
+        SELECT
+            @processors = osi.cpu_count
+        FROM sys.dm_os_sys_info AS osi;
     END
     ELSE
     BEGIN
@@ -1115,6 +1120,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE domc.type = N'USERSTORE_TOKENPERM'
     AND   domc.name = N'TokenAndPermUserStore'
     AND   domc.pages_kb >= 500000; /* Only if bigger than 500MB */
+
+    /* Get physical memory for LPIM check */
+    SELECT
+        @physical_memory_gb =
+            CONVERT
+            (
+                decimal(10, 2),
+                osi.physical_memory_kb / 1024.0 / 1024.0
+            )
+    FROM sys.dm_os_sys_info AS osi;
 
     /* Check if Lock Pages in Memory is enabled (on-prem and managed instances only) */
     IF  @azure_sql_db = 0
@@ -1417,7 +1432,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             VALUES
             (
-                5001,
+                5000,
                 50,
                 N'Default Trace Permissions',
                 N'Inadequate permissions',
@@ -1488,6 +1503,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 spid = t.SPID
             FROM sys.fn_trace_gettable(@trace_path, DEFAULT) AS t
             WHERE
+            (
                 /* Auto-grow and auto-shrink events */
                 t.EventClass IN (92, 93, 94, 95)
                 /* DBCC Events */
@@ -1508,8 +1524,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 OR t.EventClass = 137
                 /* Deadlock events - typically not in default trace but including for completeness */
                 OR t.EventClass = 148
-                /* Look back at the past 7 days of events at most */
-                AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
+            )
+            /* Look back at the past 7 days of events at most */
+            AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
 
             /* Update event names from map */
             UPDATE
@@ -2903,7 +2920,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             IF @debug = 1
             BEGIN
-                PRINT @file_io_sql;
+                PRINT @db_size_sql;
             END;
 
             /* For non-Azure SQL DB, get size across all accessible databases */
@@ -4317,32 +4334,33 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 7005,
             priority = 50, /* Medium priority */
             category = N'Database Configuration',
-            finding = N'Non-Standard ANSI Settings',
+            finding = N'ANSI Settings Require Review',
             database_name = d.name,
             details =
-                N'Database has non-standard ANSI settings: ' +
-                      CASE WHEN d.is_ansi_null_default_on = 1 THEN N'ANSI_NULL_DEFAULT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_nulls_on = 1 THEN N'ANSI_NULLS ON, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_padding_on = 1 THEN N'ANSI_PADDING ON, ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_warnings_on = 1 THEN N'ANSI_WARNINGS ON, ' ELSE N'' END +
-                      CASE WHEN d.is_arithabort_on = 1 THEN N'ARITHABORT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_concat_null_yields_null_on = 1 THEN N'CONCAT_NULL_YIELDS_NULL ON, ' ELSE N'' END +
-                      CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON, ' ELSE N'' END +
-                      CASE WHEN d.is_quoted_identifier_on = 1 THEN N'QUOTED_IDENTIFIER ON, ' ELSE N'' END +
-                N'which can cause unexpected application behavior and compatibility issues.',
+                N'One or more ANSI settings differ from recommended best practices: ' +
+                      CASE WHEN d.is_ansi_null_default_on = 0 THEN N'ANSI_NULL_DEFAULT OFF (recommended ON), ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_nulls_on = 0 THEN N'ANSI_NULLS OFF (recommended ON), ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_padding_on = 0 THEN N'ANSI_PADDING OFF (recommended ON), ' ELSE N'' END +
+                      CASE WHEN d.is_ansi_warnings_on = 0 THEN N'ANSI_WARNINGS OFF (recommended ON), ' ELSE N'' END +
+                      CASE WHEN d.is_arithabort_on = 0 THEN N'ARITHABORT OFF (recommended ON in many contexts), ' ELSE N'' END +
+                      CASE WHEN d.is_concat_null_yields_null_on = 0 THEN N'CONCAT_NULL_YIELDS_NULL OFF (recommended ON), ' ELSE N'' END +
+                      CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON (recommended OFF), ' ELSE N'' END +
+                      CASE WHEN d.is_quoted_identifier_on = 0 THEN N'QUOTED_IDENTIFIER OFF (recommended ON), ' ELSE N'' END +
+                N'These settings may lead to inconsistent behavior, reduced feature compatibility, or unexpected query results ' +
+                N'if they do not align with recommended best practices.',
             url = N'https://erikdarling.com/sp_PerfCheck#ANSISettings'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND
         (
-             d.is_ansi_null_default_on = 1
-          OR d.is_ansi_nulls_on = 1
-          OR d.is_ansi_padding_on = 1
-          OR d.is_ansi_warnings_on = 1
-          OR d.is_arithabort_on = 1
-          OR d.is_concat_null_yields_null_on = 1
+             d.is_ansi_null_default_on = 0
+          OR d.is_ansi_nulls_on = 0
+          OR d.is_ansi_padding_on = 0
+          OR d.is_ansi_warnings_on = 0
+          OR d.is_arithabort_on = 0
+          OR d.is_concat_null_yields_null_on = 0
           OR d.is_numeric_roundabort_on = 1
-          OR d.is_quoted_identifier_on = 1
+          OR d.is_quoted_identifier_on = 0
         );
 
         /* Check Query Store Status */

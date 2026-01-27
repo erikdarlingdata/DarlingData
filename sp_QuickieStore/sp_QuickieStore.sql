@@ -98,7 +98,7 @@ ALTER PROCEDURE
     @regression_baseline_start_date datetimeoffset(7) = NULL, /*the begin date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
     @regression_baseline_end_date datetimeoffset(7) = NULL, /*the end date of the baseline that you are checking for regressions against (if any), will be converted to UTC internally*/
     @regression_comparator varchar(20) = NULL, /*what difference to use ('relative' or 'absolute') when comparing @sort_order's metric for the normal time period with the regression time period.*/
-    @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, want do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
+    @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, what do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
     @include_query_hash_totals bit = 0, /*will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
     @include_maintenance bit = 0, /*Set this bit to 1 to add maintenance operations such as index creation to the result set*/
     @help bit = 0, /*return available parameter details, etc.*/
@@ -120,8 +120,8 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.0',
-    @version_date = '20260115';
+    @version = '6.2',
+    @version_date = '20260201';
 
 /*
 Helpful section! For help.
@@ -2779,8 +2779,14 @@ SELECT
         ISNULL(@only_queries_with_forced_plans, 0),
     @only_queries_with_forced_plan_failures =
         ISNULL(@only_queries_with_forced_plan_failures, 0),
+    @escape_brackets =
+        ISNULL(@escape_brackets, 0),
     @wait_filter =
         NULLIF(@wait_filter, ''),
+    @query_type =
+        NULLIF(@query_type, ''),
+    @execution_type_desc =
+        NULLIF(@execution_type_desc, ''),
     @format_output =
         ISNULL(@format_output, 1),
     @help =
@@ -3220,7 +3226,7 @@ OPTION(RECOMPILE);' + @nc10;
 
         IF ROWCOUNT_BIG() = 0
         BEGIN
-            RAISERROR('No object_ids were found for %s in schema %s', 11, 1, @procedure_schema, @procedure_name) WITH NOWAIT;
+            RAISERROR('No object_ids were found for %s in schema %s', 11, 1, @procedure_name, @procedure_schema) WITH NOWAIT;
             RETURN;
         END;
 
@@ -4187,7 +4193,7 @@ BEGIN
             PRINT @dynamic_sql;
         END;
 
-        EXEC sys.sp_executesql
+        EXECUTE sys.sp_executesql
             @dynamic_sql,
           N'@split_sql nvarchar(max),
             @param_value nvarchar(4000)',
@@ -5513,7 +5519,7 @@ BEGIN
            SELECT
                qsq.query_hash,
                plan_hash_count_for_query_hash =
-                   COUNT(DISTINCT qsp.query_plan_hash)
+                   COUNT_BIG(DISTINCT qsp.query_plan_hash)
            FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
            JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
              ON qsq.query_id = qsp.query_id
@@ -7170,7 +7176,7 @@ WITH
 )
 EXECUTE sys.sp_executesql
     @sql,
-  N'@database_id int',
+  N'@database_id integer',
     @database_id;
 
 IF @troubleshoot_performance = 1
@@ -7279,7 +7285,7 @@ BEGIN
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id int',
+      N'@database_id integer',
         @database_id;
 
     IF @troubleshoot_performance = 1
@@ -7373,7 +7379,7 @@ WITH
 )
 EXECUTE sys.sp_executesql
     @sql,
-  N'@database_id int',
+  N'@database_id integer',
     @database_id;
 
 IF @troubleshoot_performance = 1
@@ -7743,7 +7749,7 @@ WITH
 )
 EXECUTE sys.sp_executesql
     @sql,
-  N'@database_id int',
+  N'@database_id integer',
     @database_id;
 
 IF @troubleshoot_performance = 1
@@ -7878,7 +7884,7 @@ OPTION(RECOMPILE);' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id int',
+      N'@database_id integer',
         @database_id;
 
     IF @troubleshoot_performance = 1
@@ -7969,7 +7975,7 @@ WITH
 )
 EXECUTE sys.sp_executesql
     @sql,
-  N'@database_id int',
+  N'@database_id integer',
     @database_id;
 
 IF @troubleshoot_performance = 1
@@ -8146,7 +8152,7 @@ OPTION(RECOMPILE);' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id int',
+      N'@database_id integer',
         @database_id;
 
     IF @troubleshoot_performance = 1
@@ -8216,7 +8222,7 @@ OPTION(RECOMPILE);' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id int',
+      N'@database_id integer',
         @database_id;
 
     IF @troubleshoot_performance = 1
@@ -8292,7 +8298,7 @@ OPTION(RECOMPILE);' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@database_id int',
+      N'@database_id integer',
         @database_id;
 
     IF @troubleshoot_performance = 1
@@ -8367,7 +8373,7 @@ OPTION(RECOMPILE);' + @nc10;
         )
         EXECUTE sys.sp_executesql
             @sql,
-          N'@database_id int',
+          N'@database_id integer',
             @database_id;
 
         IF @troubleshoot_performance = 1
@@ -8437,7 +8443,7 @@ OPTION(RECOMPILE);' + @nc10;
         )
         EXECUTE sys.sp_executesql
             @sql,
-          N'@database_id int',
+          N'@database_id integer',
             @database_id;
 
         IF @troubleshoot_performance = 1
@@ -8869,34 +8875,34 @@ ORDER BY
          THEN
              CASE WHEN @regression_mode = 1
                   AND @regression_direction IN ('improved', 'better')
-                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) ASC,
+                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS decimal(19,2)) ASC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
                   WHEN @regression_mode = 1
                   AND @regression_direction IN ('regressed', 'worse')
-                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money) DESC,
+                  THEN 'TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS decimal(19,2)) DESC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
                   WHEN @regression_mode = 1
                   AND @regression_direction IN ('magnitude', 'absolute')
-                  THEN 'ABS(TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS money)) DESC,
+                  THEN 'ABS(TRY_PARSE(REPLACE(x.change_in_average_for_query_hash_since_regression_time_period, ''%'', '''') AS decimal(19,2))) DESC,
                         x.query_hash_from_regression_checking,
                         x.from_regression_baseline_time_period'
              ELSE
              CASE @sort_order
-                  WHEN 'cpu' THEN N'TRY_PARSE(x.avg_cpu_time_ms AS money)'
-                  WHEN 'logical reads' THEN N'TRY_PARSE(x.avg_logical_io_reads_mb AS money)'
-                  WHEN 'physical reads' THEN N'TRY_PARSE(x.avg_physical_io_reads_mb AS money)'
-                  WHEN 'writes' THEN N'TRY_PARSE(x.avg_logical_io_writes_mb AS money)'
-                  WHEN 'duration' THEN N'TRY_PARSE(x.avg_duration_ms AS money)'
-                  WHEN 'memory' THEN N'TRY_PARSE(x.avg_query_max_used_memory_mb AS money)'
-                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)' END
-                  WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS money)'
+                  WHEN 'cpu' THEN N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))'
+                  WHEN 'logical reads' THEN N'TRY_PARSE(x.avg_logical_io_reads_mb AS decimal(19,2))'
+                  WHEN 'physical reads' THEN N'TRY_PARSE(x.avg_physical_io_reads_mb AS decimal(19,2))'
+                  WHEN 'writes' THEN N'TRY_PARSE(x.avg_logical_io_writes_mb AS decimal(19,2))'
+                  WHEN 'duration' THEN N'TRY_PARSE(x.avg_duration_ms AS decimal(19,2))'
+                  WHEN 'memory' THEN N'TRY_PARSE(x.avg_query_max_used_memory_mb AS decimal(19,2))'
+                  WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'TRY_PARSE(x.avg_tempdb_space_used_mb AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
+                  WHEN 'executions' THEN N'TRY_PARSE(x.count_executions AS decimal(19,2))'
                   WHEN 'recent' THEN N'x.last_execution_time'
-                  WHEN 'rows' THEN N'TRY_PARSE(x.avg_rowcount AS money)'
-                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS money) DESC,
+                  WHEN 'rows' THEN N'TRY_PARSE(x.avg_rowcount AS decimal(19,2))'
+                  WHEN 'plan count by hashes' THEN N'TRY_PARSE(x.plan_hash_count_for_query_hash AS decimal(19,2)) DESC,
     x.query_hash_from_hash_counting'
-                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS money)' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS money)' END
+                  ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'TRY_PARSE(x.total_wait_time_from_sort_order_ms AS decimal(19,2))' ELSE N'TRY_PARSE(x.avg_cpu_time_ms AS decimal(19,2))' END
              END END
     END
              + N' DESC
@@ -9432,12 +9438,11 @@ BEGIN
     IF @rc > 0
     BEGIN
         SELECT
-            @current_table = 'selecting resource stats';
-
-        SET @sql = N'';
+            @current_table = 'selecting resource stats',
+            @sql = @isolation_level;
 
         SELECT
-            @sql =
+            @sql +=
         CONVERT
         (
             nvarchar(max),
@@ -9658,12 +9663,11 @@ BEGIN
                 Wait stats by query
                 */
                 SELECT
-                    @current_table = 'selecting wait stats by query';
-
-                SET @sql = N'';
+                    @current_table = 'selecting wait stats by query',
+                    @sql = @isolation_level;
 
                 SELECT
-                    @sql =
+                    @sql +=
                 CONVERT
                 (
                     nvarchar(max),
@@ -9798,12 +9802,11 @@ BEGIN
                 Wait stats in total
                 */
                 SELECT
-                    @current_table = 'selecting wait stats in total';
-
-                SET @sql = N'';
+                    @current_table = 'selecting wait stats in total',
+                    @sql = @isolation_level;
 
                 SELECT
-                    @sql =
+                    @sql +=
                 CONVERT
                 (
                     nvarchar(max),
@@ -9978,7 +9981,7 @@ BEGIN
     BEGIN
         SELECT
             @current_table = 'selecting query store options',
-            @sql = N'';
+            @sql = @isolation_level;
 
         SELECT
             @sql +=
@@ -10351,7 +10354,7 @@ BEGIN
             @only_queries_with_hints,
         only_query_with_feedback =
             @only_queries_with_feedback,
-        only_query_with_hints =
+        only_query_with_variants =
             @only_queries_with_variants,
         only_queries_with_forced_plans =
             @only_queries_with_forced_plans,

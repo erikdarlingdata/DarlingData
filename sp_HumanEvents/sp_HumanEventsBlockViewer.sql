@@ -93,8 +93,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.0',
-    @version_date = '20260115';
+    @version = '5.2',
+    @version_date = '20260201';
 
 IF @help = 1
 BEGIN
@@ -887,7 +887,6 @@ CREATE TABLE
 IF LOWER(@target_type) = N'table'
 BEGIN
     GOTO TableMode;
-    RETURN;
 END;
 
 /*Look to see if the session exists and is running*/
@@ -1078,13 +1077,13 @@ BEGIN
 
         SELECT
             @session_id =
-                t.event_session_address,
+                t.event_session_id,
             @target_session_id =
-                t.target_name
-        FROM sys.dm_xe_database_session_targets t
-        JOIN sys.dm_xe_database_sessions s
-          ON s.address = t.event_session_address
-        WHERE t.target_name = @target_type
+                t.target_id
+        FROM sys.database_event_session_targets AS t
+        JOIN sys.database_event_sessions AS s
+          ON s.event_session_id = t.event_session_id
+        WHERE t.name = @target_type
         AND   s.name = @session_name
         OPTION(RECOMPILE);
 
@@ -1104,7 +1103,7 @@ BEGIN
                         nvarchar(4000),
                         f.value
                     )
-            FROM sys.server_event_session_fields AS f
+            FROM sys.database_event_session_fields AS f
             WHERE f.event_session_id = @session_id
             AND   f.object_id = @target_session_id
             AND   f.name = N'filename'
@@ -1316,8 +1315,8 @@ BEGIN
         ecid = bd.value('(process/@ecid)[1]', 'integer'),
         query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
         wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
-        lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
-        lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
+        last_transaction_started = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
+        last_transaction_completed = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
         wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
         status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
         priority = bd.value('(process/@priority)[1]', 'integer'),
@@ -1601,6 +1600,7 @@ BEGIN
         END
     OPTION(RECOMPILE);
 
+    IF @debug = 1
     BEGIN
         RAISERROR('Inserting to #available_plans_sh', 0, 1) WITH NOWAIT;
     END;
@@ -1670,11 +1670,11 @@ BEGIN
         total_worker_time_ms =
             deqs.total_worker_time / 1000.,
         avg_worker_time_ms =
-            CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
+            CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / NULLIF(deqs.execution_count, 0)),
         total_elapsed_time_ms =
             deqs.total_elapsed_time / 1000.,
         avg_elapsed_time_ms =
-            CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
+            CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
         executions_per_second =
             ISNULL
             (
@@ -1685,7 +1685,7 @@ BEGIN
                         (
                             SECOND,
                             deqs.creation_time,
-                            NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
+                            NULLIF(deqs.last_execution_time, '19000101')
                         ),
                         0
                     ),
@@ -1860,10 +1860,8 @@ BEGIN
 
     IF @timestamp_column IS NULL
     BEGIN
-        BEGIN
-            SET @extract_sql = @extract_sql + N'
+        SET @extract_sql = @extract_sql + N'
     AND   e.x.exist(''@timestamp[. >= sql:variable("@start_date") and . < sql:variable("@end_date")]'') = 1';
-        END;
     END;
 
     SET @extract_sql = @extract_sql + N'
@@ -1941,7 +1939,7 @@ SELECT
     isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
     log_used = bd.value('(process/@logused)[1]', 'bigint'),
     clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
-    clientoption2 = bd.value('(process/@clientoption1)[1]', 'bigint'),
+    clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
     currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(256)'),
     currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
     blocking_level = 0,
@@ -2681,7 +2679,7 @@ BEGIN
             stmtend =
                 ISNULL(n.c.value('@stmtend', 'integer'), -1)
         FROM #blocks AS b
-        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
+        CROSS APPLY b.blocked_process_report.nodes('/event/data/value/blocked-process-report/blocked-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]') AS n(c)
         WHERE
         (
             (b.database_name = @database_name
@@ -2716,11 +2714,11 @@ BEGIN
         total_worker_time_ms =
             deqs.total_worker_time / 1000.,
         avg_worker_time_ms =
-            CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
+            CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / NULLIF(deqs.execution_count, 0)),
         total_elapsed_time_ms =
             deqs.total_elapsed_time / 1000.,
         avg_elapsed_time_ms =
-            CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
+            CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
         executions_per_second =
             ISNULL
             (
@@ -2731,7 +2729,7 @@ BEGIN
                         (
                             SECOND,
                             deqs.creation_time,
-                            NULLIF(deqs.last_execution_time, '1900-01-01 00:00:00.000')
+                            NULLIF(deqs.last_execution_time, '19000101')
                         ),
                         0
                     ),
@@ -3226,7 +3224,7 @@ BEGIN
         finding =
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-            N' background tasks involved in blocking sessions in ' +
+            N' done queries involved in blocking sessions in ' +
             b.database_name +
             N'.',
        sort_order =
@@ -3268,7 +3266,7 @@ BEGIN
         finding =
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-            N' background tasks involved in blocking sessions in ' +
+            N' done queries involved in blocking sessions in ' +
             b.database_name +
             N'.',
        sort_order =

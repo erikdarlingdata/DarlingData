@@ -72,8 +72,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.0',
-        @version_date = '20260115';
+        @version = '2.2',
+        @version_date = '20260201';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -184,12 +184,12 @@ BEGIN TRY
                     WHEN N'@min_writes' THEN '0'
                     WHEN N'@min_size_gb' THEN '0'
                     WHEN N'@min_rows' THEN '0'
-                    WHEN N'@dedupe_only' THEN '0'
-                    WHEN N'@get_all_databases' THEN '0'
+                    WHEN N'@dedupe_only' THEN 'false'
+                    WHEN N'@get_all_databases' THEN 'false'
                     WHEN N'@include_databases' THEN 'NULL'
                     WHEN N'@exclude_databases' THEN 'NULL'
                     WHEN N'@help' THEN 'false'
-                    WHEN N'@debug' THEN 'true'
+                    WHEN N'@debug' THEN 'false'
                     WHEN N'@version' THEN 'NULL'
                     WHEN N'@version_date' THEN 'NULL'
                     ELSE NULL
@@ -297,8 +297,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* Azure SQL DB or Managed Instance */
                 WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
                 THEN 1
-                /* SQL Server 2019+ */
-                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) = 3
+                /* SQL Server 2019+ (Enterprise or Standard) */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (2, 3)
                      AND CONVERT
                          (
                              integer,
@@ -1061,55 +1061,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
     END;
 
-    IF  @get_all_databases = 1
-    AND @include_databases IS NOT NULL
-    BEGIN
-        INSERT INTO
-            #requested_but_skipped_databases
-        WITH
-            (TABLOCK)
-        (
-            database_name,
-            reason
-        )
-        SELECT
-            id.database_name,
-            reason =
-                CASE
-                    WHEN d.name IS NULL
-                    THEN 'Database does not exist'
-                    WHEN d.state <> 0
-                    THEN 'Database not online'
-                    WHEN d.is_in_standby = 1
-                    THEN 'Database is in standby'
-                    WHEN d.is_read_only = 1
-                    THEN 'Database is read-only'
-                    WHEN d.database_id <= 4
-                    THEN 'System database'
-                    ELSE 'Other issue'
-                END
-        FROM #include_databases AS id
-        LEFT JOIN sys.databases AS d
-          ON id.database_name = d.name
-        WHERE NOT EXISTS
-              (
-                  SELECT
-                      1/0
-                  FROM #databases AS db
-                  WHERE db.database_name = id.database_name
-              )
-        OPTION(RECOMPILE);
-
-        IF @debug = 1
-        BEGIN
-            SELECT
-                table_name = '#requested_but_skipped_databases',
-                rbsd.*
-            FROM #requested_but_skipped_databases AS rbsd
-            OPTION(RECOMPILE);
-        END;
-    END;
-
     /* Parse @exclude_databases comma-separated list */
     IF  @get_all_databases = 1
     AND @exclude_databases IS NOT NULL
@@ -1291,6 +1242,59 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
+    /*
+    Identify databases that were requested but couldn't be processed.
+    This must happen AFTER #databases is populated.
+    */
+    IF  @get_all_databases = 1
+    AND @include_databases IS NOT NULL
+    BEGIN
+        INSERT INTO
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            id.database_name,
+            reason =
+                CASE
+                    WHEN d.name IS NULL
+                    THEN 'Database does not exist'
+                    WHEN d.state <> 0
+                    THEN 'Database not online'
+                    WHEN d.is_in_standby = 1
+                    THEN 'Database is in standby'
+                    WHEN d.is_read_only = 1
+                    THEN 'Database is read-only'
+                    WHEN d.database_id <= 4
+                    THEN 'System database'
+                    ELSE 'Other issue'
+                END
+        FROM #include_databases AS id
+        LEFT JOIN sys.databases AS d
+          ON id.database_name = d.name
+        WHERE NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #databases AS db
+                  WHERE db.database_name = id.database_name
+              )
+        OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            SELECT
+                table_name = '#requested_but_skipped_databases',
+                rbsd.*
+            FROM #requested_but_skipped_databases AS rbsd
+            OPTION(RECOMPILE);
+        END;
+    END;
+
     /*Set up database cursor processing*/
 
     /* Create a cursor to process each database */
@@ -1427,9 +1431,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         JOIN ' + QUOTENAME(@current_database_name) + N'.sys.partitions AS p
           ON  i.object_id = p.object_id
           AND i.index_id = p.index_id
-        LEFT JOIN ' + QUOTENAME(@current_database_name) + N'.sys.dm_db_index_usage_stats AS us
-          ON  i.object_id = us.object_id
-          AND us.database_id = @database_id
+        /* LEFT JOIN to dm_db_index_usage_stats removed 2026-01-15 - was dead code with no columns selected */
         WHERE (t.object_id IS NULL OR t.is_ms_shipped = 0)
         AND   (t.object_id IS NULL OR t.type <> N''TF'')
         AND    i.is_disabled = 0
@@ -2309,7 +2311,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @sql,
       N'@database_id integer,
         @object_id integer,
-        @min_rows integer',
+        @min_rows bigint',
         @current_database_id,
         @object_id,
         @min_rows;
@@ -3098,7 +3100,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             FROM #index_analysis AS ia2_inner
             WHERE ia2_inner.scope_hash = ia1.scope_hash
             AND   ia2_inner.index_name <> ia1.index_name
-            AND   ia2_inner.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'
+            AND   ia2_inner.key_columns LIKE (REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]'), '_', '~_'), '%', '~%') + N', %') ESCAPE '~'
             AND   ISNULL(ia2_inner.filter_definition, N'') = ISNULL(ia1.filter_definition, N'')
             AND   NOT (ia1.is_unique = 1 AND ia2_inner.is_unique = 0)
             AND   ia2_inner.consolidation_rule IS NULL
@@ -3130,7 +3132,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #index_analysis AS ia2
       ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
       AND ia1.index_name <> ia2.index_name
-      AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]') + N', %') ESCAPE '~'  /* ia2 has wider key that starts with ia1's key */
+      AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]'), '_', '~_'), '%', '~%') + N', %') ESCAPE '~'  /* ia2 has wider key that starts with ia1's key */
       AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
       /* Exception: If narrower index is unique and wider is not, they should not be merged */
       AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
@@ -3182,7 +3184,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
 
-    DECLARE @rule3_rowcount bigint = @@ROWCOUNT;
+    DECLARE @rule3_rowcount bigint = ROWCOUNT_BIG();
 
     IF @debug = 1
     BEGIN
@@ -3315,7 +3317,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
 
-    DECLARE @rule5_rowcount bigint = @@ROWCOUNT;
+    DECLARE @rule5_rowcount bigint = ROWCOUNT_BIG();
 
     IF @debug = 1
     BEGIN
@@ -3329,92 +3331,114 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /* Rule 6: Merge includes from subset to superset indexes */
-    WITH
-        KeySubsetSuperset AS
-    (
+    /* Pre-compute merged includes in a temp table to handle multiple subsets per superset */
+    IF @debug = 1
+    BEGIN
         SELECT
-            superset.database_id,
-            superset.object_id,
-            superset.index_id,
-            superset.index_name,
-            superset.index_hash,
-            superset.included_columns AS superset_includes,
-            subset.included_columns AS subset_includes
+            debug_label = 'Subsets for Rule 6 merge',
+            superset_name = superset.index_name,
+            subset_name = subset.index_name,
+            subset_includes = subset.included_columns
         FROM #index_analysis AS superset
         JOIN #index_analysis AS subset
-          ON  superset.scope_hash = subset.scope_hash
+          ON  subset.scope_hash = superset.scope_hash
           AND subset.target_index_name = superset.index_name
+          AND subset.action = N'DISABLE'
+          AND subset.consolidation_rule = N'Key Subset'
         WHERE superset.action = N'MERGE INCLUDES'
-        AND   subset.action = N'DISABLE'
         AND   superset.consolidation_rule = N'Key Superset'
-        AND   subset.consolidation_rule = N'Key Subset'
+        OPTION(RECOMPILE);
+    END;
+
+    CREATE TABLE
+        #merged_includes
+    (
+        scope_hash bigint NOT NULL,
+        index_name sysname NOT NULL,
+        key_columns nvarchar(max) NOT NULL,
+        merged_includes nvarchar(max) NULL,
+        PRIMARY KEY (scope_hash, index_name)
+    );
+
+    /* Gather all supersets that need include merging */
+    INSERT INTO
+        #merged_includes
+    WITH
+        (TABLOCK)
+    (
+        scope_hash,
+        index_name,
+        key_columns,
+        merged_includes
     )
+    SELECT
+        superset.scope_hash,
+        superset.index_name,
+        superset.key_columns,
+        merged_includes =
+            STUFF
+            (
+                (
+                    SELECT DISTINCT
+                        N', ' +
+                        t.c.value('.', 'sysname')
+                    FROM
+                    (
+                        /* Superset's own includes */
+                        SELECT
+                            x = CONVERT
+                            (
+                                xml,
+                                N'<c>' +
+                                REPLACE(superset.included_columns, N', ', N'</c><c>') +
+                                N'</c>'
+                            )
+                        WHERE superset.included_columns IS NOT NULL
+
+                        UNION ALL
+
+                        /* ALL subsets' includes */
+                        SELECT
+                            x = CONVERT
+                            (
+                                xml,
+                                N'<c>' +
+                                REPLACE(subset.included_columns, N', ', N'</c><c>') +
+                                N'</c>'
+                            )
+                        FROM #index_analysis AS subset
+                        WHERE subset.scope_hash = superset.scope_hash
+                        AND   subset.target_index_name = superset.index_name
+                        AND   subset.action = N'DISABLE'
+                        AND   subset.consolidation_rule = N'Key Subset'
+                        AND   subset.included_columns IS NOT NULL
+                    ) AS a
+                    CROSS APPLY a.x.nodes('/c') AS t(c)
+                    /* Filter out columns already in superset's key */
+                    WHERE CHARINDEX(t.c.value('.', 'sysname'), superset.key_columns) = 0
+                    AND   LEN(t.c.value('.', 'sysname')) > 0
+                    FOR
+                        XML
+                        PATH('')
+                ),
+                1,
+                2,
+                ''
+            )
+    FROM #index_analysis AS superset
+    WHERE superset.action = N'MERGE INCLUDES'
+    AND   superset.consolidation_rule = N'Key Superset'
+    OPTION(RECOMPILE);
+
+    /* Apply the pre-computed merged includes */
     UPDATE
         ia
     SET
-        ia.included_columns =
-        CASE
-            /* If both have includes, combine them without duplicates */
-            WHEN kss.superset_includes IS NOT NULL
-            AND  kss.subset_includes IS NOT NULL
-            THEN
-                /* Create combined includes using XML method that works with all SQL Server versions */
-                (
-                    SELECT
-                        /* Combine both sets of includes */
-                        combined_cols =
-                            STUFF
-                            (
-                                (
-                                    SELECT DISTINCT
-                                        N', ' +
-                                        t.c.value('.', 'sysname')
-                                    FROM
-                                    (
-                                        /* Create XML from superset includes */
-                                        SELECT
-                                            x = CONVERT
-                                            (
-                                                xml,
-                                                N'<c>' +
-                                                REPLACE(kss.superset_includes, N', ', N'</c><c>') +
-                                                N'</c>'
-                                            )
-
-                                        UNION ALL
-
-                                        /* Create XML from subset includes */
-                                        SELECT
-                                            x = CONVERT
-                                            (
-                                                xml,
-                                                N'<c>' +
-                                                REPLACE(kss.subset_includes, N', ', N'</c><c>') +
-                                                N'</c>'
-                                            )
-                                    ) AS a
-                                    /* Split XML into individual columns */
-                                    CROSS APPLY a.x.nodes('/c') AS t(c)
-                                    FOR
-                                        XML
-                                        PATH('')
-                                ),
-                                1,
-                                2,
-                                ''
-                            )
-                )
-            /* If only subset has includes, use those */
-            WHEN kss.superset_includes IS NULL
-            AND  kss.subset_includes IS NOT NULL
-            THEN kss.subset_includes
-            /* If only superset has includes or neither has includes, keep superset's includes */
-            ELSE kss.superset_includes
-        END
+        ia.included_columns = mi.merged_includes
     FROM #index_analysis AS ia
-    JOIN KeySubsetSuperset AS kss
-      ON ia.index_hash = kss.index_hash
-    WHERE ia.action = N'MERGE INCLUDES'
+    JOIN #merged_includes AS mi
+      ON  mi.scope_hash = ia.scope_hash
+      AND mi.index_name = ia.index_name
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -3437,7 +3461,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #index_analysis AS ia2
       ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
       AND ia1.index_name <> ia2.index_name
-      AND ia2.key_columns LIKE (ia1.key_columns + N'%')  /* ia2 has wider key that starts with ia1's key */
+      AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]'), '_', '~_'), '%', '~%') + N'%') ESCAPE '~'  /* ia2 has wider key that starts with ia1's key */
       AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
       /* Exception: If narrower index is unique and wider is not, they should not be merged */
       AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
@@ -4116,20 +4140,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_analysis AS ia
     WHERE ia.action = N'MERGE INCLUDES'
     AND   ia.superseded_by IS NOT NULL
-    /* This should indicate it already has all the needed includes */
+    /* Only change to KEEP if Rule 6 didn't compute merged includes for this index */
     AND NOT EXISTS
     (
-        /* Find any indexes it supersedes that have includes not in this index */
         SELECT
             1/0
-        FROM #index_analysis AS ia_subset
-        WHERE ia_subset.scope_hash = ia.scope_hash
-        AND   ia_subset.key_columns = ia.key_columns
-        AND   ia_subset.action = N'DISABLE'
-        AND   ia_subset.target_index_name = ia.index_name
-        /* This complex check handles cases where the superset doesn't contain all subset columns */
-        AND   CHARINDEX(ISNULL(ia_subset.included_columns, N''), ISNULL(ia.included_columns, N'')) = 0
-        AND   ISNULL(ia_subset.included_columns, N'') <> N''
+        FROM #merged_includes AS mi
+        WHERE mi.scope_hash = ia.scope_hash
+        AND   mi.index_name = ia.index_name
     )
     OPTION(RECOMPILE);
 
@@ -4234,7 +4252,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN ps.partition_function_name IS NOT NULL
                 THEN N' ON ' +
-                     QUOTENAME(ps.partition_function_name) +
+                     QUOTENAME(ps.built_on) +
                      N'(' +
                      ISNULL(ps.partition_columns, N'') +
                      N')'
@@ -4622,7 +4640,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         THEN N'UNIQUE '
                         ELSE N''
                     END +
-                N'CLUSTERED INDEX' +
+                N'CLUSTERED INDEX ' +
                 QUOTENAME(fo.index_name) +
                 N' ON ' +
                 QUOTENAME(fo.database_name) +
@@ -4885,7 +4903,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             QUOTENAME(ia_uc.schema_name) +
             N'.' +
             QUOTENAME(ia_uc.table_name) +
-            N' NOCHECK CONSTRAINT ' +
+            N' DROP CONSTRAINT ' +
             QUOTENAME(ia_uc.index_name) +
             N';',
         /* Original index definition for validation */
@@ -6036,7 +6054,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     irs.index_name,
                     irs.script_type
                 ORDER BY
-                    irs.result_type DESC /* Prefer non-NULL result types */
+                    irs.result_type DESC
             ) AS rn
         FROM #index_cleanup_results AS irs
     ) AS ir

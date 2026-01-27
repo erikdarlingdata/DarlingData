@@ -70,8 +70,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '3.0',
-        @version_date = '20260115';
+        @version = '3.2',
+        @version_date = '20260201';
 
     IF @help = 1
     BEGIN
@@ -142,7 +142,7 @@ BEGIN
                     WHEN N'@end_date' THEN N'current date'
                     WHEN N'@warnings_only' THEN N'0'
                     WHEN N'@database_name' THEN N'NULL'
-                    WHEN N'@wait_duration_ms' THEN N'0'
+                    WHEN N'@wait_duration_ms' THEN N'500'
                     WHEN N'@wait_round_interval_minutes' THEN N'60'
                     WHEN N'@skip_locks' THEN N'0'
                     WHEN N'@pending_task_threshold' THEN N'10'
@@ -234,15 +234,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @dbid integer =
             DB_ID(@database_name),
         @timestamp_utc_mode tinyint,
-        @sql_template nvarchar(max) = N'',
-        @time_filter nvarchar(max) = N'',
-        @cross_apply nvarchar(max) = N'',
+        @sql_template nvarchar(MAX) = N'',
+        @time_filter nvarchar(MAX) = N'',
+        @cross_apply nvarchar(MAX) = N'',
         @collection_cursor CURSOR,
         @area_name varchar(20),
         @object_name sysname,
         @temp_table sysname,
         @insert_list sysname,
-        @collection_sql nvarchar(max),
+        @collection_sql nvarchar(MAX),
         /*Log to table stuff*/
         @log_table_significant_waits sysname,
         @log_table_waits_by_count sysname,
@@ -256,14 +256,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @log_table_scheduler_issues sysname,
         @log_table_severe_errors sysname,
         @cleanup_date datetime2(7),
-        @check_sql nvarchar(max) = N'',
-        @create_sql nvarchar(max) = N'',
-        @insert_sql nvarchar(max) = N'',
+        @check_sql nvarchar(MAX) = N'',
+        @create_sql nvarchar(MAX) = N'',
+        @insert_sql nvarchar(MAX) = N'',
         @log_database_schema nvarchar(1024),
         @max_event_time datetime2(7),
-        @dsql nvarchar(max) = N'',
-        @mdsql_template nvarchar(max) = N'',
-        @mdsql_execute nvarchar(max) = N'',
+        @dsql nvarchar(MAX) = N'',
+        @mdsql_template nvarchar(MAX) = N'',
+        @mdsql_execute nvarchar(MAX) = N'',
         @start_date_debug nvarchar(50),
         @end_date_debug nvarchar(50);
 
@@ -450,7 +450,7 @@ AND   ca.utc_timestamp < @end_date';
     SELECT
         @what_to_check = LOWER(ISNULL(@what_to_check, 'all')),
         @warnings_only = ISNULL(@warnings_only, 0),
-        @wait_duration_ms = ISNULL(@wait_duration_ms, 0),
+        @wait_duration_ms = ISNULL(@wait_duration_ms, 500),
         @wait_round_interval_minutes = ISNULL(@wait_round_interval_minutes, 60),
         @skip_locks = ISNULL(@skip_locks, 0),
         @pending_task_threshold = ISNULL(@pending_task_threshold, 10);
@@ -2047,7 +2047,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(CONVERT(date, @end_date)) +
                                  '.'
                             ELSE 'no significant waits found!'
-                        END
+                        END;
 
                 RAISERROR('No waits by count found', 0, 0) WITH NOWAIT;
             END;
@@ -2307,7 +2307,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(@wait_duration_ms) +
                                  'ms.'
                             ELSE 'no significant waits found!'
-                        END
+                        END;
 
                 RAISERROR('No waits by duration', 0, 0) WITH NOWAIT;
             END;
@@ -2574,7 +2574,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(@warnings_only) +
                                  '.'
                             ELSE 'no io issues found!'
-                        END
+                        END;
                 RAISERROR('No io data found', 0, 0) WITH NOWAIT;
             END;
         END;
@@ -2731,7 +2731,7 @@ AND   ca.utc_timestamp < @end_date';
         FROM #sp_server_diagnostics_component_result AS wi
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
-        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         AND  (w.x.exist('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks[.>= sql:variable("@pending_task_threshold")])') = 1 OR @warnings_only = 0)
         OPTION(RECOMPILE);
 
@@ -2779,7 +2779,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(@warnings_only) +
                                  '.'
                             ELSE 'no cpu issues found!'
-                        END
+                        END;
 
                 RAISERROR('No scheduler data found', 0, 0) WITH NOWAIT;
             END;
@@ -2987,7 +2987,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(@warnings_only) +
                                  '.'
                             ELSE 'no memory issues found!'
-                        END
+                        END;
 
                 RAISERROR('No memory condition data found', 0, 0) WITH NOWAIT;
             END;
@@ -3218,7 +3218,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(@warnings_only) +
                                  '.'
                             ELSE 'no memory pressure events found!'
-                        END
+                        END;
 
                 RAISERROR('No memory broker data found', 0, 0) WITH NOWAIT;
             END;
@@ -3510,7 +3510,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(CONVERT(date, @end_date)) +
                                  '.'
                             ELSE 'no memory node OOM events found!'
-                        END
+                        END;
 
                 RAISERROR('No memory oom data found', 0, 0) WITH NOWAIT;
             END;
@@ -3912,7 +3912,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(@warnings_only) +
                                  '.'
                             ELSE 'no system health issues found!'
-                        END
+                        END;
 
                 RAISERROR('No system health data found', 0, 0) WITH NOWAIT;
             END;
@@ -4107,7 +4107,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(@warnings_only) +
                                  '.'
                             ELSE 'no scheduler issues found!'
-                        END
+                        END;
 
                 RAISERROR('No scheduler issues data found', 0, 0) WITH NOWAIT;
             END;
@@ -4334,7 +4334,7 @@ AND   ca.utc_timestamp < @end_date';
                                  RTRIM(@warnings_only) +
                                  '.'
                             ELSE 'no severe errors found!'
-                        END
+                        END;
 
                 RAISERROR('No error data found', 0, 0) WITH NOWAIT;
             END;
@@ -4502,7 +4502,7 @@ AND   ca.utc_timestamp < @end_date';
     CROSS APPLY w.x.nodes('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') AS w2(x2)
     WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
     AND   w.x.exist('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') = 1
-    AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only IS NULL)
+    AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4533,6 +4533,14 @@ AND   ca.utc_timestamp < @end_date';
     AND @log_to_table = 0
     )
     BEGIN
+        /*Validate database name if provided*/
+        IF  @database_name IS NOT NULL
+        AND @dbid IS NULL
+        BEGIN
+            RAISERROR('The specified database %s does not exist.', 11, 1, @database_name) WITH NOWAIT;
+            RETURN;
+        END;
+
         IF @debug = 1
         BEGIN
             RAISERROR('Parsing locking stuff', 0, 0) WITH NOWAIT;
@@ -4585,20 +4593,20 @@ AND   ca.utc_timestamp < @end_date';
 
         SELECT
             bx.event_time,
-            currentdbname = bd.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
+            currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
             spid = bd.value('(process/@spid)[1]', 'integer'),
             ecid = bd.value('(process/@ecid)[1]', 'integer'),
             query_text_pre = bd.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
             wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
             lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
             lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-            wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+            wait_resource = bd.value('(process/@waitresource)[1]', 'sysname'),
             status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
             priority = bd.value('(process/@priority)[1]', 'integer'),
             transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
-            client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-            host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
-            login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
+            client_app = bd.value('(process/@clientapp)[1]', 'sysname'),
+            host_name = bd.value('(process/@hostname)[1]', 'sysname'),
+            login_name = bd.value('(process/@loginname)[1]', 'sysname'),
             isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
             log_used = bd.value('(process/@logused)[1]', 'bigint'),
             clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
@@ -4610,6 +4618,7 @@ AND   ca.utc_timestamp < @end_date';
         OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
         OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
         WHERE bd.exist('process/@spid') = 1
+        AND   (bd.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
         OPTION(RECOMPILE);
 
         IF @debug = 1
@@ -4646,20 +4655,20 @@ AND   ca.utc_timestamp < @end_date';
 
         SELECT
             bx.event_time,
-            currentdbname = bg.value('(process/@currentdbname)[1]', 'nvarchar(128)'),
+            currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
             spid = bg.value('(process/@spid)[1]', 'integer'),
             ecid = bg.value('(process/@ecid)[1]', 'integer'),
             query_text_pre = bg.value('(process/inputbuf/text())[1]', 'nvarchar(max)'),
             wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
             last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
             last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-            wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(100)'),
+            wait_resource = bg.value('(process/@waitresource)[1]', 'sysname'),
             status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
             priority = bg.value('(process/@priority)[1]', 'integer'),
             transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
-            client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
-            host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
-            login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
+            client_app = bg.value('(process/@clientapp)[1]', 'sysname'),
+            host_name = bg.value('(process/@hostname)[1]', 'sysname'),
+            login_name = bg.value('(process/@loginname)[1]', 'sysname'),
             isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
             log_used = bg.value('(process/@logused)[1]', 'bigint'),
             clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
@@ -4671,6 +4680,7 @@ AND   ca.utc_timestamp < @end_date';
         OUTER APPLY bx.human_events_xml.nodes('/event') AS oa(c)
         OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
         WHERE bg.exist('process/@spid') = 1
+        AND   (bg.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
         OPTION(RECOMPILE);
 
         IF @debug = 1
@@ -4927,7 +4937,7 @@ AND   ca.utc_timestamp < @end_date';
                     'available plans for blocking',
                 b.currentdbname,
                 query_text =
-                    TRY_CAST(b.query_text AS nvarchar(max)),
+                    TRY_CAST(b.query_text AS nvarchar(MAX)),
                 sql_handle =
                     CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
                 stmtstart =
@@ -4946,7 +4956,7 @@ AND   ca.utc_timestamp < @end_date';
                     CONVERT(varchar(30), 'available plans for blocking'),
                 b.currentdbname,
                 query_text =
-                    TRY_CAST(b.query_text AS nvarchar(max)),
+                    TRY_CAST(b.query_text AS nvarchar(MAX)),
                 sql_handle =
                     CONVERT(varbinary(64), n.c.value('@sqlhandle', 'varchar(130)'), 1),
                 stmtstart =
@@ -5077,23 +5087,23 @@ AND   ca.utc_timestamp < @end_date';
                     ),
                 d.victim_id,
                 d.deadlock_graph,
-                id = e.x.value('@id', 'nvarchar(256)'),
+                id = e.x.value('@id', 'sysname'),
                 database_id = e.x.value('@currentdb', 'bigint'),
-                current_database_name = e.x.value('@currentdbname', 'nvarchar(256)'),
+                current_database_name = e.x.value('@currentdbname', 'sysname'),
                 priority = e.x.value('@priority', 'smallint'),
                 log_used = e.x.value('@logused', 'bigint'),
                 wait_time = e.x.value('@waittime', 'bigint'),
-                transaction_name = e.x.value('@transactionname', 'nvarchar(256)'),
-                last_tran_started = e.x.value('@lasttranstarted', 'datetime'),
-                last_batch_started = e.x.value('@lastbatchstarted', 'datetime'),
-                last_batch_completed = e.x.value('@lastbatchcompleted', 'datetime'),
-                lock_mode = e.x.value('@lockMode', 'nvarchar(256)'),
-                status = e.x.value('@status', 'nvarchar(256)'),
+                transaction_name = e.x.value('@transactionname', 'sysname'),
+                last_tran_started = e.x.value('@lasttranstarted', 'datetime2'),
+                last_batch_started = e.x.value('@lastbatchstarted', 'datetime2'),
+                last_batch_completed = e.x.value('@lastbatchcompleted', 'datetime2'),
+                lock_mode = e.x.value('@lockMode', 'sysname'),
+                status = e.x.value('@status', 'sysname'),
                 transaction_count = e.x.value('@trancount', 'bigint'),
                 client_app = e.x.value('@clientapp', 'nvarchar(1024)'),
-                host_name = e.x.value('@hostname', 'nvarchar(256)'),
-                login_name = e.x.value('@loginname', 'nvarchar(256)'),
-                isolation_level = e.x.value('@isolationlevel', 'nvarchar(256)'),
+                host_name = e.x.value('@hostname', 'sysname'),
+                login_name = e.x.value('@loginname', 'sysname'),
+                isolation_level = e.x.value('@isolationlevel', 'sysname'),
                 clientoption1 = e.x.value('@clientoption1', 'bigint'),
                 clientoption2 = e.x.value('@clientoption2', 'bigint'),
                 query_text_pre = e.x.value('(//process/inputbuf/text())[1]', 'nvarchar(max)'),
@@ -5305,11 +5315,11 @@ AND   ca.utc_timestamp < @end_date';
             total_worker_time_ms =
                 deqs.total_worker_time / 1000.,
             avg_worker_time_ms =
-                CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / deqs.execution_count),
+                CONVERT(decimal(38, 6), deqs.total_worker_time / 1000. / NULLIF(deqs.execution_count, 0)),
             total_elapsed_time_ms =
                 deqs.total_elapsed_time / 1000.,
             avg_elapsed_time =
-                CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / deqs.execution_count),
+                CONVERT(decimal(38, 6), deqs.total_elapsed_time / 1000. / NULLIF(deqs.execution_count, 0)),
             executions_per_second =
                 ISNULL
                 (
@@ -5333,13 +5343,13 @@ AND   ca.utc_timestamp < @end_date';
             total_logical_reads_mb =
                 deqs.total_logical_reads * 8. / 1024.,
             min_grant_mb =
-                deqs.min_grant_kb * 8. / 1024.,
+                deqs.min_grant_kb / 1024.,
             max_grant_mb =
-                deqs.max_grant_kb * 8. / 1024.,
+                deqs.max_grant_kb / 1024.,
             min_used_grant_mb =
-                deqs.min_used_grant_kb * 8. / 1024.,
+                deqs.min_used_grant_kb / 1024.,
             max_used_grant_mb =
-                deqs.max_used_grant_kb * 8. / 1024.,
+                deqs.max_used_grant_kb / 1024.,
             deqs.min_reserved_threads,
             deqs.max_reserved_threads,
             deqs.min_used_threads,
@@ -5403,7 +5413,7 @@ AND   ca.utc_timestamp < @end_date';
             ap.sql_handle,
             ap.statement_start_offset,
             ap.statement_end_offset
-        INTO #all_avalable_plans
+        INTO #all_available_plans
         FROM
         (
             SELECT
@@ -5457,13 +5467,13 @@ AND   ca.utc_timestamp < @end_date';
         (
             SELECT
                 1/0
-            FROM #all_avalable_plans AS ap
+            FROM #all_available_plans AS ap
             WHERE ap.finding = 'available plans for blocking'
         )
         BEGIN
             SELECT
                 aap.*
-            FROM #all_avalable_plans AS aap
+            FROM #all_available_plans AS aap
             WHERE aap.finding = 'available plans for blocking'
             ORDER BY
                 aap.avg_worker_time_ms DESC
@@ -5488,13 +5498,13 @@ AND   ca.utc_timestamp < @end_date';
         (
             SELECT
                 1/0
-            FROM #all_avalable_plans AS ap
+            FROM #all_available_plans AS ap
             WHERE ap.finding = 'available plans for deadlocks'
         )
         BEGIN
             SELECT
                 aap.*
-            FROM #all_avalable_plans AS aap
+            FROM #all_available_plans AS aap
             WHERE aap.finding = 'available plans for deadlocks'
             ORDER BY
                 aap.avg_worker_time_ms DESC

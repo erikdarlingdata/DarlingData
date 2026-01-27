@@ -57,8 +57,8 @@ ALTER PROCEDURE
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
     @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
     @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
-    @include_plan_ids nvarchar(4000) = NULL, /*a list of query ids to search for*/
-    @include_query_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
+    @include_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
+    @include_query_ids nvarchar(4000) = NULL, /*a list of query ids to search for*/
     @ignore_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to ignore*/
     @ignore_query_ids nvarchar(4000) = NULL, /*a list of query ids to ignore*/
     @procedure_schema sysname = NULL, /*the schema of the procedure you're searching for*/
@@ -83,8 +83,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.0',
-    @version_date = '20260115';
+    @version = '1.2',
+    @version_date = '20260201';
 
 /*Help*/
 IF @help = 1
@@ -190,12 +190,12 @@ DECLARE
         N'SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;' +
         NCHAR(10),
     @nc10 nchar(1) = NCHAR(10),
-    @where_clause nvarchar(MAX) = N'',
     @start_date_original datetimeoffset(7),
     @end_date_original datetimeoffset(7),
     @utc_minutes_difference bigint,
     @product_version integer,
     @azure bit = 0,
+    @sql_2017 bit = 0,
     @sql_2022_views bit = 0,
     @new bit = 0,
     @current_table nvarchar(100)
@@ -289,6 +289,17 @@ SELECT
                 ) - 1
             )
         );
+
+/*Check for SQL Server 2017+ features (wait stats)*/
+IF
+(
+    @product_version >= 14
+ OR @azure = 1
+)
+BEGIN
+    SELECT
+        @sql_2017 = 1;
+END;
 
 /*Check for SQL Server 2019+ features*/
 IF
@@ -551,28 +562,81 @@ BEGIN
             N'.' +
             QUOTENAME(@procedure_name);
 
-    /*Check if procedure exists in Query Store - single procedure (no wildcards)*/
-    IF CHARINDEX(N'%', @procedure_name) = 0
+    /*Check if procedure exists in Query Store - wildcard procedure name*/
+    IF CHARINDEX(N'%', @procedure_name) > 0
     BEGIN
         SELECT
             @sql = @isolation_level;
 
         SELECT
             @sql += N'
+SELECT
+    p.object_id
+FROM ' + @database_name_quoted + N'.sys.procedures AS p
+JOIN ' + @database_name_quoted + N'.sys.schemas AS s
+  ON s.schema_id = p.schema_id
+WHERE s.name = @procedure_schema
+AND   p.name LIKE @procedure_name
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        INSERT
+            #procedure_object_ids
+        WITH
+            (TABLOCK)
+        (
+            object_id
+        )
+        EXECUTE sys.sp_executesql
+            @sql,
+          N'@procedure_schema sysname,
+            @procedure_name sysname',
+            @procedure_schema,
+            @procedure_name;
+
+        IF ROWCOUNT_BIG() = 0
+        BEGIN
+            RAISERROR('No procedures matching %s were found in schema %s', 11, 1, @procedure_name, @procedure_schema) WITH NOWAIT;
+            RETURN;
+        END;
+
+        /*Check if any of the matching procedures exist in Query Store*/
         SELECT
-            @procedure_exists =
-                CASE
-                    WHEN EXISTS
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+SELECT
+    @procedure_exists =
+        MAX(x.procedure_exists)
+FROM
+(
+    SELECT
+        procedure_exists =
+            CASE
+                WHEN EXISTS
+                     (
+                         SELECT
+                             1/0
+                         FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                         WHERE EXISTS
                          (
                              SELECT
                                  1/0
-                             FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
-                             WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+                             FROM #procedure_object_ids AS p
+                             WHERE qsq.object_id = p.object_id
                          )
-                    THEN 1
-                    ELSE 0
-                END
-        OPTION(RECOMPILE);' + @nc10;
+                     )
+                THEN 1
+                ELSE 0
+            END
+) AS x
+OPTION(RECOMPILE);' + @nc10;
 
         IF @debug = 1
         BEGIN
@@ -582,7 +646,50 @@ BEGIN
 
         EXECUTE sys.sp_executesql
             @sql,
-            N'@procedure_exists bit OUTPUT, @procedure_name_quoted nvarchar(1024)',
+          N'@procedure_exists bit OUTPUT',
+            @procedure_exists OUTPUT;
+
+        IF @procedure_exists = 0
+        BEGIN
+            RAISERROR('The stored procedures matching %s do not appear to have any entries in Query Store for database %s
+Check that you spelled everything correctly and you''re in the right database',
+                       10, 1, @procedure_name, @database_name) WITH NOWAIT;
+            RETURN;
+        END;
+    END;
+    ELSE
+    /*Check if procedure exists in Query Store - single procedure (no wildcards)*/
+    BEGIN
+        SELECT
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+SELECT
+    @procedure_exists =
+        CASE
+            WHEN EXISTS
+                 (
+                     SELECT
+                         1/0
+                     FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                     WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+                 )
+            THEN 1
+            ELSE 0
+        END
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql,
+          N'@procedure_exists bit OUTPUT,
+            @procedure_name_quoted sysname',
             @procedure_exists OUTPUT,
             @procedure_name_quoted;
 
@@ -641,6 +748,13 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     INDEX plan_id CLUSTERED (plan_id)
+);
+
+CREATE TABLE
+    #procedure_object_ids
+(
+    object_id bigint NOT NULL,
+    INDEX object_id CLUSTERED (object_id)
 );
 
 /*
@@ -943,14 +1057,6 @@ CREATE TABLE
     parameter_name sysname NULL,
     parameter_data_type sysname NULL,
     parameter_compiled_value nvarchar(max) NULL
-);
-
-CREATE TABLE
-    #query_text_parameters
-(
-    plan_id bigint NOT NULL,
-    INDEX plan_id CLUSTERED (plan_id),
-    parameter_declaration nvarchar(max) NULL
 );
 
 CREATE TABLE
@@ -1354,7 +1460,7 @@ BEGIN
                   )
           )';
 
-    /*Add procedure filter if specified*/
+    /*Add procedure filter if specified - single procedure*/
     IF
     (
         @procedure_name IS NOT NULL
@@ -1370,6 +1476,31 @@ BEGIN
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
               WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+          )';
+    END;
+
+    /*Add procedure filter if specified - wildcard*/
+    IF
+    (
+        @procedure_name IS NOT NULL
+    AND @procedure_exists = 1
+    AND CHARINDEX(N'%', @procedure_name) > 0
+    )
+    BEGIN
+        SELECT
+            @sql += N'
+    AND   qsp.query_id IN
+          (
+              SELECT
+                  qsq.query_id
+              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+              WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #procedure_object_ids AS poi
+                  WHERE poi.object_id = qsq.object_id
+              )
           )';
     END;
 
@@ -1459,7 +1590,7 @@ BEGIN
                   )
           )';
 
-    /*Add procedure filter if specified*/
+    /*Add procedure filter if specified - single procedure*/
     IF
     (
         @procedure_name IS NOT NULL
@@ -1475,6 +1606,31 @@ BEGIN
                   qsq.query_id
               FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
               WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+          )';
+    END;
+
+    /*Add procedure filter if specified - wildcard*/
+    IF
+    (
+        @procedure_name IS NOT NULL
+    AND @procedure_exists = 1
+    AND CHARINDEX(N'%', @procedure_name) > 0
+    )
+    BEGIN
+        SELECT
+            @sql += N'
+    AND   qsp.query_id IN
+          (
+              SELECT
+                  qsq.query_id
+              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+              WHERE EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #procedure_object_ids AS poi
+                  WHERE poi.object_id = qsq.object_id
+              )
           )';
     END;
 
@@ -1880,7 +2036,7 @@ BEGIN
           )';
 END;
 
-/*Add procedure filter if specified*/
+/*Add procedure filter if specified - single procedure*/
 IF
 (
     @procedure_name IS NOT NULL
@@ -1901,6 +2057,37 @@ BEGIN
                             qsq.query_id
                         FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
                         WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+                    )
+          )';
+END;
+
+/*Add procedure filter if specified - wildcard*/
+IF
+(
+    @procedure_name IS NOT NULL
+AND @procedure_exists = 1
+AND CHARINDEX(N'%', @procedure_name) > 0
+)
+BEGIN
+    SELECT
+        @sql += N'
+    AND   qsrs.plan_id IN
+          (
+              SELECT
+                  qsp.plan_id
+              FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              WHERE qsp.query_id IN
+                    (
+                        SELECT
+                            qsq.query_id
+                        FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+                        WHERE EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #procedure_object_ids AS poi
+                            WHERE poi.object_id = qsq.object_id
+                        )
                     )
           )';
 END;
@@ -2118,7 +2305,7 @@ AND   NOT EXISTS
       )';
 END;
 
-/*Add procedure filter if specified*/
+/*Add procedure filter if specified - single procedure*/
 IF
 (
     @procedure_name IS NOT NULL
@@ -2134,6 +2321,31 @@ AND   qsp.query_id IN
               qsq.query_id
           FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
           WHERE qsq.object_id = OBJECT_ID(@procedure_name_quoted)
+      )';
+END;
+
+/*Add procedure filter if specified - wildcard*/
+IF
+(
+    @procedure_name IS NOT NULL
+AND @procedure_exists = 1
+AND CHARINDEX(N'%', @procedure_name) > 0
+)
+BEGIN
+    SELECT
+        @sql += N'
+AND   qsp.query_id IN
+      (
+          SELECT
+              qsq.query_id
+          FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+          WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #procedure_object_ids AS poi
+              WHERE poi.object_id = qsq.object_id
+          )
       )';
 END;
 
@@ -2166,7 +2378,7 @@ EXECUTE sys.sp_executesql
 Populate the #query_store_query table with query metadata
 */
 SELECT
-    @sql = N'',
+    @sql = @isolation_level,
     @current_table = N'inserting #query_store_query';
 
 SELECT
@@ -2224,7 +2436,7 @@ EXECUTE sys.sp_executesql
 Populate the #query_store_query_text table with query text
 */
 SELECT
-    @sql = N'',
+    @sql = @isolation_level,
     @current_table = N'inserting #query_store_query_text';
 
 SELECT
@@ -2290,7 +2502,7 @@ OPTION(RECOMPILE);
 Populate the #query_context_settings table with context settings
 */
 SELECT
-    @sql = N'',
+    @sql = @isolation_level,
     @current_table = N'inserting #query_context_settings';
 
 SELECT
@@ -2449,12 +2661,14 @@ OPTION(RECOMPILE);
 /*
 Populate the #query_store_wait_stats table with wait statistics (SQL 2017+)
 */
-SELECT
-    @sql = N'',
-    @current_table = N'inserting #query_store_wait_stats';
+IF @sql_2017 = 1
+BEGIN
+    SELECT
+        @sql = @isolation_level,
+        @current_table = N'inserting #query_store_wait_stats';
 
-SELECT
-    @sql += N'
+    SELECT
+        @sql += N'
 SELECT
     @database_id,
     qsws_with_lasts.plan_id,
@@ -2506,30 +2720,31 @@ HAVING
     SUM(qsws_with_lasts.min_query_wait_time_ms) > 0.
 OPTION(RECOMPILE);' + @nc10;
 
-IF @debug = 1
-BEGIN
-    PRINT LEN(@sql);
-    PRINT @sql;
-END;
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
 
-INSERT
-    #query_store_wait_stats
-WITH
-    (TABLOCK)
-(
-    database_id,
-    plan_id,
-    wait_category_desc,
-    total_query_wait_time_ms,
-    avg_query_wait_time_ms,
-    last_query_wait_time_ms,
-    min_query_wait_time_ms,
-    max_query_wait_time_ms
-)
-EXECUTE sys.sp_executesql
-    @sql,
-  N'@database_id integer',
-    @database_id;
+    INSERT
+        #query_store_wait_stats
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        plan_id,
+        wait_category_desc,
+        total_query_wait_time_ms,
+        avg_query_wait_time_ms,
+        last_query_wait_time_ms,
+        min_query_wait_time_ms,
+        max_query_wait_time_ms
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@database_id integer',
+        @database_id;
+END;
 
 /*
 Populate SQL 2022+ Query Store tables
@@ -2540,7 +2755,7 @@ BEGIN
     Populate the #query_store_plan_feedback table
     */
     SELECT
-        @sql = N'',
+        @sql = @isolation_level,
         @current_table = N'inserting #query_store_plan_feedback';
 
     SELECT
@@ -2593,7 +2808,7 @@ OPTION(RECOMPILE);' + @nc10;
     Populate the #query_store_query_variant table
     */
     SELECT
-        @sql = N'',
+        @sql = @isolation_level,
         @current_table = N'inserting #query_store_query_variant';
 
     SELECT
@@ -2638,7 +2853,7 @@ OPTION(RECOMPILE);' + @nc10;
     Populate the #query_store_query_hints table
     */
     SELECT
-        @sql = N'',
+        @sql = @isolation_level,
         @current_table = N'inserting #query_store_query_hints';
 
     SELECT
