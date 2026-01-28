@@ -3081,7 +3081,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ELSE RIGHT(REPLICATE(''0'', 2) +
                          CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
                          '' '' +
-                         RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
+                         RIGHT(CONVERT(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
                          ''.'' +
                          RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
                 END,
@@ -3745,7 +3745,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         ELSE RIGHT(REPLICATE(''0'', 2) +
                              CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
                              '' '' +
-                             RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
+                             RIGHT(CONVERT(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
                              ''.'' +
                              RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
                     END,
