@@ -2903,6 +2903,8 @@ END;
 
 /*
 Extract parameters from query plans
+Uses substring extraction for performance,
+avoids casting the full plan to XML
 */
 SELECT
     @current_table = N'extracting parameters from query plans';
@@ -2925,6 +2927,7 @@ SELECT
         LTRIM(RTRIM(cr.c.value(N'@ParameterDataType', N'sysname'))),
     parameter_compiled_value =
         CASE
+            /*Strip parentheses from values like (13)*/
             WHEN cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)') LIKE N'(%)'
             THEN SUBSTRING
                  (
@@ -2932,47 +2935,16 @@ SELECT
                      2,
                      LEN(cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')) - 2
                  )
-            ELSE cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')
-        END
-FROM #query_store_plan AS qsp
-CROSS APPLY
-(
-    SELECT
-        query_plan_xml =
-            TRY_CAST(qsp.query_plan AS xml)
-) AS x
-CROSS APPLY x.query_plan_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:ParameterList/p:ColumnReference') AS cr(c)
-WHERE x.query_plan_xml IS NOT NULL
-OPTION(RECOMPILE);
-
-/*
-Extract parameters from plans too large to cast as full XML
-*/
-INSERT
-    #query_parameters
-WITH
-    (TABLOCK)
-(
-    plan_id,
-    parameter_name,
-    parameter_data_type,
-    parameter_compiled_value
-)
-SELECT
-    qsp.plan_id,
-    parameter_name =
-        LTRIM(RTRIM(cr.c.value(N'@Column', N'sysname'))),
-    parameter_data_type =
-        LTRIM(RTRIM(cr.c.value(N'@ParameterDataType', N'sysname'))),
-    parameter_compiled_value =
-        CASE
-            WHEN cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)') LIKE N'(%)'
-            THEN SUBSTRING
+            /*Strip guid wrapper from values like {guid'...'}*/
+            WHEN cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)') LIKE N'{guid''%''}'
+            THEN N'''' +
+                 SUBSTRING
                  (
                      cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)'),
-                     2,
-                     LEN(cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')) - 2
-                 )
+                     7,
+                     LEN(cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')) - 8
+                 ) +
+                 N''''
             ELSE cr.c.value(N'@ParameterCompiledValue', N'nvarchar(MAX)')
         END
 FROM #query_store_plan AS qsp
@@ -2997,10 +2969,142 @@ CROSS APPLY
                 ) AS xml
             )
 ) AS x
-CROSS APPLY x.parameter_list_xml.nodes(N'declare namespace p="http://schemas.microsoft.com/sqlserver/2004/07/showplan"; //p:ParameterList/p:ColumnReference') AS cr(c)
-WHERE TRY_CAST(qsp.query_plan AS xml) IS NULL
-AND   CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
+CROSS APPLY x.parameter_list_xml.nodes(N'//ParameterList/ColumnReference') AS cr(c)
+WHERE CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
 AND   x.parameter_list_xml IS NOT NULL
+OPTION(RECOMPILE);
+
+/*
+Fill in parameters declared in query text
+but missing from the plan's ParameterList.
+Uses ? as compiled value so the query cannot
+be accidentally executed with incorrect values.
+*/
+SELECT
+    @current_table = N'filling in missing parameters from query text';
+
+INSERT
+    #query_parameters
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    parameter_name,
+    parameter_data_type,
+    parameter_compiled_value
+)
+SELECT DISTINCT
+    qsp.plan_id,
+    parameter_name =
+        LTRIM(RTRIM
+        (
+            LEFT
+            (
+                LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
+                CHARINDEX
+                (
+                    N' ',
+                    LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
+                ) - 1
+            )
+        )),
+    parameter_data_type =
+        LTRIM(RTRIM
+        (
+            SUBSTRING
+            (
+                LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
+                CHARINDEX
+                (
+                    N' ',
+                    LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
+                ) + 1,
+                LEN(LTRIM(p.param_text.value(N'.', N'nvarchar(max)')))
+            )
+        )),
+    parameter_compiled_value =
+        N'?'
+FROM #query_store_plan AS qsp
+JOIN #query_store_query AS qsq
+  ON qsp.query_id = qsq.query_id
+JOIN #query_store_query_text AS qsqt
+  ON qsq.query_text_id = qsqt.query_text_id
+CROSS APPLY
+(
+    SELECT
+        param_prefix =
+            SUBSTRING
+            (
+                qsqt.query_sql_text,
+                2,
+                PATINDEX(N'%)[^,]%', qsqt.query_sql_text) - 2 +
+                    CASE
+                        WHEN SUBSTRING
+                             (
+                                 qsqt.query_sql_text,
+                                 PATINDEX(N'%)[^,]%', qsqt.query_sql_text),
+                                 2
+                             ) = N'))'
+                        THEN 1
+                        ELSE 0
+                    END
+            )
+    WHERE qsqt.query_sql_text LIKE N'(@%'
+    AND   PATINDEX(N'%)[^,]%', qsqt.query_sql_text) > 0
+) AS prefix
+CROSS APPLY
+(
+    SELECT
+        param_xml =
+            TRY_CAST
+            (
+                N'<p>' +
+                REPLACE(prefix.param_prefix, N',', N'</p><p>') +
+                N'</p>' AS xml
+            )
+) AS px
+CROSS APPLY px.param_xml.nodes(N'/p') AS p(param_text)
+WHERE NOT EXISTS
+(
+    SELECT
+        1/0
+    FROM #query_parameters AS qp
+    WHERE qp.plan_id = qsp.plan_id
+    AND   qp.parameter_name = LTRIM(RTRIM
+          (
+              LEFT
+              (
+                  LTRIM(p.param_text.value(N'.', N'nvarchar(max)')),
+                  CHARINDEX
+                  (
+                      N' ',
+                      LTRIM(p.param_text.value(N'.', N'nvarchar(max)'))
+                  ) - 1
+              )
+          ))
+)
+OPTION(RECOMPILE);
+
+/*
+Warn when parameters were missing from the plan ParameterList
+*/
+INSERT
+    #reproduction_warnings
+WITH
+    (TABLOCK)
+(
+    plan_id,
+    warning_type,
+    warning_message
+)
+SELECT DISTINCT
+    qp.plan_id,
+    warning_type = N'missing parameter values',
+    warning_message =
+        N'Some parameters declared in the query text were not found in the plan ParameterList. ' +
+        N'Their values are set to ? and must be filled in manually before executing.'
+FROM #query_parameters AS qp
+WHERE qp.parameter_compiled_value = N'?'
 OPTION(RECOMPILE);
 
 /*
