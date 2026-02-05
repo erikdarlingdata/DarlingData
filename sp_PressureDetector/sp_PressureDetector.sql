@@ -483,7 +483,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
             /* Default database name to current database if not specified */
             @log_database_name = ISNULL(@log_database_name, DB_NAME()),
             /* Default schema name to dbo if not specified */
-            @log_schema_name = ISNULL(@log_schema_name, N'dbo');
+            @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+            /* Default table name prefix if not specified */
+            @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'PressureDetector');
 
         /* Validate database exists */
         IF NOT EXISTS
