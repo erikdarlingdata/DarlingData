@@ -1022,6 +1022,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
         hours_wait_time decimal(38,2),
         avg_ms_per_wait decimal(38,2),
         percent_signal_waits decimal(38,2),
+        signal_wait_time_ms decimal(38,2),
         waiting_tasks_count_n bigint,
         sample_time datetime,
         sorting bigint,
@@ -1167,6 +1168,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             hours_wait_time,
             avg_ms_per_wait,
             percent_signal_waits,
+            signal_wait_time_ms,
             waiting_tasks_count_n,
             sample_time,
             sorting
@@ -1319,6 +1321,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         0.
                     )
                 ),
+            dows.signal_wait_time_ms,
             dows.waiting_tasks_count,
             sample_time =
                 SYSDATETIME(),
@@ -1452,13 +1455,32 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         CONVERT
                         (
                             decimal(38,1),
-                            (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2
+                            ISNULL
+                            (
+                                (w2.hours_wait_time - w.hours_wait_time) /
+                                    NULLIF
+                                    (
+                                        CONVERT
+                                        (
+                                            decimal(38, 2),
+                                            w2.waiting_tasks_count_n - w.waiting_tasks_count_n
+                                        ),
+                                        0.
+                                    ),
+                                0.
+                            )
                         ),
                     percent_signal_waits =
                         CONVERT
                         (
                             decimal(38,1),
-                            (w2.percent_signal_waits + w.percent_signal_waits) / 2
+                            ISNULL
+                            (
+                                100.0 *
+                                    (w2.signal_wait_time_ms - w.signal_wait_time_ms) /
+                                    NULLIF(w2.hours_wait_time - w.hours_wait_time, 0.),
+                                0.
+                            )
                         ),
                     waiting_tasks_count =
                         FORMAT((w2.waiting_tasks_count_n - w.waiting_tasks_count_n), 'N0'),
