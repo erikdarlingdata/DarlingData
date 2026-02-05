@@ -3967,7 +3967,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
             IF @debug = 1
             BEGIN
-                PRINT SUBSTRING(@cpu_sql, 0, 4000);
+                PRINT SUBSTRING(@cpu_sql, 1, 4000);
                 PRINT SUBSTRING(@cpu_sql, 4001, 8000);
             END;
 
