@@ -294,7 +294,7 @@ END;
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('reverting skip options for table logging', 0, 1, @what_to_check) WITH NOWAIT;
+            RAISERROR('reverting skip options for table logging, @what_to_check was %s', 0, 1, @what_to_check) WITH NOWAIT;
         END;
         SELECT
             @skip_queries = 0,
