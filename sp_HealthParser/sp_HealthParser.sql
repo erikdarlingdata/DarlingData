@@ -163,7 +163,7 @@ BEGIN
           ON  ap.system_type_id = t.system_type_id
           AND ap.user_type_id = t.user_type_id
         WHERE o.name = N'sp_HealthParser'
-        OPTION(MAXDOP 1, RECOMPILE);
+        OPTION(RECOMPILE);
 
         SELECT
             mit_license_yo = 'i am MIT licensed, so like, do whatever'
@@ -255,6 +255,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @log_table_system_health sysname,
         @log_table_scheduler_issues sysname,
         @log_table_severe_errors sysname,
+        @log_table_pending_tasks sysname,
+        @log_table_blocking sysname,
+        @log_table_deadlocks sysname,
         @cleanup_date datetime2(7),
         @check_sql nvarchar(MAX) = N'',
         @create_sql nvarchar(MAX) = N'',
@@ -552,7 +555,16 @@ AND   ca.utc_timestamp < @end_date';
                 QUOTENAME(@log_table_name_prefix + N'_SchedulerIssues'),
             @log_table_severe_errors =
                 @log_database_schema +
-                QUOTENAME(@log_table_name_prefix + N'_SevereErrors');
+                QUOTENAME(@log_table_name_prefix + N'_SevereErrors'),
+            @log_table_pending_tasks =
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_PendingTasks'),
+            @log_table_blocking =
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_Blocking'),
+            @log_table_deadlocks =
+                @log_database_schema +
+                QUOTENAME(@log_table_name_prefix + N'_Deadlocks');
 
         /* Check if schema exists and create it if needed */
         SET @check_sql = N'
@@ -849,10 +861,10 @@ AND   ca.utc_timestamp < @end_date';
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
                     event_time datetime2(7) NULL,
-                    broker_id integer NULL,
-                    pool_metadata_id integer NULL,
+                    broker_id bigint NULL,
+                    pool_metadata_id bigint NULL,
                     delta_time bigint NULL,
-                    memory_ratio integer NULL,
+                    memory_ratio bigint NULL,
                     new_target bigint NULL,
                     overall bigint NULL,
                     rate bigint NULL,
@@ -893,9 +905,9 @@ AND   ca.utc_timestamp < @end_date';
                     id bigint IDENTITY,
                     collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
                     event_time datetime2(7) NULL,
-                    node_id integer NULL,
-                    memory_node_id integer NULL,
-                    memory_utilization_pct integer NULL,
+                    node_id bigint NULL,
+                    memory_node_id bigint NULL,
+                    memory_utilization_pct bigint NULL,
                     total_physical_memory_kb bigint NULL,
                     available_physical_memory_kb bigint NULL,
                     total_page_file_kb bigint NULL,
@@ -909,12 +921,12 @@ AND   ca.utc_timestamp < @end_date';
                     awe_kb bigint NULL,
                     pages_kb bigint NULL,
                     failure_type nvarchar(256) NULL,
-                    failure_value integer NULL,
-                    resources integer NULL,
+                    failure_value bigint NULL,
+                    resources bigint NULL,
                     factor_text nvarchar(256) NULL,
-                    factor_value integer NULL,
-                    last_error integer NULL,
-                    pool_metadata_id integer NULL,
+                    factor_value bigint NULL,
+                    last_error bigint NULL,
+                    pool_metadata_id bigint NULL,
                     is_process_in_job nvarchar(10) NULL,
                     is_system_physical_memory_high nvarchar(10) NULL,
                     is_system_physical_memory_low nvarchar(10) NULL,
@@ -1059,6 +1071,166 @@ AND   ca.utc_timestamp < @end_date';
             @log_table_name_prefix,
             @debug;
 
+        /* Create PendingTasks table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_PendingTasks''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_pending_tasks + N'
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    pending_tasks bigint NULL,
+                    entry_point_name sysname NULL,
+                    module_name sysname NULL,
+                    image_base varbinary(8) NULL,
+                    size bigint NULL,
+                    address varbinary(8) NULL,
+                    entry_point_count bigint NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for pending tasks logging.'', 0, 1, ''' + @log_table_pending_tasks + N''') WITH NOWAIT; END;
+            END';
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
+            @table_name sysname,
+            @debug bit',
+            @log_schema_name,
+            @log_table_name_prefix,
+            @debug;
+
+        /* Create Blocking table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_Blocking''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_blocking + N'
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_time datetime2(7) NULL,
+                    currentdbname nvarchar(128) NULL,
+                    activity varchar(8) NULL,
+                    spid integer NULL,
+                    ecid integer NULL,
+                    query_text xml NULL,
+                    wait_time_ms bigint NULL,
+                    status nvarchar(10) NULL,
+                    isolation_level nvarchar(50) NULL,
+                    transaction_count integer NULL,
+                    last_transaction_started datetime2(7) NULL,
+                    last_transaction_completed datetime2(7) NULL,
+                    client_option_1 varchar(8000) NULL,
+                    client_option_2 varchar(8000) NULL,
+                    wait_resource nvarchar(1024) NULL,
+                    priority integer NULL,
+                    log_used bigint NULL,
+                    client_app nvarchar(256) NULL,
+                    host_name nvarchar(256) NULL,
+                    login_name nvarchar(256) NULL,
+                    process_id sysname NULL,
+                    scheduler_id bigint NULL,
+                    kpid bigint NULL,
+                    sbid bigint NULL,
+                    last_attention datetime2(7) NULL,
+                    xactid bigint NULL,
+                    currentdb bigint NULL,
+                    lock_timeout bigint NULL,
+                    host_pid bigint NULL,
+                    task_priority bigint NULL,
+                    owner_id bigint NULL,
+                    transaction_name nvarchar(1024) NULL,
+                    last_tran_started datetime2(7) NULL,
+                    xdes sysname NULL,
+                    lock_mode nvarchar(10) NULL,
+                    blocked_process_report xml NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for blocking logging.'', 0, 1, ''' + @log_table_blocking + N''') WITH NOWAIT; END;
+            END';
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
+            @table_name sysname,
+            @debug bit',
+            @log_schema_name,
+            @log_table_name_prefix,
+            @debug;
+
+        /* Create Deadlocks table if it doesn't exist */
+        SET @create_sql = N'
+            IF NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM ' + QUOTENAME(@log_database_name) + N'.sys.tables AS t
+                JOIN ' + QUOTENAME(@log_database_name) + N'.sys.schemas AS s
+                  ON t.schema_id = s.schema_id
+                WHERE t.name = @table_name + N''_Deadlocks''
+                AND   s.name = @schema_name
+            )
+            BEGIN
+                CREATE TABLE ' + @log_table_deadlocks + N'
+                (
+                    id bigint IDENTITY,
+                    collection_time datetime2(7) NOT NULL DEFAULT SYSDATETIME(),
+                    event_date datetime2(7) NULL,
+                    is_victim integer NULL,
+                    database_name sysname NULL,
+                    current_database_name sysname NULL,
+                    query_text xml NULL,
+                    deadlock_resources xml NULL,
+                    isolation_level sysname NULL,
+                    lock_mode sysname NULL,
+                    status sysname NULL,
+                    wait_time bigint NULL,
+                    log_used bigint NULL,
+                    transaction_name sysname NULL,
+                    transaction_count bigint NULL,
+                    client_option_1 varchar(500) NULL,
+                    client_option_2 varchar(500) NULL,
+                    last_tran_started datetime2(7) NULL,
+                    last_batch_started datetime2(7) NULL,
+                    last_batch_completed datetime2(7) NULL,
+                    client_app nvarchar(1024) NULL,
+                    host_name sysname NULL,
+                    login_name sysname NULL,
+                    priority smallint NULL,
+                    deadlock_graph xml NULL,
+                    PRIMARY KEY CLUSTERED (collection_time, id)
+                );
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for deadlocks logging.'', 0, 1, ''' + @log_table_deadlocks + N''') WITH NOWAIT; END;
+            END';
+
+        EXECUTE sys.sp_executesql
+            @create_sql,
+          N'@schema_name sysname,
+            @table_name sysname,
+            @debug bit',
+            @log_schema_name,
+            @log_table_name_prefix,
+            @debug;
+
         /* Handle log retention if specified */
         IF @log_to_table = 1 AND @log_retention_days > 0
         BEGIN
@@ -1108,6 +1280,15 @@ AND   ca.utc_timestamp < @end_date';
     WHERE collection_time < @cleanup_date;
 
     DELETE FROM ' + @log_table_severe_errors + '
+    WHERE collection_time < @cleanup_date;
+
+    DELETE FROM ' + @log_table_pending_tasks + '
+    WHERE collection_time < @cleanup_date;
+
+    DELETE FROM ' + @log_table_blocking + '
+    WHERE collection_time < @cleanup_date;
+
+    DELETE FROM ' + @log_table_deadlocks + '
     WHERE collection_time < @cleanup_date;
             ';
 
@@ -2892,6 +3073,226 @@ AND   ca.utc_timestamp < @end_date';
         END;
     END;/*End CPU*/
 
+    /*Grab pending task entry point details*/
+    IF @what_to_check IN ('all', 'cpu')
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing pending task entry point details', 0, 0) WITH NOWAIT;
+        END;
+
+        SELECT
+            event_time =
+                DATEADD
+                (
+                    MINUTE,
+                    DATEDIFF
+                    (
+                        MINUTE,
+                        GETUTCDATE(),
+                        SYSDATETIME()
+                    ),
+                    w.x.value('@timestamp', 'datetime2')
+                ),
+            pending_tasks =
+                w.x.value
+                (
+                    '(/event/data[@name="data"]/value/queryProcessing/@pendingTasks)[1]',
+                    'bigint'
+                ),
+            entry_point_name =
+                ep.e.value('@name', 'sysname'),
+            module_name =
+                ep.e.value('@moduleName', 'sysname'),
+            image_base =
+                ep.e.value
+                (
+                    'xs:hexBinary(substring(string(@imageBase), 3))',
+                    'varbinary(8)'
+                ),
+            size =
+                CONVERT
+                (
+                    bigint,
+                    ep.e.value
+                    (
+                        '
+                        xs:hexBinary
+                        (
+                          if (string-length(substring(string(@size), 3)) mod 2 = 1)
+                          then concat("0", substring(string(@size), 3))
+                          else substring(string(@size), 3)
+                        )
+                        ',
+                        'varbinary(8)'
+                    )
+                ),
+            address =
+                ep.e.value
+                (
+                    'xs:hexBinary(substring(string(@address), 3))',
+                    'varbinary(8)'
+                ),
+            entry_point_count =
+                ep.e.value('@count', 'bigint')
+        INTO #pending_task_details
+        FROM #sp_server_diagnostics_component_result AS wi
+        CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('/event') AS w(x)
+        CROSS APPLY w.x.nodes('/event/data[@name="data"]/value/queryProcessing[@pendingTasks > 1]/pendingTasks/entryPoint') AS ep(e)
+        WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
+        AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
+        OPTION(RECOMPILE);
+
+        IF @debug = 1
+        BEGIN
+            SELECT TOP (100)
+                table_name = '#pending_task_details, top 100 rows',
+                x.*
+            FROM #pending_task_details AS x
+            ORDER BY
+                x.event_time DESC;
+        END;
+    END;
+
+    /*Pending task entry point details output*/
+    IF @what_to_check IN ('all', 'cpu')
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Parsing pending task entry point output', 0, 0) WITH NOWAIT;
+        END;
+
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #pending_task_details AS ptd
+        )
+        BEGIN
+            IF @log_to_table = 0
+            BEGIN
+                SELECT
+                    finding =
+                        CASE
+                            WHEN @what_to_check NOT IN ('all', 'cpu')
+                            THEN 'cpu skipped, @what_to_check set to ' +
+                                 @what_to_check
+                            WHEN @what_to_check IN ('all', 'cpu')
+                            THEN 'no pending task entry point details found between ' +
+                                 RTRIM(CONVERT(date, @start_date)) +
+                                 ' and ' +
+                                 RTRIM(CONVERT(date, @end_date)) +
+                                 ' with @warnings_only set to ' +
+                                 RTRIM(@warnings_only) +
+                                 '.'
+                            ELSE 'no pending task entry point details found!'
+                        END;
+
+                RAISERROR('No pending task entry point data found', 0, 0) WITH NOWAIT;
+            END;
+        END;
+        ELSE
+        BEGIN
+            /* Build the query */
+            SET @dsql = N'
+                SELECT
+                    ' + CASE
+                            WHEN @log_to_table = 1
+                            THEN N''
+                            ELSE N'finding = ''pending task entry point details'','
+                        END +
+                  N'
+                    ptd.event_time,
+                    ptd.pending_tasks,
+                    ptd.entry_point_name,
+                    ptd.module_name,
+                    ptd.image_base,
+                    ptd.size,
+                    ptd.address,
+                    ptd.entry_point_count
+                FROM #pending_task_details AS ptd';
+
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for pending task details */
+                SET @mdsql_execute =
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template,
+                            '{table_check}',
+                            @log_table_pending_tasks
+                        ),
+                        '{date_column}',
+                        'event_time'
+                    );
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @mdsql_execute;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @mdsql_execute,
+                  N'@max_event_time datetime2(7) OUTPUT',
+                    @max_event_time OUTPUT;
+
+                SET @dsql += N'
+            WHERE ptd.event_time > @max_event_time';
+            END;
+
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
+            ORDER BY
+                ptd.event_time DESC
+            OPTION(RECOMPILE);
+            ';
+
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN
+                SET @insert_sql = N'
+                INSERT INTO
+                    ' + @log_table_pending_tasks + N'
+                (
+                    event_time,
+                    pending_tasks,
+                    entry_point_name,
+                    module_name,
+                    image_base,
+                    size,
+                    address,
+                    entry_point_count
+                )' +
+                    @dsql;
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @insert_sql;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @insert_sql,
+                  N'@max_event_time datetime2(7)',
+                    @max_event_time;
+            END;
+
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1
+                BEGIN
+                    PRINT @dsql;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @dsql;
+            END;
+        END;
+    END;/*End pending task entry point details*/
+
     /*Grab memory details*/
     IF @what_to_check IN ('all', 'memory')
     BEGIN
@@ -3163,10 +3564,10 @@ AND   ca.utc_timestamp < @end_date';
                     ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
-            broker_id = w.x.value('(data[@name="id"]/value)[1]', 'integer'),
-            pool_metadata_id = w.x.value('(data[@name="pool_metadata_id"]/value)[1]', 'integer'),
+            broker_id = w.x.value('(data[@name="id"]/value)[1]', 'bigint'),
+            pool_metadata_id = w.x.value('(data[@name="pool_metadata_id"]/value)[1]', 'bigint'),
             delta_time = w.x.value('(data[@name="delta_time"]/value)[1]', 'bigint'),
-            memory_ratio = w.x.value('(data[@name="memory_ratio"]/value)[1]', 'integer'),
+            memory_ratio = w.x.value('(data[@name="memory_ratio"]/value)[1]', 'bigint'),
             new_target = w.x.value('(data[@name="new_target"]/value)[1]', 'bigint'),
             overall = w.x.value('(data[@name="overall"]/value)[1]', 'bigint'),
             rate = w.x.value('(data[@name="rate"]/value)[1]', 'bigint'),
@@ -3443,9 +3844,9 @@ AND   ca.utc_timestamp < @end_date';
                     ),
                     w.x.value('@timestamp', 'datetime2')
                 ),
-            node_id = w.x.value('(data[@name="id"]/value)[1]', 'integer'),
-            memory_node_id = w.x.value('(data[@name="memory_node_id"]/value)[1]', 'integer'),
-            memory_utilization_pct = w.x.value('(data[@name="memory_utilization_pct"]/value)[1]', 'integer'),
+            node_id = w.x.value('(data[@name="id"]/value)[1]', 'bigint'),
+            memory_node_id = w.x.value('(data[@name="memory_node_id"]/value)[1]', 'bigint'),
+            memory_utilization_pct = w.x.value('(data[@name="memory_utilization_pct"]/value)[1]', 'bigint'),
             total_physical_memory_kb = w.x.value('(data[@name="total_physical_memory_kb"]/value)[1]', 'bigint'),
             available_physical_memory_kb = w.x.value('(data[@name="available_physical_memory_kb"]/value)[1]', 'bigint'),
             total_page_file_kb = w.x.value('(data[@name="total_page_file_kb"]/value)[1]', 'bigint'),
@@ -3459,12 +3860,12 @@ AND   ca.utc_timestamp < @end_date';
             awe_kb = w.x.value('(data[@name="awe_kb"]/value)[1]', 'bigint'),
             pages_kb = w.x.value('(data[@name="pages_kb"]/value)[1]', 'bigint'),
             failure_type = w.x.value('(data[@name="failure"]/text)[1]', 'nvarchar(256)'),
-            failure_value = w.x.value('(data[@name="failure"]/value)[1]', 'integer'),
-            resources = w.x.value('(data[@name="resources"]/value)[1]', 'integer'),
+            failure_value = w.x.value('(data[@name="failure"]/value)[1]', 'bigint'),
+            resources = w.x.value('(data[@name="resources"]/value)[1]', 'bigint'),
             factor_text = w.x.value('(data[@name="factor"]/text)[1]', 'nvarchar(256)'),
-            factor_value = w.x.value('(data[@name="factor"]/value)[1]', 'integer'),
-            last_error = w.x.value('(data[@name="last_error"]/value)[1]', 'integer'),
-            pool_metadata_id = w.x.value('(data[@name="pool_metadata_id"]/value)[1]', 'integer'),
+            factor_value = w.x.value('(data[@name="factor"]/value)[1]', 'bigint'),
+            last_error = w.x.value('(data[@name="last_error"]/value)[1]', 'bigint'),
+            pool_metadata_id = w.x.value('(data[@name="pool_metadata_id"]/value)[1]', 'bigint'),
             is_process_in_job = w.x.value('(data[@name="is_process_in_job"]/value)[1]', 'nvarchar(10)'),
             is_system_physical_memory_high = w.x.value('(data[@name="is_system_physical_memory_high"]/value)[1]', 'nvarchar(10)'),
             is_system_physical_memory_low = w.x.value('(data[@name="is_system_physical_memory_low"]/value)[1]', 'nvarchar(10)'),
@@ -4530,7 +4931,6 @@ AND   ca.utc_timestamp < @end_date';
     (
         @what_to_check IN ('all', 'locking')
     AND @skip_locks = 0
-    AND @log_to_table = 0
     )
     BEGIN
         /*Validate database name if provided*/
@@ -4600,17 +5000,32 @@ AND   ca.utc_timestamp < @end_date';
             wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
             lastbatchstarted = bd.value('(process/@lastbatchstarted)[1]', 'datetime2'),
             lastbatchcompleted = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-            wait_resource = bd.value('(process/@waitresource)[1]', 'sysname'),
+            wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
             status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
             priority = bd.value('(process/@priority)[1]', 'integer'),
             transaction_count = bd.value('(process/@trancount)[1]', 'integer'),
-            client_app = bd.value('(process/@clientapp)[1]', 'sysname'),
-            host_name = bd.value('(process/@hostname)[1]', 'sysname'),
-            login_name = bd.value('(process/@loginname)[1]', 'sysname'),
+            client_app = bd.value('(process/@clientapp)[1]', 'nvarchar(256)'),
+            host_name = bd.value('(process/@hostname)[1]', 'nvarchar(256)'),
+            login_name = bd.value('(process/@loginname)[1]', 'nvarchar(256)'),
             isolation_level = bd.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
             log_used = bd.value('(process/@logused)[1]', 'bigint'),
             clientoption1 = bd.value('(process/@clientoption1)[1]', 'bigint'),
             clientoption2 = bd.value('(process/@clientoption2)[1]', 'bigint'),
+            process_id = bd.value('(process/@id)[1]', 'sysname'),
+            scheduler_id = bd.value('(process/@schedulerid)[1]', 'bigint'),
+            kpid = bd.value('(process/@kpid)[1]', 'bigint'),
+            sbid = bd.value('(process/@sbid)[1]', 'bigint'),
+            last_attention = bd.value('(process/@lastattention)[1]', 'datetime2'),
+            xactid = bd.value('(process/@xactid)[1]', 'bigint'),
+            currentdb = bd.value('(process/@currentdb)[1]', 'bigint'),
+            lock_timeout = bd.value('(process/@lockTimeout)[1]', 'bigint'),
+            host_pid = bd.value('(process/@hostpid)[1]', 'bigint'),
+            task_priority = bd.value('(process/@taskpriority)[1]', 'bigint'),
+            owner_id = bd.value('(process/@ownerId)[1]', 'bigint'),
+            transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
+            last_tran_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
+            xdes = bd.value('(process/@XDES)[1]', 'sysname'),
+            lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
             activity = CASE WHEN bd.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
             blocked_process_report = bd.query('.')
         INTO #blocked
@@ -4662,17 +5077,32 @@ AND   ca.utc_timestamp < @end_date';
             wait_time = bg.value('(process/@waittime)[1]', 'bigint'),
             last_transaction_started = bg.value('(process/@lastbatchstarted)[1]', 'datetime2'),
             last_transaction_completed = bg.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
-            wait_resource = bg.value('(process/@waitresource)[1]', 'sysname'),
+            wait_resource = bg.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
             status = bg.value('(process/@status)[1]', 'nvarchar(10)'),
             priority = bg.value('(process/@priority)[1]', 'integer'),
             transaction_count = bg.value('(process/@trancount)[1]', 'integer'),
-            client_app = bg.value('(process/@clientapp)[1]', 'sysname'),
-            host_name = bg.value('(process/@hostname)[1]', 'sysname'),
-            login_name = bg.value('(process/@loginname)[1]', 'sysname'),
+            client_app = bg.value('(process/@clientapp)[1]', 'nvarchar(256)'),
+            host_name = bg.value('(process/@hostname)[1]', 'nvarchar(256)'),
+            login_name = bg.value('(process/@loginname)[1]', 'nvarchar(256)'),
             isolation_level = bg.value('(process/@isolationlevel)[1]', 'nvarchar(50)'),
             log_used = bg.value('(process/@logused)[1]', 'bigint'),
             clientoption1 = bg.value('(process/@clientoption1)[1]', 'bigint'),
             clientoption2 = bg.value('(process/@clientoption2)[1]', 'bigint'),
+            process_id = bg.value('(process/@id)[1]', 'sysname'),
+            scheduler_id = bg.value('(process/@schedulerid)[1]', 'bigint'),
+            kpid = bg.value('(process/@kpid)[1]', 'bigint'),
+            sbid = bg.value('(process/@sbid)[1]', 'bigint'),
+            last_attention = bg.value('(process/@lastattention)[1]', 'datetime2'),
+            xactid = bg.value('(process/@xactid)[1]', 'bigint'),
+            currentdb = bg.value('(process/@currentdb)[1]', 'bigint'),
+            lock_timeout = bg.value('(process/@lockTimeout)[1]', 'bigint'),
+            host_pid = bg.value('(process/@hostpid)[1]', 'bigint'),
+            task_priority = bg.value('(process/@taskpriority)[1]', 'bigint'),
+            owner_id = bg.value('(process/@ownerId)[1]', 'bigint'),
+            transaction_name = bg.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
+            last_tran_started = bg.value('(process/@lasttranstarted)[1]', 'datetime2'),
+            xdes = bg.value('(process/@XDES)[1]', 'sysname'),
+            lock_mode = bg.value('(process/@lockMode)[1]', 'nvarchar(10)'),
             activity = CASE WHEN bg.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
             blocked_process_report = bg.query('.')
         INTO #blocking
@@ -4832,6 +5262,21 @@ AND   ca.utc_timestamp < @end_date';
             kheb.client_app,
             kheb.host_name,
             kheb.login_name,
+            kheb.process_id,
+            kheb.scheduler_id,
+            kheb.kpid,
+            kheb.sbid,
+            kheb.last_attention,
+            kheb.xactid,
+            kheb.currentdb,
+            kheb.lock_timeout,
+            kheb.host_pid,
+            kheb.task_priority,
+            kheb.owner_id,
+            kheb.transaction_name,
+            kheb.last_tran_started,
+            kheb.xdes,
+            kheb.lock_mode,
             kheb.blocked_process_report
         INTO #blocks
         FROM
@@ -4869,38 +5314,164 @@ AND   ca.utc_timestamp < @end_date';
             FROM #blocks AS b
         )
         BEGIN
-            SELECT
-                finding = 'blocked process report',
-                b.event_time,
-                b.currentdbname,
-                b.activity,
-                b.spid,
-                b.ecid,
-                b.query_text,
-                b.wait_time_ms,
-                b.status,
-                b.isolation_level,
-                b.transaction_count,
-                b.last_transaction_started,
-                b.last_transaction_completed,
-                b.client_option_1,
-                b.client_option_2,
-                b.wait_resource,
-                b.priority,
-                b.log_used,
-                b.client_app,
-                b.host_name,
-                b.login_name,
-                b.blocked_process_report
-            FROM #blocks AS b
-            ORDER BY
-                b.event_time DESC,
-                CASE
-                    WHEN b.activity = 'blocking'
-                    THEN -1
-                    ELSE +1
-                END
-            OPTION(RECOMPILE);
+            /* Build the query */
+            SET @dsql = N'
+                SELECT
+                    ' + CASE
+                            WHEN @log_to_table = 1
+                            THEN N''
+                            ELSE N'finding = ''blocked process report'','
+                        END +
+                  N'
+                    b.event_time,
+                    b.currentdbname,
+                    b.activity,
+                    b.spid,
+                    b.ecid,
+                    b.query_text,
+                    b.wait_time_ms,
+                    b.status,
+                    b.isolation_level,
+                    b.transaction_count,
+                    b.last_transaction_started,
+                    b.last_transaction_completed,
+                    b.client_option_1,
+                    b.client_option_2,
+                    b.wait_resource,
+                    b.priority,
+                    b.log_used,
+                    b.client_app,
+                    b.host_name,
+                    b.login_name,
+                    b.process_id,
+                    b.scheduler_id,
+                    b.kpid,
+                    b.sbid,
+                    b.last_attention,
+                    b.xactid,
+                    b.currentdb,
+                    b.lock_timeout,
+                    b.host_pid,
+                    b.task_priority,
+                    b.owner_id,
+                    b.transaction_name,
+                    b.last_tran_started,
+                    b.xdes,
+                    b.lock_mode,
+                    b.blocked_process_report
+                FROM #blocks AS b';
+
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_time for blocking */
+                SET @mdsql_execute =
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template,
+                            '{table_check}',
+                            @log_table_blocking
+                        ),
+                        '{date_column}',
+                        'event_time'
+                    );
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @mdsql_execute;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @mdsql_execute,
+                  N'@max_event_time datetime2(7) OUTPUT',
+                    @max_event_time OUTPUT;
+
+                SET @dsql += N'
+                WHERE b.event_time > @max_event_time';
+            END;
+
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
+                ORDER BY
+                    b.event_time DESC,
+                    CASE
+                        WHEN b.activity = ''blocking''
+                        THEN -1
+                        ELSE +1
+                    END
+                OPTION(RECOMPILE);
+            ';
+
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN
+                SET @insert_sql = N'
+                INSERT INTO
+                    ' + @log_table_blocking + N'
+                (
+                    event_time,
+                    currentdbname,
+                    activity,
+                    spid,
+                    ecid,
+                    query_text,
+                    wait_time_ms,
+                    status,
+                    isolation_level,
+                    transaction_count,
+                    last_transaction_started,
+                    last_transaction_completed,
+                    client_option_1,
+                    client_option_2,
+                    wait_resource,
+                    priority,
+                    log_used,
+                    client_app,
+                    host_name,
+                    login_name,
+                    process_id,
+                    scheduler_id,
+                    kpid,
+                    sbid,
+                    last_attention,
+                    xactid,
+                    currentdb,
+                    lock_timeout,
+                    host_pid,
+                    task_priority,
+                    owner_id,
+                    transaction_name,
+                    last_tran_started,
+                    xdes,
+                    lock_mode,
+                    blocked_process_report
+                )' +
+                    @dsql;
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @insert_sql;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @insert_sql,
+                  N'@max_event_time datetime2(7)',
+                    @max_event_time;
+            END;
+
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1
+                BEGIN
+                    PRINT @dsql;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @dsql;
+            END;
         END;
         ELSE
         BEGIN
@@ -5154,95 +5725,193 @@ AND   ca.utc_timestamp < @end_date';
             FROM #deadlocks_parsed AS dp
         )
         BEGIN
-            SELECT
-                finding = 'xml deadlock report',
-                dp.event_date,
-                is_victim =
-                    CASE
-                        WHEN dp.id = dp.victim_id
-                        THEN 1
-                        ELSE 0
-                    END,
-                dp.database_name,
-                dp.current_database_name,
-                query_text =
-                    CASE
-                        WHEN dp.query_text
-                             LIKE CONVERT(nvarchar(1), 0x0a00, 0) + N'Proc |[Database Id = %' ESCAPE N'|'
-                        THEN
-                            (
-                                SELECT
-                                    [processing-instruction(query)] =
-                                        OBJECT_SCHEMA_NAME
-                                        (
-                                                SUBSTRING
-                                                (
-                                                    dp.query_text,
-                                                    CHARINDEX(N'Object Id = ', dp.query_text) + 12,
-                                                    LEN(dp.query_text) - (CHARINDEX(N'Object Id = ', dp.query_text) + 12)
-                                                )
-                                                ,
-                                                SUBSTRING
-                                                (
-                                                    dp.query_text,
-                                                    CHARINDEX(N'Database Id = ', dp.query_text) + 14,
-                                                    CHARINDEX(N'Object Id', dp.query_text) - (CHARINDEX(N'Database Id = ', dp.query_text) + 14)
-                                                )
-                                        ) +
-                                        N'.' +
-                                        OBJECT_NAME
-                                        (
-                                             SUBSTRING
-                                             (
-                                                 dp.query_text,
-                                                 CHARINDEX(N'Object Id = ', dp.query_text) + 12,
-                                                 LEN(dp.query_text) - (CHARINDEX(N'Object Id = ', dp.query_text) + 12)
-                                             )
-                                             ,
-                                             SUBSTRING
-                                             (
-                                                 dp.query_text,
-                                                 CHARINDEX(N'Database Id = ', dp.query_text) + 14,
-                                                 CHARINDEX(N'Object Id', dp.query_text) - (CHARINDEX(N'Database Id = ', dp.query_text) + 14)
-                                             )
-                                        )
-                                FOR XML
-                                    PATH(N''),
-                                    TYPE
-                            )
-                        ELSE
-                            (
-                                SELECT
-                                    [processing-instruction(query)] =
-                                        dp.query_text
-                                FOR XML
-                                    PATH(N''),
-                                    TYPE
-                            )
-                    END,
-                dp.deadlock_resources,
-                dp.isolation_level,
-                dp.lock_mode,
-                dp.status,
-                dp.wait_time,
-                dp.log_used,
-                dp.transaction_name,
-                dp.transaction_count,
-                dp.client_option_1,
-                dp.client_option_2,
-                dp.last_tran_started,
-                dp.last_batch_started,
-                dp.last_batch_completed,
-                dp.client_app,
-                dp.host_name,
-                dp.login_name,
-                dp.priority,
-                dp.deadlock_graph
-            FROM #deadlocks_parsed AS dp
-            ORDER BY
-                dp.event_date,
-                is_victim
-            OPTION(RECOMPILE);
+            /* Build the query */
+            SET @dsql = N'
+                SELECT
+                    ' + CASE
+                            WHEN @log_to_table = 1
+                            THEN N''
+                            ELSE N'finding = ''xml deadlock report'','
+                        END +
+                  N'
+                    dp.event_date,
+                    is_victim =
+                        CASE
+                            WHEN dp.id = dp.victim_id
+                            THEN 1
+                            ELSE 0
+                        END,
+                    dp.database_name,
+                    dp.current_database_name,
+                    query_text =
+                        CASE
+                            WHEN dp.query_text
+                                 LIKE CONVERT(nvarchar(1), 0x0a00, 0) + N''Proc |[Database Id = %'' ESCAPE N''|''
+                            THEN
+                                (
+                                    SELECT
+                                        [processing-instruction(query)] =
+                                            OBJECT_SCHEMA_NAME
+                                            (
+                                                    SUBSTRING
+                                                    (
+                                                        dp.query_text,
+                                                        CHARINDEX(N''Object Id = '', dp.query_text) + 12,
+                                                        LEN(dp.query_text) - (CHARINDEX(N''Object Id = '', dp.query_text) + 12)
+                                                    )
+                                                    ,
+                                                    SUBSTRING
+                                                    (
+                                                        dp.query_text,
+                                                        CHARINDEX(N''Database Id = '', dp.query_text) + 14,
+                                                        CHARINDEX(N''Object Id'', dp.query_text) - (CHARINDEX(N''Database Id = '', dp.query_text) + 14)
+                                                    )
+                                            ) +
+                                            N''.'' +
+                                            OBJECT_NAME
+                                            (
+                                                 SUBSTRING
+                                                 (
+                                                     dp.query_text,
+                                                     CHARINDEX(N''Object Id = '', dp.query_text) + 12,
+                                                     LEN(dp.query_text) - (CHARINDEX(N''Object Id = '', dp.query_text) + 12)
+                                                 )
+                                                 ,
+                                                 SUBSTRING
+                                                 (
+                                                     dp.query_text,
+                                                     CHARINDEX(N''Database Id = '', dp.query_text) + 14,
+                                                     CHARINDEX(N''Object Id'', dp.query_text) - (CHARINDEX(N''Database Id = '', dp.query_text) + 14)
+                                                 )
+                                            )
+                                    FOR XML
+                                        PATH(N''''),
+                                        TYPE
+                                )
+                            ELSE
+                                (
+                                    SELECT
+                                        [processing-instruction(query)] =
+                                            dp.query_text
+                                    FOR XML
+                                        PATH(N''''),
+                                        TYPE
+                                )
+                        END,
+                    dp.deadlock_resources,
+                    dp.isolation_level,
+                    dp.lock_mode,
+                    dp.status,
+                    dp.wait_time,
+                    dp.log_used,
+                    dp.transaction_name,
+                    dp.transaction_count,
+                    dp.client_option_1,
+                    dp.client_option_2,
+                    dp.last_tran_started,
+                    dp.last_batch_started,
+                    dp.last_batch_completed,
+                    dp.client_app,
+                    dp.host_name,
+                    dp.login_name,
+                    dp.priority,
+                    dp.deadlock_graph
+                FROM #deadlocks_parsed AS dp';
+
+            /* Add the WHERE clause only for table logging */
+            IF @log_to_table = 1
+            BEGIN
+                /* Get max event_date for deadlocks */
+                SET @mdsql_execute =
+                    REPLACE
+                    (
+                        REPLACE
+                        (
+                            @mdsql_template,
+                            '{table_check}',
+                            @log_table_deadlocks
+                        ),
+                        '{date_column}',
+                        'event_date'
+                    );
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @mdsql_execute;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @mdsql_execute,
+                  N'@max_event_time datetime2(7) OUTPUT',
+                    @max_event_time OUTPUT;
+
+                SET @dsql += N'
+                WHERE dp.event_date > @max_event_time';
+            END;
+
+            /* Add the ORDER BY clause */
+            SET @dsql += N'
+                ORDER BY
+                    dp.event_date,
+                    is_victim
+                OPTION(RECOMPILE);
+            ';
+
+            /* Handle table logging */
+            IF @log_to_table = 1
+            BEGIN
+                SET @insert_sql = N'
+                INSERT INTO
+                    ' + @log_table_deadlocks + N'
+                (
+                    event_date,
+                    is_victim,
+                    database_name,
+                    current_database_name,
+                    query_text,
+                    deadlock_resources,
+                    isolation_level,
+                    lock_mode,
+                    status,
+                    wait_time,
+                    log_used,
+                    transaction_name,
+                    transaction_count,
+                    client_option_1,
+                    client_option_2,
+                    last_tran_started,
+                    last_batch_started,
+                    last_batch_completed,
+                    client_app,
+                    host_name,
+                    login_name,
+                    priority,
+                    deadlock_graph
+                )' +
+                    @dsql;
+
+                IF @debug = 1
+                BEGIN
+                    PRINT @insert_sql;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @insert_sql,
+                  N'@max_event_time datetime2(7)',
+                    @max_event_time;
+            END;
+
+            /* Execute the query for client results */
+            IF @log_to_table = 0
+            BEGIN
+                IF @debug = 1
+                BEGIN
+                    PRINT @dsql;
+                END;
+
+                EXECUTE sys.sp_executesql
+                    @dsql;
+            END;
         END;
         ELSE
         BEGIN
