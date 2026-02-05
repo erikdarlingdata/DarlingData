@@ -3005,13 +3005,11 @@ OPTION(MAXDOP 1, RECOMPILE);',
         FROM sys.dm_exec_query_resource_semaphores AS deqrs
         CROSS APPLY
         (
-            SELECT TOP (1)
+            SELECT
                 total_reduced_memory_grant_count =
-                    wg.total_reduced_memgrant_count
+                    SUM(wg.total_reduced_memgrant_count)
             FROM sys.dm_resource_governor_workload_groups AS wg
             WHERE wg.pool_id = deqrs.pool_id
-            ORDER BY
-                wg.total_reduced_memgrant_count DESC
         ) AS wg
         WHERE deqrs.max_target_memory_kb IS NOT NULL
         ORDER BY
