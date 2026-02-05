@@ -340,6 +340,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 1
                 ELSE 0
             END,
+        @is_azure_sql_db bit =
+            CASE
+                WHEN CONVERT
+                     (
+                         integer,
+                         SERVERPROPERTY('EngineEdition')
+                     ) = 5
+                THEN 1
+                ELSE 0
+            END,
         @uptime_days nvarchar(10) =
         (
             SELECT
@@ -1150,6 +1160,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SET @database_name = NULL;
     END;
 
+    /* Azure SQL DB does not support @get_all_databases */
+    IF  @get_all_databases = 1
+    AND @is_azure_sql_db = 1
+    BEGIN
+        RAISERROR('@get_all_databases is not supported on Azure SQL Database. Please specify a @database_name instead.', 16, 1);
+        RETURN;
+    END;
+
     /* Build the #databases table */
     IF @get_all_databases = 0
     BEGIN
@@ -1167,6 +1185,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SET @database_name = DB_NAME();
         END;
 
+        /* Strip brackets if user supplied them */
+        IF @database_name IS NOT NULL
+        BEGIN
+            SET @database_name = PARSENAME(@database_name, 1);
+        END;
+
         /* Single database mode */
         IF @database_name IS NOT NULL
         BEGIN
@@ -1182,7 +1206,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 d.name,
                 d.database_id
             FROM sys.databases AS d
-            WHERE d.database_id = DB_ID(@database_name)
+            WHERE d.name = @database_name
             AND   d.state = 0
             AND   d.is_in_standby = 0
             AND   d.is_read_only = 0
