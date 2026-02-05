@@ -1843,7 +1843,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     (
                                         decimal(38, 2),
                                         (fm2.io_stall_read_ms - fm.io_stall_read_ms) /
-                                        (fm2.total_read_count  - fm.total_read_count)
+                                        CONVERT(decimal(38, 2), fm2.total_read_count  - fm.total_read_count)
                                     )
                             END,
                         avg_write_stall_ms =
@@ -1855,7 +1855,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     (
                                         decimal(38, 2),
                                         (fm2.io_stall_write_ms - fm.io_stall_write_ms) /
-                                        (fm2.total_write_count  - fm.total_write_count)
+                                        CONVERT(decimal(38, 2), fm2.total_write_count  - fm.total_write_count)
                                     )
                             END,
                         total_avg_stall =
@@ -1871,7 +1871,9 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                             (fm2.io_stall_read_ms  - fm.io_stall_read_ms) +
                                             (fm2.io_stall_write_ms - fm.io_stall_write_ms)
                                         ) /
+                                        CONVERT
                                         (
+                                            decimal(38, 2),
                                             (fm2.total_read_count  - fm.total_read_count) +
                                             (fm2.total_write_count - fm.total_write_count)
                                         )
