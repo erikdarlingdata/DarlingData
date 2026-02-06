@@ -562,6 +562,14 @@ BEGIN
             N'.' +
             QUOTENAME(@procedure_name);
 
+    /*Create temp table for procedure object IDs (needed before wildcard check)*/
+    CREATE TABLE
+        #procedure_object_ids
+    (
+        object_id bigint NOT NULL,
+        INDEX object_id CLUSTERED (object_id)
+    );
+
     /*Check if procedure exists in Query Store - wildcard procedure name*/
     IF CHARINDEX(N'%', @procedure_name) > 0
     BEGIN
@@ -748,13 +756,6 @@ CREATE TABLE
 (
     plan_id bigint NOT NULL,
     INDEX plan_id CLUSTERED (plan_id)
-);
-
-CREATE TABLE
-    #procedure_object_ids
-(
-    object_id bigint NOT NULL,
-    INDEX object_id CLUSTERED (object_id)
 );
 
 /*
@@ -3848,7 +3849,7 @@ BEGIN CATCH
     END;
 
     THROW;
-END CATCH
+END CATCH;
 
 IF @debug = 1
 BEGIN
