@@ -72,8 +72,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.2',
-        @version_date = '20260201';
+        @version = '2.2.5',
+        @version_date = '20260206';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -337,6 +337,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              2
                          )
                      ) >= 13
+                THEN 1
+                ELSE 0
+            END,
+        @is_azure_sql_db bit =
+            CASE
+                WHEN CONVERT
+                     (
+                         integer,
+                         SERVERPROPERTY('EngineEdition')
+                     ) = 5
                 THEN 1
                 ELSE 0
             END,
@@ -1150,6 +1160,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         SET @database_name = NULL;
     END;
 
+    /* Azure SQL DB does not support @get_all_databases */
+    IF  @get_all_databases = 1
+    AND @is_azure_sql_db = 1
+    BEGIN
+        RAISERROR('@get_all_databases is not supported on Azure SQL Database. Please specify a @database_name instead.', 16, 1);
+        RETURN;
+    END;
+
     /* Build the #databases table */
     IF @get_all_databases = 0
     BEGIN
@@ -1167,6 +1185,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SET @database_name = DB_NAME();
         END;
 
+        /* Strip brackets if user supplied them */
+        IF @database_name IS NOT NULL
+        BEGIN
+            SET @database_name = PARSENAME(@database_name, 1);
+        END;
+
         /* Single database mode */
         IF @database_name IS NOT NULL
         BEGIN
@@ -1182,7 +1206,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 d.name,
                 d.database_id
             FROM sys.databases AS d
-            WHERE d.database_id = DB_ID(@database_name)
+            WHERE d.name = @database_name
             AND   d.state = 0
             AND   d.is_in_standby = 0
             AND   d.is_read_only = 0
@@ -3639,6 +3663,161 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
+    /* Rule 7.6: Handle Key Duplicates of MAKE UNIQUE indexes */
+    /* After a unique constraint is replaced, other indexes with same keys should be disabled */
+    /* and their includes should be merged into the MAKE UNIQUE index */
+    UPDATE
+        ia_dup
+    SET
+        ia_dup.consolidation_rule = N'Key Duplicate',
+        ia_dup.action = N'DISABLE',
+        ia_dup.target_index_name = ia_winner.index_name
+    FROM #index_analysis AS ia_dup
+    JOIN #index_analysis AS ia_winner
+      ON  ia_winner.scope_hash = ia_dup.scope_hash
+      AND ia_winner.key_filter_hash = ia_dup.key_filter_hash
+      AND ia_winner.index_name <> ia_dup.index_name
+      AND ia_winner.action = N'MAKE UNIQUE'
+      AND ia_winner.consolidation_rule = N'Unique Constraint Replacement'
+    WHERE ia_dup.consolidation_rule IS NULL
+    AND   ia_dup.action IS NULL
+    /* Exclude unique constraints (they're handled separately) */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_uc
+        WHERE id_uc.index_hash = ia_dup.index_hash
+        AND   id_uc.is_unique_constraint = 1
+    )
+    OPTION(RECOMPILE);
+
+    /* Merge includes from the disabled Key Duplicates into the MAKE UNIQUE index */
+    UPDATE
+        ia_winner
+    SET
+        ia_winner.included_columns =
+        (
+            SELECT
+                combined_cols =
+                    STUFF
+                    (
+                        (
+                            SELECT DISTINCT
+                                N', ' + t.c.value('.', 'sysname')
+                            FROM
+                            (
+                                /* Winner's includes */
+                                SELECT
+                                    x = CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE(ISNULL(ia_winner.included_columns, N''), N', ', N'</c><c>') +
+                                        N'</c>'
+                                    )
+                                WHERE ia_winner.included_columns IS NOT NULL
+
+                                UNION ALL
+
+                                /* Loser's includes */
+                                SELECT
+                                    x = CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE(ia_loser.included_columns, N', ', N'</c><c>') +
+                                        N'</c>'
+                                    )
+                                FROM #index_analysis AS ia_loser
+                                WHERE ia_loser.scope_hash = ia_winner.scope_hash
+                                AND   ia_loser.key_filter_hash = ia_winner.key_filter_hash
+                                AND   ia_loser.action = N'DISABLE'
+                                AND   ia_loser.consolidation_rule = N'Key Duplicate'
+                                AND   ia_loser.target_index_name = ia_winner.index_name
+                                AND   ia_loser.included_columns IS NOT NULL
+                            ) AS a
+                            CROSS APPLY a.x.nodes('/c') AS t(c)
+                            WHERE LEN(t.c.value('.', 'sysname')) > 0
+                            FOR
+                                XML
+                                PATH('')
+                        ),
+                        1,
+                        2,
+                        ''
+                    )
+        ),
+        ia_winner.superseded_by =
+            CASE
+                WHEN ia_winner.superseded_by IS NULL
+                THEN N'Supersedes ' +
+                     STUFF
+                     (
+                         (
+                             SELECT
+                                 N', ' + ia_loser.index_name
+                             FROM #index_analysis AS ia_loser
+                             WHERE ia_loser.scope_hash = ia_winner.scope_hash
+                             AND   ia_loser.key_filter_hash = ia_winner.key_filter_hash
+                             AND   ia_loser.action = N'DISABLE'
+                             AND   ia_loser.consolidation_rule = N'Key Duplicate'
+                             AND   ia_loser.target_index_name = ia_winner.index_name
+                             FOR
+                                 XML
+                                 PATH('')
+                         ),
+                         1,
+                         2,
+                         ''
+                     )
+                ELSE ia_winner.superseded_by +
+                     N', ' +
+                     STUFF
+                     (
+                         (
+                             SELECT
+                                 N', ' + ia_loser.index_name
+                             FROM #index_analysis AS ia_loser
+                             WHERE ia_loser.scope_hash = ia_winner.scope_hash
+                             AND   ia_loser.key_filter_hash = ia_winner.key_filter_hash
+                             AND   ia_loser.action = N'DISABLE'
+                             AND   ia_loser.consolidation_rule = N'Key Duplicate'
+                             AND   ia_loser.target_index_name = ia_winner.index_name
+                             FOR
+                                 XML
+                                 PATH('')
+                         ),
+                         1,
+                         2,
+                         ''
+                     )
+            END
+    FROM #index_analysis AS ia_winner
+    WHERE ia_winner.action = N'MAKE UNIQUE'
+    AND   ia_winner.consolidation_rule = N'Unique Constraint Replacement'
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_loser
+        WHERE ia_loser.scope_hash = ia_winner.scope_hash
+        AND   ia_loser.key_filter_hash = ia_winner.key_filter_hash
+        AND   ia_loser.action = N'DISABLE'
+        AND   ia_loser.consolidation_rule = N'Key Duplicate'
+        AND   ia_loser.target_index_name = ia_winner.index_name
+    )
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 7.6',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
+
     /* Rule 8: Identify indexes with same keys but in different order after first column */
     /* This rule flags indexes that have the same set of key columns but ordered differently */
     /* These need manual review as they may be redundant depending on query patterns */
@@ -4045,6 +4224,48 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
 
+    /* Insert Key Duplicate winners into #merged_includes so they get MERGE scripts */
+    INSERT INTO
+        #merged_includes
+    WITH
+        (TABLOCK)
+    (
+        scope_hash,
+        index_name,
+        key_columns,
+        merged_includes
+    )
+    SELECT
+        ia.scope_hash,
+        ia.index_name,
+        ia.key_columns,
+        ia.included_columns
+    FROM #index_analysis AS ia
+    WHERE ia.action = N'MERGE INCLUDES'
+    AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #key_duplicate_dedupe AS kdd
+        WHERE kdd.scope_hash = ia.scope_hash
+        AND   kdd.winning_index_name = ia.index_name
+    )
+    /* Only insert if there were actually losers with different includes */
+    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS loser
+        WHERE loser.scope_hash = ia.scope_hash
+        AND   loser.key_filter_hash = ia.key_filter_hash
+        AND   loser.action = N'DISABLE'
+        AND   loser.consolidation_rule = N'Key Duplicate'
+        AND   loser.included_columns IS NOT NULL
+        AND   ISNULL(loser.included_columns, N'') <> ISNULL(ia.included_columns, N'')
+    )
+    OPTION(RECOMPILE);
+
     /* Find indexes with same key columns where one has includes that are a subset of another */
     IF @debug = 1
     BEGIN
@@ -4301,10 +4522,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ps.partition_columns
     ) AS ps
       ON ia.index_hash = ps.index_hash
-    JOIN #compression_eligibility AS ce
+    LEFT JOIN #compression_eligibility AS ce
       ON ia.index_hash = ce.index_hash
     WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
-    AND   ce.can_compress = 1
     /* Only create merge scripts for the indexes that should remain after merging */
     AND   ia.target_index_name IS NULL
     OPTION(RECOMPILE);
@@ -4321,12 +4541,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             script_type = 'WILL GET MERGE SCRIPT',
             ia.included_columns
         FROM #index_analysis AS ia
-        JOIN #compression_eligibility AS ce
-          ON  ia.database_id = ce.database_id
-          AND ia.object_id = ce.object_id
-          AND ia.index_id = ce.index_id
         WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
-        AND   ce.can_compress = 1
         AND   ia.target_index_name IS NULL
         ORDER BY
             ia.index_name
@@ -4810,7 +5025,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
                 ELSE N''
             END +
-            N')',
+            N');',
         additional_info = N'Compression type: All Partitions',
         superseded_info = NULL, /* No target index for compression scripts */
         ia.superseded_by, /* Include superseded_by info for compression scripts */
@@ -5005,7 +5220,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
                     ELSE N''
                 END +
-            N')',
+            N');',
             N'Compression type: Per Partition | Partition: ' +
             CONVERT
             (
@@ -5266,7 +5481,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         THEN N'ON'
                         ELSE N'OFF'
                     END +
-                    N', DATA_COMPRESSION = PAGE)'
+                    N', DATA_COMPRESSION = PAGE);'
                 ELSE NULL
             END
     FROM #index_analysis AS ia

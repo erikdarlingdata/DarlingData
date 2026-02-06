@@ -7,3 +7,4 @@
 *.vsidx
 *.lock
 .DS_Store
+.claude/

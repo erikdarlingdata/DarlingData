@@ -78,8 +78,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '6.2',
-    @version_date = '20260201';
+    @version = '6.2.5',
+    @version_date = '20260206';
 
 
 IF @help = 1
@@ -1804,7 +1804,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     file_size_gb = 0,
                     avg_read_stall_ms = 0,
                     avg_write_stall_ms = 0,
-                    total_avg_stall = 0,
+                    total_avg_stall_ms = 0,
                     total_gb_read = 0,
                     total_gb_written = 0,
                     total_read_count = N'0',
@@ -2801,7 +2801,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
         END;
 
-        IF @health_history = 'true'
+        IF @health_history = 1
         BEGIN
             EXECUTE sys.sp_executesql
                 N'
@@ -3081,7 +3081,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     ELSE RIGHT(REPLICATE(''0'', 2) +
                          CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
                          '' '' +
-                         RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
+                         RIGHT(CONVERT(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
                          ''.'' +
                          RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
                 END,
@@ -3745,7 +3745,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         ELSE RIGHT(REPLICATE(''0'', 2) +
                              CONVERT(varchar(10), e.elapsed_time_ms / 86400000), 2) +
                              '' '' +
-                             RIGHT(convert(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
+                             RIGHT(CONVERT(varchar(30), DATEADD(second, e.elapsed_time_ms / 1000, 0), 120), 9) +
                              ''.'' +
                              RIGHT(''000'' + CONVERT(varchar(3), e.elapsed_time_ms % 1000), 3)
                     END,

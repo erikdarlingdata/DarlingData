@@ -64,8 +64,8 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.2',
-        @version_date = N'20260201';
+        @version = N'2.2.5',
+        @version_date = N'20260206';
 
     /*
     Help section, for help.
@@ -320,7 +320,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN CONVERT(bit, 'true')
                 ELSE CONVERT(bit, 'false')
             END,
-        @health_history_count integer = 0;
+        @health_history_count bigint = 0;
 
 
     /* Check for VIEW SERVER STATE permission */
@@ -1579,8 +1579,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     CONVERT(nvarchar(30), te.event_time, 120) +
                     N'. ' +
                     N'Growth amount: ' +
-                    CONVERT(nvarchar(20), te.file_growth / 1048576) +
-                    N' GB. ',
+                    CONVERT(nvarchar(20), CONVERT(decimal(18,2), te.file_growth * 8.0 / 1024.0)) +
+                    N' MB. ',
                 url = N'https://erikdarling.com/sp_PerfCheck#AutoGrowth'
             FROM #trace_events AS te
             WHERE te.event_class IN (92, 93) /* Auto-grow events */
@@ -2256,7 +2256,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     FROM sys.dm_os_memory_health_history AS hh
                     WHERE hh.severity_level > 1;
                     ',
-                    N'@health_history_count integer OUTPUT',
+                    N'@health_history_count bigint OUTPUT',
                     @health_history_count OUTPUT;
             END;
 
@@ -3799,10 +3799,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             url = N'https://erikdarling.com/sp_PerfCheck#ServerSettings'
         FROM sys.configurations AS c
         WHERE c.value <> c.value_in_use
-        AND
+        AND NOT
         (
-              c.name <> N'min server memory (MB)'
-          AND c.value_in_use <> 16
+              c.name = N'min server memory (MB)'
+          AND c.value_in_use = 16
         );
     END;
 
@@ -5106,7 +5106,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         r.object_name,
         r.details,
         r.url
-    FROM #results r
+    FROM #results AS r
     ORDER BY
         r.priority,
         r.category,

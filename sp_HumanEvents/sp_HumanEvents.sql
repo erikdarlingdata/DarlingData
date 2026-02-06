@@ -88,8 +88,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '7.2',
-    @version_date = '20260201';
+    @version = '7.2.5',
+    @version_date = '20260206';
 
 IF @help = 1
 BEGIN
@@ -479,7 +479,6 @@ DECLARE
     @stop_sql  nvarchar(max) = N'',
     @drop_sql  nvarchar(max) = N'',
     @session_filter nvarchar(max) = N'',
-    @session_filter_limited nvarchar(max) = N'',
     @session_filter_query_plans nvarchar(max) = N'',
     @session_filter_waits nvarchar(max) = N'',
     @session_filter_recompile nvarchar(max)= N'',
@@ -687,12 +686,12 @@ BEGIN
                 (rg.max_memory * .10) * 1024
             )
     FROM sys.dm_user_db_resource_governance AS rg
-    WHERE UPPER(rg.database_name) = UPPER(QUOTENAME(@database_name))
+    WHERE UPPER(rg.database_name) = UPPER(@database_name)
     OR    @database_name = ''
     ORDER BY
         max_memory DESC;
 
-    IF @debug = 1 BEGIN RAISERROR(N'Setting lower max memory for ringbuffer due to Azure, setting to %m kb',  0, 1, @max_memory_kb) WITH NOWAIT; END;
+    IF @debug = 1 BEGIN RAISERROR(N'Setting lower max memory for ringbuffer due to Azure, setting to %I64d kb',  0, 1, @max_memory_kb) WITH NOWAIT; END;
 END;
 
 /* session create options */
@@ -770,8 +769,6 @@ N';' +
 
 /*Some sessions can use all general filters*/
 SET @session_filter = @nc10 + N'            sqlserver.is_system = 0 ' + @nc10;
-/*Others can't use all of them, like app and host name*/
-SET @session_filter_limited = @nc10 + N'            sqlserver.is_system = 0 ' + @nc10;
 /*query plans can filter on requested memory, too, along with the limited filters*/
 SET @session_filter_query_plans = @nc10 + N'            sqlserver.is_system = 0 ' + @nc10;
 /*only wait stats can filter on wait types, but can filter on everything else*/
@@ -829,6 +826,8 @@ SET @output_schema_name    = ISNULL(@output_schema_name, N'');
 
 /*I'm also very forgiving of some white space*/
 SET @database_name = RTRIM(LTRIM(@database_name));
+SET @query_sort_order = LOWER(@query_sort_order);
+SET @event_type = LOWER(@event_type);
 
 /*Assemble the full object name for easier wrangling*/
 SET @fully_formed_babby =
@@ -913,6 +912,16 @@ END;
 
 IF @debug = 1 BEGIN RAISERROR(N'Parsing any supplied waits', 0, 1) WITH NOWAIT; END;
 SET @wait_type = UPPER(@wait_type);
+
+/* There's no THREADPOOL in XE map values, it gets registered as SOS_WORKER */
+SET @wait_type =
+        REPLACE
+        (
+            @wait_type,
+            N'THREADPOOL',
+            N'SOS_WORKER'
+        );
+
 /* This will hold the CSV list of wait types someone passes in */
 
 INSERT
@@ -969,15 +978,6 @@ they're valid waits by checking them against what's available.
 IF @wait_type <> N'ALL'
 BEGIN
     IF @debug = 1 BEGIN RAISERROR(N'Checking wait validity', 0, 1) WITH NOWAIT; END;
-
-    /* There's no THREADPOOL in XE map values, it gets registered as SOS_WORKER */
-    SET @wait_type =
-            REPLACE
-            (
-                @wait_type,
-                N'THREADPOOL',
-                N'SOS_WORKER'
-            );
 
     SELECT DISTINCT
         invalid_waits =
@@ -1534,18 +1534,7 @@ SET @session_filter_waits +=
         ISNULL(@client_hostname_filter, N'') +
         ISNULL(@database_name_filter, N'') +
         ISNULL(@session_id_filter, N'') +
-        ISNULL(@username_filter, N'') +
-        ISNULL(@object_name_filter, N'')
-    );
-
-/* For sessions that can't filter on client app or host name */
-SET @session_filter_limited +=
-    (
-        ISNULL(@query_duration_filter, N'') +
-        ISNULL(@database_name_filter, N'') +
-        ISNULL(@session_id_filter, N'') +
-        ISNULL(@username_filter, N'') +
-        ISNULL(@object_name_filter, N'')
+        ISNULL(@username_filter, N'')
     );
 
 /* For query plans, which can also filter on memory required */
@@ -1587,8 +1576,7 @@ SET @session_filter_blocking +=
         ISNULL(@database_name_filter, N'') +
         ISNULL(@session_id_filter, N'') +
         ISNULL(@username_filter, N'') +
-        ISNULL(@object_name_filter, N'') +
-        ISNULL(@requested_memory_mb_filter, N'')
+        ISNULL(@object_name_filter, N'')
     );
 
 /* The parameterization event is pretty limited in weird ways */
@@ -3263,7 +3251,8 @@ BEGIN
         b.host_name,
         b.login_name,
         b.transaction_id,
-        b.blocked_process_report
+        blocked_process_report_xml =
+            b.blocked_process_report
     FROM
     (
         SELECT
@@ -4269,7 +4258,8 @@ FROM
                 CONVERT
                 (
                     varbinary(64),
-                    bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)'')
+                    bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)''),
+                    1
                 ) AS sqlhandle,
             process_report = oa.c.query(''.'')
         FROM #human_events_xml_internal AS xet
@@ -4691,7 +4681,7 @@ ORDER BY
             BEGIN
                 PRINT SUBSTRING(@table_sql, 0, 4000);
                 PRINT SUBSTRING(@table_sql, 4001, 8000);
-                PRINT SUBSTRING(@table_sql, 8002, 12000);
+                PRINT SUBSTRING(@table_sql, 8001, 12000);
                 PRINT SUBSTRING(@table_sql, 12001, 16000);
                 PRINT SUBSTRING(@table_sql, 16001, 20000);
                 PRINT SUBSTRING(@table_sql, 20001, 24000);

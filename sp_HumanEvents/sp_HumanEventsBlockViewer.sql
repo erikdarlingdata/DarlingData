@@ -93,8 +93,8 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.2',
-    @version_date = '20260201';
+    @version = '5.2.5',
+    @version_date = '20260206';
 
 IF @help = 1
 BEGIN
@@ -1698,13 +1698,13 @@ BEGIN
         total_logical_reads_mb =
             deqs.total_logical_reads * 8. / 1024.,
         min_grant_mb =
-            deqs.min_grant_kb * 8. / 1024.,
+            deqs.min_grant_kb / 1024.,
         max_grant_mb =
-            deqs.max_grant_kb * 8. / 1024.,
+            deqs.max_grant_kb / 1024.,
         min_used_grant_mb =
-            deqs.min_used_grant_kb * 8. / 1024.,
+            deqs.min_used_grant_kb / 1024.,
         max_used_grant_mb =
-            deqs.max_used_grant_kb * 8. / 1024.,
+            deqs.max_used_grant_kb / 1024.,
         deqs.min_reserved_threads,
         deqs.max_reserved_threads,
         deqs.min_used_threads,
@@ -1834,7 +1834,7 @@ BEGIN
 
     /* Build dynamic SQL to extract the XML */
     SET @extract_sql = N'
-    SELECT
+    SELECT TOP (' + CONVERT(nvarchar(20), CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 2147483647 END) + N')
         human_events_xml = ' +
         QUOTENAME(@target_column) +
         N'
@@ -1927,7 +1927,7 @@ SELECT
     wait_time = bd.value('(process/@waittime)[1]', 'bigint'),
     transaction_name = bd.value('(process/@transactionname)[1]', 'nvarchar(1024)'),
     last_transaction_started = bd.value('(process/@lasttranstarted)[1]', 'datetime2'),
-    last_transaction_completed = CONVERT(datetime2, NULL),
+    last_transaction_completed = bd.value('(process/@lastbatchcompleted)[1]', 'datetime2'),
     wait_resource = bd.value('(process/@waitresource)[1]', 'nvarchar(1024)'),
     lock_mode = bd.value('(process/@lockMode)[1]', 'nvarchar(10)'),
     status = bd.value('(process/@status)[1]', 'nvarchar(10)'),
@@ -2426,9 +2426,9 @@ SET
         co.contentious_object,
         N'Unresolved: ' +
         N'database: ' +
-        b.database_name +
+        ISNULL(b.database_name, N'unknown') +
         N' object_id: ' +
-        RTRIM(b.object_id)
+        ISNULL(RTRIM(b.object_id), N'unknown')
     )
 FROM #blocks AS b
 CROSS APPLY
@@ -2742,13 +2742,13 @@ BEGIN
         total_logical_reads_mb =
             deqs.total_logical_reads * 8. / 1024.,
         min_grant_mb =
-            deqs.min_grant_kb * 8. / 1024.,
+            deqs.min_grant_kb / 1024.,
         max_grant_mb =
-            deqs.max_grant_kb * 8. / 1024.,
+            deqs.max_grant_kb / 1024.,
         min_used_grant_mb =
-            deqs.min_used_grant_kb * 8. / 1024.,
+            deqs.min_used_grant_kb / 1024.,
         max_used_grant_mb =
-            deqs.max_used_grant_kb * 8. / 1024.,
+            deqs.max_used_grant_kb / 1024.,
         deqs.min_reserved_threads,
         deqs.max_reserved_threads,
         deqs.min_used_threads,
@@ -2852,7 +2852,7 @@ BEGIN
                 deqs.*,
                 query_plan =
                     TRY_CAST(deps.query_plan AS xml)
-            FROM #dm_exec_query_stats deqs
+            FROM #dm_exec_query_stats AS deqs
             OUTER APPLY sys.dm_exec_text_query_plan
             (
                 deqs.plan_handle,
@@ -3224,7 +3224,7 @@ BEGIN
         finding =
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
-            N' done queries involved in blocking sessions in ' +
+            N' background queries involved in blocking sessions in ' +
             b.database_name +
             N'.',
        sort_order =
@@ -3613,7 +3613,7 @@ BEGIN
                   nvarchar(30),
                   DATEADD
                   (
-                      MILLISECOND,
+                      SECOND,
                       (
                           SUM
                           (
@@ -3622,13 +3622,13 @@ BEGIN
                                   bigint,
                                   b.wait_time_ms
                               )
-                          )
+                          ) / 1000
                       ),
                       '19000101'
                   ),
                   14
               ) +
-            N' [dd hh:mm:ss:ms] of lock wait time.',
+            N' [dd hh:mm:ss] of lock wait time.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
     FROM b AS b
@@ -3702,7 +3702,7 @@ BEGIN
                   nvarchar(30),
                   DATEADD
                   (
-                      MILLISECOND,
+                      SECOND,
                       (
                           SUM
                           (
@@ -3711,13 +3711,13 @@ BEGIN
                                   bigint,
                                   b.wait_time_ms
                               )
-                          )
+                          ) / 1000
                       ),
                       '19000101'
                   ),
                   14
               ) +
-            N' [dd hh:mm:ss:ms] of lock wait time in database ' +
+            N' [dd hh:mm:ss] of lock wait time in database ' +
             b.database_name,
        sort_order =
            ROW_NUMBER() OVER (ORDER BY SUM(CONVERT(bigint, b.wait_time_ms)) DESC)
