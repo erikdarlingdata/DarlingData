@@ -514,7 +514,7 @@ BEGIN
     BEGIN
         RAISERROR('@l_log: %i', 0, 1, @l_log) WITH NOWAIT;
         RAISERROR('@h_log: %i', 0, 1, @h_log) WITH NOWAIT;
-        RAISERROR('@t_searches: %i', 0, 1, @t_searches) WITH NOWAIT;
+        RAISERROR('@t_searches: %I64d', 0, 1, @t_searches) WITH NOWAIT;
     END;
 
     IF @debug = 1 BEGIN RAISERROR('Declaring cursor', 0, 1) WITH NOWAIT; END;
@@ -576,7 +576,7 @@ BEGIN
             IF @debug = 1
             BEGIN
                 RAISERROR('log %i of %i', 0, 1, @l_log, @h_log) WITH NOWAIT;
-                RAISERROR('search %i of %i', 0, 1, @l_count, @t_searches) WITH NOWAIT;
+                RAISERROR('search %i of %I64d', 0, 1, @l_count, @t_searches) WITH NOWAIT;
                 RAISERROR('@c: %s', 0, 1, @c) WITH NOWAIT;
             END;
 
