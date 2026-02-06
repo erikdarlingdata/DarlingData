@@ -1804,7 +1804,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     file_size_gb = 0,
                     avg_read_stall_ms = 0,
                     avg_write_stall_ms = 0,
-                    total_avg_stall = 0,
+                    total_avg_stall_ms = 0,
                     total_gb_read = 0,
                     total_gb_written = 0,
                     total_read_count = N'0',
@@ -2801,7 +2801,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
         END;
 
-        IF @health_history = 'true'
+        IF @health_history = 1
         BEGIN
             EXECUTE sys.sp_executesql
                 N'
