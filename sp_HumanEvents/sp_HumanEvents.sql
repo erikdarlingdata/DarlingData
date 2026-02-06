@@ -3251,7 +3251,8 @@ BEGIN
         b.host_name,
         b.login_name,
         b.transaction_id,
-        b.blocked_process_report
+        blocked_process_report_xml =
+            b.blocked_process_report
     FROM
     (
         SELECT
