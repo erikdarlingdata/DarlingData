@@ -2953,22 +2953,25 @@ CROSS APPLY
 (
     SELECT
         parameter_list_xml =
-            TRY_CAST
-            (
-                SUBSTRING
-                (
-                    qsp.query_plan,
-                    CHARINDEX(N'<ParameterList>', qsp.query_plan),
-                    CHARINDEX
-                    (
-                        N'</ParameterList>',
-                        qsp.query_plan,
-                        CHARINDEX(N'<ParameterList>', qsp.query_plan)
-                    )
-                    + LEN(N'</ParameterList>')
-                    - CHARINDEX(N'<ParameterList>', qsp.query_plan)
-                ) AS xml
-            )
+            CASE
+                WHEN CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
+                THEN TRY_CAST
+                     (
+                         SUBSTRING
+                         (
+                             qsp.query_plan,
+                             CHARINDEX(N'<ParameterList>', qsp.query_plan),
+                             CHARINDEX
+                             (
+                                 N'</ParameterList>',
+                                 qsp.query_plan,
+                                 CHARINDEX(N'<ParameterList>', qsp.query_plan)
+                             )
+                             + LEN(N'</ParameterList>')
+                             - CHARINDEX(N'<ParameterList>', qsp.query_plan)
+                         ) AS xml
+                     )
+            END
 ) AS x
 CROSS APPLY x.parameter_list_xml.nodes(N'//ParameterList/ColumnReference') AS cr(c)
 WHERE CHARINDEX(N'<ParameterList>', qsp.query_plan) > 0
