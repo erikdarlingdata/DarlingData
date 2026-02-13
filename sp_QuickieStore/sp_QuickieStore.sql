@@ -5264,6 +5264,7 @@ WHERE NOT EXISTS
           AND   qsqt.query_sql_text NOT LIKE N''%SELECT StatMan%''
           AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
           AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
+          AND   qsqt.query_sql_text NOT LIKE N''WAITFOR%''
       )
 OPTION(RECOMPILE);' + @nc10;
 
