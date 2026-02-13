@@ -2056,7 +2056,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
             p.cntr_value,
             p.cntr_type
         FROM p
-        WHERE p.object_name LIKE @prefix
+        WHERE p.cntr_value > 0
+        AND   p.object_name LIKE @prefix
         AND   p.instance_name NOT IN
         (
             N'internal', N'master', N'model', N'msdb', N'model_msdb',
@@ -2125,7 +2126,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     p.total,
                     p.total_per_second
                 FROM p
-                WHERE p.cntr_value > 0
+                WHERE p.total_per_second <> N'0'
                 ORDER BY
                     p.object_name,
                     p.counter_name,
