@@ -1478,6 +1478,21 @@ CREATE TABLE
 );
 
 /*
+Tuning In, Tuning Out
+*/
+CREATE TABLE
+    #database_automatic_tuning_configurations
+(
+    database_id integer NOT NULL,
+    [option] nvarchar(120) NULL,
+    option_value nvarchar(120) NULL,
+    [type] nvarchar(120) NULL,
+    type_value nvarchar(120) NULL,
+    details nvarchar(4000) NULL,
+    [state] integer NULL
+);
+
+/*
 Trouble Loves Me
 */
 CREATE TABLE
@@ -8533,6 +8548,80 @@ OPTION(RECOMPILE);' + @nc10;
                 @current_table;
         END;
     END; /*End AG queries*/
+
+    /*database_automatic_tuning_configurations*/
+    SELECT
+        @current_table = 'inserting #database_automatic_tuning_configurations',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    @database_id,
+    datc.[option],
+    datc.option_value,
+    datc.[type],
+    type_value =
+        CONVERT
+        (
+            nvarchar(120),
+            datc.type_value
+        ),
+    datc.details,
+    datc.[state]
+FROM ' + @database_name_quoted + N'.sys.database_automatic_tuning_configurations AS datc
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #database_automatic_tuning_configurations
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        [option],
+        option_value,
+        [type],
+        type_value,
+        details,
+        [state]
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@database_id integer',
+        @database_id;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
 END; /*End SQL 2022 views*/
 
 FETCH NEXT
@@ -9271,6 +9360,34 @@ BEGIN
                 END;
             END;
         END; /*@ags_present*/
+
+        IF @expert_mode = 1
+        BEGIN
+            IF EXISTS
+               (
+                   SELECT
+                       1/0
+                   FROM #database_automatic_tuning_configurations AS datc
+               )
+            BEGIN
+                SELECT
+                    @current_table = 'selecting #database_automatic_tuning_configurations';
+
+                SELECT
+                    database_name =
+                        DB_NAME(datc.database_id),
+                    datc.[option],
+                    datc.option_value,
+                    datc.[type],
+                    datc.type_value,
+                    datc.details,
+                    datc.[state]
+                FROM #database_automatic_tuning_configurations AS datc
+                ORDER BY
+                    datc.[option]
+                OPTION(RECOMPILE);
+            END;
+        END;
     END; /*End 2022 views*/
 
     IF @expert_mode = 1
@@ -11594,6 +11711,29 @@ BEGIN
                     result =
                         '#query_store_plan_forcing_locations is empty';
             END;
+        END;
+
+        IF EXISTS
+           (
+              SELECT
+                  1/0
+              FROM #database_automatic_tuning_configurations AS datc
+           )
+        BEGIN
+            SELECT
+                table_name =
+                    '#database_automatic_tuning_configurations',
+                datc.*
+            FROM #database_automatic_tuning_configurations AS datc
+            ORDER BY
+                datc.[option]
+            OPTION(RECOMPILE);
+        END;
+        ELSE
+        BEGIN
+            SELECT
+                result =
+                    '#database_automatic_tuning_configurations is empty';
         END;
 
         IF EXISTS
