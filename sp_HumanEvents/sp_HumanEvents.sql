@@ -1544,7 +1544,8 @@ SET @session_filter_query_plans +=
         ISNULL(@database_name_filter, N'') +
         ISNULL(@session_id_filter, N'') +
         ISNULL(@username_filter, N'') +
-        ISNULL(@object_name_filter, N'')
+        ISNULL(@object_name_filter, N'') +
+        ISNULL(@requested_memory_mb_filter, N'')
     );
 
 /* Recompile can have almost everything except... duration */
@@ -3754,7 +3755,7 @@ BEGIN
                     N'.' +
                     QUOTENAME(hew.output_schema) +
                     N'.' +
-                    hew.output_table
+                    QUOTENAME(hew.output_table)
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
             AND   hew.is_table_created = 0;
@@ -4105,7 +4106,7 @@ END;
                     N'.' +
                     QUOTENAME(hew.output_schema) +
                     N'.' +
-                    hew.output_table,
+                    QUOTENAME(hew.output_table),
                 @date_filter =
                     DATEADD
                     (
@@ -4848,7 +4849,7 @@ BEGIN
             SELECT
                 @i_cleanup_tables +=
                     N''DROP TABLE '' +
-                    SCHEMA_NAME(s.schema_id) +
+                    QUOTENAME(SCHEMA_NAME(s.schema_id)) +
                     N''.'' +
                     QUOTENAME(s.name) +
                     ''; '' +
@@ -4879,7 +4880,7 @@ BEGIN
             SELECT
                 @i_cleanup_views +=
                     N''DROP VIEW '' +
-                    SCHEMA_NAME(v.schema_id) +
+                    QUOTENAME(SCHEMA_NAME(v.schema_id)) +
                     N''.'' +
                     QUOTENAME(v.name) +
                     ''; '' +
@@ -4912,7 +4913,7 @@ BEGIN CATCH
 
             /*Only try to drop a session if we're not outputting*/
             IF (@output_database_name = N''
-                  AND @output_schema_name = N'')
+                  AND @output_schema_name IN (N'', N'dbo'))
             BEGIN
                 IF @debug = 1
                 BEGIN

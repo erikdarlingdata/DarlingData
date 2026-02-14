@@ -990,6 +990,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
     END;
 
+    IF @has_view_server_state = 1
+    BEGIN
     /* Check for high number of deadlocks */
     INSERT INTO
         #results
@@ -1101,7 +1103,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 5
                 THEN 20 /* Very high priority >5GB */
-                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) BETWEEN 3 AND 5
+                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) BETWEEN 2 AND 5
                 THEN 30 /* High priority >2GB */
                 WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) BETWEEN 1 AND 2
                 THEN 40 /* Medium-high priority >1GB */
@@ -1130,6 +1132,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 osi.physical_memory_kb / 1024.0 / 1024.0
             )
     FROM sys.dm_os_sys_info AS osi;
+    END;
 
     /* Check if Lock Pages in Memory is enabled (on-prem and managed instances only) */
     IF  @azure_sql_db = 0
@@ -3306,7 +3309,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /* Check for single data file */
-        IF @tempdb_data_file_count = 1
+        IF  @tempdb_data_file_count = 1
+        AND @processors IS NOT NULL
         BEGIN
             INSERT INTO
                 #results

@@ -1770,7 +1770,7 @@ SELECT
     MAX(qsrs_with_lasts.max_rowcount),';
 
 /*Add SQL 2017+ columns*/
-IF @new = 1
+IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
     AVG((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.),
@@ -1911,7 +1911,7 @@ FROM
             ),';
 
 /*Add SQL 2017+ windowing columns*/
-IF @new = 1
+IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
         partitioned_last_num_physical_io_reads =
@@ -2210,7 +2210,7 @@ BEGIN
     qsp.is_optimized_plan_forcing_disabled,
     qsp.plan_type_desc';
 END;
-ELSE IF @new = 1
+ELSE IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
     qsp.plan_forcing_type_desc,

@@ -1027,6 +1027,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ON #filtered_index_columns_analysis
         (database_id, schema_id, object_id, index_id);
 
+    CREATE TABLE
+        #merged_includes
+    (
+        scope_hash varbinary(32) NOT NULL,
+        index_name sysname NOT NULL,
+        key_columns nvarchar(max) NOT NULL,
+        merged_includes nvarchar(max) NULL,
+        PRIMARY KEY (scope_hash, index_name)
+    );
+
     /* Parse @include_databases comma-separated list */
     IF  @get_all_databases = 1
     AND @include_databases IS NOT NULL
@@ -1135,10 +1145,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
 
         /* If we found any conflicts, raise an error */
-        IF LEN(@conflict_list) > 0
+        IF DATALENGTH(@conflict_list) > 0
         BEGIN
             /* Remove trailing comma and space */
-            SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
+            SET @conflict_list = LEFT(@conflict_list, DATALENGTH(@conflict_list) / 2 - 2);
 
             SET @error_msg =
                 N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' +
@@ -1380,6 +1390,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             #check_constraints_analysis;
         TRUNCATE TABLE
             #filtered_index_columns_analysis;
+        TRUNCATE TABLE
+            #merged_includes;
 
          /*Validate searched objects per-database*/
          IF  @schema_name IS NOT NULL
@@ -2178,7 +2190,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                          WHERE  c.system_type_id = t.system_type_id
                          AND    c.user_type_id = t.user_type_id
                          AND    t.name IN (N''varchar'', N''nvarchar'')
-                         AND    t.max_length = -1
+                         AND    c.max_length = -1
                      )
                 THEN 1
                 ELSE 0
@@ -3373,16 +3385,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   superset.consolidation_rule = N'Key Superset'
         OPTION(RECOMPILE);
     END;
-
-    CREATE TABLE
-        #merged_includes
-    (
-        scope_hash bigint NOT NULL,
-        index_name sysname NOT NULL,
-        key_columns nvarchar(max) NOT NULL,
-        merged_includes nvarchar(max) NULL,
-        PRIMARY KEY (scope_hash, index_name)
-    );
 
     /* Gather all supersets that need include merging */
     INSERT INTO

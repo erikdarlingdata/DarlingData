@@ -563,7 +563,7 @@ WITH
 )
 SELECT
     qsq.query_hash,
-    total_plans = COUNT_BIG(*)
+    total_plans = COUNT_BIG(DISTINCT qsq.query_id)
 FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
   ON qsrs.plan_id = qsp.plan_id
@@ -585,7 +585,7 @@ AND   EXISTS
 GROUP BY
     qsq.query_hash
 HAVING
-    COUNT_BIG(*) > 1
+    COUNT_BIG(DISTINCT qsq.query_id) > 1
 OPTION(RECOMPILE);';
 
         IF @debug = 1
@@ -627,7 +627,7 @@ WITH
 )
 SELECT
     qsp.query_plan_hash,
-    total_plans = COUNT_BIG(*)
+    total_plans = COUNT_BIG(DISTINCT qsp.plan_id)
 FROM ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
   ON qsrs.plan_id = qsp.plan_id
@@ -649,7 +649,7 @@ AND   EXISTS
 GROUP BY
     qsp.query_plan_hash
 HAVING
-    COUNT_BIG(*) > 1
+    COUNT_BIG(DISTINCT qsp.plan_id) > 1
 OPTION(RECOMPILE);';
 
         IF @debug = 1

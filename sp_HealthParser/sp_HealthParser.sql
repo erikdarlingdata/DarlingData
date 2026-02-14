@@ -5677,7 +5677,7 @@ AND   ca.utc_timestamp < @end_date';
                 isolation_level = e.x.value('@isolationlevel', 'sysname'),
                 clientoption1 = e.x.value('@clientoption1', 'bigint'),
                 clientoption2 = e.x.value('@clientoption2', 'bigint'),
-                query_text_pre = e.x.value('(//process/inputbuf/text())[1]', 'nvarchar(max)'),
+                query_text_pre = e.x.value('(inputbuf/text())[1]', 'nvarchar(max)'),
                 process_xml = e.x.query(N'.'),
                 deadlock_resources = d.xml_deadlock_report.query('//deadlock/resource-list')
             FROM #deadlocks AS d

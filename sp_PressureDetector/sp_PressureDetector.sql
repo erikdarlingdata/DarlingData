@@ -441,17 +441,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                  ELSE 0
             END,
         @prefix sysname =
+        ISNULL
         (
-            SELECT TOP (1)
-                SUBSTRING
-                (
-                    dopc.object_name,
-                    1,
-                    CHARINDEX(N':', dopc.object_name)
-                )
-            FROM sys.dm_os_performance_counters AS dopc
-        ) +
-        N'%',
+            (
+                SELECT TOP (1)
+                    SUBSTRING
+                    (
+                        dopc.object_name,
+                        1,
+                        CHARINDEX(N':', dopc.object_name)
+                    )
+                FROM sys.dm_os_performance_counters AS dopc
+            ) +
+            N'%',
+            N'%'
+        ),
         @memory_grant_cap xml,
         @cache_xml xml,
         @cache_sql nvarchar(max) = N'',
@@ -1452,7 +1456,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         CONVERT
                         (
                             decimal(38,1),
-                            (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2
+                            ISNULL
+                            (
+                                (w2.hours_wait_time - w.hours_wait_time) /
+                                    NULLIF
+                                    (
+                                        1. * (w2.waiting_tasks_count_n - w.waiting_tasks_count_n),
+                                        0.
+                                    ),
+                                0.
+                            )
                         ),
                     percent_signal_waits =
                         CONVERT
@@ -2106,11 +2119,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 dopc.cntr_value /
                                 ISNULL
                                 (
-                                    DATEDIFF
+                                    NULLIF
                                     (
-                                        SECOND,
-                                        dopc.sample_time,
-                                        SYSDATETIME()
+                                        DATEDIFF
+                                        (
+                                            SECOND,
+                                            dopc.sample_time,
+                                            SYSDATETIME()
+                                        ),
+                                        0
                                     ),
                                     1
                                 ),
@@ -3932,7 +3949,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
                   THEN N'
                 der.cpu_time DESC,
                 der.parallel_worker_count DESC
-            OPTION(MAXDOP 1, RECOMPILE);'
+            OPTION(MAXDOP 1, RECOMPILE);
+
+            SET LOCK_TIMEOUT -1;
+            '
                   ELSE N'
                 der.cpu_time DESC
             OPTION(MAXDOP 1, RECOMPILE);

@@ -2477,18 +2477,6 @@ TRUNCATE TABLE
     #ignore_sql_handles;
 
 TRUNCATE TABLE
-    #only_queries_with_hints;
-
-TRUNCATE TABLE
-    #only_queries_with_feedback;
-
-TRUNCATE TABLE
-    #only_queries_with_variants;
-
-TRUNCATE TABLE
-    #forced_plans_failures;
-
-TRUNCATE TABLE
     #query_hash_totals;
 
 
@@ -2968,6 +2956,15 @@ BEGIN
             RETURN;
         END;
     END;
+
+    IF @get_all_databases = 1
+    BEGIN
+        FETCH NEXT
+        FROM @database_cursor
+        INTO @database_name;
+
+        CONTINUE;
+    END;
 END;
 
 /*
@@ -3077,6 +3074,15 @@ BEGIN
         BEGIN
             RETURN;
         END;
+    END;
+
+    IF @get_all_databases = 1
+    BEGIN
+        FETCH NEXT
+        FROM @database_cursor
+        INTO @database_name;
+
+        CONTINUE;
     END;
 END;
 
@@ -3899,12 +3905,15 @@ BEGIN
        SELECT
            @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 5' + @nc10;
     END;/*df 1*/
-
-    IF @df = 7
+    ELSE IF @df = 7
     BEGIN
        SELECT
            @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 2 AND 6' + @nc10;
     END;/*df 7*/
+    ELSE
+    BEGIN
+       RAISERROR('Warning: @workdays filter does not support @@DATEFIRST = %i, weekday filter skipped', 10, 1, @df) WITH NOWAIT;
+    END;
 
     IF  @work_start_utc IS NOT NULL
     AND @work_end_utc IS NOT NULL
@@ -6549,10 +6558,10 @@ BEGIN
     MAX(((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs_with_lasts.avg_log_bytes_used / 100000000.)),
-    MAX((qsrs_with_lasts.partitioned_last_log_bytes_used / 100000000.)),
-    MIN((qsrs_with_lasts.min_log_bytes_used / 100000000.)),
-    MAX((qsrs_with_lasts.max_log_bytes_used / 100000000.)),
+    AVG((qsrs_with_lasts.avg_log_bytes_used / 1048576.)),
+    MAX((qsrs_with_lasts.partitioned_last_log_bytes_used / 1048576.)),
+    MIN((qsrs_with_lasts.min_log_bytes_used / 1048576.)),
+    MAX((qsrs_with_lasts.max_log_bytes_used / 1048576.)),
     AVG(((qsrs_with_lasts.avg_tempdb_space_used * 8) / 1024.)),
     MAX(((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8) / 1024.)),
     MIN(((qsrs_with_lasts.min_tempdb_space_used * 8) / 1024.)),
@@ -7185,9 +7194,9 @@ SELECT
     (qsq.last_optimize_duration / 1000.),
     (qsq.avg_optimize_cpu_time / 1000.),
     (qsq.last_optimize_cpu_time / 1000.),
-    ((qsq.avg_compile_memory_kb * 8) / 1024.),
-    ((qsq.last_compile_memory_kb * 8) / 1024.),
-    ((qsq.max_compile_memory_kb * 8) / 1024.),
+    (qsq.avg_compile_memory_kb / 1024.),
+    (qsq.last_compile_memory_kb / 1024.),
+    (qsq.max_compile_memory_kb / 1024.),
     qsq.is_clouddb_internal_query
 FROM #query_store_plan AS qsp
 CROSS APPLY
@@ -7302,7 +7311,7 @@ BEGIN
       WHEN 1
       THEN N',
         SUM(qsrs.count_executions * (qsrs.avg_num_physical_io_reads * 8)) / 1024.,
-        SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 100000000.,
+        SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 1048576.,
         SUM(qsrs.count_executions * (qsrs.avg_tempdb_space_used * 8)) / 1024.'
       ELSE N',
         NULL,

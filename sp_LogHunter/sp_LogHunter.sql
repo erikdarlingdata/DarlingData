@@ -367,8 +367,9 @@ BEGIN
         DELETE
             e WITH(TABLOCKX)
         FROM #enum AS e
-        WHERE e.log_date < CONVERT(date, @start_date)
-        OR    e.log_date > CONVERT(date, @end_date)
+        WHERE (e.log_date < CONVERT(date, @start_date)
+        OR     e.log_date > CONVERT(date, @end_date))
+        AND   e.archive > 0
         OPTION(RECOMPILE);
     END;
 
