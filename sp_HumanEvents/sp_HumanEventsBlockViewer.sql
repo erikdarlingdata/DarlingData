@@ -1356,7 +1356,7 @@ BEGIN
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#blocking_sh',
+            table_name = '#blocking_xml_sh',
             bxs.*
         FROM #blocking_xml_sh AS bxs
         OPTION(RECOMPILE);

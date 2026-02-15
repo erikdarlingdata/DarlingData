@@ -2058,11 +2058,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     END
                 ),
             @server_uptime_hours =
-                DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0
+                DATEDIFF(SECOND, osi.sqlserver_start_time, SYSDATETIME()) / 3600.0
         FROM sys.dm_os_wait_stats AS osw
         CROSS JOIN sys.dm_os_sys_info AS osi
         GROUP BY
-            DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0;
+            DATEDIFF(SECOND, osi.sqlserver_start_time, SYSDATETIME()) / 3600.0;
 
         SET @pagelatch_ratio_to_uptime =
             @pagelatch_wait_hours / NULLIF(@server_uptime_hours, 0) * 100;

@@ -3964,7 +3964,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
             IF @debug = 1
             BEGIN
-                PRINT SUBSTRING(@cpu_sql, 0, 4000);
+                PRINT SUBSTRING(@cpu_sql, 1, 4000);
                 PRINT SUBSTRING(@cpu_sql, 4001, 8000);
             END;
 
@@ -4319,7 +4319,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             bi.wait_resource,
             reads = ISNULL(der.reads, 0),
             writes = ISNULL(der.writes, 0),
-            physical_reads = ISNULL(der.logical_reads, bi.physical_io),
+            logical_reads = ISNULL(der.logical_reads, bi.physical_io),
             cpu_time = ISNULL(der.cpu_time, bi.cpu_time),
             used_memory = ISNULL(der.granted_query_memory, bi.memusage),
             bi.status,

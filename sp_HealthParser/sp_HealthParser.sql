@@ -432,7 +432,7 @@ AND   ca.utc_timestamp < @end_date';
             SET @time_filter = N'
     AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date';
         ELSE
-            SET @time_filter = '
+            SET @time_filter = N'
     AND   fx.timestamp_utc BETWEEN @start_date AND @end_date';
     END;
 
