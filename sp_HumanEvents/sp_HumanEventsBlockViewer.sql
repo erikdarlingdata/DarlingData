@@ -1835,9 +1835,7 @@ BEGIN
     /* Build dynamic SQL to extract the XML */
     SET @extract_sql = N'
     SELECT TOP (' + CONVERT(nvarchar(20), CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 2147483647 END) + N')
-        human_events_xml = ' +
-        QUOTENAME(@target_column) +
-        N'
+        human_events_xml = e.x.query(''.'')
     FROM ' +
     QUOTENAME(@target_database) +
     N'.' +
@@ -3622,7 +3620,7 @@ BEGIN
                                   bigint,
                                   b.wait_time_ms
                               )
-                          ) / 1000
+                          ) / 1000 % 86400
                       ),
                       '19000101'
                   ),
@@ -3711,7 +3709,7 @@ BEGIN
                                   bigint,
                                   b.wait_time_ms
                               )
-                          ) / 1000
+                          ) / 1000 % 86400
                       ),
                       '19000101'
                   ),

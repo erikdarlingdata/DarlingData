@@ -58,5 +58,7 @@ The script will:
 
 The WhoIsActive Logging procedures are not included in this file, as they have a different installation process and depend on Adam Machanic's sp_WhoIsActive.
 
+sp_QueryStoreCleanup is also not included, as it is a destructive procedure that removes queries from Query Store. Install it separately from the [sp_QueryStoreCleanup](../sp_QueryStoreCleanup) directory.
+
 Copyright 2026 Darling Data, LLC  
 Released under MIT license

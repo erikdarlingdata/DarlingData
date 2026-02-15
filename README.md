@@ -15,6 +15,7 @@
     - [sp_HealthParser](#health-parser): Pull all the performance-related data from the system health Extended Event
     - [sp_LogHunter](#log-hunter): Get all of the worst stuff out of your error log
     - [sp_IndexCleanup](#index-cleanup): Identify unused and duplicate indexes
+    - [sp_QueryStoreCleanup](#query-store-cleanup): Remove duplicate and noisy queries from Query Store
 
 ## Who are these scripts for?
 You need to troubleshoot performance problems with SQL Server, and you need to do it now. 
@@ -490,6 +491,35 @@ Current valid parameter details:
 | @debug | bit | 0 | Prints debug information during execution |
 | @version | varchar(20) | NULL | OUTPUT parameter that returns the version number of the procedure |
 | @version_date | datetime | NULL | OUTPUT parameter that returns the date this version was released |
+
+[*Back to top*](#navigatory)
+
+## Query Store Cleanup
+
+Query Store is great, but it collects a lot of noise. System DMV queries, index maintenance, statistics updates, and other background operations all pile up as duplicate entries, wasting space and making it harder to find the queries you actually care about.
+
+This procedure identifies and removes duplicate and noisy queries from Query Store in any database on your server. It uses text pattern matching and hash-based deduplication to find the junk, and removes it using `sp_query_store_remove_query`.
+
+By default, it targets system queries, maintenance operations, and removes all copies of duplicated query and plan hashes. You can customize what to target, how to deduplicate, and whether to just report or actually remove.
+
+Queries with forced plans are always protected from removal.
+
+**Note:** This procedure is not included in the Install-All script due to its destructive nature. Install it separately.
+
+Current valid parameter details:
+
+| parameter_name | data_type | description | valid_inputs | defaults |
+|---|---|---|---|---|
+| @database_name | sysname | the database to clean query store in | a database name with query store enabled | NULL; current database if NULL |
+| @cleanup_targets | varchar(100) | what to target for cleanup | all, system, maintenance (or maint), custom, none | all |
+| @custom_query_filter | nvarchar(1024) | custom LIKE pattern for query text filtering | a valid LIKE pattern | NULL |
+| @dedupe_by | varchar(50) | deduplication strategy | all, query_hash, plan_hash, none | all |
+| @min_age_days | integer | only remove queries not executed in this many days | a positive integer | NULL; no age filter |
+| @report_only | bit | report what would be removed without removing | 0 or 1 | 0 |
+| @help | bit | how you got here | 0 or 1 | 0 |
+| @debug | bit | prints dynamic sql and diagnostics | 0 or 1 | 0 |
+| @version | varchar | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
+| @version_date | datetime | OUTPUT; for support | none; OUTPUT | none; OUTPUT |
 
 [*Back to top*](#navigatory)
 
