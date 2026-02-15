@@ -1,4 +1,4 @@
--- Compile Date: 02/15/2026 14:08:02 UTC
+-- Compile Date: 02/15/2026 15:13:30 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -433,7 +433,7 @@ AND   ca.utc_timestamp < @end_date';
             SET @time_filter = N'
     AND   CONVERT(datetimeoffset(7), fx.timestamp_utc) BETWEEN @start_date AND @end_date';
         ELSE
-            SET @time_filter = '
+            SET @time_filter = N'
     AND   fx.timestamp_utc BETWEEN @start_date AND @end_date';
     END;
 
@@ -12493,7 +12493,7 @@ BEGIN
     IF @debug = 1
     BEGIN
         SELECT
-            table_name = '#blocking_sh',
+            table_name = '#blocking_xml_sh',
             bxs.*
         FROM #blocking_xml_sh AS bxs
         OPTION(RECOMPILE);
@@ -24714,11 +24714,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     END
                 ),
             @server_uptime_hours =
-                DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0
+                DATEDIFF(SECOND, osi.sqlserver_start_time, SYSDATETIME()) / 3600.0
         FROM sys.dm_os_wait_stats AS osw
         CROSS JOIN sys.dm_os_sys_info AS osi
         GROUP BY
-            DATEDIFF(SECOND, osi.sqlserver_start_time, GETDATE()) / 3600.0;
+            DATEDIFF(SECOND, osi.sqlserver_start_time, SYSDATETIME()) / 3600.0;
 
         SET @pagelatch_ratio_to_uptime =
             @pagelatch_wait_hours / NULLIF(@server_uptime_hours, 0) * 100;
@@ -31750,7 +31750,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
             IF @debug = 1
             BEGIN
-                PRINT SUBSTRING(@cpu_sql, 0, 4000);
+                PRINT SUBSTRING(@cpu_sql, 1, 4000);
                 PRINT SUBSTRING(@cpu_sql, 4001, 8000);
             END;
 
@@ -32105,7 +32105,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             bi.wait_resource,
             reads = ISNULL(der.reads, 0),
             writes = ISNULL(der.writes, 0),
-            physical_reads = ISNULL(der.logical_reads, bi.physical_io),
+            logical_reads = ISNULL(der.logical_reads, bi.physical_io),
             cpu_time = ISNULL(der.cpu_time, bi.cpu_time),
             used_memory = ISNULL(der.granted_query_memory, bi.memusage),
             bi.status,
