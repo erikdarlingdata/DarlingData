@@ -1,4 +1,4 @@
--- Compile Date: 02/13/2026 22:23:00 UTC
+-- Compile Date: 02/15/2026 14:08:02 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -5678,7 +5678,7 @@ AND   ca.utc_timestamp < @end_date';
                 isolation_level = e.x.value('@isolationlevel', 'sysname'),
                 clientoption1 = e.x.value('@clientoption1', 'bigint'),
                 clientoption2 = e.x.value('@clientoption2', 'bigint'),
-                query_text_pre = e.x.value('(//process/inputbuf/text())[1]', 'nvarchar(max)'),
+                query_text_pre = e.x.value('(inputbuf/text())[1]', 'nvarchar(max)'),
                 process_xml = e.x.query(N'.'),
                 deadlock_resources = d.xml_deadlock_report.query('//deadlock/resource-list')
             FROM #deadlocks AS d
@@ -7743,7 +7743,8 @@ SET @session_filter_query_plans +=
         ISNULL(@database_name_filter, N'') +
         ISNULL(@session_id_filter, N'') +
         ISNULL(@username_filter, N'') +
-        ISNULL(@object_name_filter, N'')
+        ISNULL(@object_name_filter, N'') +
+        ISNULL(@requested_memory_mb_filter, N'')
     );
 
 /* Recompile can have almost everything except... duration */
@@ -9953,7 +9954,7 @@ BEGIN
                     N'.' +
                     QUOTENAME(hew.output_schema) +
                     N'.' +
-                    hew.output_table
+                    QUOTENAME(hew.output_table)
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
             AND   hew.is_table_created = 0;
@@ -10304,7 +10305,7 @@ END;
                     N'.' +
                     QUOTENAME(hew.output_schema) +
                     N'.' +
-                    hew.output_table,
+                    QUOTENAME(hew.output_table),
                 @date_filter =
                     DATEADD
                     (
@@ -11047,7 +11048,7 @@ BEGIN
             SELECT
                 @i_cleanup_tables +=
                     N''DROP TABLE '' +
-                    SCHEMA_NAME(s.schema_id) +
+                    QUOTENAME(SCHEMA_NAME(s.schema_id)) +
                     N''.'' +
                     QUOTENAME(s.name) +
                     ''; '' +
@@ -11078,7 +11079,7 @@ BEGIN
             SELECT
                 @i_cleanup_views +=
                     N''DROP VIEW '' +
-                    SCHEMA_NAME(v.schema_id) +
+                    QUOTENAME(SCHEMA_NAME(v.schema_id)) +
                     N''.'' +
                     QUOTENAME(v.name) +
                     ''; '' +
@@ -11111,7 +11112,7 @@ BEGIN CATCH
 
             /*Only try to drop a session if we're not outputting*/
             IF (@output_database_name = N''
-                  AND @output_schema_name = N'')
+                  AND @output_schema_name IN (N'', N'dbo'))
             BEGIN
                 IF @debug = 1
                 BEGIN
@@ -12971,9 +12972,7 @@ BEGIN
     /* Build dynamic SQL to extract the XML */
     SET @extract_sql = N'
     SELECT TOP (' + CONVERT(nvarchar(20), CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 2147483647 END) + N')
-        human_events_xml = ' +
-        QUOTENAME(@target_column) +
-        N'
+        human_events_xml = e.x.query(''.'')
     FROM ' +
     QUOTENAME(@target_database) +
     N'.' +
@@ -14758,7 +14757,7 @@ BEGIN
                                   bigint,
                                   b.wait_time_ms
                               )
-                          ) / 1000
+                          ) / 1000 % 86400
                       ),
                       '19000101'
                   ),
@@ -14847,7 +14846,7 @@ BEGIN
                                   bigint,
                                   b.wait_time_ms
                               )
-                          ) / 1000
+                          ) / 1000 % 86400
                       ),
                       '19000101'
                   ),
@@ -15938,6 +15937,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ON #filtered_index_columns_analysis
         (database_id, schema_id, object_id, index_id);
 
+    CREATE TABLE
+        #merged_includes
+    (
+        scope_hash varbinary(32) NOT NULL,
+        index_name sysname NOT NULL,
+        key_columns nvarchar(max) NOT NULL,
+        merged_includes nvarchar(max) NULL,
+        PRIMARY KEY (scope_hash, index_name)
+    );
+
     /* Parse @include_databases comma-separated list */
     IF  @get_all_databases = 1
     AND @include_databases IS NOT NULL
@@ -16046,10 +16055,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
 
         /* If we found any conflicts, raise an error */
-        IF LEN(@conflict_list) > 0
+        IF DATALENGTH(@conflict_list) > 0
         BEGIN
             /* Remove trailing comma and space */
-            SET @conflict_list = LEFT(@conflict_list, LEN(@conflict_list) - 2);
+            SET @conflict_list = LEFT(@conflict_list, DATALENGTH(@conflict_list) / 2 - 2);
 
             SET @error_msg =
                 N'The following databases appear in both @include_databases and @exclude_databases, which creates ambiguity: ' +
@@ -16291,6 +16300,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             #check_constraints_analysis;
         TRUNCATE TABLE
             #filtered_index_columns_analysis;
+        TRUNCATE TABLE
+            #merged_includes;
 
          /*Validate searched objects per-database*/
          IF  @schema_name IS NOT NULL
@@ -17089,7 +17100,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                          WHERE  c.system_type_id = t.system_type_id
                          AND    c.user_type_id = t.user_type_id
                          AND    t.name IN (N''varchar'', N''nvarchar'')
-                         AND    t.max_length = -1
+                         AND    c.max_length = -1
                      )
                 THEN 1
                 ELSE 0
@@ -18284,16 +18295,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   superset.consolidation_rule = N'Key Superset'
         OPTION(RECOMPILE);
     END;
-
-    CREATE TABLE
-        #merged_includes
-    (
-        scope_hash bigint NOT NULL,
-        index_name sysname NOT NULL,
-        key_columns nvarchar(max) NOT NULL,
-        merged_includes nvarchar(max) NULL,
-        PRIMARY KEY (scope_hash, index_name)
-    );
 
     /* Gather all supersets that need include merging */
     INSERT INTO
@@ -22283,8 +22284,9 @@ BEGIN
         DELETE
             e WITH(TABLOCKX)
         FROM #enum AS e
-        WHERE e.log_date < CONVERT(date, @start_date)
-        OR    e.log_date > CONVERT(date, @end_date)
+        WHERE (e.log_date < CONVERT(date, @start_date)
+        OR     e.log_date > CONVERT(date, @end_date))
+        AND   e.archive > 0
         OPTION(RECOMPILE);
     END;
 
@@ -23644,6 +23646,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
     END;
 
+    IF @has_view_server_state = 1
+    BEGIN
     /* Check for high number of deadlocks */
     INSERT INTO
         #results
@@ -23755,7 +23759,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CASE
                 WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 5
                 THEN 20 /* Very high priority >5GB */
-                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) BETWEEN 3 AND 5
+                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) BETWEEN 2 AND 5
                 THEN 30 /* High priority >2GB */
                 WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) BETWEEN 1 AND 2
                 THEN 40 /* Medium-high priority >1GB */
@@ -23784,6 +23788,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 osi.physical_memory_kb / 1024.0 / 1024.0
             )
     FROM sys.dm_os_sys_info AS osi;
+    END;
 
     /* Check if Lock Pages in Memory is enabled (on-prem and managed instances only) */
     IF  @azure_sql_db = 0
@@ -25960,7 +25965,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END;
 
         /* Check for single data file */
-        IF @tempdb_data_file_count = 1
+        IF  @tempdb_data_file_count = 1
+        AND @processors IS NOT NULL
         BEGIN
             INSERT INTO
                 #results
@@ -28221,17 +28227,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                  ELSE 0
             END,
         @prefix sysname =
+        ISNULL
         (
-            SELECT TOP (1)
-                SUBSTRING
-                (
-                    dopc.object_name,
-                    1,
-                    CHARINDEX(N':', dopc.object_name)
-                )
-            FROM sys.dm_os_performance_counters AS dopc
-        ) +
-        N'%',
+            (
+                SELECT TOP (1)
+                    SUBSTRING
+                    (
+                        dopc.object_name,
+                        1,
+                        CHARINDEX(N':', dopc.object_name)
+                    )
+                FROM sys.dm_os_performance_counters AS dopc
+            ) +
+            N'%',
+            N'%'
+        ),
         @memory_grant_cap xml,
         @cache_xml xml,
         @cache_sql nvarchar(max) = N'',
@@ -29232,7 +29242,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         CONVERT
                         (
                             decimal(38,1),
-                            (w2.avg_ms_per_wait + w.avg_ms_per_wait) / 2
+                            ISNULL
+                            (
+                                (w2.hours_wait_time - w.hours_wait_time) /
+                                    NULLIF
+                                    (
+                                        1. * (w2.waiting_tasks_count_n - w.waiting_tasks_count_n),
+                                        0.
+                                    ),
+                                0.
+                            )
                         ),
                     percent_signal_waits =
                         CONVERT
@@ -29886,11 +29905,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                 dopc.cntr_value /
                                 ISNULL
                                 (
-                                    DATEDIFF
+                                    NULLIF
                                     (
-                                        SECOND,
-                                        dopc.sample_time,
-                                        SYSDATETIME()
+                                        DATEDIFF
+                                        (
+                                            SECOND,
+                                            dopc.sample_time,
+                                            SYSDATETIME()
+                                        ),
+                                        0
                                     ),
                                     1
                                 ),
@@ -31712,7 +31735,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
                   THEN N'
                 der.cpu_time DESC,
                 der.parallel_worker_count DESC
-            OPTION(MAXDOP 1, RECOMPILE);'
+            OPTION(MAXDOP 1, RECOMPILE);
+
+            SET LOCK_TIMEOUT -1;
+            '
                   ELSE N'
                 der.cpu_time DESC
             OPTION(MAXDOP 1, RECOMPILE);
@@ -34042,7 +34068,7 @@ SELECT
     MAX(qsrs_with_lasts.max_rowcount),';
 
 /*Add SQL 2017+ columns*/
-IF @new = 1
+IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
     AVG((qsrs_with_lasts.avg_num_physical_io_reads * 8.) / 1024.),
@@ -34183,7 +34209,7 @@ FROM
             ),';
 
 /*Add SQL 2017+ windowing columns*/
-IF @new = 1
+IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
         partitioned_last_num_physical_io_reads =
@@ -34482,7 +34508,7 @@ BEGIN
     qsp.is_optimized_plan_forcing_disabled,
     qsp.plan_type_desc';
 END;
-ELSE IF @new = 1
+ELSE IF @sql_2017 = 1
 BEGIN
     SELECT @sql += N'
     qsp.plan_forcing_type_desc,
@@ -38732,18 +38758,6 @@ TRUNCATE TABLE
     #ignore_sql_handles;
 
 TRUNCATE TABLE
-    #only_queries_with_hints;
-
-TRUNCATE TABLE
-    #only_queries_with_feedback;
-
-TRUNCATE TABLE
-    #only_queries_with_variants;
-
-TRUNCATE TABLE
-    #forced_plans_failures;
-
-TRUNCATE TABLE
     #query_hash_totals;
 
 
@@ -39223,6 +39237,15 @@ BEGIN
             RETURN;
         END;
     END;
+
+    IF @get_all_databases = 1
+    BEGIN
+        FETCH NEXT
+        FROM @database_cursor
+        INTO @database_name;
+
+        CONTINUE;
+    END;
 END;
 
 /*
@@ -39332,6 +39355,15 @@ BEGIN
         BEGIN
             RETURN;
         END;
+    END;
+
+    IF @get_all_databases = 1
+    BEGIN
+        FETCH NEXT
+        FROM @database_cursor
+        INTO @database_name;
+
+        CONTINUE;
     END;
 END;
 
@@ -40154,12 +40186,15 @@ BEGIN
        SELECT
            @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 5' + @nc10;
     END;/*df 1*/
-
-    IF @df = 7
+    ELSE IF @df = 7
     BEGIN
        SELECT
            @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 2 AND 6' + @nc10;
     END;/*df 7*/
+    ELSE
+    BEGIN
+       RAISERROR('Warning: @workdays filter does not support @@DATEFIRST = %i, weekday filter skipped', 10, 1, @df) WITH NOWAIT;
+    END;
 
     IF  @work_start_utc IS NOT NULL
     AND @work_end_utc IS NOT NULL
@@ -41519,6 +41554,7 @@ WHERE NOT EXISTS
           AND   qsqt.query_sql_text NOT LIKE N''%SELECT StatMan%''
           AND   qsqt.query_sql_text NOT LIKE N''DBCC%''
           AND   qsqt.query_sql_text NOT LIKE N''(@[_]msparam%''
+          AND   qsqt.query_sql_text NOT LIKE N''WAITFOR%''
       )
 OPTION(RECOMPILE);' + @nc10;
 
@@ -42803,10 +42839,10 @@ BEGIN
     MAX(((qsrs_with_lasts.partitioned_last_num_physical_io_reads * 8.) / 1024.)),
     MIN(((qsrs_with_lasts.min_num_physical_io_reads * 8.) / 1024.)),
     MAX(((qsrs_with_lasts.max_num_physical_io_reads * 8.) / 1024.)),
-    AVG((qsrs_with_lasts.avg_log_bytes_used / 100000000.)),
-    MAX((qsrs_with_lasts.partitioned_last_log_bytes_used / 100000000.)),
-    MIN((qsrs_with_lasts.min_log_bytes_used / 100000000.)),
-    MAX((qsrs_with_lasts.max_log_bytes_used / 100000000.)),
+    AVG((qsrs_with_lasts.avg_log_bytes_used / 1048576.)),
+    MAX((qsrs_with_lasts.partitioned_last_log_bytes_used / 1048576.)),
+    MIN((qsrs_with_lasts.min_log_bytes_used / 1048576.)),
+    MAX((qsrs_with_lasts.max_log_bytes_used / 1048576.)),
     AVG(((qsrs_with_lasts.avg_tempdb_space_used * 8) / 1024.)),
     MAX(((qsrs_with_lasts.partitioned_last_tempdb_space_used * 8) / 1024.)),
     MIN(((qsrs_with_lasts.min_tempdb_space_used * 8) / 1024.)),
@@ -43439,9 +43475,9 @@ SELECT
     (qsq.last_optimize_duration / 1000.),
     (qsq.avg_optimize_cpu_time / 1000.),
     (qsq.last_optimize_cpu_time / 1000.),
-    ((qsq.avg_compile_memory_kb * 8) / 1024.),
-    ((qsq.last_compile_memory_kb * 8) / 1024.),
-    ((qsq.max_compile_memory_kb * 8) / 1024.),
+    (qsq.avg_compile_memory_kb / 1024.),
+    (qsq.last_compile_memory_kb / 1024.),
+    (qsq.max_compile_memory_kb / 1024.),
     qsq.is_clouddb_internal_query
 FROM #query_store_plan AS qsp
 CROSS APPLY
@@ -43556,7 +43592,7 @@ BEGIN
       WHEN 1
       THEN N',
         SUM(qsrs.count_executions * (qsrs.avg_num_physical_io_reads * 8)) / 1024.,
-        SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 100000000.,
+        SUM(qsrs.count_executions * qsrs.avg_log_bytes_used) / 1048576.,
         SUM(qsrs.count_executions * (qsrs.avg_tempdb_space_used * 8)) / 1024.'
       ELSE N',
         NULL,
