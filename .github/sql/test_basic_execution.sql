@@ -1,7 +1,9 @@
 /*
 CI Test: Run default execution for procedures that are safe to execute without special setup.
-Procs requiring extended events or special data (sp_HumanEvents, sp_HumanEventsBlockViewer,
-sp_QueryReproBuilder) are tested with @help = 1 only (see test_help_output.sql).
+Procs requiring extended events, special data, or host features not available in Docker
+(sp_HumanEvents, sp_HumanEventsBlockViewer, sp_QueryReproBuilder, sp_PerfCheck)
+are tested with @help = 1 only (see test_help_output.sql).
+sp_PerfCheck reads the default trace which does not exist in Docker containers.
 Uses a temp table to track results across GO batches.
 */
 
@@ -25,18 +27,6 @@ END TRY
 BEGIN CATCH
     INSERT #exec_results VALUES ('sp_PressureDetector', 0);
     PRINT 'FAIL: sp_PressureDetector - ' + ERROR_MESSAGE();
-END CATCH;
-GO
-
-/* sp_PerfCheck - comprehensive performance health check */
-BEGIN TRY
-    EXEC dbo.sp_PerfCheck;
-    INSERT #exec_results VALUES ('sp_PerfCheck', 1);
-    PRINT 'PASS: sp_PerfCheck (default)';
-END TRY
-BEGIN CATCH
-    INSERT #exec_results VALUES ('sp_PerfCheck', 0);
-    PRINT 'FAIL: sp_PerfCheck - ' + ERROR_MESSAGE();
 END CATCH;
 GO
 
