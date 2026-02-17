@@ -34,6 +34,7 @@ All you need to do is hit F5 to get information about:
 | @log_schema_name           | sysname   | schema to store logging tables                                                 | valid schema name                                    | NULL         |
 | @log_table_name_prefix     | sysname   | prefix for all logging tables                                                  | valid table name prefix                               | 'PressureDetector' |
 | @log_retention_days        | integer   | Number of days to keep logs, 0 = keep indefinitely                             | integer                                              | 30           |
+| @troubleshoot_blocking       | bit       | show blocking chains instead of pressure analysis                              | 0 or 1                                               | 0            |
 | @help                      | bit       | how you got here                                                               | 0 or 1                                               | 0            |
 | @debug                     | bit       | prints dynamic sql, displays parameter and variable values, and table contents | 0 or 1                                               | 0            |
 | @version                   | varchar   | OUTPUT; for support                                                            | none                                                 | none; OUTPUT |

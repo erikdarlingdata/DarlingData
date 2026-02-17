@@ -1,8 +1,6 @@
 # sp_PerfCheck: SQL Server Performance Health Check
 
-`sp_PerfCheck` is a comprehensive SQL Server performance diagnostic tool that quickly identifies configuration issues, capacity problems, and performance bottlenecks.
-
-This procedure collects key health metrics and configuration settings at both the server and database level, providing actionable insights without overwhelming you with irrelevant information.
+`sp_PerfCheck` is a comprehensive SQL Server performance diagnostic tool that quickly identifies configuration issues, capacity problems, and performance bottlenecks at both server and database levels.
 
 ## Features
 
@@ -24,229 +22,157 @@ This procedure collects key health metrics and configuration settings at both th
 
 | Parameter | Data Type | Default | Description |
 |-----------|-----------|---------|-------------|
-| @database_name | sysname | NULL | Specific database to check; NULL runs against all accessible user databases |
+| @database_name | sysname | NULL | Specific database to check; NULL checks all accessible user databases |
 | @debug | bit | 0 | Print diagnostic messages and intermediate query results |
 | @version | varchar(30) | NULL OUTPUT | Returns version number |
 | @version_date | datetime | NULL OUTPUT | Returns version date |
 
-## Usage Examples
+## Usage
 
-### Basic check on all databases
 ```sql
+-- Basic check on all databases
 EXEC dbo.sp_PerfCheck;
-```
 
-### Check a specific database only
-```sql
+-- Check a specific database only
 EXEC dbo.sp_PerfCheck
     @database_name = 'YourDatabaseName';
-```
 
-### Run with debug information
-```sql
+-- Run with debug information
 EXEC dbo.sp_PerfCheck
     @debug = 1;
 ```
 
+## Priority System
+
+All findings are assigned a priority level indicating severity and urgency:
+
+| Priority | Label | Meaning |
+|----------|-------|---------|
+| 10 | **Critical** | Server instability — crashes, offline resources, pending configuration changes |
+| 20 | **High** | Active performance degradation — severe I/O latency, memory pressure, high deadlock rates |
+| 30 | **Medium** | Moderate impact or risky configuration that will likely cause problems |
+| 40 | **Low** | Best practice recommendations that improve reliability |
+| 50 | **Informational** | Awareness items and non-default settings that may be intentional |
+
+Results include a `priority_label` column for readability and are sorted by priority (lowest number first).
+
 ## Performance Checks
 
-### Wait Statistics Analysis (6000-series)
+### Server Configuration
 
-- **High Impact Wait Types** (check_id 6001)
-  - Analyzes sys.dm_os_wait_stats to identify performance bottlenecks
-  - Calculates wait time as a percentage of SQL Server uptime
-  - Categorizes waits by resource type (CPU, I/O, Memory, etc.)
-  - Identifies abnormal wait patterns indicating specific resource pressure
-  - Filters out benign or expected wait types
+| Check | Finding | Priority | Description |
+|-------|---------|----------|-------------|
+| 1000 | Non-Default Configuration | Informational (50) | Reports sp_configure options changed from default |
+| 1001 | Min Memory Too Close To Max | Low (40) | Min server memory >= 90% of max |
+| 1003 | MAXDOP Not Configured | Low (40) | Default MAXDOP (0) on multi-processor system |
+| 1004 | Low Cost Threshold | Low (40) | Cost threshold for parallelism <= 5 |
+| 1005 | Priority Boost Enabled | High (20) | Dangerous setting affecting Windows scheduling |
+| 1006 | Lightweight Pooling Enabled | Low (40) | Fiber mode rarely beneficial |
+| 1007 | Config Pending Reconfigure | Critical (10) | Server not running intended configuration |
+| 1008 | Affinity Mask Configured | Informational (50) | Manual CPU binding |
+| 1009 | Affinity I/O Mask Configured | Informational (50) | Manual I/O CPU binding |
+| 1010 | Affinity64 Mask Configured | Informational (50) | CPU binding for processors 33-64 |
+| 1011 | Affinity64 I/O Mask Configured | Informational (50) | I/O binding for processors 33-64 |
 
-### Server Configuration (4000-series)
+### TempDB Configuration
 
-#### Memory Configuration
-- **Lock Pages in Memory Status** (check_id 4105)
-  - Identifies if SQL Server is using locked pages in memory
-  - Recommends enabling for production environments with >32GB RAM
+| Check | Finding | Priority | Description |
+|-------|---------|----------|-------------|
+| 2001 | Single TempDB Data File | Medium (30) | Single file causes allocation contention |
+| 2002 | Odd Number of TempDB Files | Informational (50) | File count not optimal for CPU count |
+| 2003 | More TempDB Files Than CPUs | Informational (50) | More data files than logical processors |
+| 2004 | Uneven TempDB File Sizes | Low (40) | Data files vary in size by >10% |
+| 2005 | Mixed TempDB Autogrowth | Low (40) | Inconsistent growth settings across files |
+| 2006 | Percentage Growth in TempDB | Low (40) | Percentage-based growth in TempDB files |
+| 2010 | TempDB Allocation Contention | Medium (30) | Active pagelatch contention detected |
 
-- **Memory Pressure Indicators** (check_id 4001-4002)
-  - Detects high buffer pool churn, memory grants issues, external memory pressure
-  - Provides specific thresholds based on server class
+### Storage Performance
 
-- **Memory Pressure Analysis** (check_id 4101)
-  - Detects forced memory grants that can impact query performance
-  - Analyzes memory clerk distribution and pressure points
+| Check | Finding | Priority | Description |
+|-------|---------|----------|-------------|
+| 3001 | Slow Read Latency | High (20) / Medium (30) | >1000 ms = High, >500 ms = Medium per file |
+| 3002 | Slow Write Latency | High (20) / Medium (30) | >1000 ms = High, >500 ms = Medium per file |
+| 3003 | Multiple Slow Files on Storage Location | High (20) | Systemic storage problem on a drive |
 
-- **Security Token Cache Size** (check_id 4104)
-  - Analyzes TokenAndPermUserStore cache size
-  - Identifies excessive security token cache which can consume significant memory
-  - Provides recommendations for high-connection environments
+### Server Health
 
-- **Instant File Initialization** (check_id 4106)
-  - Verifies if IFI is enabled for data file operations
-  - Critical for fast file growths and database restores
+| Check | Finding | Priority | Description |
+|-------|---------|----------|-------------|
+| 4001 | Offline CPU Schedulers | Critical (10) | CPUs offline, reducing processing power |
+| 4101 | Memory-Starved Queries (forced) | High (20) | Forced grants causing tempdb spills |
+| 4102 | Memory Dumps Detected | Critical (10) | Server crashing in last 90 days |
+| 4103 | Memory Grant Timeouts | High (20) | Queries can't get memory |
+| 4104 | Large Security Token Cache | High/Medium/Low | >5 GB=20, >2 GB=30, >1 GB=40 |
+| 4105 | Lock Pages Not Enabled | Low (40) | Best practice for >=32 GB RAM |
+| 4106 | IFI Disabled | Low (40) | Best practice for file operations |
+| 4107 | Resource Governor Enabled | Informational (50) | May be intentional |
 
-- **Min and Max Server Memory** (check_id 1001-1002)
-  - Check for min server memory too close to max (≥90%)
-  - Identifies max server memory set too close to physical memory (≥95%)
-  - Prevents SQL Server from dynamically adjusting memory usage
+### Trace Events
 
-- **High Stolen Memory** (check_id 6002)
-  - Identifies high percentage of memory stolen from buffer pool
-  - Calculates impact on data caching capability
-  - Suggests investigating memory usage by CLR, extended stored procedures, or linked servers
+| Check | Finding | Priority | Description |
+|-------|---------|----------|-------------|
+| 5001 | Slow Auto-Growth | Medium (30) / Low (40) | Log grows = Medium, data grows = Low |
+| 5002 | Auto-Shrink Events | Low (40) | Harmful config executing |
+| 5003 | Disruptive DBCC Commands | Medium (30) / Informational (50) | Destructive = Medium, other = Informational |
+| 5103 | High Deadlock Rate | High (20) / Medium (30) | >50/day = High, >9/day = Medium |
 
-#### CPU Configuration
-- **CPU Scheduling Pressure** (check_id 6101-6102)
-  - High signal waits ratio (>25%) indicating CPU scheduler contention
-  - Excessive SOS_SCHEDULER_YIELD waits showing CPU pressure
+### Resource Performance
 
-- **Offline CPU Schedulers** (check_id 4001)
-  - Detects when CPU schedulers are offline
-  - Identifies potential affinity mask misconfigurations
-  - Checks for licensing or VM configuration issues limiting processor availability
+| Check | Finding | Priority | Description |
+|-------|---------|----------|-------------|
+| 6001 | High Impact Wait Types | High (20) / Medium (30) / Low (40) | Top 10 waits by % of uptime |
+| 6002 | High Stolen Memory | High (20) / Medium (30) / Low (40) | Buffer pool starvation |
+| 6003 | Top Memory Consumers | Informational (50) | Top 5 non-buffer pool memory clerks |
+| 6101 | High Signal Wait Ratio | High (20) / Medium (30) / Low (40) | CPU scheduler contention |
+| 6102 | High SOS_SCHEDULER_YIELD | High (20) / Medium (30) / Low (40) | CPU pressure from frequent yields |
 
-- **MAXDOP Settings** (check_id 1003)
-  - Identifies default MAXDOP setting (0) on multi-processor systems
-  - Warns about potential excessive parallelism issues
-  - Provides recommendations based on logical processor count
+### Database Configuration
 
-- **Cost Threshold for Parallelism** (check_id 1004)
-  - Detects low cost threshold settings that may cause excessive parallelism
-  - Analyzes impact on small query performance
-  - Recommends appropriate values based on workload characteristics
+| Check | Finding | Priority | Description |
+|-------|---------|----------|-------------|
+| 7001 | Auto-Shrink Enabled | Medium (30) | Actively harmful config |
+| 7002 | Auto-Close Enabled | Low (40) | Causes connection delays |
+| 7003 | Restricted Access Mode | High (20) | Apps can't connect |
+| 7004 | Auto Stats Disabled | Medium (30) | Causes stale statistics |
+| 7005 | ANSI Settings | Informational (50) | Non-standard ANSI settings |
+| 7006 | Query Store Not Enabled | Informational (50) | Missed opportunity |
+| 7007 | Non-Default Recovery Time | Informational (50) | Awareness |
+| 7008 | Delayed Durability | Medium (30) | Data loss risk on crash |
+| 7009 | ADR Not Enabled | Low (40) | Recommendation for SI/RCSI databases |
+| 7010 | Ledger Feature Enabled | Informational (50) | Awareness of overhead |
+| 7011 | Query Store State Mismatch | Medium (30) | QS not working as intended |
+| 7012 | Query Store Suboptimal Config | Low (40) | Tuning recommendation |
+| 7020 | Non-Default DB Scoped Config | Informational (50) | Awareness |
 
-#### Server Stability
-- **Memory Dumps Analysis** (check_id 4102)
-  - Detects SQL Server memory dumps indicating stability issues
-  - Calculates frequency of dumps relative to uptime
-  - Provides guidance for dump analysis and resolution
+### Database File Settings
 
-- **Deadlock Detection** (check_id 4103)
-  - Identifies deadlock frequency and patterns
-  - Tracks deadlocks per day since server startup
-  - Indicates potential application concurrency issues
-
-#### Advanced Configuration Settings
-- **Priority Boost** (check_id 1005)
-  - Detects when priority boost is enabled
-  - Warns about potential issues with Windows scheduling priorities
-  - Provides guidance on recommended settings
-
-- **Lightweight Pooling** (check_id 1006)
-  - Identifies when lightweight pooling (fiber mode) is enabled
-  - Warns about potential compatibility issues with OLEDB providers
-  - Explains performance implications and alternatives
-
-- **Affinity Mask** (check_id 1008)
-  - Detects when the affinity mask has been manually configured
-  - Warns about potential limitations on SQL Server CPU usage
-  - Provides guidance for CPU binding scenarios
-
-- **Affinity I/O Mask** (check_id 1009)
-  - Identifies when the affinity I/O mask has been manually configured
-  - Warns about binding I/O completion to specific CPUs
-  - Explains when this specialized configuration might be appropriate
-
-- **Affinity64 Mask** (check_id 1010)
-  - Detects when affinity64 mask has been manually configured
-  - Identifies potential CPU usage limitations on high-CPU systems
-  - Provides guidance for proper configuration
-
-- **Affinity64 I/O Mask** (check_id 1011)
-  - Identifies when affinity64 I/O mask has been manually configured
-  - Warns about binding I/O completion on high-CPU systems
-  - Explains performance implications and alternatives
-
-#### Resource Governor
-- **Resource Governor State** (check_id 4107)
-  - Detects if Resource Governor is enabled
-  - Provides scripts to examine resource pool and workload group settings
-  - Analyzes impact on workload performance
-
-#### Server-level Settings
-- **SQL Server Edition and Configuration Options** (server_info)
-  - Documents product version, edition, and key server properties
-  - Shows non-default global configuration settings
-  - Lists globally enabled trace flags
-  - Identifies offline CPU schedulers or other configuration issues
-
-#### TempDB Configuration
-- **TempDB Files and Settings** (check_id 5000-5003)
-  - Verifies proper number of TempDB data files based on CPU count
-  - Checks for equal file sizes and settings
-  - Identifies suboptimal growth settings
-  - Analyzes TempDB contention indicators
-
-- **Potentially Disruptive DBCC Commands** (check_id 5003)
-  - Detects execution of DBCC FREEPROCCACHE, FREESYSTEMCACHE, DROPCLEANBUFFERS
-  - Identifies DBCC SHRINKDATABASE and SHRINKFILE operations
-  - Warns about performance impact on production environments
-
-### Storage Performance (6000-series)
-
-- **I/O Stall Statistics** (check_id 6201)
-  - Tracks read/write stalls per database
-  - Identifies databases experiencing I/O bottlenecks
-  - Calculates average stall times for reads and writes
-  - Differentiates between data and log file performance issues
-
-- **Storage Performance by File** (check_id 6202-6204)
-  - Analyzes performance metrics for each database file
-  - Identifies specific files causing I/O bottlenecks
-
-- **Auto-growth Events** (server_info)
-  - Captures slow auto-growth events for data and log files
-  - Reports frequency and average duration
-
-### Database Configuration (7000-series)
-
-- **Basic Database Settings** (check_id 7001-7010)
-  - Auto-shrink (7001): Performance impact of cyclic shrink/grow operations
-  - Auto-close (7002): Connection delay impact
-  - Restricted access mode (7003): Non-multi-user modes
-  - Statistics settings (7004): Auto create/update statistics disabled
-  - ANSI settings (7005): Non-standard ANSI settings
-  - Query Store status (7006): Not enabled
-  - Recovery time target (7007): Non-default settings
-  - Transaction durability (7008): Delayed durability modes
-  - Accelerated Database Recovery (7009): Missing ADR with snapshot isolation
-  - Ledger feature (7010): Performance overhead of blockchain features
-
-- **Query Store Health** (check_id 7011-7012)
-  - State mismatch (7011): Desired state doesn't match actual state
-  - Suboptimal configuration (7012): Identifies settings that might limit effectiveness
-
-- **Database Scoped Configurations** (check_id 7020)
-  - Identifies non-default DSC settings
-  - Explains the performance impact of each setting
-
-- **Database File Settings** (check_id 7101-7104)
-  - Percentage growth for data files (7101): Risk of increasingly larger growth events
-  - Percentage growth for log files (7102): Higher priority due to zeroing impact
-  - Non-optimal log growth increments (7103): Missing 64MB setting for instant log initialization
-  - Extremely large growth increments (7104): Growth settings >10GB that may cause stalls
+| Check | Finding | Priority | Description |
+|-------|---------|----------|-------------|
+| 7101 | % Growth on Data File | Low (40) | Reports growth % and current file size |
+| 7102 | % Growth on Log File | Medium (30) | Reports growth % and current file size |
+| 7103 | Non-Optimal Log Growth | Low (40) | Not 64 MB on SQL 2022+/Azure |
+| 7104 | Extremely Large Growth | Low (40) | Fixed growth >10 GB |
 
 ## Results Organization
 
-Results are organized by check_id ranges to help prioritize focus areas:
+Results are organized by check_id ranges:
 
-- **4000-series**: Server configuration issues (memory, CPU, stability)
-- **5000-series**: TempDB configuration problems
-- **6000-series**: Resource-specific performance issues (waits, I/O, CPU)
-- **7000-series**: Database configuration issues
+- **1000-series**: Server configuration settings
+- **2000-series**: TempDB configuration
+- **3000-series**: Storage performance (file-level I/O)
+- **4000-series**: Server health (memory, CPU, stability)
+- **5000-series**: Trace events (auto-growth, deadlocks, DBCC)
+- **6000-series**: Resource performance (waits, I/O, memory)
+- **7000-series**: Database configuration
 
-## Results Interpretation
-
-Results are returned in two sections:
+Results are returned in two result sets:
 
 1. **Server Information**: General server metrics and configuration details
-   - Displays as info_type/value pairs
-   - Includes version, resource usage, configuration settings
-   - Shows wait statistics summary and resource utilization
+2. **Performance Check Results**: Specific findings sorted by priority, with a `priority_label` column for readability
 
-2. **Performance Check Results**: Specific findings from all checks
-   - Sorted by priority (lower numbers = higher priority)
-   - Grouped by category for easier analysis
-   - Includes details with explanations and recommendations
-   - Contains URLs to documentation and troubleshooting guidance
+## Documentation
+
+Full documentation: [erikdarling.com/sp_perfcheck](https://erikdarling.com/sp_perfcheck/)
 
 ## Credits
 

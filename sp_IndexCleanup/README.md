@@ -98,5 +98,5 @@ EXECUTE dbo.sp_IndexCleanup
 - When using @get_all_databases, results for all databases are combined in a single result set
 - The index_count column for the SUMMARY row in the output table will likely indicate a lower number than is shown at the DATABASE level.  The SUMMARY level only includes indexes that have been analyzed; excluding things like clustered indexes, heaps, xml indexes, etc.  The DATABASE level index_count value is the total number of indexes in the database.
 
-Copyright 2024 Darling Data, LLC  
+Copyright 2026 Darling Data, LLC  
 Released under MIT license

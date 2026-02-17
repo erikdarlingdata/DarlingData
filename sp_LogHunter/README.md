@@ -19,7 +19,7 @@ It helps you give you a fuller, better picture of any bad stuff happening.
 | @days_back           | integer   | how many days back you want to search the logs | an integer; will be converted to a negative number automatically             | -7           |
 | @start_date          | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
 | @end_date            | datetime  | if you want to search a specific time frame    | a datetime value                                                             | NULL         |
-| @custom_message      | nvarchar  | if you want to search for a custom string      | something specific you want to search for. no wildcards or substitions.      | NULL         |
+| @custom_message      | nvarchar  | if you want to search for a custom string      | something specific you want to search for. no wildcards or substitutions.      | NULL         |
 | @custom_message_only | bit       | only search for the custom string              | NULL, 0, 1                                                                   | 0            |
 | @first_log_only      | bit       | only search through the first error log        | NULL, 0, 1                                                                   | 0            |
 | @language_id         | integer   | to use something other than English            | SELECT DISTINCT m.language_id FROM sys.messages AS m ORDER BY m.language_id; | 1033         |

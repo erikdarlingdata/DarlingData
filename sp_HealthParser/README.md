@@ -33,10 +33,12 @@ Typical result set will show you:
 | @end_date                    | datetimeoffset | latest date to show data for, will be internally converted to UTC   | a reasonable date                                                     | current date    |
 | @warnings_only               | bit            | only show rows where a warning was reported                         | NULL, 0, 1                                                            | 0               |
 | @database_name               | sysname        | database name to show blocking events for                           | the name of a database                                                | NULL            |
-| @wait_duration_ms            | bigint         | minimum wait duration                                               | the minimum duration of a wait for queries with interesting waits     | 0               |
+| @wait_duration_ms            | bigint         | minimum wait duration                                               | the minimum duration of a wait for queries with interesting waits     | 500             |
 | @wait_round_interval_minutes | bigint         | interval to round minutes to for wait stats                         | interval to round minutes to for top wait stats by count and duration | 60              |
 | @skip_locks                  | bit            | skip the blocking and deadlocking section                           | 0 or 1                                                                | 0               |
+| @skip_waits                  | bit            | skip the wait stats section                                         | 0 or 1                                                                | 0               |
 | @pending_task_threshold      | integer        | minimum number of pending tasks to display                          | a valid integer                                                       | 10              |
+| @use_ring_buffer             | bit            | use ring_buffer target instead of file target for faster collection | 0 or 1                                                                | 0               |
 | @log_to_table                | bit            | enable logging to permanent tables                                  | 0 or 1                                                                | 0               |
 | @log_database_name           | sysname        | database to store logging tables                                    | valid database name                                                   | NULL            |
 | @log_schema_name             | sysname        | schema to store logging tables                                      | valid schema name                                                     | NULL            |
