@@ -5,6 +5,7 @@ on:
       - main
 permissions:
   contents: write
+  pull-requests: write
 jobs:
   build-sql-file:
     runs-on: ubuntu-latest
@@ -13,11 +14,6 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
-      - name: Checkout Code
-        run: |
-          git config --global user.name 'Darling Data'
-          git config --global user.email 'erik@erikdarling.com'
-          git checkout
       - name: Trim trailing whitespace and replace Tabs
         shell: pwsh
         run: |
@@ -35,23 +31,27 @@ jobs:
                   if ($CharArray[$charIdx] -eq "`t") {
                       $currentTab = $tabSize - (($charIdx + $slidingOffset) % $tabSize)
                       $slidingOffset += $currentTab - 1
-                      $lineOutput += (" " * $currentTab) 
+                      $lineOutput += (" " * $currentTab)
                   }
                   else {
-                      $lineOutput += $CharArray[$charIdx] 
+                      $lineOutput += $CharArray[$charIdx]
                   }
               }
               $outputString += $lineOutput.TrimEnd() + "`n"   # Add line output with trailing spaces removed to the output string, and add newline
             }
             Set-Content -Path $fullPath -Value ($outputString.TrimEnd())
-          }  
+          }
       - name: Compile SQL File
         shell: pwsh
-        run: | 
+        run: |
           cd Install-All
           ./Merge-All.ps1
-      - name: Commit Updated File
-        run: |
-          git add .
-          git commit -am "Automation: Format and Build SQL File"
-          git push
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          commit-message: "Automation: Format and Build SQL File"
+          branch: automation/format-and-build
+          title: "Automation: Format and Build SQL File"
+          body: "Auto-generated formatting and rebuild of Install-All/DarlingData.sql"
+          delete-branch: true
