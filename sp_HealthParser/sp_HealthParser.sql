@@ -49,6 +49,7 @@ ALTER PROCEDURE
     @wait_duration_ms bigint = 500, /*Minimum duration to show query waits*/
     @wait_round_interval_minutes bigint = 60, /*Nearest interval to round wait stats to*/
     @skip_locks bit = 0, /*Skip the blocking and deadlocks*/
+    @skip_waits bit = 0, /*Skip the wait stats*/
     @pending_task_threshold integer = 10, /*Minimum number of pending tasks to care about*/
     @log_to_table bit = 0, /*enable logging to permanent tables*/
     @log_database_name sysname = NULL, /*database to store logging tables*/
@@ -70,8 +71,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '3.2.5',
-        @version_date = '20260206';
+        @version = '3.3',
+        @version_date = '20260216';
 
     IF @help = 1
     BEGIN
@@ -101,6 +102,7 @@ BEGIN
                     WHEN N'@wait_duration_ms' THEN N'minimum wait duration'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for wait stats'
                     WHEN N'@skip_locks' THEN N'skip the blocking and deadlocking section'
+                    WHEN N'@skip_waits' THEN N'skip the wait stats section'
                     WHEN N'@pending_task_threshold' THEN N'minimum number of pending tasks to display'
                     WHEN N'@log_to_table' THEN N'enable logging to permanent tables instead of returning results'
                     WHEN N'@log_database_name' THEN N'database to store logging tables'
@@ -123,6 +125,7 @@ BEGIN
                     WHEN N'@wait_duration_ms' THEN N'the minimum duration of a wait for queries with interesting waits'
                     WHEN N'@wait_round_interval_minutes' THEN N'interval to round minutes to for top wait stats by count and duration'
                     WHEN N'@skip_locks' THEN N'0 or 1'
+                    WHEN N'@skip_waits' THEN N'0 or 1'
                     WHEN N'@pending_task_threshold' THEN N'a valid integer'
                     WHEN N'@log_to_table' THEN N'0 or 1'
                     WHEN N'@log_database_name' THEN N'any valid database name'
@@ -145,6 +148,7 @@ BEGIN
                     WHEN N'@wait_duration_ms' THEN N'500'
                     WHEN N'@wait_round_interval_minutes' THEN N'60'
                     WHEN N'@skip_locks' THEN N'0'
+                    WHEN N'@skip_waits' THEN N'0'
                     WHEN N'@pending_task_threshold' THEN N'10'
                     WHEN N'@log_to_table' THEN N'0'
                     WHEN N'@log_database_name' THEN N'NULL (current database)'
@@ -456,6 +460,7 @@ AND   ca.utc_timestamp < @end_date';
         @wait_duration_ms = ISNULL(@wait_duration_ms, 500),
         @wait_round_interval_minutes = ISNULL(@wait_round_interval_minutes, 60),
         @skip_locks = ISNULL(@skip_locks, 0),
+        @skip_waits = ISNULL(@skip_waits, 0),
         @pending_task_threshold = ISNULL(@pending_task_threshold, 10);
 
     /*Validate what to check*/
@@ -1348,6 +1353,9 @@ AND   ca.utc_timestamp < @end_date';
                         WHEN v.area_name = 'locking'
                         AND  @skip_locks = 1
                         THEN 0
+                        WHEN v.area_name = 'waits'
+                        AND  @skip_waits = 1
+                        THEN 0
                         ELSE 1
                     END
                 WHEN @what_to_check = v.area_name
@@ -1454,7 +1462,8 @@ AND   ca.utc_timestamp < @end_date';
     );
 
     /*The more you ignore waits, the worser they get*/
-    IF @what_to_check IN ('all', 'waits')
+    IF  @what_to_check IN ('all', 'waits')
+    AND @skip_waits = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -1674,7 +1683,8 @@ AND   ca.utc_timestamp < @end_date';
             FROM #ring_buffer AS x;
         END;
 
-        IF @what_to_check IN ('all', 'waits')
+        IF  @what_to_check IN ('all', 'waits')
+        AND @skip_waits = 0
         BEGIN
             IF @debug = 1
             BEGIN
@@ -1883,7 +1893,8 @@ AND   ca.utc_timestamp < @end_date';
     END;
 
     /*Parse out the wait_info data*/
-    IF @what_to_check IN ('all', 'waits')
+    IF  @what_to_check IN ('all', 'waits')
+    AND @skip_waits = 0
     BEGIN
         IF @debug = 1
         BEGIN
@@ -1969,6 +1980,8 @@ AND   ca.utc_timestamp < @end_date';
                             WHEN @what_to_check NOT IN ('all', 'waits')
                             THEN 'waits skipped, @what_to_check set to ' +
                                  @what_to_check
+                            WHEN @skip_waits = 1
+                            THEN 'waits skipped, @skip_waits set to 1'
                             WHEN @what_to_check IN ('all', 'waits')
                             THEN 'no queries with significant waits found between ' +
                                  RTRIM(CONVERT(date, @start_date)) +
@@ -2221,6 +2234,8 @@ AND   ca.utc_timestamp < @end_date';
                             WHEN @what_to_check NOT IN ('all', 'waits')
                             THEN 'waits skipped, @what_to_check set to ' +
                                  @what_to_check
+                            WHEN @skip_waits = 1
+                            THEN 'waits skipped, @skip_waits set to 1'
                             WHEN @what_to_check IN ('all', 'waits')
                             THEN 'no significant waits found between ' +
                                  RTRIM(CONVERT(date, @start_date)) +
@@ -2479,6 +2494,8 @@ AND   ca.utc_timestamp < @end_date';
                             WHEN @what_to_check NOT IN ('all', 'waits')
                             THEN 'waits skipped, @what_to_check set to ' +
                                  @what_to_check
+                            WHEN @skip_waits = 1
+                            THEN 'waits skipped, @skip_waits set to 1'
                             WHEN @what_to_check IN ('all', 'waits')
                             THEN 'no significant waits found between ' +
                                  RTRIM(CONVERT(date, @start_date)) +
