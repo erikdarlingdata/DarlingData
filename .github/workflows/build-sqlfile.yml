@@ -1,19 +1,28 @@
 name: Format and Regenerate SQL Main File
-on: 
+on:
   push:
     branches:
       - main
 permissions:
   contents: write
-  pull-requests: write
 jobs:
   build-sql-file:
     runs-on: ubuntu-latest
     steps:
+      - name: Generate App Token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.PAT_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Configure Git
+        run: |
+          git config --global user.name 'Darling Data'
+          git config --global user.email 'erik@erikdarling.com'
       - name: Trim trailing whitespace and replace Tabs
         shell: pwsh
         run: |
@@ -46,12 +55,9 @@ jobs:
         run: |
           cd Install-All
           ./Merge-All.ps1
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          commit-message: "Automation: Format and Build SQL File"
-          branch: automation/format-and-build
-          title: "Automation: Format and Build SQL File"
-          body: "Auto-generated formatting and rebuild of Install-All/DarlingData.sql"
-          delete-branch: true
+      - name: Commit and Push
+        run: |
+          git add .
+          git diff --staged --quiet && echo "No changes to commit" && exit 0
+          git commit -m "Automation: Format and Build SQL File"
+          git push
