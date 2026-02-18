@@ -64,8 +64,8 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.2.5',
-        @version_date = N'20260206';
+        @version = N'2.3',
+        @version_date = N'20260217';
 
     /*
     Help section, for help.
@@ -279,8 +279,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @has_percent_growth bit,
         @has_fixed_growth bit,
         /* Storage performance variables */
-        @slow_read_ms decimal(10, 2) = 100.0, /* Threshold for slow reads (ms) */
-        @slow_write_ms decimal(10, 2) = 100.0, /* Threshold for slow writes (ms) */
+        @slow_read_ms decimal(10, 2) = 500.0, /* Threshold for slow reads (ms) */
+        @slow_write_ms decimal(10, 2) = 500.0, /* Threshold for slow writes (ms) */
         /* Set threshold for "slow" autogrowth (in ms) */
         @slow_autogrow_ms integer = 1000,  /* 1 second */
         @trace_path nvarchar(260),
@@ -877,7 +877,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 4001,
-            priority = 20, /* Very high priority */
+            priority = 10, /* Critical: missing CPU resources */
             category = N'CPU Configuration',
             finding = N'Offline CPU Schedulers',
             details =
@@ -886,7 +886,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(10), (SELECT cpu_count FROM sys.dm_os_sys_info)) +
                 N' logical processors. This reduces available processing power. ' +
                 N'Check affinity mask configuration, licensing, or VM CPU cores/sockets',
-            url = N'https://erikdarling.com/sp_PerfCheck/#OfflineCPU'
+            url = N'https://erikdarling.com/sp_perfcheck/#OfflineCPU'
         FROM sys.dm_os_schedulers AS dos
         WHERE dos.is_online = 0
         HAVING
@@ -909,7 +909,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 4101,
-            priority = 30, /* High priority */
+            priority = 20, /* High: active memory spills */
             category = N'Memory Pressure',
             finding = N'Memory-Starved Queries Detected',
             details =
@@ -917,7 +917,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
                 N' forced memory grants. ' +
                 N'Queries are being forced to run with less memory than requested, which can cause spills to tempdb and poor performance.',
-            url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+            url = N'https://erikdarling.com/sp_perfcheck/#MemoryStarved'
         FROM sys.dm_exec_query_resource_semaphores AS ders
         WHERE ders.forced_grant_count > 0
         HAVING
@@ -936,7 +936,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 4103,
-            priority = 30, /* High priority */
+            priority = 20, /* High: queries can't get memory */
             category = N'Memory Pressure',
             finding = N'Memory-Starved Queries Detected',
             details =
@@ -944,7 +944,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
                 N' memory grant timeouts. ' +
                 N'Queries are waiting for memory for a long time and giving up.',
-            url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+            url = N'https://erikdarling.com/sp_perfcheck/#MemoryStarved'
         FROM sys.dm_exec_query_resource_semaphores AS ders
         WHERE ders.timeout_error_count > 0
         HAVING
@@ -971,7 +971,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             SELECT
                 check_id = 4102,
-                priority = 20, /* Very high priority */
+                priority = 10, /* Critical: server crashing */
                 category = N'Server Stability',
                 finding = N'Memory Dumps Detected In Last 90 Days',
                 details =
@@ -982,7 +982,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N' at ' +
                     MAX(dsmd.filename) +
                     N'. Check the SQL Server error log and Windows event logs.',
-                url = N'https://erikdarling.com/sp_PerfCheck#MemoryDumps'
+                url = N'https://erikdarling.com/sp_perfcheck/#MemoryDumps'
             FROM sys.dm_server_memory_dumps AS dsmd
             WHERE dsmd.creation_time >= DATEADD(DAY, -90, SYSDATETIME())
             HAVING
@@ -1022,7 +1022,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         0
                     )
                 ) > 100
-                THEN 20 /* Very high priority */
+                THEN 20 /* High: >100 deadlocks/day */
                 WHEN
                 (
                     1.0 *
@@ -1038,8 +1038,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         0
                     )
                 ) > 50
-                THEN 30 /* High priority */
-                ELSE 40 /* Medium-high priority */
+                THEN 20 /* High: >50 deadlocks/day is still severe */
+                ELSE 30 /* Medium: >9 deadlocks/day */
             END,
         category = N'Concurrency',
         finding = N'High Number of Deadlocks',
@@ -1064,7 +1064,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N' hours since startup. ' +
                     N'High deadlock rates indicate concurrency issues that should be investigated.'
             END,
-        url = N'https://erikdarling.com/sp_PerfCheck#Deadlocks'
+        url = N'https://erikdarling.com/sp_perfcheck/#Deadlocks'
     FROM sys.dm_os_performance_counters AS p
     CROSS JOIN sys.dm_os_sys_info AS osi
     WHERE RTRIM(p.counter_name) = N'Number of Deadlocks/sec'
@@ -1102,12 +1102,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         priority =
             CASE
                 WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 5
-                THEN 20 /* Very high priority >5GB */
-                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) BETWEEN 2 AND 5
-                THEN 30 /* High priority >2GB */
-                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) BETWEEN 1 AND 2
-                THEN 40 /* Medium-high priority >1GB */
-                ELSE 50 /* Medium priority */
+                THEN 20 /* High: >5GB security cache is severe */
+                WHEN CONVERT(decimal(10, 2), (domc.pages_kb / 1024.0 / 1024.0)) > 2
+                THEN 30 /* Medium: 2-5GB security cache */
+                ELSE 40 /* Low: 1-2GB security cache */
             END,
         category = N'Memory Usage',
         finding = N'Large Security Token Cache',
@@ -1117,11 +1115,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N' GB. Large security caches can consume significant memory and may indicate security-related issues ' +
             N'such as excessive application role usage or frequent permission changes. ' +
             N'Consider using dbo.ClearTokenPerm stored procedure to manage this issue.',
-        url = N'https://erikdarling.com/sp_PerfCheck#SecurityToken'
+        url = N'https://erikdarling.com/sp_perfcheck/#SecurityToken'
     FROM sys.dm_os_memory_clerks AS domc
     WHERE domc.type = N'USERSTORE_TOKENPERM'
     AND   domc.name = N'TokenAndPermUserStore'
-    AND   domc.pages_kb >= 500000; /* Only if bigger than 500MB */
+    AND   domc.pages_kb >= 1048576; /* Only if bigger than 1 GB */
 
     /* Get physical memory for LPIM check */
     SELECT
@@ -1150,14 +1148,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 4105,
-            priority = 50, /* Medium priority */
+            priority = 40, /* Low: best practice */
             category = N'Memory Configuration',
             finding = N'Lock Pages in Memory Not Enabled',
             details =
                 N'SQL Server is not using locked pages in memory (LPIM). This can lead to Windows ' +
                 N'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
                 N'For production SQL Servers with more than 64GB of memory, LPIM should be enabled.',
-            url = N'https://erikdarling.com/sp_PerfCheck#LPIM'
+            url = N'https://erikdarling.com/sp_perfcheck/#LPIM'
         FROM sys.dm_os_sys_info AS osi
         WHERE osi.sql_memory_model_desc = N'CONVENTIONAL' /* Conventional means not using LPIM */
         AND   @physical_memory_gb >= 32 /* Only recommend for servers with >=32GB RAM */;
@@ -1209,14 +1207,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT TOP (1)
             check_id = 4106,
-            priority = 50, /* Medium priority */
+            priority = 40, /* Low: best practice */
             category = N'Storage Configuration',
             finding = N'Instant File Initialization Disabled',
             details =
                 N'Instant File Initialization is not enabled. This can significantly slow down database file ' +
                 N'creation and growth operations, as SQL Server must zero out data files before using them. ' +
                 N'Enable this feature by granting the "Perform Volume Maintenance Tasks" permission to the SQL Server service account.',
-            url = N'https://erikdarling.com/sp_PerfCheck#IFI'
+            url = N'https://erikdarling.com/sp_perfcheck/#IFI'
         FROM sys.dm_server_services AS dss
         WHERE dss.filename LIKE N'%sqlservr.exe%'
         AND   dss.servicename LIKE N'SQL Server%'
@@ -1252,7 +1250,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             SELECT
                 check_id = 4107,
-                priority = 50, /* Medium priority */
+                priority = 50, /* Informational: may be intentional */
                 category = N'Resource Governor',
                 finding = N'Resource Governor Enabled',
                 details =
@@ -1268,7 +1266,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'/* Classifier function (if configured) */' + NCHAR(13) + NCHAR(10) +
                     N'SELECT cf.* FROM sys.resource_governor_configuration AS gc' + NCHAR(13) + NCHAR(10) +
                     N'CROSS APPLY (SELECT OBJECT_NAME(gc.classifier_function_id) AS classifier_function_name) AS cf;',
-                url = N'https://erikdarling.com/sp_PerfCheck#ResourceGovernor'
+                url = N'https://erikdarling.com/sp_perfcheck/#ResourceGovernor'
             FROM sys.resource_governor_configuration AS rgc
             WHERE rgc.is_enabled = 1;
         END
@@ -1559,8 +1557,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 priority =
                     CASE
                         WHEN te.event_class = 93
-                        THEN 40 /* Log file autogrow (higher priority) */
-                        ELSE 50 /* Data file autogrow */
+                        THEN 30 /* Medium: log file autogrow (zeroing required) */
+                        ELSE 40 /* Low: data file autogrow */
                     END,
                 category = N'Database File Configuration',
                 finding =
@@ -1584,7 +1582,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'Growth amount: ' +
                     CONVERT(nvarchar(20), CONVERT(decimal(18,2), te.file_growth * 8.0 / 1024.0)) +
                     N' MB. ',
-                url = N'https://erikdarling.com/sp_PerfCheck#AutoGrowth'
+                url = N'https://erikdarling.com/sp_perfcheck/#AutoGrowth'
             FROM #trace_events AS te
             WHERE te.event_class IN (92, 93) /* Auto-grow events */
             AND   te.duration_ms > @slow_autogrow_ms
@@ -1606,7 +1604,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             )
             SELECT TOP (10)
                 check_id = 5002,
-                priority = 60, /* Medium priority */
+                priority = 40, /* Low: harmful config executing */
                 category = N'Database File Configuration',
                 finding =
                     CASE
@@ -1624,7 +1622,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'. ' +
                     N'Auto-shrink is generally not recommended as it can lead to file fragmentation and ' +
                     N'repeated grow/shrink cycles. Consider disabling auto-shrink on this database.',
-                url = N'https://erikdarling.com/sp_PerfCheck#AutoShrink'
+                url = N'https://erikdarling.com/sp_perfcheck/#AutoShrink'
             FROM #trace_events AS te
             WHERE te.event_class IN (94, 95) /* Auto-shrink events */
             ORDER BY
@@ -1650,8 +1648,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%FREESYSTEMCACHE%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%DROPCLEANBUFFERS%'
                         OR   dbcc_cmd.dbcc_pattern LIKE N'%WRITEPAGE%'
-                        THEN 40 /* Higher priority */
-                        ELSE 60 /* Medium priority */
+                        THEN 30 /* Medium: destructive DBCC commands */
+                        ELSE 50 /* Informational: other DBCC commands */
                     END,
                 N'System Management',
                 N'Potentially Disruptive DBCC Commands',
@@ -1674,7 +1672,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CONVERT(nvarchar(30), MAX(te.event_time), 120) +
                 N'. These commands can impact server performance or database integrity. ' +
                 N'Review why these commands are being executed, especially if on a production system.',
-                N'https://erikdarling.com/sp_PerfCheck/#DisruptiveDBCC'
+                N'https://erikdarling.com/sp_perfcheck/#DisruptiveDBCC'
             FROM #trace_events AS te
             CROSS APPLY
             (
@@ -2006,12 +2004,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             priority =
                 CASE
                     WHEN ws.wait_time_percent_of_uptime > 100
-                    THEN 20 /* Very high priority if >100% of uptime */
+                    THEN 20 /* High: >100% of uptime */
                     WHEN ws.wait_time_percent_of_uptime > 75
-                    THEN 30 /* High priority if >75% of uptime */
+                    THEN 20 /* High: >75% of uptime */
                     WHEN ws.wait_time_percent_of_uptime >= 50
-                    THEN 40 /* Medium-high priority if >=50% of uptime */
-                    ELSE 50 /* Medium priority otherwise */
+                    THEN 30 /* Medium: >=50% of uptime */
+                    ELSE 40 /* Low: >=10% of uptime */
                 END,
             category = N'Wait Statistics',
             finding =
@@ -2033,7 +2031,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' ms per wait. ' +
                 N'Description: ' +
                 ws.description,
-            url = N'https://erikdarling.com/sp_PerfCheck#WaitStats'
+            url = N'https://erikdarling.com/sp_perfcheck/#WaitStats'
         FROM #wait_stats AS ws
         WHERE ws.wait_time_percent_of_uptime >= 10.0 /* Only include waits that are at least 10% of uptime */
         AND   ws.wait_type <> N'SLEEP_TASK'
@@ -2169,10 +2167,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     6101,
                     CASE
                         WHEN @signal_wait_ratio >= 50.0
-                        THEN 20 /* Very high priority if >=50% signal waits */
+                        THEN 20 /* High: >=50% signal waits */
                         WHEN @signal_wait_ratio >= 30.0
-                        THEN 30 /* High priority if >=30% signal waits */
-                        ELSE 40 /* Medium-high priority */
+                        THEN 30 /* Medium: >=30% signal waits */
+                        ELSE 40 /* Low: notable signal waits */
                     END,
                     N'CPU Scheduling',
                     N'High Signal Wait Ratio',
@@ -2181,7 +2179,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'%. This indicates significant CPU scheduling pressure. ' +
                     N'Processes are waiting to get scheduled on the CPU, which can impact query performance. ' +
                     N'Consider investigating high-CPU queries, reducing server load, or adding CPU resources.',
-                    N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
+                    N'https://erikdarling.com/sp_perfcheck/#CPUPressure'
                 );
             END;
 
@@ -2203,10 +2201,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     6102,
                     CASE
                         WHEN @sos_scheduler_yield_pct_of_uptime >= 50.0
-                        THEN 30 /* High priority if >=50% of uptime */
+                        THEN 20 /* High: >=50% of uptime in scheduler yields */
                         WHEN @sos_scheduler_yield_pct_of_uptime >= 30.0
-                        THEN 40 /* Medium-high priority if >=30% of uptime */
-                        ELSE 50 /* Medium priority */
+                        THEN 30 /* Medium: >=30% of uptime */
+                        ELSE 40 /* Low: >=25% of uptime */
                     END,
                     N'CPU Scheduling',
                     N'High SOS_SCHEDULER_YIELD Waits',
@@ -2215,7 +2213,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     N'% of server uptime. This indicates tasks frequently giving up their quantum of CPU time. ' +
                     N'This can be caused by CPU-intensive queries, causing threads to context switch frequently. ' +
                     N'Consider tuning queries with high CPU usage or adding CPU resources.',
-                    N'https://erikdarling.com/sp_PerfCheck#CPUPressure'
+                    N'https://erikdarling.com/sp_perfcheck/#CPUPressure'
                 );
             END;
         END;
@@ -2347,10 +2345,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     6002,
                     CASE
                         WHEN @stolen_memory_pct > 30
-                        THEN 30 /* High priority if >30% stolen */
+                        THEN 20 /* High: actively starving buffer pool */
                         WHEN @stolen_memory_pct > 15
-                        THEN 40 /* Medium-high priority if >15% stolen */
-                        ELSE 50 /* Medium priority */
+                        THEN 30 /* Medium: significant stolen memory */
+                        ELSE 40 /* Low: moderate stolen memory */
                     END,
                     N'Memory Usage',
                     N'High Stolen Memory Percentage',
@@ -2360,7 +2358,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     CONVERT(nvarchar(10), CONVERT(decimal(10, 1), ISNULL(@stolen_memory_pct, 0))) +
                     N'% of total memory). This reduces memory available for data caching and can impact performance. ' +
                     N'Consider investigating memory usage by CLR, extended stored procedures, linked servers, or other memory clerks.',
-                    N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+                    N'https://erikdarling.com/sp_perfcheck/#StolenMemory'
                 );
 
                 /* Also add the top 5 non-buffer pool memory consumers for visibility */
@@ -2376,7 +2374,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 )
                 SELECT TOP (5)
                     check_id = 6003,
-                    priority = 60, /* Informational priority */
+                    priority = 50, /* Informational: memory context */
                     category = N'Memory Usage',
                     finding =
                         N'Top Memory Consumer: ' +
@@ -2395,7 +2393,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             )
                         ) +
                         N' GB of memory. This is one of the top consumers of memory outside the buffer pool.',
-                    url = N'https://erikdarling.com/sp_PerfCheck#MemoryStarved'
+                    url = N'https://erikdarling.com/sp_perfcheck/#StolenMemory'
                 FROM sys.dm_os_memory_clerks AS domc
                 WHERE domc.type <> N'MEMORYCLERK_SQLBUFFERPOOL'
                 GROUP BY
@@ -2529,7 +2527,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 9997,
-                70, /* Medium priority */
+                50, /* Informational: collection error */
                 N'Errors',
                 N'Error Collecting IO Statistics',
                 N'Unable to collect IO stall statistics: ' + ERROR_MESSAGE()
@@ -2588,60 +2586,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ORDER BY
             i.avg_io_stall_ms DESC;
 
-        /* Add findings for significant I/O stalls */
-        INSERT INTO
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            details,
-            url
-        )
-        SELECT TOP (10)
-            check_id = 6201,
-            priority =
-                CASE
-                    WHEN io.avg_io_stall_ms >= 100.0
-                    THEN 30 /* High priority if >100ms */
-                    WHEN io.avg_io_stall_ms >= 50.0
-                    THEN 40 /* Medium-high priority if >50ms */
-                    ELSE 50 /* Medium priority */
-                END,
-            category = N'Storage Performance',
-            finding = N'High Database I/O Stalls',
-            database_name = io.database_name,
-            details =
-                N'Database ' +
-                io.database_name +
-                N' has average I/O stall of ' +
-                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_io_stall_ms)) +
-                N' ms. ' +
-                N'Read latency: ' +
-                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_read_stall_ms)) +
-                N' ms, Write latency: ' +
-                CONVERT(nvarchar(10), CONVERT(decimal(10, 2), io.avg_write_stall_ms)) +
-                N' ms. ' +
-                N'Total read: ' +
-                CONVERT(nvarchar(20), CONVERT(decimal(18, 2), io.read_io_mb)) +
-                N' MB, Total write: ' +
-                CONVERT(nvarchar(20), CONVERT(decimal(18, 2), io.write_io_mb)) +
-                N' MB. ' +
-                N'This indicates slow I/O subsystem performance for this database.',
-            url = N'https://erikdarling.com/sp_PerfCheck#IOStalls'
-        FROM #io_stalls_by_db AS io
-        WHERE
-            /* Only include databases with significant I/O and significant stalls */
-            io.total_io_mb > 1024.0 /* Only databases with at least 1024MB total I/O */
-        AND
-        (
-             io.avg_read_stall_ms >= @slow_read_ms
-          OR io.avg_write_stall_ms >= @slow_write_ms
-        )
-        ORDER BY
-            io.avg_io_stall_ms DESC;
+        /* Check 6201 (High Database I/O Stalls) removed — duplicated by file-level checks 3001/3002/3003 */
     END;
 
     /*
@@ -2769,7 +2714,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         VALUES
         (
             9996,
-            70, /* Medium priority */
+            50, /* Informational: collection error */
             N'Errors',
             N'Error Collecting File IO Statistics',
             N'Unable to collect file IO statistics: ' + ERROR_MESSAGE()
@@ -2794,8 +2739,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         priority =
             CASE
                 WHEN i.avg_read_latency_ms > @slow_read_ms * 2
-                THEN 40 /* Very slow */
-                ELSE 50 /* Moderately slow */
+                THEN 20 /* High: >1000ms is severe */
+                ELSE 30 /* Medium: >500ms is significant */
             END,
         category = N'Storage Performance',
         finding = N'Slow Read Latency',
@@ -2814,7 +2759,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'This is above the ' +
             CONVERT(nvarchar(10), CONVERT(integer, @slow_read_ms)) +
             N' ms threshold and may indicate storage performance issues.',
-        url = N'https://erikdarling.com/sp_PerfCheck#StoragePerformance'
+        url = N'https://erikdarling.com/sp_perfcheck/#StoragePerformance'
     FROM #io_stats AS i
     WHERE i.avg_read_latency_ms > @slow_read_ms
     AND   i.num_of_reads > 1000; /* Only alert if there's been a significant number of reads */
@@ -2837,8 +2782,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         priority =
             CASE
                 WHEN i.avg_write_latency_ms > @slow_write_ms * 2
-                THEN 40 /* Very slow */
-                ELSE 50 /* Moderately slow */
+                THEN 20 /* High: >1000ms is severe */
+                ELSE 30 /* Medium: >500ms is significant */
             END,
         category = N'Storage Performance',
         finding = N'Slow Write Latency',
@@ -2857,7 +2802,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'This is above the ' +
             CONVERT(nvarchar(10), CONVERT(integer, @slow_write_ms)) +
             N' ms threshold and may indicate storage performance issues.',
-        url = N'https://erikdarling.com/sp_PerfCheck#StoragePerformance'
+        url = N'https://erikdarling.com/sp_perfcheck/#StoragePerformance'
     FROM #io_stats AS i
     WHERE i.avg_write_latency_ms > @slow_write_ms
     AND   i.num_of_writes > 1000; /* Only alert if there's been a significant number of writes */
@@ -2875,7 +2820,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     SELECT
         check_id = 3003,
-        priority = 40, /* High priority */
+        priority = 20, /* High: systemic storage problem */
         category = N'Storage Performance',
         finding =
             N'Multiple Slow Files on Storage Location ' +
@@ -2890,7 +2835,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             CONVERT(nvarchar(10), CONVERT(decimal(10, 2), AVG(i.avg_io_latency_ms))) +
             N' ms. ' +
             N'This may indicate an overloaded drive or underlying storage issue.',
-        url = N'https://erikdarling.com/sp_PerfCheck#StoragePerformance'
+        url = N'https://erikdarling.com/sp_perfcheck/#StoragePerformance'
     FROM #io_stats AS i
     WHERE
     (
@@ -3086,7 +3031,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 1000,
-            priority = 70, /* Informational priority */
+            priority = 50, /* Informational: non-default config */
             category = N'Server Configuration',
             finding = N'Non-Default Configuration: ' + c.name,
             details =
@@ -3119,7 +3064,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHEN c.name = N'lightweight pooling' THEN N', Default: 0'
                     ELSE N', Default: Unknown'
                 END,
-            url = N'https://erikdarling.com/sp_PerfCheck#ServerSettings'
+            url = N'https://erikdarling.com/sp_perfcheck/#ServerSettings'
         FROM sys.configurations AS c
         WHERE
             /* Access check cache settings */
@@ -3225,7 +3170,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 9995,
-                70, /* Medium priority */
+                50, /* Informational: collection error */
                 N'Errors',
                 N'Error Collecting TempDB File Information',
                 N'Unable to collect TempDB file information: ' +
@@ -3325,7 +3270,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 2001,
-                50, /* High priority */
+                30, /* Medium: single file causes contention */
                 N'TempDB Configuration',
                 N'Single TempDB Data File',
                 N'TempDB has only one data file on a ' + CONVERT(nvarchar(10), @processors) +
@@ -3334,7 +3279,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHEN @processors > 8 THEN N'8'
                     ELSE CONVERT(nvarchar(10), @processors)
                 END + N' data files total.',
-                N'https://erikdarling.com/sp_PerfCheck#tempdb'
+                N'https://erikdarling.com/sp_perfcheck/#TempDB'
             );
         END;
 
@@ -3355,14 +3300,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 2002,
-                65, /* Medium priority */
+                50, /* Informational */
                 N'TempDB Configuration',
                 N'Odd Number of TempDB Files',
                 N'TempDB has ' + CONVERT(nvarchar(10), @tempdb_data_file_count) +
                 N' data files. This is an odd number and not equal to the ' +
                 CONVERT(nvarchar(10), @processors) + ' logical processors. ' +
                 N'Consider using an even number of files for better performance.',
-                N'https://erikdarling.com/sp_PerfCheck#tempdb'
+                N'https://erikdarling.com/sp_perfcheck/#TempDB'
             );
         END;
 
@@ -3382,7 +3327,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 2003,
-                70, /* Informational */
+                50, /* Informational */
                 N'TempDB Configuration',
                 N'More TempDB Files Than CPUs',
                 N'TempDB has ' +
@@ -3390,7 +3335,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' data files, which is more than the ' +
                 CONVERT(nvarchar(10), @processors) +
                 N' logical processors. ',
-                N'https://erikdarling.com/sp_PerfCheck#tempdb'
+                N'https://erikdarling.com/sp_perfcheck/#TempDB'
             );
         END;
 
@@ -3410,7 +3355,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 2004,
-                55, /* High-medium priority */
+                40, /* Low: uneven file sizes */
                 N'TempDB Configuration',
                 N'Uneven TempDB Data File Sizes',
                 N'TempDB data files vary in size by ' +
@@ -3420,7 +3365,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' GB, Largest: ' +
                 CONVERT(nvarchar(10), CONVERT(integer, @max_data_file_size)) +
                 N' GB. For best performance, TempDB data files should be the same size.',
-                N'https://erikdarling.com/sp_PerfCheck#tempdb'
+                N'https://erikdarling.com/sp_perfcheck/#TempDB'
             );
         END;
 
@@ -3441,12 +3386,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 2005,
-                55, /* High-medium priority */
+                40, /* Low: inconsistent growth settings */
                 N'TempDB Configuration',
                 N'Mixed TempDB Autogrowth Settings',
                 N'TempDB data files have inconsistent autogrowth settings - some use percentage growth and others use fixed size growth. ' +
                 N'This can lead to uneven file sizes over time. Use consistent settings for all files.',
-                N'https://erikdarling.com/sp_PerfCheck#tempdb'
+                N'https://erikdarling.com/sp_perfcheck/#TempDB'
             );
         END;
 
@@ -3466,12 +3411,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 2006,
-                50, /* High-medium priority */
+                40, /* Low: percent growth in tempdb */
                 N'TempDB Configuration',
                 N'Percentage Auto-Growth Setting in TempDB',
                 N'TempDB data files are using percentage growth settings. This can lead to increasingly larger growth events as files grow. ' +
                 N'TempDB is recreated on server restart, so using predictable fixed-size growth is recommended for better performance.',
-                N'https://erikdarling.com/sp_PerfCheck#tempdb'
+                N'https://erikdarling.com/sp_perfcheck/#TempDB'
             );
         END;
 
@@ -3494,7 +3439,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 2010,
-                40, /* High priority */
+                30, /* Medium: active contention */
                 N'TempDB Performance',
                 N'TempDB Allocation Contention Detected',
                 N'Server has spent ' +
@@ -3508,7 +3453,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHEN @processors > 8 THEN N'8'
                     ELSE CONVERT(nvarchar(10), @processors)
                 END + N' total to reduce allocation contention.',
-                N'https://erikdarling.com/sp_PerfCheck#tempdb-contention'
+                N'https://erikdarling.com/sp_perfcheck/#TempDB'
             );
         END;
 
@@ -3528,7 +3473,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1001,
-                50, /* High priority */
+                40, /* Low: config recommendation */
                 N'Server Configuration',
                 N'Min Server Memory Too Close To Max',
                 N'Min server memory (' +
@@ -3536,7 +3481,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' MB) is >= 90% of max server memory (' +
                 CONVERT(nvarchar(20), @max_server_memory) +
                 N' MB). This prevents SQL Server from dynamically adjusting memory.',
-                N'https://erikdarling.com/sp_PerfCheck/#MinMaxMemory'
+                N'https://erikdarling.com/sp_perfcheck/#MinMaxMemory'
             );
         END;
 
@@ -3564,7 +3509,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N' MB) is >= 95% of physical memory (' +
                 CONVERT(nvarchar(20), CONVERT(bigint, @physical_memory_gb * 1024)) +
                 N' MB). This may not leave enough memory for the OS and other processes.',
-                N'https://erikdarling.com/sp_PerfCheck/#MinMaxMemory'
+                N'https://erikdarling.com/sp_perfcheck/#MinMaxMemory'
             );
         END;
 
@@ -3585,13 +3530,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1003,
-                60, /* Medium priority */
+                40, /* Low: config recommendation */
                 N'Server Configuration',
                 N'MAXDOP Not Configured',
                 N'Max degree of parallelism is set to 0 (default) on a server with ' +
                 CONVERT(nvarchar(10), @processors) +
                 N' logical processors. This can lead to excessive parallelism.',
-                N'https://erikdarling.com/sp_PerfCheck/#MAXDOP'
+                N'https://erikdarling.com/sp_perfcheck/#MAXDOP'
             );
         END;
 
@@ -3611,13 +3556,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1004,
-                60, /* Medium priority */
+                40, /* Low: config recommendation */
                 N'Server Configuration',
                 N'Low Cost Threshold for Parallelism',
                 N'Cost threshold for parallelism is set to ' +
                 CONVERT(nvarchar(10), @cost_threshold) +
                 N'. Low values can cause excessive parallelism for small queries.',
-                N'https://erikdarling.com/sp_PerfCheck/#CostThreshold'
+                N'https://erikdarling.com/sp_perfcheck/#CostThreshold'
             );
         END;
 
@@ -3637,12 +3582,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1005,
-                30, /* High priority */
+                20, /* High: priority boost is dangerous */
                 N'Server Configuration',
                 N'Priority Boost Enabled',
                 N'Priority boost is enabled.
                   This can cause issues with Windows scheduling priorities and is not recommended.',
-                N'https://erikdarling.com/sp_PerfCheck/#PriorityBoost'
+                N'https://erikdarling.com/sp_perfcheck/#PriorityBoost'
             );
         END;
 
@@ -3662,12 +3607,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1006,
-                50, /* Medium priority */
+                40, /* Low: rarely beneficial */
                 N'Server Configuration',
                 N'Lightweight Pooling Enabled',
                 N'Lightweight pooling (fiber mode) is enabled.
                   This is rarely beneficial and can cause issues with OLEDB providers and other components.',
-                N'https://erikdarling.com/sp_PerfCheck/#LightweightPooling'
+                N'https://erikdarling.com/sp_perfcheck/#LightweightPooling'
             );
         END;
 
@@ -3687,13 +3632,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1008,
-                50, /* Medium priority */
+                50, /* Informational: may be intentional */
                 N'Server Configuration',
                 N'Affinity Mask Configured',
                 N'Affinity mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity_mask) +
                 N'. This can limit SQL Server CPU usage and should only be used when necessary for specific CPU binding scenarios.',
-                N'https://erikdarling.com/sp_PerfCheck/#AffinityMask'
+                N'https://erikdarling.com/sp_perfcheck/#AffinityMask'
             );
         END;
 
@@ -3713,13 +3658,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1009,
-                50, /* Medium priority */
+                50, /* Informational: may be intentional */
                 N'Server Configuration',
                 N'Affinity I/O Mask Configured',
                 N'Affinity I/O mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity_io_mask) +
                 N'. This binds I/O completion to specific CPUs and should only be used for specialized workloads.',
-                N'https://erikdarling.com/sp_PerfCheck/#AffinityIOMask'
+                N'https://erikdarling.com/sp_perfcheck/#AffinityIOMask'
             );
         END;
 
@@ -3739,13 +3684,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1010,
-                50, /* Medium priority */
+                50, /* Informational: may be intentional */
                 N'Server Configuration',
                 N'Affinity64 Mask Configured',
                 N'Affinity64 mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity64_mask) +
                 N'. This can limit SQL Server CPU usage on high-CPU systems and should be carefully evaluated.',
-                N'https://erikdarling.com/sp_PerfCheck/#Affinity64Mask'
+                N'https://erikdarling.com/sp_perfcheck/#Affinity64Mask'
             );
         END;
 
@@ -3765,13 +3710,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1011,
-                50, /* Medium priority */
+                50, /* Informational: may be intentional */
                 N'Server Configuration',
                 N'Affinity64 I/O Mask Configured',
                 N'Affinity64 I/O mask has been manually configured to ' +
                 CONVERT(nvarchar(20), @affinity64_io_mask) +
                 N'. This binds I/O completion on high-CPU systems and should be carefully evaluated.',
-                N'https://erikdarling.com/sp_PerfCheck/#Affinity64Mask'
+                N'https://erikdarling.com/sp_perfcheck/#Affinity64IOMask'
             );
         END;
 
@@ -3788,7 +3733,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 1007,
-            priority = 20, /* Very high priority */
+            priority = 10, /* Critical: server not running intended config */
             category = N'Server Configuration',
             finding = N'Configuration Pending Reconfigure',
             details =
@@ -3800,7 +3745,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N', ' +
                 N'Pending value: ' +
                 CONVERT(nvarchar(50), c.value),
-            url = N'https://erikdarling.com/sp_PerfCheck#ServerSettings'
+            url = N'https://erikdarling.com/sp_perfcheck/#ServerSettings'
         FROM sys.configurations AS c
         WHERE c.value <> c.value_in_use
         AND NOT
@@ -4208,13 +4153,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7001,
-            priority = 50,
+            priority = 30, /* Medium: actively harmful config */
             category = N'Database Configuration',
             finding = N'Auto-Shrink Enabled',
             database_name = d.name,
             details =
                 N'Database has auto-shrink enabled, which can cause significant performance problems.',
-            url = N'https://erikdarling.com/sp_PerfCheck#AutoShrink'
+            url = N'https://erikdarling.com/sp_perfcheck/#AutoShrink'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_auto_shrink_on = 1;
@@ -4233,14 +4178,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7002,
-            priority = 50,
+            priority = 40, /* Low: bad practice but less destructive */
             category = N'Database Configuration',
             finding = N'Auto-Close Enabled',
             database_name = d.name,
             details =
                 N'Database has auto-close enabled, which can cause connection delays while the database is reopened.
                  This setting can impact performance for applications that frequently connect to and disconnect from the database.',
-            url = N'https://erikdarling.com/sp_PerfCheck#AutoClose'
+            url = N'https://erikdarling.com/sp_perfcheck/#AutoClose'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_auto_close_on = 1;
@@ -4259,7 +4204,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7003,
-            priority = 30, /* High priority */
+            priority = 20, /* High: apps can't connect */
             category = N'Database Configuration',
             finding =
                 N'Restricted Access Mode: ' +
@@ -4269,7 +4214,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Database is not in MULTI_USER mode. Current mode: ' +
                 d.user_access_desc +
                 N'. This restricts normal database access and may prevent applications from connecting.',
-            url = N'https://erikdarling.com/sp_PerfCheck#RestrictedAccess'
+            url = N'https://erikdarling.com/sp_perfcheck/#RestrictedAccess'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.user_access_desc <> N'MULTI_USER';
@@ -4288,7 +4233,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7004,
-            priority = 40, /* Medium-high priority */
+            priority = 30, /* Medium: causes stale stats */
             category = N'Database Configuration',
             finding =
                 CASE
@@ -4313,7 +4258,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     AND  d.is_auto_create_stats_on = 1
                     THEN N'Auto update statistics is disabled. This can lead to poor query performance due to outdated statistics.'
                 END,
-            url = N'https://erikdarling.com/sp_PerfCheck#Statistics'
+            url = N'https://erikdarling.com/sp_perfcheck/#Statistics'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND
@@ -4336,7 +4281,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7005,
-            priority = 50, /* Medium priority */
+            priority = 50, /* Informational */
             category = N'Database Configuration',
             finding = N'ANSI Settings Require Review',
             database_name = d.name,
@@ -4352,7 +4297,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       CASE WHEN d.is_quoted_identifier_on = 0 THEN N'QUOTED_IDENTIFIER OFF (recommended ON), ' ELSE N'' END +
                 N'These settings may lead to inconsistent behavior, reduced feature compatibility, or unexpected query results ' +
                 N'if they do not align with recommended best practices.',
-            url = N'https://erikdarling.com/sp_PerfCheck#ANSISettings'
+            url = N'https://erikdarling.com/sp_perfcheck/#ANSISettings'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND
@@ -4381,14 +4326,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7006,
-            priority = 60, /* Informational priority */
+            priority = 50, /* Informational: missed opportunity */
             category = N'Database Configuration',
             finding = N'Query Store Not Enabled',
             database_name = d.name,
             details = N'Query Store is not enabled.'
                     + N' Consider enabling Query Store to track query performance'
                     + N' over time and identify regression issues.',
-            url = N'https://erikdarling.com/sp_PerfCheck#QueryStore'
+            url = N'https://erikdarling.com/sp_perfcheck/#QueryStore'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_query_store_on = 0
@@ -4404,14 +4349,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             SELECT
                 check_id = 7006,
-                priority = 60, /* Informational priority */
+                priority = 50, /* Informational: missed opportunity */
                 category = N''Database Configuration'',
                 finding = N''Query Store Not Enabled'',
                 database_name = @current_database_name,
                 details = N''Query Store is not enabled.
                           Consider enabling Query Store to track query performance
                           over time and identify regression issues.'',
-                url = N''https://erikdarling.com/sp_PerfCheck#QueryStore''
+                url = N''https://erikdarling.com/sp_perfcheck/#QueryStore''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_query_store_options AS qso
             WHERE qso.actual_state = 0 /* OFF */;';
 
@@ -4444,7 +4389,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             SELECT
                 check_id = 7011,
-                priority = 40, /* Medium-high priority */
+                priority = 30, /* Medium: QS not working as intended */
                 category = N''Database Configuration'',
                 finding = N''Query Store State Mismatch'',
                 database_name = @current_database_name,
@@ -4468,7 +4413,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN 524288 THEN N''Database has reached disk size limit.''
                         ELSE N''Unknown reason code: '' + CONVERT(nvarchar(20), qso.readonly_reason)
                     END,
-                url = N''https://erikdarling.com/sp_PerfCheck#QueryStoreHealth''
+                url = N''https://erikdarling.com/sp_perfcheck/#QueryStoreHealth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_query_store_options AS qso
             WHERE qso.desired_state <> 0 /* Not intentionally OFF */
             AND   qso.readonly_reason <> 8 /* Ignore AG secondaries */
@@ -4502,7 +4447,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             SELECT
                 check_id = 7012,
-                priority = 50, /* Medium priority */
+                priority = 40, /* Low: tuning recommendation */
                 category = N''Database Configuration'',
                 finding = N''Query Store Suboptimal Configuration'',
                 database_name = @current_database_name,
@@ -4525,7 +4470,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              CONVERT(nvarchar(20), qso.max_plans_per_query) +
                              ''. This may cause relevant plans to be purged prematurely.''
                     END,
-                url = N''https://erikdarling.com/sp_PerfCheck#QueryStoreHealth''
+                url = N''https://erikdarling.com/sp_perfcheck/#QueryStoreHealth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_query_store_options AS qso
             WHERE qso.actual_state = 2 /* Query Store is ON */
             AND
@@ -4714,7 +4659,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 )
                 SELECT
                     check_id = 7020,
-                    priority = 60, /* Informational priority */
+                    priority = 50, /* Informational: non-default config */
                     category = N'Database Configuration',
                     finding = N'Non-Default Database Scoped Configuration',
                     database_name = dsc.database_name,
@@ -4732,7 +4677,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             ELSE N''
                         END +
                         N'. ',
-                    url = N'https://erikdarling.com/sp_PerfCheck#DSC'
+                    url = N'https://erikdarling.com/sp_perfcheck/#DSC'
                 FROM #database_scoped_configs AS dsc
                 WHERE dsc.database_id = @current_database_id
                 AND   dsc.is_value_default = 0;
@@ -4764,7 +4709,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7007,
-            priority = 60, /* Informational priority */
+            priority = 50, /* Informational */
             category = N'Database Configuration',
             finding = N'Non-Default Target Recovery Time',
             database_name = d.name,
@@ -4772,7 +4717,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Database target recovery time is ' +
                 CONVERT(nvarchar(20), d.target_recovery_time_in_seconds) +
                 N' seconds, which differs from the default of 60 seconds. This affects checkpoint frequency and recovery time.',
-            url = N'https://erikdarling.com/sp_PerfCheck#RecoveryTime'
+            url = N'https://erikdarling.com/sp_perfcheck/#RecoveryTime'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.target_recovery_time_in_seconds <> 60;
@@ -4791,7 +4736,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7008,
-            priority = 50, /* Medium priority */
+            priority = 30, /* Medium: data loss risk on crash */
             category = N'Database Configuration',
             finding = N'Delayed Durability: ' + d.delayed_durability_desc,
             database_name = d.name,
@@ -4799,7 +4744,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Database uses ' +
                 d.delayed_durability_desc +
                 N' durability mode. This can improve performance but increases the risk of data loss during a server failure.',
-            url = N'https://erikdarling.com/sp_PerfCheck#TransactionDurability'
+            url = N'https://erikdarling.com/sp_perfcheck/#TransactionDurability'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.delayed_durability_desc <> N'DISABLED';
@@ -4818,14 +4763,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7009,
-            priority = 50, /* Medium priority */
+            priority = 40, /* Low: recommendation */
             category = N'Database Configuration',
             finding = N'Accelerated Database Recovery Not Enabled With Snapshot Isolation',
             database_name = d.name,
             details =
                 N'Database has Snapshot Isolation or RCSI enabled but Accelerated Database Recovery (ADR) is disabled. ' +
                 N'ADR can significantly improve performance with these isolation levels by reducing version store cleanup overhead.',
-            url = N'https://erikdarling.com/sp_PerfCheck#ADR'
+            url = N'https://erikdarling.com/sp_perfcheck/#ADR'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_accelerated_database_recovery_on = 0
@@ -4849,14 +4794,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         )
         SELECT
             check_id = 7010,
-            priority = 60, /* Informational priority */
+            priority = 50, /* Informational */
             category = N'Database Configuration',
             finding = N'Ledger Feature Enabled',
             database_name = d.name,
             details =
                 N'Database has the ledger feature enabled, which adds blockchain-like capabilities
                  but may impact performance due to additional overhead for maintaining cryptographic verification.',
-            url = N'https://erikdarling.com/sp_PerfCheck#Ledger'
+            url = N'https://erikdarling.com/sp_perfcheck/#Ledger'
         FROM #databases AS d
         WHERE d.database_id = @current_database_id
         AND   d.is_ledger_on = 1;
@@ -4869,7 +4814,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             SELECT
                 check_id = 7101,
-                priority = 40, /* Medium-high priority */
+                priority = 40, /* Low: best practice */
                 category = N''Database Files'',
                 finding = N''Percentage Auto-Growth Setting on Data File'',
                 database_name = @current_database_name,
@@ -4882,7 +4827,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     '' GB. This can lead to increasingly larger growth events as the file grows,
                     potentially causing larger file sizes than intended. Even with instant file initialization enabled,
                     consider using a fixed size instead for more predictable growth.'',
-                url = N''https://erikdarling.com/sp_PerfCheck#DataFileGrowth''
+                url = N''https://erikdarling.com/sp_perfcheck/#DataFileGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 1
             AND   mf.type_desc = N''ROWS'';';
@@ -4915,7 +4860,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             SELECT
                 check_id = 7102,
-                priority = 30, /* High priority */
+                priority = 30, /* Medium: log file percent growth */
                 category = N''Database Files'',
                 finding = N''Percentage Auto-Growth Setting on Log File'',
                 database_name = @current_database_name,
@@ -4923,10 +4868,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 details =
                     ''Transaction log file is using percentage growth setting ('' +
                     CONVERT(nvarchar(20), mf.growth) +
-                    ''%). This can lead to increasingly larger growth events and significant stalls
+                    ''%). Current file size is '' +
+                    CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.size * 8.0 / 1024 / 1024)) +
+                    '' GB. This can lead to increasingly larger growth events and significant stalls
                     as log files must be zeroed out during auto-growth operations.
                     Always use fixed size growth for log files.'',
-                url = N''https://erikdarling.com/sp_PerfCheck#LogFileGrowth''
+                url = N''https://erikdarling.com/sp_perfcheck/#LogFileGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 1
             AND   mf.type_desc = N''LOG'';';
@@ -4963,7 +4910,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
                 SELECT
                     check_id = 7103,
-                    priority = 40, /* Medium-high priority */
+                    priority = 40, /* Low: best practice for SQL 2022+ */
                     category = N''Database Files'',
                     finding = N''Non-Optimal Log File Growth Increment'',
                     database_name = @current_database_name,
@@ -4973,7 +4920,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         CONVERT(nvarchar(20), CONVERT(decimal(18, 2), mf.growth * 8.0 / 1024)) + '' MB. '' +
                         ''On SQL Server 2022, Azure SQL DB, or Azure MI, transaction logs can use instant file initialization when set to exactly 64 MB. '' +
                         ''Consider changing the growth increment to 64 MB for improved performance.'',
-                    url = N''https://erikdarling.com/sp_PerfCheck#LogGrowthSize''
+                    url = N''https://erikdarling.com/sp_perfcheck/#LogGrowthSize''
                 FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
                 WHERE mf.is_percent_growth = 0
                 AND   mf.type_desc = N''LOG''
@@ -5008,7 +4955,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
             SELECT
                 check_id = 7104,
-                priority = 40, /* Medium-high priority */
+                priority = 40, /* Low: very large growth increment */
                 category = N''Database Files'',
                 finding = N''Extremely Large Auto-Growth Setting'',
                 database_name = @current_database_name,
@@ -5027,7 +4974,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN mf.type_desc = N''LOG''
                         THEN N''This can cause significant stalls as log files must be zeroed out during growth operations.''
                     END,
-                url = N''https://erikdarling.com/sp_PerfCheck#LargeGrowth''
+                url = N''https://erikdarling.com/sp_perfcheck/#LargeGrowth''
             FROM ' + QUOTENAME(@current_database_name) + N'.sys.database_files AS mf
             WHERE mf.is_percent_growth = 0
             AND   mf.growth * CONVERT(decimal(18, 2), 8.0) /
@@ -5104,6 +5051,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SELECT
         r.check_id,
         r.priority,
+        priority_label =
+            CASE r.priority
+                WHEN 10 THEN N'Critical'
+                WHEN 20 THEN N'High'
+                WHEN 30 THEN N'Medium'
+                WHEN 40 THEN N'Low'
+                WHEN 50 THEN N'Informational'
+                ELSE N'Unknown'
+            END,
         r.category,
         r.finding,
         r.database_name,
