@@ -8580,6 +8580,13 @@ SELECT
     datc.details,
     datc.[state]
 FROM ' + @database_name_quoted + N'.sys.database_automatic_tuning_configurations AS datc
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE datc.type_value = qsp.query_id
+      )
 OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
