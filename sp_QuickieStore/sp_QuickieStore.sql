@@ -8585,7 +8585,7 @@ WHERE EXISTS
           SELECT
               1/0
           FROM #query_store_plan AS qsp
-          WHERE datc.type_value = qsp.query_id
+          WHERE TRY_CAST(datc.type_value AS bigint) = qsp.query_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
