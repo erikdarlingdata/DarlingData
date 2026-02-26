@@ -3231,7 +3231,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             der.statement_start_offset,
             der.statement_end_offset
         ) AS deqp
-        OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest' +
+        OUTER APPLY sys.dm_exec_sql_text(COALESCE(deqmg.sql_handle, deqmg.plan_handle)) AS dest' +
             CASE
                 WHEN @live_plans = 1
                 THEN N'
@@ -3929,7 +3929,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             ELSE DATEDIFF(MILLISECOND, der.start_time, SYSDATETIME())
                         END
             ) AS e
-            OUTER APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
+            OUTER APPLY sys.dm_exec_sql_text(COALESCE(der.sql_handle, der.plan_handle)) AS dest
             OUTER APPLY sys.dm_exec_text_query_plan
             (
                 der.plan_handle,
