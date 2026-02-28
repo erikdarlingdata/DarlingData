@@ -53,8 +53,8 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.0',
-        @version_date = '20260212';
+        @version = '1.3',
+        @version_date = '20260301';
 
     /*
     Help section

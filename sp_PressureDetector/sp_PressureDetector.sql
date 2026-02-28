@@ -78,8 +78,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '6.2.5',
-    @version_date = '20260206';
+    @version = '6.3',
+    @version_date = '20260301';
 
 
 IF @help = 1
@@ -2085,7 +2085,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
             N'Batch Requests/sec', N'SQL Compilations/sec', N'SQL Re-Compilations/sec', N'Longest Transaction Running Time', N'Log Bytes Flushed/sec',
             N'Lock waits', N'Log buffer waits', N'Log write waits', N'Memory grant queue waits', N'Network IO waits', N'Log Flush Write Time (ms)',
             N'Non-Page latch waits', N'Page IO latch waits', N'Page latch waits', N'Thread-safe memory objects waits', N'Wait for the worker',
-            N'Active parallel threads', N'Active requests', N'Blocked tasks', N'Query optimizations/sec', N'Queued requests', N'Reduced memory grants/sec'
+            N'Active parallel threads', N'Active requests', N'Blocked tasks', N'Query optimizations/sec', N'Queued requests', N'Reduced memory grants/sec',
+            N'Version Store Size (KB)', N'Free Space in tempdb (KB)', N'Active Temp Tables', N'Processes blocked', N'Full Scans/sec', N'Index Searches/sec',
+            N'Page Splits/sec', N'Free list stalls/sec', N'Workfiles Created/sec', N'Worktables Created/sec', N'Temp Tables Creation Rate', N'Version Generation rate (KB/s)',
+            N'Version Cleanup rate (KB/s)', N'Lock Timeouts/sec'
         );
 
 
@@ -3228,7 +3231,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             der.statement_start_offset,
             der.statement_end_offset
         ) AS deqp
-        OUTER APPLY sys.dm_exec_sql_text(deqmg.plan_handle) AS dest' +
+        OUTER APPLY sys.dm_exec_sql_text(COALESCE(deqmg.sql_handle, deqmg.plan_handle)) AS dest' +
             CASE
                 WHEN @live_plans = 1
                 THEN N'
@@ -3926,7 +3929,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             ELSE DATEDIFF(MILLISECOND, der.start_time, SYSDATETIME())
                         END
             ) AS e
-            OUTER APPLY sys.dm_exec_sql_text(der.plan_handle) AS dest
+            OUTER APPLY sys.dm_exec_sql_text(COALESCE(der.sql_handle, der.plan_handle)) AS dest
             OUTER APPLY sys.dm_exec_text_query_plan
             (
                 der.plan_handle,

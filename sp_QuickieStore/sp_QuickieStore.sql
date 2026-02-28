@@ -120,8 +120,8 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.2.5',
-    @version_date = '20260206';
+    @version = '6.3',
+    @version_date = '20260301';
 
 /*
 Helpful section! For help.
@@ -1093,6 +1093,7 @@ CREATE TABLE
     is_trivial_plan bit NOT NULL,
     is_parallel_plan bit NOT NULL,
     is_forced_plan bit NOT NULL,
+    toggle_forcing nvarchar(300) NOT NULL,
     is_natively_compiled bit NOT NULL,
     force_failure_count bigint NOT NULL,
     last_force_failure_reason_desc nvarchar(128) NULL,
@@ -1553,11 +1554,13 @@ INSERT INTO
     column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern
 )
 VALUES
+    (10, 'emergency_troubleshooting', 'toggle_forcing', 'toggle_forcing', 'qsp.toggle_forcing', 0, NULL, NULL, 1, NULL),
     (20, 'metadata', 'force_count', 'force_failure_count', 'qsp.force_failure_count', 0, NULL, NULL, 0, NULL),
     (30, 'metadata', 'force_reason', 'last_force_failure_reason_desc', 'qsp.last_force_failure_reason_desc', 0, NULL, NULL, 0, NULL),
     /* SQL 2022 specific columns */
     (40, 'sql_2022', 'feedback', 'has_query_feedback', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_plan_feedback AS qspf WHERE qspf.plan_id = qsp.plan_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
     (50, 'sql_2022', 'hints', 'has_query_store_hints', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_hints AS qsqh WHERE qsqh.query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
+    (55, 'sql_2022', 'hints', 'set_query_store_hints', '''EXECUTE ''+ QUOTENAME(DB_NAME(qsp.database_id)) + ''.sys.sp_query_store_set_hints @query_id = '' + CONVERT(nvarchar(20), qsq.query_id) + '', @query_hints = N''''OPTION(older_hints_go_here, USE HINT(''''''''newer_hints_go_here''''''''))'''';''', 1, 'sql_2022_views', 1, 1, NULL),
     (60, 'sql_2022', 'variants', 'has_plan_variants', 'CASE WHEN EXISTS (SELECT 1/0 FROM #query_store_query_variant AS qsqv WHERE qsqv.query_variant_query_id = qsp.query_id) THEN ''Yes'' ELSE ''No'' END', 1, 'sql_2022_views', 1, 0, NULL),
     (70, 'sql_2022', 'replay', 'has_compile_replay_script', 'qsp.has_compile_replay_script', 1, 'sql_2022_views', 1, 0, NULL),
     (80, 'sql_2022', 'opt_forcing', 'is_optimized_plan_forcing_disabled', 'qsp.is_optimized_plan_forcing_disabled', 1, 'sql_2022_views', 1, 0, NULL),
@@ -7018,6 +7021,14 @@ SELECT
     qsp.is_trivial_plan,
     qsp.is_parallel_plan,
     qsp.is_forced_plan,
+    toggle_forcing = 
+        CASE
+            qsp.is_forced_plan
+            WHEN 1
+            THEN ''EXECUTE ' + @database_name_quoted + '.sys.sp_query_store_unforce_plan @query_id = '' + CONVERT(nvarchar(20), qsp.query_id) +  '', @plan_id = '' + CONVERT(nvarchar(20), qsp.plan_id) + '';''
+            WHEN 0
+            THEN ''EXECUTE ' + @database_name_quoted + '.sys.sp_query_store_force_plan @query_id = '' + CONVERT(nvarchar(20), qsp.query_id) +  '', @plan_id = '' + CONVERT(nvarchar(20), qsp.plan_id) + '', @disable_optimized_plan_forcing = ? ;''
+        END,
     qsp.is_natively_compiled,
     qsp.force_failure_count,
     qsp.last_force_failure_reason_desc,
@@ -7110,6 +7121,7 @@ WITH
     is_trivial_plan,
     is_parallel_plan,
     is_forced_plan,
+    toggle_forcing,
     is_natively_compiled,
     force_failure_count,
     last_force_failure_reason_desc,
@@ -8583,6 +8595,7 @@ FROM
             WHEN @include_plan_hashes IS NOT NULL
             OR   @ignore_plan_hashes IS NOT NULL
             OR   @sort_order = 'plan count by hashes'
+            OR   @expert_mode = 1
             THEN N'
         qsp.query_plan_hash,'
             ELSE N''
@@ -9158,6 +9171,8 @@ BEGIN
                     qsqh.query_hint_id,
                     qsqh.query_id,
                     qsqh.query_hint_text,
+                    remove_hint =
+                        ''EXECUTE '' + QUOTENAME(DB_NAME(qsqh.database_id)) + ''.sys.sp_query_store_clear_hints @query_id = '' + CONVERT(nvarchar(20), qsqh.query_id) + '';'',
                     qsqh.last_query_hint_failure_reason_desc,
                     query_hint_failure_count = ' +
                     CASE
