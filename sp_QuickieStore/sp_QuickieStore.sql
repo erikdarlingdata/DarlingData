@@ -7021,7 +7021,7 @@ SELECT
     qsp.is_trivial_plan,
     qsp.is_parallel_plan,
     qsp.is_forced_plan,
-    toggle_forcing = 
+    toggle_forcing =
         CASE
             qsp.is_forced_plan
             WHEN 1
