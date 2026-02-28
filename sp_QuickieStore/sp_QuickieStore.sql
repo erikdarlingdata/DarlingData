@@ -1093,6 +1093,7 @@ CREATE TABLE
     is_trivial_plan bit NOT NULL,
     is_parallel_plan bit NOT NULL,
     is_forced_plan bit NOT NULL,
+    toggle_forcing nvarchar(300) NOT NULL,
     is_natively_compiled bit NOT NULL,
     force_failure_count bigint NOT NULL,
     last_force_failure_reason_desc nvarchar(128) NULL,
@@ -1553,6 +1554,7 @@ INSERT INTO
     column_id, metric_group, metric_type, column_name, column_source, is_conditional, condition_param, condition_value, expert_only, format_pattern
 )
 VALUES
+    (10, 'emergency_troubleshooting', 'toggle_forcing', 'toggle_forcing', 'qsp.toggle_forcing', 0, NULL, NULL, 1, NULL),
     (20, 'metadata', 'force_count', 'force_failure_count', 'qsp.force_failure_count', 0, NULL, NULL, 0, NULL),
     (30, 'metadata', 'force_reason', 'last_force_failure_reason_desc', 'qsp.last_force_failure_reason_desc', 0, NULL, NULL, 0, NULL),
     /* SQL 2022 specific columns */
@@ -7018,6 +7020,14 @@ SELECT
     qsp.is_trivial_plan,
     qsp.is_parallel_plan,
     qsp.is_forced_plan,
+    toggle_forcing = 
+        CASE
+            qsp.is_forced_plan
+            WHEN 1
+            THEN ''EXECUTE ' + @database_name_quoted + '.sys.sp_query_store_unforce_plan @query_id = '' + CONVERT(nvarchar(20), qsp.query_id) +  '', @plan_id = '' + CONVERT(nvarchar(20), qsp.plan_id) + '';''
+            WHEN 0
+            THEN ''EXECUTE ' + @database_name_quoted + '.sys.sp_query_store_force_plan @query_id = '' + CONVERT(nvarchar(20), qsp.query_id) +  '', @plan_id = '' + CONVERT(nvarchar(20), qsp.plan_id) + '', @disable_optimized_plan_forcing = ? ;''
+        END,
     qsp.is_natively_compiled,
     qsp.force_failure_count,
     qsp.last_force_failure_reason_desc,
@@ -7110,6 +7120,7 @@ WITH
     is_trivial_plan,
     is_parallel_plan,
     is_forced_plan,
+    toggle_forcing,
     is_natively_compiled,
     force_failure_count,
     last_force_failure_reason_desc,
