@@ -83,8 +83,8 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.2.5',
-    @version_date = '20260206';
+    @version = '1.3',
+    @version_date = '20260301';
 
 /*Help*/
 IF @help = 1
