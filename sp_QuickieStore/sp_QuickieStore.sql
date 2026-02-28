@@ -9159,6 +9159,8 @@ BEGIN
                     qsqh.query_hint_id,
                     qsqh.query_id,
                     qsqh.query_hint_text,
+                    remove_hint =
+                        ''EXECUTE '' + QUOTENAME(DB_NAME(qsqh.database_id)) + ''.sys.sp_query_store_clear_hints @query_id = '' + CONVERT(nvarchar(20), qsqh.query_id) + '';'',
                     qsqh.last_query_hint_failure_reason_desc,
                     query_hint_failure_count = ' +
                     CASE
