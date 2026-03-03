@@ -101,6 +101,7 @@ ALTER PROCEDURE
     @regression_direction varchar(20) = NULL, /*when comparing against the regression baseline, what do you want the results sorted by ('magnitude', 'improved', or 'regressed')?*/
     @include_query_hash_totals bit = 0, /*will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides*/
     @include_maintenance bit = 0, /*Set this bit to 1 to add maintenance operations such as index creation to the result set*/
+    @find_high_impact bit = 0, /*finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions*/
     @help bit = 0, /*return available parameter details, etc.*/
     @debug bit = 0, /*prints dynamic sql, statement length, parameter and variable values, and raw temp table contents*/
     @troubleshoot_performance bit = 0, /*set statistics xml on for queries against views*/
@@ -197,6 +198,7 @@ BEGIN
                 WHEN N'@regression_direction' THEN 'when comparing against any regression baseline, what do you want the results sorted by (''magnitude'', ''improved'', or ''regressed'')?'
                 WHEN N'@include_query_hash_totals' THEN N'will add an additional column to final output with total resource usage by query hash, may be skewed by query_hash and query_plan_hash bugs with forced plans/plan guides'
                 WHEN N'@include_maintenance' THEN N'Set this bit to 1 to add maintenance operations such as index creation to the result set'
+                WHEN N'@find_high_impact' THEN N'finds the vital few queries consuming disproportionate resources across cpu, duration, reads, writes, memory, and executions'
                 WHEN N'@help' THEN 'how you got here'
                 WHEN N'@debug' THEN 'prints dynamic sql, statement length, parameter and variable values, and raw temp table contents'
                 WHEN N'@troubleshoot_performance' THEN 'set statistics xml on for queries against views'
@@ -253,6 +255,7 @@ BEGIN
                 WHEN N'@regression_direction' THEN 'regressed, worse, improved, better, magnitude, absolute, whatever'
                 WHEN N'@include_query_hash_totals' THEN N'0 or 1'
                 WHEN N'@include_maintenance' THEN N'0 or 1'
+                WHEN N'@find_high_impact' THEN N'0 or 1'
                 WHEN N'@help' THEN '0 or 1'
                 WHEN N'@debug' THEN '0 or 1'
                 WHEN N'@troubleshoot_performance' THEN '0 or 1'
@@ -309,6 +312,7 @@ BEGIN
                 WHEN N'@regression_direction' THEN 'NULL; regressed if @regression_baseline_start_date is specified'
                 WHEN N'@include_query_hash_totals' THEN N'0'
                 WHEN N'@include_maintenance' THEN N'0'
+                WHEN N'@find_high_impact' THEN N'0'
                 WHEN N'@help' THEN '0'
                 WHEN N'@debug' THEN '0'
                 WHEN N'@troubleshoot_performance' THEN '0'
@@ -377,6 +381,52 @@ BEGIN
     SELECT 'Query Replicas (2022+, expert mode only): lists plans forced on AG replicas' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'Query Store Options (expert mode only): details about current query store configuration';
+
+    /*
+    High Impact column guide
+    */
+    SELECT
+        high_impact_columns =
+           'when using @find_high_impact = 1, the result set contains these columns:' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'database_name: the database being analyzed' UNION ALL
+    SELECT 'start_date, end_date: the time window analyzed (UTC)' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'primary_window: when this query runs most. Business (during @work_start to @work_end on weekdays),' UNION ALL
+    SELECT '    Off-hours (weekday nights), Weekend, or Spread (no single window > 50%). Percentage shown.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'object_name: the stored procedure, function, or trigger this query belongs to, or "Adhoc" for ad hoc SQL' UNION ALL
+    SELECT 'query_sql_text: representative query text (the most-executed variant for this query_hash)' UNION ALL
+    SELECT 'query_plan: the most recent execution plan (XML) for this query_hash' UNION ALL
+    SELECT 'top_waits: top 3 Query Store wait categories with total wait time in ms (SQL 2017+ only, NULL on 2016)' UNION ALL
+    SELECT 'query_hash: the query_hash that groups all parameterized variants of the same query' UNION ALL
+    SELECT 'query_count: how many distinct query_ids share this hash (parameterized variants)' UNION ALL
+    SELECT 'plan_count: how many distinct plans exist across all variants. >1 may indicate plan instability.' UNION ALL
+    SELECT 'query_id_list, plan_id_list: comma-separated IDs for drilling into Query Store views' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'impact_score: 0.00 to 1.00. The average PERCENT_RANK across all active resource dimensions.' UNION ALL
+    SELECT '    0.90 means this query outranks 90% of all queries in the database on the metrics where it registers.' UNION ALL
+    SELECT '    Only queries scoring >= 0.50 are shown. A dimension is "active" when the query accounts for >= 0.1% of the total.' UNION ALL
+    SELECT 'high_signals: which dimensions scored above the 80th percentile (e.g. "cpu, duration, reads")' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'total_executions: how many times this query_hash executed in the time window' UNION ALL
+    SELECT 'cpu_share, duration_share, reads_share, writes_share, memory_share, executions_share:' UNION ALL
+    SELECT '    what percentage of the server''s total for that metric this single query_hash consumed.' UNION ALL
+    SELECT '    This is the 80/20 answer: "this one query is X% of all CPU on the server."' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'diagnostics: rule-based signals layered on top of the score:' UNION ALL
+    SELECT '    wait time (dur/cpu=Nx) - duration far exceeds CPU time, meaning the query spends most of its time waiting' UNION ALL
+    SELECT '        (blocking, resource contention, I/O). The multiplier shows how much worse duration is vs CPU.' UNION ALL
+    SELECT '    param sensitive (1 plan, cpu Nx) - single plan but wildly varying CPU times across executions.' UNION ALL
+    SELECT '        Classic parameter sniffing: one plan shape that works for some parameter values but not others.' UNION ALL
+    SELECT '    plan instability (N plans) - multiple plans compiled for variants of this query.' UNION ALL
+    SELECT '        The optimizer keeps choosing different strategies, which usually means inconsistent performance.' UNION ALL
+    SELECT '    spills/spools (N MB/exec) - writes detected on a SELECT-like query (no INSERT/UPDATE/DELETE/MERGE).' UNION ALL
+    SELECT '        This typically means tempdb spills from underestimated memory grants, or worktable spools.' UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'volatile_metrics: flags metrics with extreme variance: (max - min) / avg > 10x.' UNION ALL
+    SELECT '    Only flagged when the absolute max exceeds meaningful thresholds (1s duration, 100ms CPU, 1MB reads/writes/memory).' UNION ALL
+    SELECT '    High volatility means the query''s performance is unpredictable, even if the average looks acceptable.';
 
     /*
     Limitations
@@ -660,6 +710,20 @@ Your @regression_direction tells us to take the absolute value of our result of 
 but your @regression_comparator is telling us to use division to compare the two time periods. This is unlikely to produce useful results.
 If you can imagine a useful way to do that, then make a feature request. Otherwise, either change @regression_direction to another value
 (e.g. ''better'' or ''worse'') or change @regression_comparator to ''absolute''.', 11, 1) WITH NOWAIT;
+    RETURN;
+END;
+
+/*
+@find_high_impact can't be used with @get_all_databases
+because the results would be diluted across databases
+*/
+IF
+(
+    @find_high_impact = 1
+AND @get_all_databases = 1
+)
+BEGIN
+    RAISERROR('@find_high_impact cannot be used with @get_all_databases. Run @find_high_impact against each database individually.', 11, 1) WITH NOWAIT;
     RETURN;
 END;
 
@@ -3856,6 +3920,1382 @@ BEGIN
         OPTION(RECOMPILE);
     END;
 END;
+
+/*
+Find high impact queries: the vital few consuming
+disproportionate resources across multiple dimensions.
+Scores queries using PERCENT_RANK across 6 metrics,
+then shows share-of-total for the 80/20 context.
+*/
+IF @find_high_impact = 1
+BEGIN
+    /*Create temp tables for high impact analysis*/
+    CREATE TABLE
+        #hi_query_stats
+    (
+        query_hash binary(8) NOT NULL,
+        query_count bigint NOT NULL,
+        plan_count bigint NOT NULL,
+        total_executions bigint NOT NULL,
+        total_cpu_ms decimal(38, 6) NOT NULL,
+        avg_cpu_ms decimal(38, 6) NULL,
+        min_cpu_ms decimal(38, 6) NULL,
+        max_cpu_ms decimal(38, 6) NULL,
+        total_duration_ms decimal(38, 6) NOT NULL,
+        avg_duration_ms decimal(38, 6) NULL,
+        min_duration_ms decimal(38, 6) NULL,
+        max_duration_ms decimal(38, 6) NULL,
+        total_physical_reads_mb decimal(38, 6) NOT NULL,
+        avg_physical_reads_mb decimal(38, 6) NULL,
+        min_physical_reads_mb decimal(38, 6) NULL,
+        max_physical_reads_mb decimal(38, 6) NULL,
+        total_writes_mb decimal(38, 6) NOT NULL,
+        avg_writes_mb decimal(38, 6) NULL,
+        min_writes_mb decimal(38, 6) NULL,
+        max_writes_mb decimal(38, 6) NULL,
+        total_memory_mb decimal(38, 6) NOT NULL,
+        avg_memory_mb decimal(38, 6) NULL,
+        min_memory_mb decimal(38, 6) NULL,
+        max_memory_mb decimal(38, 6) NULL
+    );
+
+    CREATE TABLE
+        #hi_interesting
+    (
+        query_hash binary(8) NOT NULL
+    );
+
+    CREATE TABLE
+        #hi_representative_text
+    (
+        query_hash binary(8) NOT NULL,
+        query_sql_text nvarchar(max) NULL,
+        rn bigint NOT NULL
+    );
+
+    CREATE TABLE
+        #hi_time_buckets
+    (
+        query_hash binary(8) NOT NULL,
+        time_bucket nvarchar(20) NOT NULL,
+        executions bigint NOT NULL
+    );
+
+    CREATE TABLE
+        #hi_primary_window
+    (
+        query_hash binary(8) NOT NULL,
+        primary_window nvarchar(60) NULL
+    );
+
+    CREATE TABLE
+        #hi_query_waits
+    (
+        query_hash binary(8) NOT NULL,
+        top_waits nvarchar(max) NULL
+    );
+
+    CREATE TABLE
+        #hi_wait_staging
+    (
+        query_hash binary(8) NOT NULL,
+        wait_category_desc nvarchar(60) NOT NULL,
+        total_wait_ms decimal(38, 6) NOT NULL,
+        rn bigint NOT NULL
+    );
+
+    CREATE TABLE
+        #hi_query_identifiers
+    (
+        query_hash binary(8) NOT NULL,
+        query_id_list nvarchar(max) NULL,
+        plan_id_list nvarchar(max) NULL,
+        object_name nvarchar(500) NULL
+    );
+
+    CREATE TABLE
+        #hi_id_staging_queries
+    (
+        query_hash binary(8) NOT NULL,
+        query_id bigint NOT NULL
+    );
+
+    CREATE TABLE
+        #hi_id_staging_plans
+    (
+        query_hash binary(8) NOT NULL,
+        plan_id bigint NOT NULL
+    );
+
+    CREATE TABLE
+        #hi_id_staging_objects
+    (
+        query_hash binary(8) NOT NULL,
+        object_id integer NOT NULL
+    );
+
+    /*Step 1: Aggregate runtime stats to query_hash level*/
+    SELECT
+        @current_table = 'inserting #hi_query_stats',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    qsq.query_hash,
+    query_count =
+        COUNT(DISTINCT qsq.query_id),
+    plan_count =
+        COUNT(DISTINCT qsp.plan_id),
+    total_executions =
+        SUM(qsrs.count_executions),
+    total_cpu_ms =
+        SUM(qsrs.avg_cpu_time / 1000.0 * qsrs.count_executions),
+    avg_cpu_ms =
+        SUM(qsrs.avg_cpu_time / 1000.0 * qsrs.count_executions) /
+        NULLIF(SUM(qsrs.count_executions), 0),
+    min_cpu_ms =
+        MIN(qsrs.min_cpu_time / 1000.0),
+    max_cpu_ms =
+        MAX(qsrs.max_cpu_time / 1000.0),
+    total_duration_ms =
+        SUM(qsrs.avg_duration / 1000.0 * qsrs.count_executions),
+    avg_duration_ms =
+        SUM(qsrs.avg_duration / 1000.0 * qsrs.count_executions) /
+        NULLIF(SUM(qsrs.count_executions), 0),
+    min_duration_ms =
+        MIN(qsrs.min_duration / 1000.0),
+    max_duration_ms =
+        MAX(qsrs.max_duration / 1000.0),
+    total_physical_reads_mb =
+        SUM(qsrs.avg_physical_io_reads * 8.0 / 1024.0 * qsrs.count_executions),
+    avg_physical_reads_mb =
+        SUM(qsrs.avg_physical_io_reads * 8.0 / 1024.0 * qsrs.count_executions) /
+        NULLIF(SUM(qsrs.count_executions), 0),
+    min_physical_reads_mb =
+        MIN(qsrs.min_physical_io_reads * 8.0 / 1024.0),
+    max_physical_reads_mb =
+        MAX(qsrs.max_physical_io_reads * 8.0 / 1024.0),
+    total_writes_mb =
+        SUM(qsrs.avg_logical_io_writes * 8.0 / 1024.0 * qsrs.count_executions),
+    avg_writes_mb =
+        SUM(qsrs.avg_logical_io_writes * 8.0 / 1024.0 * qsrs.count_executions) /
+        NULLIF(SUM(qsrs.count_executions), 0),
+    min_writes_mb =
+        MIN(qsrs.min_logical_io_writes * 8.0 / 1024.0),
+    max_writes_mb =
+        MAX(qsrs.max_logical_io_writes * 8.0 / 1024.0),
+    total_memory_mb =
+        SUM(qsrs.avg_query_max_used_memory * 8.0 / 1024.0 * qsrs.count_executions),
+    avg_memory_mb =
+        SUM(qsrs.avg_query_max_used_memory * 8.0 / 1024.0 * qsrs.count_executions) /
+        NULLIF(SUM(qsrs.count_executions), 0),
+    min_memory_mb =
+        MIN(qsrs.min_query_max_used_memory * 8.0 / 1024.0),
+    max_memory_mb =
+        MAX(qsrs.max_query_max_used_memory * 8.0 / 1024.0)
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    ON qsq.query_id = qsp.query_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    ON qsp.plan_id = qsrs.plan_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats_interval AS qsrsi
+    ON qsrs.runtime_stats_interval_id = qsrsi.runtime_stats_interval_id
+WHERE qsrsi.start_time >= @start_date
+AND   qsrsi.start_time <  @end_date' + @nc10;
+
+    /*Maintenance filter: exclude index/stats operations*/
+    IF @include_maintenance = 0
+    BEGIN
+        SELECT
+            @sql += N'AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+          WHERE qsqt.query_text_id = qsq.query_text_id
+          AND
+          (
+              qsqt.query_sql_text LIKE N''ALTER INDEX%''
+           OR qsqt.query_sql_text LIKE N''ALTER TABLE%''
+           OR qsqt.query_sql_text LIKE N''CREATE%INDEX%''
+           OR qsqt.query_sql_text LIKE N''CREATE STATISTICS%''
+           OR qsqt.query_sql_text LIKE N''UPDATE STATISTICS%''
+           OR qsqt.query_sql_text LIKE N''%SELECT StatMan%''
+           OR qsqt.query_sql_text LIKE N''DBCC%''
+           OR qsqt.query_sql_text LIKE N''(@[_]msparam%''
+           OR qsqt.query_sql_text LIKE N''WAITFOR%''
+          )
+      )' + @nc10;
+    END;
+
+    SELECT
+        @sql += N'GROUP BY
+    qsq.query_hash
+HAVING
+    SUM(qsrs.count_executions) > 0
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #hi_query_stats WITH (TABLOCK)
+    (
+        query_hash,
+        query_count,
+        plan_count,
+        total_executions,
+        total_cpu_ms,
+        avg_cpu_ms,
+        min_cpu_ms,
+        max_cpu_ms,
+        total_duration_ms,
+        avg_duration_ms,
+        min_duration_ms,
+        max_duration_ms,
+        total_physical_reads_mb,
+        avg_physical_reads_mb,
+        min_physical_reads_mb,
+        max_physical_reads_mb,
+        total_writes_mb,
+        avg_writes_mb,
+        min_writes_mb,
+        max_writes_mb,
+        total_memory_mb,
+        avg_memory_mb,
+        min_memory_mb,
+        max_memory_mb
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @start_date,
+        @end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 1b: Representative query text per query_hash*/
+    SELECT
+        @current_table = 'inserting #hi_representative_text',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    qsq.query_hash,
+    qsqt.query_sql_text,
+    rn =
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY qsq.query_hash
+            ORDER BY SUM(qsrs.count_executions) DESC
+        )
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    ON qsq.query_id = qsp.query_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    ON qsp.plan_id = qsrs.plan_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats_interval AS qsrsi
+    ON qsrs.runtime_stats_interval_id = qsrsi.runtime_stats_interval_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+    ON qsq.query_text_id = qsqt.query_text_id
+WHERE qsrsi.start_time >= @start_date
+AND   qsrsi.start_time <  @end_date' + @nc10;
+
+    /*Same maintenance filter for representative text*/
+    IF @include_maintenance = 0
+    BEGIN
+        SELECT
+            @sql += N'AND   NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt2
+          WHERE qsqt2.query_text_id = qsq.query_text_id
+          AND
+          (
+              qsqt2.query_sql_text LIKE N''ALTER INDEX%''
+           OR qsqt2.query_sql_text LIKE N''ALTER TABLE%''
+           OR qsqt2.query_sql_text LIKE N''CREATE%INDEX%''
+           OR qsqt2.query_sql_text LIKE N''CREATE STATISTICS%''
+           OR qsqt2.query_sql_text LIKE N''UPDATE STATISTICS%''
+           OR qsqt2.query_sql_text LIKE N''%SELECT StatMan%''
+           OR qsqt2.query_sql_text LIKE N''DBCC%''
+           OR qsqt2.query_sql_text LIKE N''(@[_]msparam%''
+           OR qsqt2.query_sql_text LIKE N''WAITFOR%''
+          )
+      )' + @nc10;
+    END;
+
+    SELECT
+        @sql += N'GROUP BY
+    qsq.query_hash,
+    qsqt.query_sql_text
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #hi_representative_text WITH (TABLOCK)
+    (
+        query_hash,
+        query_sql_text,
+        rn
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @start_date,
+        @end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Step 2: Top N per metric (static SQL, temp tables only)*/
+    INSERT
+        #hi_interesting WITH (TABLOCK)
+    (
+        query_hash
+    )
+    SELECT
+        qs.query_hash
+    FROM
+    (
+        SELECT TOP (@top)
+            qs.query_hash
+        FROM #hi_query_stats AS qs
+        ORDER BY qs.total_cpu_ms DESC
+
+        UNION
+
+        SELECT TOP (@top)
+            qs.query_hash
+        FROM #hi_query_stats AS qs
+        ORDER BY qs.total_duration_ms DESC
+
+        UNION
+
+        SELECT TOP (@top)
+            qs.query_hash
+        FROM #hi_query_stats AS qs
+        ORDER BY qs.total_physical_reads_mb DESC
+
+        UNION
+
+        SELECT TOP (@top)
+            qs.query_hash
+        FROM #hi_query_stats AS qs
+        ORDER BY qs.total_writes_mb DESC
+
+        UNION
+
+        SELECT TOP (@top)
+            qs.query_hash
+        FROM #hi_query_stats AS qs
+        ORDER BY qs.total_memory_mb DESC
+
+        UNION
+
+        SELECT TOP (@top)
+            qs.query_hash
+        FROM #hi_query_stats AS qs
+        ORDER BY qs.total_executions DESC
+    ) AS qs;
+
+    /*Step 3: Score with PERCENT_RANK (static SQL, SELECT INTO)*/
+    SELECT
+        qs.*,
+        cpu_pctl =
+            CASE WHEN qs.total_cpu_ms >=
+                      SUM(qs.total_cpu_ms) OVER () * 0.001
+                 THEN PERCENT_RANK() OVER (ORDER BY qs.total_cpu_ms)
+            END,
+        duration_pctl =
+            CASE WHEN qs.total_duration_ms >=
+                      SUM(qs.total_duration_ms) OVER () * 0.001
+                 THEN PERCENT_RANK() OVER (ORDER BY qs.total_duration_ms)
+            END,
+        reads_pctl =
+            CASE WHEN qs.total_physical_reads_mb >=
+                      SUM(qs.total_physical_reads_mb) OVER () * 0.001
+                 THEN PERCENT_RANK() OVER (ORDER BY qs.total_physical_reads_mb)
+            END,
+        writes_pctl =
+            CASE WHEN qs.total_writes_mb >=
+                      SUM(qs.total_writes_mb) OVER () * 0.001
+                 THEN PERCENT_RANK() OVER (ORDER BY qs.total_writes_mb)
+            END,
+        memory_pctl =
+            CASE WHEN qs.total_memory_mb >=
+                      SUM(qs.total_memory_mb) OVER () * 0.001
+                 THEN PERCENT_RANK() OVER (ORDER BY qs.total_memory_mb)
+            END,
+        executions_pctl =
+            CASE WHEN qs.total_executions >=
+                      SUM(CONVERT(float, qs.total_executions)) OVER () * 0.001
+                 THEN PERCENT_RANK() OVER (ORDER BY qs.total_executions)
+            END,
+        cpu_share =
+            CONVERT(decimal(5, 1), 100.0 * qs.total_cpu_ms /
+            NULLIF(SUM(qs.total_cpu_ms) OVER (), 0)),
+        duration_share =
+            CONVERT(decimal(5, 1), 100.0 * qs.total_duration_ms /
+            NULLIF(SUM(qs.total_duration_ms) OVER (), 0)),
+        reads_share =
+            CONVERT(decimal(5, 1), 100.0 * qs.total_physical_reads_mb /
+            NULLIF(SUM(qs.total_physical_reads_mb) OVER (), 0)),
+        writes_share =
+            CONVERT(decimal(5, 1), 100.0 * qs.total_writes_mb /
+            NULLIF(SUM(qs.total_writes_mb) OVER (), 0)),
+        memory_share =
+            CONVERT(decimal(5, 1), 100.0 * qs.total_memory_mb /
+            NULLIF(SUM(qs.total_memory_mb) OVER (), 0)),
+        executions_share =
+            CONVERT
+            (
+                decimal(5, 1),
+                100.0 * qs.total_executions /
+                NULLIF(SUM(CONVERT(float, qs.total_executions)) OVER (), 0)
+            )
+    INTO #hi_scored
+    FROM #hi_query_stats AS qs;
+
+    /*Step 4: Time bucketing (dynamic SQL for Query Store DMVs)*/
+    DECLARE
+        @hi_utc_to_local smallint = -@utc_minutes_difference;
+
+    SELECT
+        @current_table = 'inserting #hi_time_buckets',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    qsq.query_hash,
+    time_bucket =
+        CASE
+            WHEN DATEPART
+                 (
+                     WEEKDAY,
+                     DATEADD(MINUTE, @utc_minutes_original, CONVERT(datetime, qsrsi.start_time))
+                 ) IN (1, 7)
+                THEN N''Weekend''
+            WHEN CONVERT
+                 (
+                     time,
+                     DATEADD(MINUTE, @utc_minutes_original, CONVERT(datetime, qsrsi.start_time))
+                 ) >= @work_start
+             AND CONVERT
+                 (
+                     time,
+                     DATEADD(MINUTE, @utc_minutes_original, CONVERT(datetime, qsrsi.start_time))
+                 ) < @work_end
+                THEN N''Business''
+            ELSE N''Off-hours''
+        END,
+    executions =
+        SUM(qsrs.count_executions)
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    ON qsq.query_id = qsp.query_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats AS qsrs
+    ON qsp.plan_id = qsrs.plan_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats_interval AS qsrsi
+    ON qsrs.runtime_stats_interval_id = qsrsi.runtime_stats_interval_id
+JOIN #hi_interesting AS i
+    ON qsq.query_hash = i.query_hash
+WHERE qsrsi.start_time >= @start_date
+AND   qsrsi.start_time <  @end_date
+GROUP BY
+    qsq.query_hash,
+    CASE
+        WHEN DATEPART
+             (
+                 WEEKDAY,
+                 DATEADD(MINUTE, @utc_minutes_original, CONVERT(datetime, qsrsi.start_time))
+             ) IN (1, 7)
+            THEN N''Weekend''
+        WHEN CONVERT
+             (
+                 time,
+                 DATEADD(MINUTE, @utc_minutes_original, CONVERT(datetime, qsrsi.start_time))
+             ) >= @work_start
+         AND CONVERT
+             (
+                 time,
+                 DATEADD(MINUTE, @utc_minutes_original, CONVERT(datetime, qsrsi.start_time))
+             ) < @work_end
+            THEN N''Business''
+        ELSE N''Off-hours''
+    END
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #hi_time_buckets WITH (TABLOCK)
+    (
+        query_hash,
+        time_bucket,
+        executions
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@start_date datetimeoffset(7),
+        @end_date datetimeoffset(7),
+        @utc_minutes_original smallint,
+        @work_start time(0),
+        @work_end time(0)',
+        @start_date,
+        @end_date,
+        @hi_utc_to_local,
+        @work_start,
+        @work_end;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Derive primary execution window per query_hash (static SQL)*/
+    INSERT
+        #hi_primary_window WITH (TABLOCK)
+    (
+        query_hash,
+        primary_window
+    )
+    SELECT
+        pcts.query_hash,
+        primary_window =
+            CASE
+                WHEN MAX(CASE WHEN pcts.time_bucket = N'Business'  THEN pcts.pct END) > 50
+                    THEN N'Business ('  +
+                         CONVERT(nvarchar(10), MAX(CASE WHEN pcts.time_bucket = N'Business' THEN pcts.pct END)) +
+                         N'%)'
+                WHEN MAX(CASE WHEN pcts.time_bucket = N'Off-hours' THEN pcts.pct END) > 50
+                    THEN N'Off-hours (' +
+                         CONVERT(nvarchar(10), MAX(CASE WHEN pcts.time_bucket = N'Off-hours' THEN pcts.pct END)) +
+                         N'%)'
+                WHEN MAX(CASE WHEN pcts.time_bucket = N'Weekend'   THEN pcts.pct END) > 50
+                    THEN N'Weekend ('   +
+                         CONVERT(nvarchar(10), MAX(CASE WHEN pcts.time_bucket = N'Weekend' THEN pcts.pct END)) +
+                         N'%)'
+                ELSE N'Spread'
+            END
+    FROM
+    (
+        SELECT
+            tb.query_hash,
+            tb.time_bucket,
+            pct =
+                CONVERT
+                (
+                    integer,
+                    100.0 * tb.executions /
+                    SUM(tb.executions) OVER (PARTITION BY tb.query_hash)
+                )
+        FROM #hi_time_buckets AS tb
+    ) AS pcts
+    GROUP BY
+        pcts.query_hash;
+
+    /*Step 5: Wait stats (SQL 2017+ only, two-stage approach)*/
+    IF
+    (
+        @new = 1
+    AND @query_store_waits_enabled = 1
+    )
+    BEGIN
+        /*Stage 1: Dynamic SQL populates staging table*/
+        SELECT
+            @current_table = 'inserting #hi_wait_staging',
+            @sql = @isolation_level;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            EXECUTE sys.sp_executesql
+                @troubleshoot_insert,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            SET STATISTICS XML ON;
+        END;
+
+        SELECT
+            @sql += N'
+SELECT
+    qsq.query_hash,
+    qsws.wait_category_desc,
+    total_wait_ms =
+        SUM(qsws.total_query_wait_time_ms),
+    rn =
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY qsq.query_hash
+            ORDER BY SUM(qsws.total_query_wait_time_ms) DESC
+        )
+FROM ' + @database_name_quoted + N'.sys.query_store_wait_stats AS qsws
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    ON qsws.plan_id = qsp.plan_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    ON qsp.query_id = qsq.query_id
+JOIN ' + @database_name_quoted + N'.sys.query_store_runtime_stats_interval AS qsrsi
+    ON qsws.runtime_stats_interval_id = qsrsi.runtime_stats_interval_id
+JOIN #hi_interesting AS i
+    ON qsq.query_hash = i.query_hash
+WHERE qsrsi.start_time >= @start_date
+AND   qsrsi.start_time <  @end_date
+GROUP BY
+    qsq.query_hash,
+    qsws.wait_category_desc
+OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        INSERT
+            #hi_wait_staging WITH (TABLOCK)
+        (
+            query_hash,
+            wait_category_desc,
+            total_wait_ms,
+            rn
+        )
+        EXECUTE sys.sp_executesql
+            @sql,
+          N'@start_date datetimeoffset(7),
+            @end_date datetimeoffset(7)',
+            @start_date,
+            @end_date;
+
+        IF @troubleshoot_performance = 1
+        BEGIN
+            SET STATISTICS XML OFF;
+
+            EXECUTE sys.sp_executesql
+                @troubleshoot_update,
+              N'@current_table nvarchar(100)',
+                @current_table;
+
+            EXECUTE sys.sp_executesql
+                @troubleshoot_info,
+              N'@sql nvarchar(max),
+                @current_table nvarchar(100)',
+                @sql,
+                @current_table;
+        END;
+
+        /*Stage 2: Aggregate top 3 waits per hash (static SQL, XML PATH)*/
+        INSERT
+            #hi_query_waits WITH (TABLOCK)
+        (
+            query_hash,
+            top_waits
+        )
+        SELECT
+            ws.query_hash,
+            top_waits =
+                STUFF
+                (
+                    (
+                        SELECT
+                            N', ' +
+                            ws2.wait_category_desc +
+                            N' (' +
+                            CONVERT(nvarchar(20), CONVERT(integer, ws2.total_wait_ms)) +
+                            N' ms)'
+                        FROM #hi_wait_staging AS ws2
+                        WHERE ws2.query_hash = ws.query_hash
+                        AND   ws2.rn <= 3
+                        ORDER BY
+                            ws2.total_wait_ms DESC
+                        FOR
+                            XML PATH(N''),
+                            TYPE
+                    ).value(N'./text()[1]', N'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+        FROM
+        (
+            SELECT DISTINCT
+                ws.query_hash
+            FROM #hi_wait_staging AS ws
+        ) AS ws;
+    END; /*End wait stats*/
+
+    /*Step 5b: Query identifiers (two-stage approach)*/
+    /*Stage 1: Dynamic SQL gets distinct IDs*/
+    SELECT
+        @current_table = 'inserting #hi_id_staging',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsq.query_hash,
+    qsq.query_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN #hi_interesting AS i
+    ON qsq.query_hash = i.query_hash
+OPTION(RECOMPILE);
+
+SELECT DISTINCT
+    qsq.query_hash,
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    ON qsq.query_id = qsp.query_id
+JOIN #hi_interesting AS i
+    ON qsq.query_hash = i.query_hash
+OPTION(RECOMPILE);
+
+SELECT DISTINCT
+    qsq.query_hash,
+    qsq.object_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN #hi_interesting AS i
+    ON qsq.query_hash = i.query_hash
+WHERE qsq.object_id > 0
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #hi_id_staging_queries WITH (TABLOCK)
+    (
+        query_hash,
+        query_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*
+    The multi-result-set approach above only inserts the first result.
+    Run the plan and object queries separately.
+    */
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsq.query_hash,
+    qsp.plan_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    ON qsq.query_id = qsp.query_id
+JOIN #hi_interesting AS i
+    ON qsq.query_hash = i.query_hash
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #hi_id_staging_plans WITH (TABLOCK)
+    (
+        query_hash,
+        plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+SELECT DISTINCT
+    qsq.query_hash,
+    qsq.object_id
+FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+JOIN #hi_interesting AS i
+    ON qsq.query_hash = i.query_hash
+WHERE qsq.object_id > 0
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #hi_id_staging_objects WITH (TABLOCK)
+    (
+        query_hash,
+        object_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql;
+
+    /*Stage 2: Aggregate IDs with XML PATH (static SQL)*/
+    INSERT
+        #hi_query_identifiers WITH (TABLOCK)
+    (
+        query_hash,
+        query_id_list,
+        plan_id_list,
+        object_name
+    )
+    SELECT
+        i.query_hash,
+        query_id_list =
+            STUFF
+            (
+                (
+                    SELECT DISTINCT
+                        N', ' +
+                        CONVERT(nvarchar(20), sq.query_id)
+                    FROM #hi_id_staging_queries AS sq
+                    WHERE sq.query_hash = i.query_hash
+                    ORDER BY
+                        N', ' +
+                        CONVERT(nvarchar(20), sq.query_id)
+                    FOR
+                        XML PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                2,
+                N''
+            ),
+        plan_id_list =
+            STUFF
+            (
+                (
+                    SELECT DISTINCT
+                        N', ' +
+                        CONVERT(nvarchar(20), sp.plan_id)
+                    FROM #hi_id_staging_plans AS sp
+                    WHERE sp.query_hash = i.query_hash
+                    ORDER BY
+                        N', ' +
+                        CONVERT(nvarchar(20), sp.plan_id)
+                    FOR
+                        XML PATH(N''),
+                        TYPE
+                ).value(N'./text()[1]', N'nvarchar(max)'),
+                1,
+                2,
+                N''
+            ),
+        object_name =
+            ISNULL
+            (
+                QUOTENAME
+                (
+                    OBJECT_SCHEMA_NAME
+                    (
+                        (
+                            SELECT TOP (1)
+                                so.object_id
+                            FROM #hi_id_staging_objects AS so
+                            WHERE so.query_hash = i.query_hash
+                        ),
+                        @database_id
+                    )
+                ) +
+                N'.' +
+                QUOTENAME
+                (
+                    OBJECT_NAME
+                    (
+                        (
+                            SELECT TOP (1)
+                                so.object_id
+                            FROM #hi_id_staging_objects AS so
+                            WHERE so.query_hash = i.query_hash
+                        ),
+                        @database_id
+                    )
+                ),
+                CASE
+                    WHEN EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #hi_id_staging_objects AS so
+                        WHERE so.query_hash = i.query_hash
+                    )
+                    THEN N'Unknown object_id'
+                    ELSE N'Adhoc'
+                END
+            )
+    FROM #hi_interesting AS i;
+
+    /*Step 6: Final output (dynamic SQL for OUTER APPLY to query plan)*/
+    SELECT
+        @current_table = 'selecting high impact results',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    SELECT
+        @sql += N'
+SELECT
+    database_name =
+        @database_name,
+    start_date =
+        @start_date,
+    end_date =
+        @end_date,
+    pw.primary_window,
+    qi.object_name,
+    rt.query_sql_text,
+    query_plan =
+        TRY_CONVERT(xml, qp.query_plan),
+    qw.top_waits,
+    s.query_hash,
+    s.query_count,
+    s.plan_count,
+    qi.query_id_list,
+    qi.plan_id_list,
+    impact_score =
+        CONVERT
+        (
+            decimal(4, 2),
+            (
+                ISNULL(s.cpu_pctl, 0) +
+                ISNULL(s.duration_pctl, 0) +
+                ISNULL(s.reads_pctl, 0) +
+                ISNULL(s.writes_pctl, 0) +
+                ISNULL(s.memory_pctl, 0) +
+                ISNULL(s.executions_pctl, 0)
+            ) /
+            NULLIF
+            (
+                CASE WHEN s.cpu_pctl        IS NOT NULL THEN 1 ELSE 0 END +
+                CASE WHEN s.duration_pctl   IS NOT NULL THEN 1 ELSE 0 END +
+                CASE WHEN s.reads_pctl      IS NOT NULL THEN 1 ELSE 0 END +
+                CASE WHEN s.writes_pctl     IS NOT NULL THEN 1 ELSE 0 END +
+                CASE WHEN s.memory_pctl     IS NOT NULL THEN 1 ELSE 0 END +
+                CASE WHEN s.executions_pctl IS NOT NULL THEN 1 ELSE 0 END,
+                0
+            )
+        ),
+    high_signals =
+        STUFF
+        (
+            ISNULL(N'', '' + CASE WHEN s.cpu_pctl        >= 0.80 THEN N''cpu'' END, N'''') +
+            ISNULL(N'', '' + CASE WHEN s.duration_pctl   >= 0.80 THEN N''duration'' END, N'''') +
+            ISNULL(N'', '' + CASE WHEN s.reads_pctl      >= 0.80 THEN N''reads'' END, N'''') +
+            ISNULL(N'', '' + CASE WHEN s.writes_pctl     >= 0.80 THEN N''writes'' END, N'''') +
+            ISNULL(N'', '' + CASE WHEN s.memory_pctl     >= 0.80 THEN N''memory'' END, N'''') +
+            ISNULL(N'', '' + CASE WHEN s.executions_pctl >= 0.80 THEN N''executions'' END, N''''),
+            1,
+            2,
+            N''''
+        ),
+    s.total_executions,
+    s.cpu_share,
+    s.duration_share,
+    s.reads_share,
+    s.writes_share,
+    s.memory_share,
+    s.executions_share,
+    diagnostics =
+        STUFF
+        (
+            ISNULL
+            (
+                N'' | '' +
+                CASE
+                    WHEN s.avg_duration_ms > s.avg_cpu_ms * 5
+                     AND s.avg_duration_ms > 100
+                    THEN N''wait time (dur/cpu='' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(integer, s.avg_duration_ms / NULLIF(s.avg_cpu_ms, 0.001))
+                         ) +
+                         N''x)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'' | '' +
+                CASE
+                    WHEN s.plan_count = 1
+                     AND s.max_cpu_ms > 100
+                     AND (s.max_cpu_ms - s.min_cpu_ms) /
+                         NULLIF(s.avg_cpu_ms, 0) > 10
+                    THEN N''param sensitive (1 plan, cpu '' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(integer, (s.max_cpu_ms - s.min_cpu_ms) / NULLIF(s.avg_cpu_ms, 0))
+                         ) +
+                         N''x)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'' | '' +
+                CASE
+                    WHEN s.plan_count > 1
+                    THEN N''plan instability ('' +
+                         CONVERT(nvarchar(10), s.plan_count) +
+                         N'' plans)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'' | '' +
+                CASE
+                    WHEN s.total_writes_mb > 0
+                     AND rt.query_sql_text NOT LIKE N''%INSERT%''
+                     AND rt.query_sql_text NOT LIKE N''%UPDATE%''
+                     AND rt.query_sql_text NOT LIKE N''%DELETE%''
+                     AND rt.query_sql_text NOT LIKE N''%MERGE%''
+                     AND rt.query_sql_text NOT LIKE N''%INTO%''
+                    THEN N''spills/spools ('' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(decimal(10, 1), s.total_writes_mb / NULLIF(s.total_executions, 0))
+                         ) +
+                         N'' MB/exec)''
+                END,
+                N''''
+            ),
+            1,
+            3,
+            N''''
+        ),
+    volatile_metrics =
+        STUFF
+        (
+            ISNULL
+            (
+                N'', '' +
+                CASE
+                    WHEN s.max_cpu_ms > 100
+                     AND (s.max_cpu_ms - s.min_cpu_ms) /
+                         NULLIF(s.avg_cpu_ms, 0) > 10
+                    THEN N''cpu ('' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(integer, (s.max_cpu_ms - s.min_cpu_ms) / NULLIF(s.avg_cpu_ms, 0))
+                         ) +
+                         N''x)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'', '' +
+                CASE
+                    WHEN s.max_duration_ms > 1000
+                     AND (s.max_duration_ms - s.min_duration_ms) /
+                         NULLIF(s.avg_duration_ms, 0) > 10
+                    THEN N''duration ('' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(integer, (s.max_duration_ms - s.min_duration_ms) / NULLIF(s.avg_duration_ms, 0))
+                         ) +
+                         N''x)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'', '' +
+                CASE
+                    WHEN s.max_physical_reads_mb > 1
+                     AND (s.max_physical_reads_mb - s.min_physical_reads_mb) /
+                         NULLIF(s.avg_physical_reads_mb, 0) > 10
+                    THEN N''reads ('' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(integer, (s.max_physical_reads_mb - s.min_physical_reads_mb) / NULLIF(s.avg_physical_reads_mb, 0))
+                         ) +
+                         N''x)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'', '' +
+                CASE
+                    WHEN s.max_writes_mb > 1
+                     AND (s.max_writes_mb - s.min_writes_mb) /
+                         NULLIF(s.avg_writes_mb, 0) > 10
+                    THEN N''writes ('' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(integer, (s.max_writes_mb - s.min_writes_mb) / NULLIF(s.avg_writes_mb, 0))
+                         ) +
+                         N''x)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'', '' +
+                CASE
+                    WHEN s.max_memory_mb > 1
+                     AND (s.max_memory_mb - s.min_memory_mb) /
+                         NULLIF(s.avg_memory_mb, 0) > 10
+                    THEN N''memory ('' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(integer, (s.max_memory_mb - s.min_memory_mb) / NULLIF(s.avg_memory_mb, 0))
+                         ) +
+                         N''x)''
+                END,
+                N''''
+            ),
+            1,
+            2,
+            N''''
+        )
+FROM #hi_scored AS s
+JOIN #hi_interesting AS i
+    ON s.query_hash = i.query_hash
+LEFT JOIN #hi_representative_text AS rt
+    ON  s.query_hash = rt.query_hash
+    AND rt.rn = 1
+LEFT JOIN #hi_query_identifiers AS qi
+    ON s.query_hash = qi.query_hash
+LEFT JOIN #hi_primary_window AS pw
+    ON s.query_hash = pw.query_hash
+LEFT JOIN #hi_query_waits AS qw
+    ON s.query_hash = qw.query_hash
+OUTER APPLY
+(
+    SELECT TOP (1)
+        qsp.query_plan
+    FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+    JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+        ON qsq.query_id = qsp.query_id
+    WHERE qsq.query_hash = s.query_hash
+    AND   qsp.query_plan IS NOT NULL
+    ORDER BY
+        qsp.last_execution_time DESC
+) AS qp
+WHERE
+    (
+        ISNULL(s.cpu_pctl, 0) +
+        ISNULL(s.duration_pctl, 0) +
+        ISNULL(s.reads_pctl, 0) +
+        ISNULL(s.writes_pctl, 0) +
+        ISNULL(s.memory_pctl, 0) +
+        ISNULL(s.executions_pctl, 0)
+    ) /
+    NULLIF
+    (
+        CASE WHEN s.cpu_pctl        IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.duration_pctl   IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.reads_pctl      IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.writes_pctl     IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.memory_pctl     IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.executions_pctl IS NOT NULL THEN 1 ELSE 0 END,
+        0
+    ) >= 0.50
+ORDER BY
+    (
+        ISNULL(s.cpu_pctl, 0) +
+        ISNULL(s.duration_pctl, 0) +
+        ISNULL(s.reads_pctl, 0) +
+        ISNULL(s.writes_pctl, 0) +
+        ISNULL(s.memory_pctl, 0) +
+        ISNULL(s.executions_pctl, 0)
+    ) /
+    NULLIF
+    (
+        CASE WHEN s.cpu_pctl        IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.duration_pctl   IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.reads_pctl      IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.writes_pctl     IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.memory_pctl     IS NOT NULL THEN 1 ELSE 0 END +
+        CASE WHEN s.executions_pctl IS NOT NULL THEN 1 ELSE 0 END,
+        0
+    ) DESC
+OPTION(LOOP JOIN, RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@database_name sysname,
+        @start_date datetimeoffset(7),
+        @end_date datetimeoffset(7)',
+        @database_name,
+        @start_date,
+        @end_date;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+
+    /*Exit: go to DEBUG dump or return*/
+    IF @debug = 1
+    BEGIN
+        GOTO DEBUG;
+    END;
+    ELSE
+    BEGIN
+        RETURN;
+    END;
+END; /*End @find_high_impact*/
 
 /*
 Get filters ready, or whatever
@@ -8063,20 +9503,30 @@ FROM
     SELECT
         plan_force_json.score,
         plan_force_json.last_refresh,
-        regressed_plan_id = 
+        regressed_plan_id =
             SUBSTRING
             (
-                plan_force_json.Detail, 
-                CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN(''regressedPlanId: ''), 
-                CHARINDEX('','', plan_force_json.detail, CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN('',''))
+                plan_force_json.detail,
+                CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN(''regressedPlanId: ''),
+                IIF
+                (
+                    CHARINDEX('','', plan_force_json.detail, CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN('','')) = 0,
+                    LEN(plan_force_json.detail),
+                    CHARINDEX('','', plan_force_json.detail, CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN('',''))
+                )
                 - LEN(''regressedPlanId: '') - CHARINDEX(''regressedPlanId: '', plan_force_json.detail)
             ),
-        recommended_plan_id = 
+        recommended_plan_id =
             SUBSTRING
             (
-                plan_force_json.detail, 
-                CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN(''recommendedPlanId: ''), 
-                CHARINDEX('','', plan_force_json.detail, CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN('',''))
+                plan_force_json.detail,
+                CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN(''recommendedPlanId: ''),
+                IIF
+                (
+                    CHARINDEX('','', plan_force_json.detail, CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN('','')) = 0,
+                    LEN(plan_force_json.detail),
+                    CHARINDEX('','', plan_force_json.detail, CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN('',''))
+                )
                 - LEN(''recommendedPlanId: '') - CHARINDEX(''recommendedPlanId: '', plan_force_json.detail)
             )
     FROM
@@ -9128,7 +10578,25 @@ SELECT
                     2,
                     ''''
                 )
-    ) AS w
+    ) AS w'
+    );
+    END; /*End wait stats query*/
+
+    /*
+    Get tuning recommendations if we can
+    */
+    IF
+    (
+        @new = 1
+    AND @expert_mode = 1
+    )
+    BEGIN
+        SELECT
+            @sql +=
+        CONVERT
+        (
+            nvarchar(max),
+            N'
     OUTER APPLY
     (
         SELECT TOP (1)
@@ -9144,8 +10612,8 @@ SELECT
         ORDER BY
             qstr.last_refresh DESC
     ) AS tr'
-    );
-    END; /*End wait stats query*/
+        );
+    END; /*End tuning recommendations query*/
 
     /*Strap on the query hash totals table*/
     IF @include_query_hash_totals = 1
@@ -10775,6 +12243,8 @@ BEGIN
             @include_query_hash_totals,
         include_maintenance =
             @include_maintenance,
+        find_high_impact =
+            @find_high_impact,
         help =
             @help,
         debug =
