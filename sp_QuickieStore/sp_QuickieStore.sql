@@ -1369,6 +1369,20 @@ CREATE TABLE
 );
 
 /*
+Tuning Recommendations, When Available (2017+)
+*/
+CREATE TABLE
+    #tuning_recommendations
+(
+    database_id integer NOT NULL,
+    score integer NULL,
+    last_refresh datetime2 NULL,
+    /* These are from JSON, so the true schema cannot be known */
+    regressed_plan_id bigint NULL,
+    recommended_plan_id bigint NULL
+);
+
+/*
 Context is everything
 */
 CREATE TABLE
@@ -1582,6 +1596,7 @@ VALUES
     (90, 'sql_2022', 'plan_type', 'plan_type_desc', 'qsp.plan_type_desc', 1, 'sql_2022_views', 1, 0, NULL),
     /* New version features */
     (95, 'new_features', 'forcing_type', 'plan_forcing_type_desc', 'qsp.plan_forcing_type_desc', 1, 'new', 1, 0, NULL),
+    (96, 'new_features', 'forcing_status', 'plan_force_recommendation_status', 'tr.plan_force_recommendation_status', 1, 'new', 1, 1, NULL),
     (97, 'new_features', 'top_waits', 'top_waits', 'w.top_waits', 1, 'new', 1, 0, NULL),
     /* Date/time columns (not conditional, always included) */
     (100, 'execution_time', 'first', 'first_execution_time', 'CASE WHEN @timezone IS NULL THEN SWITCHOFFSET(qsrs.first_execution_time, @utc_offset_string) WHEN @timezone IS NOT NULL THEN qsrs.first_execution_time AT TIME ZONE @timezone END', 0, NULL, NULL, 0, NULL),
@@ -8012,6 +8027,123 @@ OPTION(RECOMPILE);' + @nc10;
 END; /*End getting wait stats*/
 
 /*
+If tuning recommendations are available, we'll grab them here
+*/
+IF
+(
+    @new = 1
+AND @expert_mode = 1
+)
+BEGIN
+    SELECT
+        @current_table = 'inserting #tuning_recommendations',
+        @sql = @isolation_level;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        EXECUTE sys.sp_executesql
+            @troubleshoot_insert,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        SET STATISTICS XML ON;
+    END;
+
+    /* The OPENJSON query doesn't work on pre-2017 compatibility levels. */
+    SELECT
+        @sql += N'
+SELECT
+    @database_id,
+    plan_force_flat.score,
+    plan_force_flat.last_refresh,
+    plan_force_flat.regressed_plan_id,
+    plan_force_flat.recommended_plan_id
+FROM
+(
+    SELECT
+        plan_force_json.score,
+        plan_force_json.last_refresh,
+        regressed_plan_id = 
+            SUBSTRING
+            (
+                plan_force_json.Detail, 
+                CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN(''regressedPlanId: ''), 
+                CHARINDEX('','', plan_force_json.detail, CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN('',''))
+                - LEN(''regressedPlanId: '') - CHARINDEX(''regressedPlanId: '', plan_force_json.detail)
+            ),
+        recommended_plan_id = 
+            SUBSTRING
+            (
+                plan_force_json.detail, 
+                CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN(''recommendedPlanId: ''), 
+                CHARINDEX('','', plan_force_json.detail, CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN('',''))
+                - LEN(''recommendedPlanId: '') - CHARINDEX(''recommendedPlanId: '', plan_force_json.detail)
+            )
+    FROM
+    (
+        SELECT
+            tr.score,
+            tr.last_refresh,
+            detail = 
+            (
+                SELECT
+                    REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                        tr.details,
+                    ''{'', ''''), ''}'', ''''), ''"'', ''''), '':'', '': ''), ''planForceDetails: '', ''''), '','', '', '')
+            )
+        FROM ' + @database_name_quoted + N'.sys.dm_db_tuning_recommendations AS tr
+    ) AS plan_force_json
+) AS plan_force_flat
+WHERE EXISTS
+      (
+          SELECT
+              1/0
+          FROM #query_store_plan AS qsp
+          WHERE plan_force_flat.regressed_plan_id = qsp.plan_id
+      )
+OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    INSERT
+        #tuning_recommendations
+    WITH
+        (TABLOCK)
+    (
+        database_id,
+        score,
+        last_refresh,
+        regressed_plan_id,
+        recommended_plan_id
+    )
+    EXECUTE sys.sp_executesql
+        @sql,
+      N'@database_id integer',
+        @database_id;
+
+    IF @troubleshoot_performance = 1
+    BEGIN
+        SET STATISTICS XML OFF;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_update,
+          N'@current_table nvarchar(100)',
+            @current_table;
+
+        EXECUTE sys.sp_executesql
+            @troubleshoot_info,
+          N'@sql nvarchar(max),
+            @current_table nvarchar(100)',
+            @sql,
+            @current_table;
+    END;
+END; /*End getting tuning recommendations*/
+
+/*
 This gets context info and settings
 */
 SELECT
@@ -8927,7 +9059,7 @@ SELECT
     );
 
     /*
-    Get wait stats if we can
+    Get wait stats and tuning recommendations if we can
     */
     IF
     (
@@ -8996,7 +9128,22 @@ SELECT
                     2,
                     ''''
                 )
-    ) AS w'
+    ) AS w
+    OUTER APPLY
+    (
+        SELECT TOP (1)
+            plan_force_recommendation_status =
+                N''Considered regressed from plan_id '' +
+                CONVERT(nvarchar(20), qstr.recommended_plan_id) +
+                N''. That plan may not be the best plan, but it is scored '' +
+                CONVERT(nvarchar(20), qstr.score) +
+                N'' out of 100 for being better than this plan.''
+        FROM #tuning_recommendations AS qstr
+        WHERE qstr.regressed_plan_id = qsrs.plan_id
+        AND   qstr.database_id = qsrs.database_id
+        ORDER BY
+            qstr.last_refresh DESC
+    ) AS tr'
     );
     END; /*End wait stats query*/
 
@@ -11599,6 +11746,29 @@ BEGIN
                     THEN ' because we ignore wait stats if you have disabled capturing them in your Query Store options'
                     ELSE ' for the queries in the results'
                 END;
+    END;
+
+    IF EXISTS
+       (
+          SELECT
+              1/0
+          FROM #tuning_recommendations AS qstr
+       )
+    BEGIN
+        SELECT
+            table_name =
+                '#tuning_recommendations',
+            qstr.*
+        FROM #tuning_recommendations AS qstr
+        ORDER BY
+            qstr.regressed_plan_id
+        OPTION(RECOMPILE);
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            result =
+                '#tuning_recommendations is empty';
     END;
 
     IF EXISTS
