@@ -4969,9 +4969,19 @@ SELECT
     database_name =
         @database_name,
     start_date =
-        @start_date,
+        ' +
+        CASE
+            WHEN @timezone IS NOT NULL
+            THEN N'@start_date AT TIME ZONE @timezone'
+            ELSE N'SWITCHOFFSET(@start_date, @utc_offset_string)'
+        END + N',
     end_date =
-        @end_date,
+        ' +
+        CASE
+            WHEN @timezone IS NOT NULL
+            THEN N'@end_date AT TIME ZONE @timezone'
+            ELSE N'SWITCHOFFSET(@end_date, @utc_offset_string)'
+        END + N',
     pw.primary_window,
     qi.object_name,
     rt.query_sql_text,
@@ -5264,10 +5274,14 @@ OPTION(LOOP JOIN, RECOMPILE);' + @nc10;
         @sql,
       N'@database_name sysname,
         @start_date datetimeoffset(7),
-        @end_date datetimeoffset(7)',
+        @end_date datetimeoffset(7),
+        @utc_offset_string varchar(6),
+        @timezone sysname',
         @database_name,
         @start_date,
-        @end_date;
+        @end_date,
+        @utc_offset_string,
+        @timezone;
 
     IF @troubleshoot_performance = 1
     BEGIN
