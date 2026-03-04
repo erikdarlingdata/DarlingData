@@ -407,10 +407,10 @@ BEGIN
     SELECT 'impact_score: 0.00 to 1.00. The average PERCENT_RANK across all active resource dimensions.' UNION ALL
     SELECT '    0.90 means this query outranks 90% of all queries in the database on the metrics where it registers.' UNION ALL
     SELECT '    Only queries scoring >= 0.50 are shown. A dimension is "active" when the query accounts for >= 0.1% of the total.' UNION ALL
-    SELECT 'high_signals: which dimensions scored above the 80th percentile (e.g. "cpu, duration, reads")' UNION ALL
+    SELECT 'high_signals: which dimensions scored above the 80th percentile (e.g. "cpu, duration, physical reads")' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'total_executions: how many times this query_hash executed in the time window' UNION ALL
-    SELECT 'cpu_share, duration_share, reads_share, writes_share, memory_share, executions_share:' UNION ALL
+    SELECT 'cpu_share, duration_share, physical_reads_share, writes_share, memory_share, executions_share:' UNION ALL
     SELECT '    what percentage of the server''s total for that metric this single query_hash consumed.' UNION ALL
     SELECT '    This is the 80/20 answer: "this one query is X% of all CPU on the server."' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
@@ -425,7 +425,7 @@ BEGIN
     SELECT '        This typically means tempdb spills from underestimated memory grants, or worktable spools.' UNION ALL
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'volatile_metrics: flags metrics with extreme variance: (max - min) / avg > 10x.' UNION ALL
-    SELECT '    Only flagged when the absolute max exceeds meaningful thresholds (1s duration, 100ms CPU, 1MB reads/writes/memory).' UNION ALL
+    SELECT '    Only flagged when the absolute max exceeds meaningful thresholds (1s duration, 100ms CPU, 1MB physical reads/writes/memory).' UNION ALL
     SELECT '    High volatility means the query''s performance is unpredictable, even if the average looks acceptable.';
 
     /*
@@ -5021,7 +5021,7 @@ SELECT
         (
             ISNULL(N'', '' + CASE WHEN s.cpu_pctl        >= 0.80 THEN N''cpu'' END, N'''') +
             ISNULL(N'', '' + CASE WHEN s.duration_pctl   >= 0.80 THEN N''duration'' END, N'''') +
-            ISNULL(N'', '' + CASE WHEN s.reads_pctl      >= 0.80 THEN N''reads'' END, N'''') +
+            ISNULL(N'', '' + CASE WHEN s.reads_pctl      >= 0.80 THEN N''physical reads'' END, N'''') +
             ISNULL(N'', '' + CASE WHEN s.writes_pctl     >= 0.80 THEN N''writes'' END, N'''') +
             ISNULL(N'', '' + CASE WHEN s.memory_pctl     >= 0.80 THEN N''memory'' END, N'''') +
             ISNULL(N'', '' + CASE WHEN s.executions_pctl >= 0.80 THEN N''executions'' END, N''''),
@@ -5032,7 +5032,8 @@ SELECT
     s.total_executions,
     s.cpu_share,
     s.duration_share,
-    s.reads_share,
+    physical_reads_share =
+        s.reads_share,
     s.writes_share,
     s.memory_share,
     s.executions_share,
@@ -5152,7 +5153,7 @@ SELECT
                     WHEN s.max_physical_reads_mb > 1
                      AND (s.max_physical_reads_mb - s.min_physical_reads_mb) /
                          NULLIF(s.avg_physical_reads_mb, 0) > 10
-                    THEN N''reads ('' +
+                    THEN N''physical reads ('' +
                          CONVERT
                          (
                              nvarchar(20),
