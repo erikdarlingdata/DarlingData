@@ -3233,6 +3233,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
+    /* Resolve subset chains: if A -> B -> C, flatten so A -> C directly.
+       Without this, includes from transitive subsets are lost because
+       Rule 6 only collects includes from direct subsets of the final superset. */
+    DECLARE @chains_resolved bigint = 1;
+
+    WHILE @chains_resolved > 0
+    BEGIN
+        UPDATE
+            ia1
+        SET
+            ia1.target_index_name = ia2.target_index_name
+        FROM #index_analysis AS ia1
+        JOIN #index_analysis AS ia2
+          ON  ia1.scope_hash = ia2.scope_hash
+          AND ia1.target_index_name = ia2.index_name
+        WHERE ia1.consolidation_rule = N'Key Subset'
+        AND   ia1.action = N'DISABLE'
+        AND   ia2.consolidation_rule = N'Key Subset'
+        AND   ia2.action = N'DISABLE'
+        AND   ia2.target_index_name IS NOT NULL
+        AND   ia1.target_index_name <> ia2.target_index_name;
+
+        SET @chains_resolved = ROWCOUNT_BIG();
+    END;
+
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Subset chain resolution completed', 0, 0) WITH NOWAIT;
+
+        SELECT
+            table_name = '#index_analysis after chain resolution',
+            ia.*
+        FROM #index_analysis AS ia
+        WHERE ia.consolidation_rule = N'Key Subset'
+        OPTION(RECOMPILE);
+    END;
+
     /* Rule 4: Mark superset indexes for merging with includes from subset */
     UPDATE
         ia2
@@ -3476,23 +3513,49 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
-    /* Update the superseded_by column for the wider index in a separate statement */
+    /* Update the superseded_by column for the wider index in a separate statement.
+       Uses FOR XML PATH to aggregate all subset names when multiple subsets target
+       the same superset (e.g., after chain resolution flattens A -> B -> C). */
     UPDATE
         ia2
     SET
         ia2.superseded_by =
             N'Supersedes ' +
-            ia1.index_name
-    FROM #index_analysis AS ia1
-    JOIN #index_analysis AS ia2
-      ON  ia1.scope_hash = ia2.scope_hash  /* Same database and object */
-      AND ia1.index_name <> ia2.index_name
-      AND ia2.key_columns LIKE (REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(ia1.key_columns, '~', '~~'), '[', '~['), ']', '~]'), '_', '~_'), '%', '~%') + N'%') ESCAPE '~'  /* ia2 has wider key that starts with ia1's key */
-      AND ISNULL(ia1.filter_definition, '') = ISNULL(ia2.filter_definition, '')  /* Matching filters */
-      /* Exception: If narrower index is unique and wider is not, they should not be merged */
-      AND NOT (ia1.is_unique = 1 AND ia2.is_unique = 0)
-    WHERE ia1.consolidation_rule = N'Key Subset'  /* Use records just processed in previous UPDATE */
-    AND   ia1.target_index_name = ia2.index_name  /* Make sure we're updating the right wider index */
+            STUFF
+            (
+                (
+                    SELECT
+                        N', ' +
+                        ia1_inner.index_name
+                    FROM #index_analysis AS ia1_inner
+                    WHERE ia1_inner.scope_hash = ia2.scope_hash
+                    AND   ia1_inner.target_index_name = ia2.index_name
+                    AND   ia1_inner.consolidation_rule = N'Key Subset'
+                    AND   ia1_inner.action = N'DISABLE'
+                    ORDER BY
+                        ia1_inner.index_name
+                    FOR
+                        XML
+                        PATH(''),
+                        TYPE
+                ).value('text()[1]', 'nvarchar(max)'),
+                1,
+                2,
+                N''
+            )
+    FROM #index_analysis AS ia2
+    WHERE ia2.consolidation_rule = N'Key Superset'
+    AND   ia2.action = N'MERGE INCLUDES'
+    AND   EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia1_check
+        WHERE ia1_check.scope_hash = ia2.scope_hash
+        AND   ia1_check.target_index_name = ia2.index_name
+        AND   ia1_check.consolidation_rule = N'Key Subset'
+        AND   ia1_check.action = N'DISABLE'
+    )
     OPTION(RECOMPILE);
 
     IF @debug = 1
