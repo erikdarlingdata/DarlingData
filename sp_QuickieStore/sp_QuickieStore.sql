@@ -3956,7 +3956,8 @@ BEGIN
         total_memory_mb decimal(38, 6) NOT NULL,
         avg_memory_mb decimal(38, 6) NULL,
         min_memory_mb decimal(38, 6) NULL,
-        max_memory_mb decimal(38, 6) NULL
+        max_memory_mb decimal(38, 6) NULL,
+        max_dop bigint NULL
     );
 
     CREATE TABLE
@@ -4103,7 +4104,9 @@ SELECT
     min_memory_mb =
         MIN(qsrs.min_query_max_used_memory * 8.0 / 1024.0),
     max_memory_mb =
-        MAX(qsrs.max_query_max_used_memory * 8.0 / 1024.0)
+        MAX(qsrs.max_query_max_used_memory * 8.0 / 1024.0),
+    max_dop =
+        MAX(qsrs.max_dop)
 FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
     ON qsq.query_id = qsp.query_id
@@ -4178,7 +4181,8 @@ OPTION(RECOMPILE);' + @nc10;
         total_memory_mb,
         avg_memory_mb,
         min_memory_mb,
-        max_memory_mb
+        max_memory_mb,
+        max_dop
     )
     EXECUTE sys.sp_executesql
         @sql,
@@ -5100,6 +5104,115 @@ SELECT
                          (
                              nvarchar(20),
                              CONVERT(decimal(10, 1), s.total_writes_mb / NULLIF(s.total_executions, 0))
+                         ) +
+                         N'' MB/exec)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'' | '' +
+                CASE
+                    WHEN s.max_dop > 1
+                     AND s.avg_duration_ms > 0
+                    THEN N''parallel efficiency ('' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT
+                             (
+                                 decimal(5, 1),
+                                 IIF
+                                 (
+                                     (CONVERT(float, s.avg_cpu_ms) / s.avg_duration_ms - 1.0) /
+                                     (s.max_dop - 1.0) * 100.0 > 100.0,
+                                     100.0,
+                                     IIF
+                                     (
+                                         (CONVERT(float, s.avg_cpu_ms) / s.avg_duration_ms - 1.0) /
+                                         (s.max_dop - 1.0) * 100.0 < 0.0,
+                                         0.0,
+                                         (CONVERT(float, s.avg_cpu_ms) / s.avg_duration_ms - 1.0) /
+                                         (s.max_dop - 1.0) * 100.0
+                                     )
+                                 )
+                             )
+                         ) +
+                         N''% @ DOP '' +
+                         CONVERT(nvarchar(10), s.max_dop) +
+                         N'')''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'' | '' +
+                CASE
+                    WHEN (s.max_duration_ms - s.min_duration_ms) /
+                         NULLIF(s.avg_duration_ms, 0) > 10
+                     AND s.max_duration_ms > 1000
+                     AND (s.max_cpu_ms - s.min_cpu_ms) /
+                         NULLIF(s.avg_cpu_ms, 0) < 3
+                    THEN N''intermittent waits (duration '' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(integer, (s.max_duration_ms - s.min_duration_ms) / NULLIF(s.avg_duration_ms, 0))
+                         ) +
+                         N''x, cpu '' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(decimal(5, 1), (s.max_cpu_ms - s.min_cpu_ms) / NULLIF(s.avg_cpu_ms, 0))
+                         ) +
+                         N''x)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'' | '' +
+                CASE
+                    WHEN s.total_executions < 10
+                     AND (s.cpu_share > 5
+                      OR  s.duration_share > 5)
+                    THEN N''rare but expensive ('' +
+                         CONVERT(nvarchar(20), s.total_executions) +
+                         N'' execs, '' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT
+                             (
+                                 decimal(5, 1),
+                                 IIF(s.cpu_share > s.duration_share, s.cpu_share, s.duration_share)
+                             )
+                         ) +
+                         N''% share)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'' | '' +
+                CASE
+                    WHEN s.query_count > 10
+                    THEN N''adhoc bloat ('' +
+                         CONVERT(nvarchar(20), s.query_count) +
+                         N'' variants)''
+                END,
+                N''''
+            ) +
+            ISNULL
+            (
+                N'' | '' +
+                CASE
+                    WHEN s.avg_physical_reads_mb > 50
+                    THEN N''scan heavy ('' +
+                         CONVERT
+                         (
+                             nvarchar(20),
+                             CONVERT(decimal(10, 1), s.avg_physical_reads_mb)
                          ) +
                          N'' MB/exec)''
                 END,
