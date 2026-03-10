@@ -426,7 +426,22 @@ BEGIN
     SELECT REPLICATE('-', 100) UNION ALL
     SELECT 'volatile_metrics: flags metrics with extreme variance: (max - min) / avg > 10x.' UNION ALL
     SELECT '    Only flagged when the absolute max exceeds meaningful thresholds (1s duration, 100ms CPU, 1MB physical reads/writes/memory).' UNION ALL
-    SELECT '    High volatility means the query''s performance is unpredictable, even if the average looks acceptable.';
+    SELECT '    High volatility means the query''s performance is unpredictable, even if the average looks acceptable.'  UNION ALL
+    SELECT REPLICATE('-', 100) UNION ALL
+    SELECT 'WORKLOAD CONCENTRATION SUMMARY (separate result set, returned before the query details):' UNION ALL
+    SELECT 'total_query_hashes: how many distinct query_hashes had executions in the time window' UNION ALL
+    SELECT 'surfaced_query_hashes: how many made it into the detail result set after top-N and scoring filters' UNION ALL
+    SELECT 'top_n_cpu_pct, top_n_duration_pct, top_n_reads_pct, top_n_writes_pct, top_n_memory_pct, top_n_executions_pct:' UNION ALL
+    SELECT '    what percentage of the server''s total for each metric the surfaced queries account for.' UNION ALL
+    SELECT '    If top_n_cpu_pct = 88.2, the surfaced queries are 88.2% of all CPU in the time window.' UNION ALL
+    SELECT 'workload_profile: Concentrated (>= 50%), Moderate (25-49%), or Flat (< 25%).' UNION ALL
+    SELECT '    Based on the highest concentration across all six metrics.' UNION ALL
+    SELECT '    Concentrated: a few queries dominate. Tuning them individually will have the most impact.' UNION ALL
+    SELECT '    Moderate: some outliers, but a long tail of smaller queries also matters.' UNION ALL
+    SELECT '    Flat: no dominant queries. Individual query tuning has limited value.' UNION ALL
+    SELECT 'recommendation: actionable guidance based on the workload profile.' UNION ALL
+    SELECT '    For flat workloads: consider forced parameterization, look for missing schema prefixes,' UNION ALL
+    SELECT '    temp table patterns causing recompilation, or RECOMPILE hints generating unique plans.';
 
     /*
     Limitations
@@ -4951,6 +4966,180 @@ OPTION(RECOMPILE);' + @nc10;
                 END
             )
     FROM #hi_interesting AS i;
+
+    /*Step 5c: Workload concentration summary*/
+    DECLARE
+        @hi_max_pct decimal(5, 1);
+
+    SELECT
+        @hi_max_pct =
+            MAX(v.pct)
+    FROM
+    (
+        SELECT
+            pct = SUM(CONVERT(decimal(5, 1), s.cpu_share))
+        FROM #hi_scored AS s
+        JOIN #hi_interesting AS i
+            ON s.query_hash = i.query_hash
+
+        UNION ALL
+
+        SELECT
+            pct = SUM(CONVERT(decimal(5, 1), s.duration_share))
+        FROM #hi_scored AS s
+        JOIN #hi_interesting AS i
+            ON s.query_hash = i.query_hash
+
+        UNION ALL
+
+        SELECT
+            pct = SUM(CONVERT(decimal(5, 1), s.reads_share))
+        FROM #hi_scored AS s
+        JOIN #hi_interesting AS i
+            ON s.query_hash = i.query_hash
+
+        UNION ALL
+
+        SELECT
+            pct = SUM(CONVERT(decimal(5, 1), s.writes_share))
+        FROM #hi_scored AS s
+        JOIN #hi_interesting AS i
+            ON s.query_hash = i.query_hash
+
+        UNION ALL
+
+        SELECT
+            pct = SUM(CONVERT(decimal(5, 1), s.memory_share))
+        FROM #hi_scored AS s
+        JOIN #hi_interesting AS i
+            ON s.query_hash = i.query_hash
+
+        UNION ALL
+
+        SELECT
+            pct = SUM(CONVERT(float, s.executions_share))
+        FROM #hi_scored AS s
+        JOIN #hi_interesting AS i
+            ON s.query_hash = i.query_hash
+    ) AS v (pct);
+
+    SELECT
+        total_query_hashes =
+            (SELECT COUNT_BIG(*) FROM #hi_query_stats),
+        surfaced_query_hashes =
+            (SELECT COUNT_BIG(*) FROM #hi_interesting),
+        top_n_cpu_pct =
+            CONVERT
+            (
+                decimal(5, 1),
+                ISNULL
+                (
+                    (
+                        SELECT
+                            SUM(CONVERT(decimal(5, 1), s.cpu_share))
+                        FROM #hi_scored AS s
+                        JOIN #hi_interesting AS i
+                            ON s.query_hash = i.query_hash
+                    ),
+                    0
+                )
+            ),
+        top_n_duration_pct =
+            CONVERT
+            (
+                decimal(5, 1),
+                ISNULL
+                (
+                    (
+                        SELECT
+                            SUM(CONVERT(decimal(5, 1), s.duration_share))
+                        FROM #hi_scored AS s
+                        JOIN #hi_interesting AS i
+                            ON s.query_hash = i.query_hash
+                    ),
+                    0
+                )
+            ),
+        top_n_reads_pct =
+            CONVERT
+            (
+                decimal(5, 1),
+                ISNULL
+                (
+                    (
+                        SELECT
+                            SUM(CONVERT(decimal(5, 1), s.reads_share))
+                        FROM #hi_scored AS s
+                        JOIN #hi_interesting AS i
+                            ON s.query_hash = i.query_hash
+                    ),
+                    0
+                )
+            ),
+        top_n_writes_pct =
+            CONVERT
+            (
+                decimal(5, 1),
+                ISNULL
+                (
+                    (
+                        SELECT
+                            SUM(CONVERT(decimal(5, 1), s.writes_share))
+                        FROM #hi_scored AS s
+                        JOIN #hi_interesting AS i
+                            ON s.query_hash = i.query_hash
+                    ),
+                    0
+                )
+            ),
+        top_n_memory_pct =
+            CONVERT
+            (
+                decimal(5, 1),
+                ISNULL
+                (
+                    (
+                        SELECT
+                            SUM(CONVERT(decimal(5, 1), s.memory_share))
+                        FROM #hi_scored AS s
+                        JOIN #hi_interesting AS i
+                            ON s.query_hash = i.query_hash
+                    ),
+                    0
+                )
+            ),
+        top_n_executions_pct =
+            CONVERT
+            (
+                decimal(5, 1),
+                ISNULL
+                (
+                    (
+                        SELECT
+                            SUM(CONVERT(float, s.executions_share))
+                        FROM #hi_scored AS s
+                        JOIN #hi_interesting AS i
+                            ON s.query_hash = i.query_hash
+                    ),
+                    0
+                )
+            ),
+        workload_profile =
+            CASE
+                WHEN @hi_max_pct >= 50
+                    THEN N'Concentrated'
+                WHEN @hi_max_pct >= 25
+                    THEN N'Moderate'
+                ELSE N'Flat'
+            END,
+        recommendation =
+            CASE
+                WHEN @hi_max_pct >= 50
+                    THEN N'Tune the surfaced queries for the most impact.'
+                WHEN @hi_max_pct >= 25
+                    THEN N'Some outliers, but a significant long tail. Tune surfaced queries, then investigate hash sprawl from missing schema prefixes, RECOMPILE hints, or temp table patterns.'
+                ELSE N'No dominant queries. Look for forced parameterization opportunities, missing schema prefixes (dbo.Proc vs Proc), temp table patterns causing recompilation, or RECOMPILE hints generating unique plans.'
+            END;
 
     /*Step 6: Final output (dynamic SQL for OUTER APPLY to query plan)*/
     SELECT
