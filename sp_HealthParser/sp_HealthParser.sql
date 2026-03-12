@@ -1954,7 +1954,7 @@ AND   ca.utc_timestamp < @end_date';
                   FROM #ignore_waits AS i
                   WHERE w.x.exist('(data[@name="wait_type"]/text/text())[1][.= sql:column("i.wait_type")]') = 1
               )
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -2187,7 +2187,7 @@ AND   ca.utc_timestamp < @end_date';
                   FROM #ignore_waits AS i
                   WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
               )
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -2234,7 +2234,7 @@ AND   ca.utc_timestamp < @end_date';
                     @wait_round_interval_minutes,
                 '19000101'
             )
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         /* Waits by count logging section */
         IF NOT EXISTS
@@ -2444,7 +2444,7 @@ AND   ca.utc_timestamp < @end_date';
                   FROM #ignore_waits AS i
                   WHERE w2.x2.exist('@waitType[.= sql:column("i.wait_type")]') = 1
               )
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -2494,7 +2494,7 @@ AND   ca.utc_timestamp < @end_date';
             td.waits,
             td.average_wait_time_ms,
             td.max_wait_time_ms
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         /* Waits by duration logging section */
         IF NOT EXISTS
@@ -2730,7 +2730,7 @@ AND   ca.utc_timestamp < @end_date';
         OUTER APPLY w.x.nodes('/event/data/value/ioSubsystem/longestPendingRequests/pendingRequest') AS w2(x2)
         WHERE w.x.exist('(data[@name="component"]/text[.= "IO_SUBSYSTEM"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -2763,7 +2763,7 @@ AND   ca.utc_timestamp < @end_date';
             i.intervalLongIos,
             i.totalLongIos,
             ISNULL(i.longestPendingRequests_filePath, 'N/A')
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         /* Potential IO issues logging section */
         IF NOT EXISTS
@@ -2950,7 +2950,7 @@ AND   ca.utc_timestamp < @end_date';
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
         AND  (w.x.exist('(/event/data[@name="data"]/value/queryProcessing/@pendingTasks[.>= sql:variable("@pending_task_threshold")])') = 1 OR @warnings_only = 0)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -3177,7 +3177,7 @@ AND   ca.utc_timestamp < @end_date';
         CROSS APPLY w.x.nodes('/event/data[@name="data"]/value/queryProcessing[@pendingTasks > 1]/pendingTasks/entryPoint') AS ep(e)
         WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -3386,7 +3386,7 @@ AND   ca.utc_timestamp < @end_date';
         FROM #sp_server_diagnostics_component_result AS s
         CROSS APPLY s.sp_server_diagnostics_component_result.nodes('/event/data/value/resource') AS r(c)
         WHERE (r.c.exist('@lastNotification[.= "RESOURCE_MEMPHYSICAL_LOW"]') = @warnings_only OR @warnings_only = 0)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -3617,7 +3617,7 @@ AND   ca.utc_timestamp < @end_date';
         FROM #memory_broker AS mb
         CROSS APPLY mb.memory_broker.nodes('//event') AS w(x)
         WHERE (w.x.exist('(data[@name="notification"]/value[.= "RESOURCE_MEMPHYSICAL_LOW"])') = @warnings_only OR @warnings_only = 0)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -3911,7 +3911,7 @@ AND   ca.utc_timestamp < @end_date';
         INTO #memory_node_oom_info
         FROM #memory_node_oom AS mno
         CROSS APPLY mno.memory_node_oom.nodes('//event') AS w(x)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -4311,7 +4311,7 @@ AND   ca.utc_timestamp < @end_date';
         CROSS APPLY wi.sp_server_diagnostics_component_result.nodes('//event') AS w(x)
         WHERE w.x.exist('(data[@name="component"]/text[.= "SYSTEM"])') = 1
         AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -4506,7 +4506,7 @@ AND   ca.utc_timestamp < @end_date';
         FROM #scheduler_monitor AS sm
         CROSS APPLY sm.scheduler_monitor.nodes('//event') AS w(x)
         WHERE (w.x.exist('(data[@name="status"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -4733,7 +4733,7 @@ AND   ca.utc_timestamp < @end_date';
             FROM #ignore_errors AS ie
             WHERE w.x.value('(data[@name="error_number"]/value)[1]', 'integer') = ie.error_number
         )
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -4940,7 +4940,7 @@ AND   ca.utc_timestamp < @end_date';
     WHERE w.x.exist('(data[@name="component"]/text[.= "QUERY_PROCESSING"])') = 1
     AND   w.x.exist('//data[@name="data"]/value/queryProcessing/cpuIntensiveRequests/request') = 1
     AND  (w.x.exist('(data[@name="state"]/text[.= "WARNING"])') = @warnings_only OR @warnings_only = 0)
-    OPTION(RECOMPILE);
+    OPTION(RECOMPILE, MAXDOP 1);
 
     IF @debug = 1
     BEGIN
@@ -5070,7 +5070,7 @@ AND   ca.utc_timestamp < @end_date';
         OUTER APPLY oa.c.nodes('//blocked-process-report/blocked-process') AS bd(bd)
         WHERE bd.exist('process/@spid') = 1
         AND   (bd.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -5147,7 +5147,7 @@ AND   ca.utc_timestamp < @end_date';
         OUTER APPLY oa.c.nodes('//blocked-process-report/blocking-process') AS bg(bg)
         WHERE bg.exist('process/@spid') = 1
         AND   (bg.exist('process[@currentdbname = sql:variable("@database_name")]') = 1 OR @database_name IS NULL)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -5331,7 +5331,7 @@ AND   ca.utc_timestamp < @end_date';
             WHERE (bd.currentdbname = @database_name
                    OR @database_name IS NULL)
         ) AS kheb
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -5575,7 +5575,7 @@ AND   ca.utc_timestamp < @end_date';
             WHERE (b.currentdbname = @database_name
                     OR @database_name IS NULL)
         ) AS b
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -5589,7 +5589,7 @@ AND   ca.utc_timestamp < @end_date';
             deadlock_graph = x.xml_deadlock_report.query('/event/data/value/deadlock')
         INTO #deadlocks
         FROM #xml_deadlock_report AS x
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -5723,7 +5723,7 @@ AND   ca.utc_timestamp < @end_date';
                OR @dbid IS NULL)
         OR    (x.current_database_name = @database_name
                OR @database_name IS NULL)
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF @debug = 1
         BEGIN
@@ -6166,7 +6166,7 @@ AND   ca.utc_timestamp < @end_date';
         WHERE ap.query_plan IS NOT NULL
         ORDER BY
             ap.avg_worker_time_ms DESC
-        OPTION(RECOMPILE);
+        OPTION(RECOMPILE, MAXDOP 1);
 
         IF EXISTS
         (
