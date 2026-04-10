@@ -3557,6 +3557,233 @@ BEGIN
 
     IF @debug = 1
     BEGIN
+        RAISERROR('Inserting #block_findings, check_id 9', 0, 1) WITH NOWAIT;
+    END;
+
+    WITH
+        blocker_waits AS
+    (
+        SELECT
+            b.database_name,
+            query_text_pre =
+                b.query_text_pre,
+            b.transaction_id,
+            sql_handle =
+                CONVERT
+                (
+                    varbinary(64),
+                    b.blocked_process_report.value
+                    (
+                        '(/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]/@sqlhandle)[1]',
+                        'varchar(130)'
+                    ),
+                    1
+                ),
+            stmtstart =
+                ISNULL
+                (
+                    b.blocked_process_report.value
+                    (
+                        '(/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]/@stmtstart)[1]',
+                        'integer'
+                    ),
+                    0
+                ),
+            stmtend =
+                ISNULL
+                (
+                    b.blocked_process_report.value
+                    (
+                        '(/event/data/value/blocked-process-report/blocking-process/process/executionStack/frame[not(@sqlhandle = "0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]/@stmtend)[1]',
+                        'integer'
+                    ),
+                    -1
+                ),
+            wait_time_ms =
+                ISNULL
+                (
+                    b.blocked_process_report.value
+                    (
+                        '(/event/data/value/blocked-process-report/blocked-process/process/@waittime)[1]',
+                        'bigint'
+                    ),
+                    0
+                )
+        FROM #blocks AS b
+        WHERE b.activity = 'blocking'
+        AND   (b.database_name = @database_name
+               OR @database_name IS NULL)
+        AND   (b.contentious_object = @object_name
+               OR @object_name IS NULL)
+    ),
+        blocker_per_victim AS
+    (
+        SELECT
+            bw.database_name,
+            bw.sql_handle,
+            bw.stmtstart,
+            bw.stmtend,
+            bw.query_text_pre,
+            bw.transaction_id,
+            wait_time_ms =
+                MAX(bw.wait_time_ms)
+        FROM blocker_waits AS bw
+        WHERE bw.sql_handle IS NOT NULL
+        GROUP BY
+            bw.database_name,
+            bw.sql_handle,
+            bw.stmtstart,
+            bw.stmtend,
+            bw.query_text_pre,
+            bw.transaction_id
+    )
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            9,
+        bpv.database_name,
+        object_name =
+            LEFT
+            (
+                REPLACE
+                (
+                    REPLACE
+                    (
+                        ISNULL
+                        (
+                            MAX(bpv.query_text_pre),
+                            N'[Unknown]'
+                        ),
+                        NCHAR(13),
+                        N' '
+                    ),
+                    NCHAR(10),
+                    N' '
+                ),
+                200
+            ),
+        finding_group =
+            N'Top Blocking Query',
+        finding =
+            N'This query caused ' +
+            CONVERT
+            (
+                nvarchar(30),
+                (
+                    SUM
+                    (
+                        CONVERT
+                        (
+                            bigint,
+                            bpv.wait_time_ms
+                        )
+                    ) / 1000 / 86400
+                )
+            ) +
+            N' ' +
+            CONVERT
+            (
+                nvarchar(30),
+                DATEADD
+                (
+                    SECOND,
+                    (
+                        SUM
+                        (
+                            CONVERT
+                            (
+                                bigint,
+                                bpv.wait_time_ms
+                            )
+                        ) / 1000 % 86400
+                    ),
+                    '19000101'
+                ),
+                14
+            ) +
+            N' of blocking wait time (' +
+            ISNULL
+            (
+                CONVERT
+                (
+                    nvarchar(10),
+                    CONVERT
+                    (
+                        decimal(5, 1),
+                        100.0 *
+                        SUM
+                        (
+                            CONVERT
+                            (
+                                bigint,
+                                bpv.wait_time_ms
+                            )
+                        ) /
+                        NULLIF
+                        (
+                            SUM
+                            (
+                                SUM
+                                (
+                                    CONVERT
+                                    (
+                                        bigint,
+                                        bpv.wait_time_ms
+                                    )
+                                )
+                            ) OVER (),
+                            0
+                        )
+                    )
+                ),
+                N'0.0'
+            ) +
+            N'% of total) across ' +
+            CONVERT
+            (
+                nvarchar(20),
+                COUNT_BIG(DISTINCT bpv.transaction_id)
+            ) +
+            N' blocked sessions.',
+       sort_order =
+           ROW_NUMBER() OVER
+           (
+               ORDER BY
+                   SUM
+                   (
+                       CONVERT
+                       (
+                           bigint,
+                           bpv.wait_time_ms
+                       )
+                   ) DESC
+           )
+    FROM blocker_per_victim AS bpv
+    GROUP BY
+        bpv.database_name,
+        bpv.sql_handle,
+        bpv.stmtstart,
+        bpv.stmtend
+    HAVING
+        SUM(CONVERT(bigint, bpv.wait_time_ms)) * 10 >=
+        (
+            SELECT
+                SUM(CONVERT(bigint, bpv2.wait_time_ms))
+            FROM blocker_per_victim AS bpv2
+        )
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
         RAISERROR('Inserting #block_findings, check_id 1000', 0, 1) WITH NOWAIT;
     END;
 
