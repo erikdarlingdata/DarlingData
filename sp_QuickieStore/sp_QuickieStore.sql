@@ -11082,30 +11082,42 @@ FROM
         plan_force_json.score,
         plan_force_json.last_refresh,
         regressed_plan_id =
-            SUBSTRING
+            TRY_CAST
             (
-                plan_force_json.detail,
-                CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN(''regressedPlanId: ''),
-                IIF
+                LTRIM
                 (
-                    CHARINDEX('','', plan_force_json.detail, CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN('','')) = 0,
-                    LEN(plan_force_json.detail),
-                    CHARINDEX('','', plan_force_json.detail, CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN('',''))
-                )
-                - LEN(''regressedPlanId: '') - CHARINDEX(''regressedPlanId: '', plan_force_json.detail)
+                    SUBSTRING
+                    (
+                        plan_force_json.detail,
+                        CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN(''regressedPlanId: ''),
+                        IIF
+                        (
+                            CHARINDEX('','', plan_force_json.detail, CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN('','')) = 0,
+                            LEN(plan_force_json.detail),
+                            CHARINDEX('','', plan_force_json.detail, CHARINDEX(''regressedPlanId: '', plan_force_json.detail) + LEN('',''))
+                        )
+                        - LEN(''regressedPlanId: '') - CHARINDEX(''regressedPlanId: '', plan_force_json.detail)
+                    )
+                ) AS bigint
             ),
         recommended_plan_id =
-            SUBSTRING
+            TRY_CAST
             (
-                plan_force_json.detail,
-                CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN(''recommendedPlanId: ''),
-                IIF
+                LTRIM
                 (
-                    CHARINDEX('','', plan_force_json.detail, CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN('','')) = 0,
-                    LEN(plan_force_json.detail),
-                    CHARINDEX('','', plan_force_json.detail, CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN('',''))
-                )
-                - LEN(''recommendedPlanId: '') - CHARINDEX(''recommendedPlanId: '', plan_force_json.detail)
+                    SUBSTRING
+                    (
+                        plan_force_json.detail,
+                        CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN(''recommendedPlanId: ''),
+                        IIF
+                        (
+                            CHARINDEX('','', plan_force_json.detail, CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN('','')) = 0,
+                            LEN(plan_force_json.detail),
+                            CHARINDEX('','', plan_force_json.detail, CHARINDEX(''recommendedPlanId: '', plan_force_json.detail) + LEN('',''))
+                        )
+                        - LEN(''recommendedPlanId: '') - CHARINDEX(''recommendedPlanId: '', plan_force_json.detail)
+                    )
+                ) AS bigint
             )
     FROM
     (
@@ -11127,7 +11139,7 @@ WHERE EXISTS
           SELECT
               1/0
           FROM #query_store_plan AS qsp
-          WHERE TRY_CAST(plan_force_flat.regressed_plan_id AS bigint) = qsp.plan_id
+          WHERE plan_force_flat.regressed_plan_id = qsp.plan_id
       )
 OPTION(RECOMPILE);' + @nc10;
 
