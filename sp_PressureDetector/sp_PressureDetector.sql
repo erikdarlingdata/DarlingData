@@ -630,10 +630,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     total_mb_read decimal(38,2) NULL,
                     total_read_count bigint NULL,
                     avg_read_stall_ms decimal(38,2) NULL,
+                    avg_read_kb decimal(38,2) NULL,
                     total_gb_written decimal(38,2) NULL,
                     total_mb_written decimal(38,2) NULL,
                     total_write_count bigint NULL,
                     avg_write_stall_ms decimal(38,2) NULL,
+                    avg_write_kb decimal(38,2) NULL,
+                    num_of_bytes_read bigint NULL,
+                    num_of_bytes_written bigint NULL,
                     io_stall_read_ms bigint NULL,
                     io_stall_write_ms bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
@@ -1052,10 +1056,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
         total_mb_read decimal(38,2),
         total_read_count bigint,
         avg_read_stall_ms decimal(38,2),
+        avg_read_kb decimal(38,2),
         total_gb_written decimal(38,2),
         total_mb_written decimal(38,2),
         total_write_count bigint,
         avg_write_stall_ms decimal(38,2),
+        avg_write_kb decimal(38,2),
+        num_of_bytes_read bigint,
+        num_of_bytes_written bigint,
         io_stall_read_ms bigint,
         io_stall_write_ms bigint,
         sample_time datetime
@@ -1698,6 +1706,21 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         0.
                     )
                 ),
+            avg_read_kb =
+                CONVERT
+                (
+                    decimal(38, 2),
+                    ISNULL
+                    (
+                        (vfs.num_of_bytes_read / 1024.) /
+                          CONVERT
+                          (
+                              decimal(38, 2),
+                              NULLIF(vfs.num_of_reads, 0.)
+                          ),
+                        0.
+                    )
+                ),
             total_gb_written =
                 CASE
                     WHEN vfs.num_of_bytes_written > 0
@@ -1735,6 +1758,25 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         0.
                     )
                 ),
+            avg_write_kb =
+                CONVERT
+                (
+                    decimal(38, 2),
+                    ISNULL
+                    (
+                        (vfs.num_of_bytes_written / 1024.) /
+                          CONVERT
+                          (
+                              decimal(38, 2),
+                              NULLIF(vfs.num_of_writes, 0.)
+                          ),
+                        0.
+                    )
+                ),
+            num_of_bytes_read =
+                vfs.num_of_bytes_read,
+            num_of_bytes_written =
+                vfs.num_of_bytes_written,
             io_stall_read_ms,
             io_stall_write_ms,
             sample_time =
@@ -1790,10 +1832,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
             total_mb_read,
             total_read_count,
             avg_read_stall_ms,
+            avg_read_kb,
             total_gb_written,
             total_mb_written,
             total_write_count,
             avg_write_stall_ms,
+            avg_write_kb,
+            num_of_bytes_read,
+            num_of_bytes_written,
             io_stall_read_ms,
             io_stall_write_ms,
             sample_time
@@ -1816,6 +1862,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                         fm.file_size_gb,
                         fm.avg_read_stall_ms,
                         fm.avg_write_stall_ms,
+                        fm.avg_read_kb,
+                        fm.avg_write_kb,
                         fm.total_gb_read,
                         fm.total_gb_written,
                         total_read_count =
@@ -1838,6 +1886,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     fm.avg_read_stall_ms,
                     fm.avg_write_stall_ms,
                     fm.total_avg_stall_ms,
+                    fm.avg_read_kb,
+                    fm.avg_write_kb,
                     fm.total_gb_read,
                     fm.total_gb_written,
                     fm.total_read_count,
@@ -1855,6 +1905,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     avg_read_stall_ms = 0,
                     avg_write_stall_ms = 0,
                     total_avg_stall_ms = 0,
+                    avg_read_kb = 0,
+                    avg_write_kb = 0,
                     total_gb_read = 0,
                     total_gb_written = 0,
                     total_read_count = N'0',
@@ -1927,6 +1979,30 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                         )
                                     )
                             END,
+                        avg_read_kb =
+                            CASE
+                                WHEN (fm2.total_read_count - fm.total_read_count) = 0
+                                THEN 0.00
+                                ELSE
+                                    CONVERT
+                                    (
+                                        decimal(38, 2),
+                                        ((fm2.num_of_bytes_read - fm.num_of_bytes_read) / 1024.) /
+                                        (fm2.total_read_count - fm.total_read_count)
+                                    )
+                            END,
+                        avg_write_kb =
+                            CASE
+                                WHEN (fm2.total_write_count - fm.total_write_count) = 0
+                                THEN 0.00
+                                ELSE
+                                    CONVERT
+                                    (
+                                        decimal(38, 2),
+                                        ((fm2.num_of_bytes_written - fm.num_of_bytes_written) / 1024.) /
+                                        (fm2.total_write_count - fm.total_write_count)
+                                    )
+                            END,
                         total_mb_read =
                             (fm2.total_mb_read - fm.total_mb_read),
                         total_mb_written =
@@ -1954,6 +2030,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     f.avg_read_stall_ms,
                     f.avg_write_stall_ms,
                     f.total_avg_stall,
+                    f.avg_read_kb,
+                    f.avg_write_kb,
                     total_mb_read =
                         FORMAT(f.total_mb_read, 'N0'),
                     total_mb_written =
@@ -2003,10 +2081,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    total_mb_read,
                    total_read_count,
                    avg_read_stall_ms,
+                   avg_read_kb,
                    total_gb_written,
                    total_mb_written,
                    total_write_count,
                    avg_write_stall_ms,
+                   avg_write_kb,
+                   num_of_bytes_read,
+                   num_of_bytes_written,
                    io_stall_read_ms,
                    io_stall_write_ms
                )
@@ -2020,10 +2102,14 @@ OPTION(MAXDOP 1, RECOMPILE);',
                    fm.total_mb_read,
                    fm.total_read_count,
                    fm.avg_read_stall_ms,
+                   fm.avg_read_kb,
                    fm.total_gb_written,
                    fm.total_mb_written,
                    fm.total_write_count,
                    fm.avg_write_stall_ms,
+                   fm.avg_write_kb,
+                   fm.num_of_bytes_read,
+                   fm.num_of_bytes_written,
                    fm.io_stall_read_ms,
                    fm.io_stall_write_ms
                FROM #file_metrics AS fm;
