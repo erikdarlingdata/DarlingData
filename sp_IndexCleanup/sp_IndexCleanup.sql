@@ -61,6 +61,7 @@ ALTER PROCEDURE
     @get_all_databases bit = 'false', /*looks for all accessible user databases and returns combined results*/
     @include_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
+    @sort_order varchar(20) = 'default', /*controls final result ordering: default (script type first) or object (cluster all rows for the same database/schema/table/index)*/
     @help bit = 'false', /*learn about the procedure and parameters*/
     @debug bit = 'false', /*print dynamic sql, show temp table contents*/
     @version varchar(20) = NULL OUTPUT, /*script version number*/
@@ -148,6 +149,7 @@ BEGIN TRY
                     WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases'
                     WHEN N'@include_databases' THEN 'comma-separated list of databases to include when @get_all_databases = 1'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude when @get_all_databases = 1'
+                    WHEN N'@sort_order' THEN 'controls final result ordering: default groups by script type within each database, object groups all rows for the same index together'
                     WHEN N'@help' THEN 'displays this help information'
                     WHEN N'@debug' THEN 'prints debug information during execution'
                     WHEN N'@version' THEN 'returns the version number of the procedure'
@@ -168,6 +170,7 @@ BEGIN TRY
                     WHEN N'@get_all_databases' THEN '0 or 1'
                     WHEN N'@include_databases' THEN 'comma-separated list of database names'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of database names'
+                    WHEN N'@sort_order' THEN 'default or object'
                     WHEN N'@help' THEN '0 or 1'
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
@@ -188,6 +191,7 @@ BEGIN TRY
                     WHEN N'@get_all_databases' THEN 'false'
                     WHEN N'@include_databases' THEN 'NULL'
                     WHEN N'@exclude_databases' THEN 'NULL'
+                    WHEN N'@sort_order' THEN 'default'
                     WHEN N'@help' THEN 'false'
                     WHEN N'@debug' THEN 'false'
                     WHEN N'@version' THEN 'NULL'
@@ -236,6 +240,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RETURN;
     END;
 
+    /*
+    Validate @sort_order
+    */
+    SET @sort_order = LOWER(LTRIM(RTRIM(ISNULL(@sort_order, N'default'))));
+
+    IF @sort_order NOT IN (N'default', N'object')
+    BEGIN
+        RAISERROR(N'@sort_order must be either ''default'' or ''object''.', 16, 1);
+        RETURN;
+    END;
+
     IF @debug = 1
     BEGIN
         RAISERROR('Declaring variables', 0, 0) WITH NOWAIT;
@@ -274,7 +289,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       (
                           integer,
                           SERVERPROPERTY('EngineEdition')
-                      ) = 2
+                      ) IN (2, 4)
                       AND CONVERT
                           (
                               integer,
@@ -299,8 +314,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* Azure SQL DB or Managed Instance */
                 WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
                 THEN 1
-                /* SQL Server 2019+ (Enterprise or Standard) */
-                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (2, 3)
+                /* SQL Server 2019+ (Enterprise, Standard, Web, or Express) */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (2, 3, 4)
                      AND CONVERT
                          (
                              integer,
@@ -6458,9 +6473,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ir.rn = 1 /* Take only the first row for each index */
     ORDER BY
         ir.database_name,
+        /* Object mode: cluster by schema/table/index before script type */
+        CASE WHEN @sort_order = N'object' THEN ir.schema_name END,
+        CASE WHEN @sort_order = N'object' THEN ir.table_name END,
+        CASE WHEN @sort_order = N'object' THEN ir.index_name END,
+        /* Always order by script type within the current grouping */
         ir.sort_order,
-        /* Within each sort_order group, prioritize by size and usage */
+        /* Default mode: within each sort_order group, prioritize by size and usage */
         CASE
+            WHEN @sort_order <> N'default'
+            THEN NULL
             /* For SUMMARY, keep the original order */
             WHEN ir.result_type = 'SUMMARY'
             THEN 0
@@ -6468,6 +6490,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE ISNULL(ir.index_size_gb, 0)
         END DESC,
         CASE
+            WHEN @sort_order <> N'default'
+            THEN NULL
             /* For SUMMARY, keep the original order */
             WHEN ir.result_type = 'SUMMARY'
             THEN 0
