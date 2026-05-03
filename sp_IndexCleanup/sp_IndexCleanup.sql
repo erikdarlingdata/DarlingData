@@ -1206,6 +1206,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Single database mode */
         IF @database_name IS NOT NULL
         BEGIN
+            /*
+            Preflight: if the database exists and is otherwise eligible but the current
+            principal has no access, fail loud rather than letting downstream queries hang.
+            sp_IndexCleanup queries sys.dm_db_partition_stats via three-part name, which
+            under a SQL Server permission/recompile bug spins at 100% CPU forever instead
+            of erroring (Msg 916). See PerformanceMonitor issue #915.
+            */
+            IF EXISTS
+               (
+                   SELECT
+                       1/0
+                   FROM sys.databases AS d
+                   WHERE d.name = @database_name
+                   AND   d.state = 0
+                   AND   d.is_in_standby = 0
+                   AND   d.is_read_only = 0
+               )
+            AND ISNULL(HAS_DBACCESS(@database_name), 0) = 0
+            BEGIN
+                SET @error_msg =
+                    N'The current login has no access to database ' +
+                    QUOTENAME(@database_name) +
+                    N'. Run, against that database: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;';
+
+                RAISERROR(@error_msg, 16, 1);
+                RETURN;
+            END;
+
             INSERT INTO
                 #databases
             WITH
@@ -1222,6 +1250,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   d.state = 0
             AND   d.is_in_standby = 0
             AND   d.is_read_only = 0
+            AND   HAS_DBACCESS(d.name) = 1
             OPTION(RECOMPILE);
 
             /* Get the database_id for backwards compatibility */
@@ -1233,7 +1262,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END
     ELSE
     BEGIN
-        /* Multi-database mode */
+        /*
+        Multi-database mode. HAS_DBACCESS gates which databases the current principal can
+        actually query; without this filter, three-part-name queries against
+        sys.dm_db_partition_stats hang indefinitely under a SQL Server permission/recompile
+        bug. See PerformanceMonitor issue #915.
+        */
         INSERT INTO
             #databases
         WITH
@@ -1250,6 +1284,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   d.state = 0
         AND   d.is_in_standby = 0
         AND   d.is_read_only = 0
+        AND   HAS_DBACCESS(d.name) = 1
         AND   (
                 @include_databases IS NULL
                 OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
@@ -1259,6 +1294,81 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 OR NOT EXISTS (SELECT 1/0 FROM #exclude_databases AS ed WHERE ed.database_name = d.name)
               )
         OPTION(RECOMPILE);
+
+        /*
+        Track databases that would otherwise qualify but were skipped because the current
+        principal has no access. These surface in the SUMMARY row so the operator knows
+        which databases need GRANT before they will be analyzed.
+        */
+        INSERT INTO
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            d.name,
+            reason = N'No database access for current login'
+        FROM sys.databases AS d
+        WHERE d.database_id > 4
+        AND   d.state = 0
+        AND   d.is_in_standby = 0
+        AND   d.is_read_only = 0
+        AND   ISNULL(HAS_DBACCESS(d.name), 0) = 0
+        AND   (
+                @include_databases IS NULL
+                OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
+              )
+        AND   (
+                @exclude_databases IS NULL
+                OR NOT EXISTS (SELECT 1/0 FROM #exclude_databases AS ed WHERE ed.database_name = d.name)
+              )
+        OPTION(RECOMPILE);
+
+        /*
+        Surface a non-fatal warning listing the skipped databases. Severity 10 with NOWAIT
+        matches existing progress messages and is visible regardless of @debug. Skipped
+        databases never produce result-set rows; they appear in the SUMMARY row's
+        "skipped databases" column.
+        */
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #requested_but_skipped_databases AS rbs
+               WHERE rbs.reason = N'No database access for current login'
+           )
+        BEGIN
+            SET @error_msg = N'';
+
+            SELECT
+                @error_msg =
+                    @error_msg +
+                    rbs.database_name +
+                    N', '
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.reason = N'No database access for current login'
+            ORDER BY
+                rbs.database_name
+            OPTION(RECOMPILE);
+
+            IF DATALENGTH(@error_msg) > 0
+            BEGIN
+                SET @error_msg = LEFT(@error_msg, DATALENGTH(@error_msg) / 2 - 2);
+
+                SET @error_msg =
+                    N'Skipping these databases - current login has no access: ' +
+                    @error_msg +
+                    N'. Run, against each: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;';
+
+                RAISERROR(@error_msg, 10, 1) WITH NOWAIT;
+
+                /* Reset for subsequent uses below. */
+                SET @error_msg = N'';
+            END;
+        END;
     END;
 
     /* Check for empty database list */
@@ -1307,6 +1417,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN 'Database is read-only'
                     WHEN d.database_id <= 4
                     THEN 'System database'
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    THEN 'No database access for current login'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
@@ -1318,6 +1430,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       1/0
                   FROM #databases AS db
                   WHERE db.database_name = id.database_name
+              )
+        /* HAS_DBACCESS skips were already recorded above; avoid PK conflicts. */
+        AND   NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #requested_but_skipped_databases AS rbs
+                  WHERE rbs.database_name = id.database_name
               )
         OPTION(RECOMPILE);
 
