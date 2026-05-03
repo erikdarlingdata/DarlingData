@@ -1,4 +1,4 @@
--- Compile Date: 04/29/2026 21:01:51 UTC
+-- Compile Date: 05/03/2026 15:23:41 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -15579,6 +15579,7 @@ ALTER PROCEDURE
     @get_all_databases bit = 'false', /*looks for all accessible user databases and returns combined results*/
     @include_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
+    @sort_order varchar(20) = 'default', /*controls final result ordering: default (script type first) or object (cluster all rows for the same database/schema/table/index)*/
     @help bit = 'false', /*learn about the procedure and parameters*/
     @debug bit = 'false', /*print dynamic sql, show temp table contents*/
     @version varchar(20) = NULL OUTPUT, /*script version number*/
@@ -15666,6 +15667,7 @@ BEGIN TRY
                     WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases'
                     WHEN N'@include_databases' THEN 'comma-separated list of databases to include when @get_all_databases = 1'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude when @get_all_databases = 1'
+                    WHEN N'@sort_order' THEN 'controls final result ordering: default groups by script type within each database, object groups all rows for the same index together'
                     WHEN N'@help' THEN 'displays this help information'
                     WHEN N'@debug' THEN 'prints debug information during execution'
                     WHEN N'@version' THEN 'returns the version number of the procedure'
@@ -15686,6 +15688,7 @@ BEGIN TRY
                     WHEN N'@get_all_databases' THEN '0 or 1'
                     WHEN N'@include_databases' THEN 'comma-separated list of database names'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of database names'
+                    WHEN N'@sort_order' THEN 'default or object'
                     WHEN N'@help' THEN '0 or 1'
                     WHEN N'@debug' THEN '0 or 1'
                     WHEN N'@version' THEN 'OUTPUT parameter'
@@ -15706,6 +15709,7 @@ BEGIN TRY
                     WHEN N'@get_all_databases' THEN 'false'
                     WHEN N'@include_databases' THEN 'NULL'
                     WHEN N'@exclude_databases' THEN 'NULL'
+                    WHEN N'@sort_order' THEN 'default'
                     WHEN N'@help' THEN 'false'
                     WHEN N'@debug' THEN 'false'
                     WHEN N'@version' THEN 'NULL'
@@ -15754,6 +15758,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RETURN;
     END;
 
+    /*
+    Validate @sort_order
+    */
+    SET @sort_order = LOWER(LTRIM(RTRIM(ISNULL(@sort_order, N'default'))));
+
+    IF @sort_order NOT IN (N'default', N'object')
+    BEGIN
+        RAISERROR(N'@sort_order must be either ''default'' or ''object''.', 16, 1);
+        RETURN;
+    END;
+
     IF @debug = 1
     BEGIN
         RAISERROR('Declaring variables', 0, 0) WITH NOWAIT;
@@ -15792,7 +15807,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       (
                           integer,
                           SERVERPROPERTY('EngineEdition')
-                      ) = 2
+                      ) IN (2, 4)
                       AND CONVERT
                           (
                               integer,
@@ -15817,8 +15832,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 /* Azure SQL DB or Managed Instance */
                 WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (5, 8)
                 THEN 1
-                /* SQL Server 2019+ (Enterprise or Standard) */
-                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (2, 3)
+                /* SQL Server 2019+ (Enterprise, Standard, Web, or Express) */
+                WHEN CONVERT(integer, SERVERPROPERTY('EngineEdition')) IN (2, 3, 4)
                      AND CONVERT
                          (
                              integer,
@@ -16724,6 +16739,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Single database mode */
         IF @database_name IS NOT NULL
         BEGIN
+            /*
+            Preflight: if the database exists and is otherwise eligible but the current
+            principal has no access, fail loud rather than letting downstream queries hang.
+            sp_IndexCleanup queries sys.dm_db_partition_stats via three-part name, which
+            under a SQL Server permission/recompile bug spins at 100% CPU forever instead
+            of erroring (Msg 916). See PerformanceMonitor issue #915.
+            */
+            IF EXISTS
+               (
+                   SELECT
+                       1/0
+                   FROM sys.databases AS d
+                   WHERE d.name = @database_name
+                   AND   d.state = 0
+                   AND   d.is_in_standby = 0
+                   AND   d.is_read_only = 0
+               )
+            AND ISNULL(HAS_DBACCESS(@database_name), 0) = 0
+            BEGIN
+                SET @error_msg =
+                    N'The current login has no access to database ' +
+                    QUOTENAME(@database_name) +
+                    N'. Run, against that database: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;';
+
+                RAISERROR(@error_msg, 16, 1);
+                RETURN;
+            END;
+
             INSERT INTO
                 #databases
             WITH
@@ -16740,6 +16783,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   d.state = 0
             AND   d.is_in_standby = 0
             AND   d.is_read_only = 0
+            AND   HAS_DBACCESS(d.name) = 1
             OPTION(RECOMPILE);
 
             /* Get the database_id for backwards compatibility */
@@ -16751,7 +16795,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END
     ELSE
     BEGIN
-        /* Multi-database mode */
+        /*
+        Multi-database mode. HAS_DBACCESS gates which databases the current principal can
+        actually query; without this filter, three-part-name queries against
+        sys.dm_db_partition_stats hang indefinitely under a SQL Server permission/recompile
+        bug. See PerformanceMonitor issue #915.
+        */
         INSERT INTO
             #databases
         WITH
@@ -16768,6 +16817,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   d.state = 0
         AND   d.is_in_standby = 0
         AND   d.is_read_only = 0
+        AND   HAS_DBACCESS(d.name) = 1
         AND   (
                 @include_databases IS NULL
                 OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
@@ -16777,6 +16827,81 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 OR NOT EXISTS (SELECT 1/0 FROM #exclude_databases AS ed WHERE ed.database_name = d.name)
               )
         OPTION(RECOMPILE);
+
+        /*
+        Track databases that would otherwise qualify but were skipped because the current
+        principal has no access. These surface in the SUMMARY row so the operator knows
+        which databases need GRANT before they will be analyzed.
+        */
+        INSERT INTO
+            #requested_but_skipped_databases
+        WITH
+            (TABLOCK)
+        (
+            database_name,
+            reason
+        )
+        SELECT
+            d.name,
+            reason = N'No database access for current login'
+        FROM sys.databases AS d
+        WHERE d.database_id > 4
+        AND   d.state = 0
+        AND   d.is_in_standby = 0
+        AND   d.is_read_only = 0
+        AND   ISNULL(HAS_DBACCESS(d.name), 0) = 0
+        AND   (
+                @include_databases IS NULL
+                OR EXISTS (SELECT 1/0 FROM #include_databases AS id WHERE id.database_name = d.name)
+              )
+        AND   (
+                @exclude_databases IS NULL
+                OR NOT EXISTS (SELECT 1/0 FROM #exclude_databases AS ed WHERE ed.database_name = d.name)
+              )
+        OPTION(RECOMPILE);
+
+        /*
+        Surface a non-fatal warning listing the skipped databases. Severity 10 with NOWAIT
+        matches existing progress messages and is visible regardless of @debug. Skipped
+        databases never produce result-set rows; they appear in the SUMMARY row's
+        "skipped databases" column.
+        */
+        IF EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #requested_but_skipped_databases AS rbs
+               WHERE rbs.reason = N'No database access for current login'
+           )
+        BEGIN
+            SET @error_msg = N'';
+
+            SELECT
+                @error_msg =
+                    @error_msg +
+                    rbs.database_name +
+                    N', '
+            FROM #requested_but_skipped_databases AS rbs
+            WHERE rbs.reason = N'No database access for current login'
+            ORDER BY
+                rbs.database_name
+            OPTION(RECOMPILE);
+
+            IF DATALENGTH(@error_msg) > 0
+            BEGIN
+                SET @error_msg = LEFT(@error_msg, DATALENGTH(@error_msg) / 2 - 2);
+
+                SET @error_msg =
+                    N'Skipping these databases - current login has no access: ' +
+                    @error_msg +
+                    N'. Run, against each: CREATE USER [<login>] FOR LOGIN [<login>]; GRANT VIEW DATABASE STATE; GRANT VIEW DEFINITION;';
+
+                RAISERROR(@error_msg, 10, 1) WITH NOWAIT;
+
+                /* Reset for subsequent uses below. */
+                SET @error_msg = N'';
+            END;
+        END;
     END;
 
     /* Check for empty database list */
@@ -16825,6 +16950,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN 'Database is read-only'
                     WHEN d.database_id <= 4
                     THEN 'System database'
+                    WHEN ISNULL(HAS_DBACCESS(d.name), 0) = 0
+                    THEN 'No database access for current login'
                     ELSE 'Other issue'
                 END
         FROM #include_databases AS id
@@ -16836,6 +16963,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       1/0
                   FROM #databases AS db
                   WHERE db.database_name = id.database_name
+              )
+        /* HAS_DBACCESS skips were already recorded above; avoid PK conflicts. */
+        AND   NOT EXISTS
+              (
+                  SELECT
+                      1/0
+                  FROM #requested_but_skipped_databases AS rbs
+                  WHERE rbs.database_name = id.database_name
               )
         OPTION(RECOMPILE);
 
@@ -21976,9 +22111,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ir.rn = 1 /* Take only the first row for each index */
     ORDER BY
         ir.database_name,
+        /* Object mode: cluster by schema/table/index before script type */
+        CASE WHEN @sort_order = N'object' THEN ir.schema_name END,
+        CASE WHEN @sort_order = N'object' THEN ir.table_name END,
+        CASE WHEN @sort_order = N'object' THEN ir.index_name END,
+        /* Always order by script type within the current grouping */
         ir.sort_order,
-        /* Within each sort_order group, prioritize by size and usage */
+        /* Default mode: within each sort_order group, prioritize by size and usage */
         CASE
+            WHEN @sort_order <> N'default'
+            THEN NULL
             /* For SUMMARY, keep the original order */
             WHEN ir.result_type = 'SUMMARY'
             THEN 0
@@ -21986,6 +22128,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             ELSE ISNULL(ir.index_size_gb, 0)
         END DESC,
         CASE
+            WHEN @sort_order <> N'default'
+            THEN NULL
             /* For SUMMARY, keep the original order */
             WHEN ir.result_type = 'SUMMARY'
             THEN 0
