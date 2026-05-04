@@ -61,7 +61,7 @@ ALTER PROCEDURE
     @get_all_databases bit = 'false', /*looks for all accessible user databases and returns combined results*/
     @include_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
-    @sort_order varchar(20) = 'default', /*controls final result ordering: default (script type first) or object (cluster all rows for the same database/schema/table/index)*/
+    @sort_order varchar(20) = 'default', /*controls final result ordering: default (script type first) or object (cluster rows for the same index; Key Subset disables sort under their replacement)*/
     @help bit = 'false', /*learn about the procedure and parameters*/
     @debug bit = 'false', /*print dynamic sql, show temp table contents*/
     @version varchar(20) = NULL OUTPUT, /*script version number*/
@@ -149,7 +149,7 @@ BEGIN TRY
                     WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases'
                     WHEN N'@include_databases' THEN 'comma-separated list of databases to include when @get_all_databases = 1'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude when @get_all_databases = 1'
-                    WHEN N'@sort_order' THEN 'controls final result ordering: default groups by script type within each database, object groups all rows for the same index together'
+                    WHEN N'@sort_order' THEN 'controls final result ordering: default groups by script type within each database, object groups all rows for the same index together (Key Subset disables sort under their replacement index)'
                     WHEN N'@help' THEN 'displays this help information'
                     WHEN N'@debug' THEN 'prints debug information during execution'
                     WHEN N'@version' THEN 'returns the version number of the procedure'
@@ -6596,7 +6596,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Object mode: cluster by schema/table/index before script type */
         CASE WHEN @sort_order = N'object' THEN ir.schema_name END,
         CASE WHEN @sort_order = N'object' THEN ir.table_name END,
-        CASE WHEN @sort_order = N'object' THEN ir.index_name END,
+        /*
+        A Key Subset DISABLE row sorts under the index that's replacing it
+        (its target_index_name) instead of under its own index_name, so the
+        loser ends up next to its keeper in the output.
+        */
+        CASE
+            WHEN @sort_order = N'object'
+             AND ir.script_type = N'DISABLE SCRIPT'
+             AND ir.consolidation_rule = N'Key Subset'
+             AND ir.target_index_name IS NOT NULL
+            THEN ir.target_index_name
+            WHEN @sort_order = N'object'
+            THEN ir.index_name
+        END,
+        /*
+        Within a paired cluster, the keeper sorts before its losers. Without
+        this, a Key Subset whose keeper is a KEPT index (sort_order 95) would
+        sort after its DISABLE losers (sort_order 20).
+        */
+        CASE
+            WHEN @sort_order = N'object'
+             AND ir.script_type = N'DISABLE SCRIPT'
+             AND ir.consolidation_rule = N'Key Subset'
+             AND ir.target_index_name IS NOT NULL
+            THEN 2
+            WHEN @sort_order = N'object'
+            THEN 1
+        END,
         /* Always order by script type within the current grouping */
         ir.sort_order,
         /* Default mode: within each sort_order group, prioritize by size and usage */
