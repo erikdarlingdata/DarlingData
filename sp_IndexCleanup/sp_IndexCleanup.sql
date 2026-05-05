@@ -5404,6 +5404,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         index_name,
         script_type,
+        consolidation_rule,
+        target_index_name,
         additional_info,
         script,
         original_index_definition,
@@ -5420,6 +5422,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia_uc.table_name,
         ia_uc.index_name,
         script_type = 'DISABLE CONSTRAINT SCRIPT',
+        ia_uc.consolidation_rule,
+        ia_uc.target_index_name,
         additional_info =
             N'This constraint is being replaced by: ' +
             ISNULL(ia_uc.target_index_name, N'(unknown)'),
@@ -6597,14 +6601,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         CASE WHEN @sort_order = N'object' THEN ir.schema_name END,
         CASE WHEN @sort_order = N'object' THEN ir.table_name END,
         /*
-        A Key Subset DISABLE row sorts under the index that's replacing it
-        (its target_index_name) instead of under its own index_name, so the
-        loser ends up next to its keeper in the output.
+        Any DISABLE SCRIPT or DISABLE CONSTRAINT row that points at a
+        replacement (target_index_name IS NOT NULL) sorts under that
+        replacement's index_name, so losers end up next to their keeper
+        regardless of consolidation_rule (Key Subset, Unique Constraint
+        Replacement, Exact Duplicate, Key Duplicate, etc.).
         */
         CASE
             WHEN @sort_order = N'object'
-             AND ir.script_type = N'DISABLE SCRIPT'
-             AND ir.consolidation_rule = N'Key Subset'
+             AND ir.script_type IN (N'DISABLE SCRIPT', N'DISABLE CONSTRAINT SCRIPT')
              AND ir.target_index_name IS NOT NULL
             THEN ir.target_index_name
             WHEN @sort_order = N'object'
@@ -6612,13 +6617,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END,
         /*
         Within a paired cluster, the keeper sorts before its losers. Without
-        this, a Key Subset whose keeper is a KEPT index (sort_order 95) would
-        sort after its DISABLE losers (sort_order 20).
+        this, a keeper that's a KEPT index (sort_order 95) would sort after
+        its DISABLE losers (sort_order 20).
         */
         CASE
             WHEN @sort_order = N'object'
-             AND ir.script_type = N'DISABLE SCRIPT'
-             AND ir.consolidation_rule = N'Key Subset'
+             AND ir.script_type IN (N'DISABLE SCRIPT', N'DISABLE CONSTRAINT SCRIPT')
              AND ir.target_index_name IS NOT NULL
             THEN 2
             WHEN @sort_order = N'object'
