@@ -593,6 +593,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     );
 
     CREATE TABLE
+        #success_rate
+    (
+        [database_name] sysname NOT NULL, 
+        [schema_name] sysname NOT NULL, 
+        table_name sysname NOT NULL, 
+        index_name sysname NULL, 
+        partition_number INT NOT NULL, 
+        page_compression_attempt_count BIGINT NOT NULL, 
+        page_compression_success_count BIGINT NOT NULL, 
+        success_rate_pct NUMERIC(6,2) NOT NULL 
+    )
+
+    CREATE TABLE
         #index_details
     (
         database_id integer NOT NULL,
@@ -6466,6 +6479,39 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ps.object_id
     OPTION(RECOMPILE);
 
+    /* Accumulate data for indexes with page compression and its compression success rate */
+    INSERT INTO #success_rate
+    (
+        [database_name],
+        [schema_name], 
+        table_name,
+        index_name,
+        partition_number,
+        page_compression_attempt_count,
+        page_compression_success_count,
+        success_rate_pct
+    )
+        SELECT
+        	ps.[database_name]
+        	, ps.[schema_name]
+        	, ps.table_name
+        	, ps.index_name
+        	, ps.partition_number
+        	, os.page_compression_attempt_count
+        	, os.page_compression_success_count
+        	, success_rate_pct = 
+                CASE 
+                    WHEN os.page_compression_attempt_count = 0 THEN 0.0
+                    ELSE CAST(ROUND(os.page_compression_success_count * 100.0 / os.page_compression_attempt_count,2) AS NUMERIC(6,2))
+                END 
+        FROM #partition_stats AS ps
+            INNER JOIN #operational_stats AS os 
+                ON os.database_id = ps.database_id
+                AND os.[object_id] = ps.[object_id]
+                AND os.index_id = ps.index_id
+        WHERE ps.data_compression_desc = 'PAGE'
+        OPTION(RECOMPILE);
+
     /* We're not doing index-level summaries - focusing on database and table level reports */
 
     /*
@@ -6665,6 +6711,32 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         RAISERROR('Generating #index_reporting_stats, REPORT', 0, 0) WITH NOWAIT;
     END;
+
+    /* Report any existing indexes with page compression and its compression success rate */
+    IF EXISTS
+        (
+            SELECT 1/0 
+            FROM #success_rate sr
+        )
+        BEGIN
+            SELECT
+                success_rate = 'SuccessRate', 
+                sr.database_name, 
+                sr.schema_name, 
+                sr.table_name, 
+                sr.index_name, 
+                sr.partition_number, 
+                sr.page_compression_attempt_count, 
+                sr.page_compression_success_count, 
+                sr.success_rate_pct
+            FROM #success_rate AS sr
+            ORDER BY success_rate_pct
+            OPTION(RECOMPILE)
+        END 
+        ELSE 
+            BEGIN 
+                SELECT 'NO INDEXES WITH PAGE COMPRESSION FOUND' AS success_rate
+            END;
 
     /*
     Pre-calculate server uptime for use in daily calculations
