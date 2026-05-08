@@ -1,4 +1,4 @@
-﻿USE VectorDefense;
+USE VectorDefense;
 SET NOCOUNT ON;
 GO
 
@@ -23,12 +23,12 @@ GO
 CREATE TABLE
     dbo.EmbeddingIngress
 (
-    id integer 
-        IDENTITY 
+    id integer
+        IDENTITY
         PRIMARY KEY CLUSTERED,
     label sysname NOT NULL,
     embedding_json nvarchar(max) NOT NULL,
-    inserted_at datetime2(3) NOT NULL 
+    inserted_at datetime2(3) NOT NULL
         DEFAULT SYSUTCDATETIME()
 );
 GO
@@ -39,13 +39,13 @@ GO
 CREATE TABLE
     dbo.EmbeddingStore
 (
-    id integer 
-        IDENTITY 
+    id integer
+        IDENTITY
         PRIMARY KEY CLUSTERED,
     label sysname NOT NULL,
     embedding vector(4, float32) NOT NULL,
     energy float NOT NULL,
-    inserted_at datetime2(3) NOT NULL 
+    inserted_at datetime2(3) NOT NULL
         DEFAULT SYSUTCDATETIME()
 );
 GO
@@ -56,14 +56,14 @@ GO
 CREATE TABLE
     dbo.EmbeddingQuarantine
 (
-    id integer 
-        IDENTITY 
+    id integer
+        IDENTITY
         PRIMARY KEY CLUSTERED,
     label sysname NOT NULL,
     embedding_json nvarchar(MAX) NOT NULL,
     rejection_reason nvarchar(500) NOT NULL,
     inserted_at datetime2(3) NOT NULL,
-    quarantined_at datetime2(3) NOT NULL 
+    quarantined_at datetime2(3) NOT NULL
         DEFAULT SYSUTCDATETIME()
 );
 GO
@@ -194,7 +194,7 @@ BEGIN
                         ELSE 0
                     END
                 ),
-            sum_squares = 
+            sum_squares =
                 SUM(c.component_value * c.component_value)
         FROM components AS c
         GROUP BY
@@ -319,7 +319,7 @@ BEGIN
             c.embedding_json,
             c.inserted_at,
             component_count = COUNT_BIG(*),
-            null_count = 
+            null_count =
                 SUM
                 (
                     CASE
@@ -328,7 +328,7 @@ BEGIN
                         ELSE 0
                     END
                 ),
-            sum_squares = 
+            sum_squares =
                 SUM(c.component_value * c.component_value)
         FROM components AS c
         GROUP BY
@@ -410,7 +410,7 @@ VALUES
     */
     (N'too_few',        N'[0.5, 0.5, 0.5]'),
     (N'too_many',       N'[0.5, 0.5, 0.5, 0.5, 0.5]'),
-    
+
     /*
         Malformed inputs
     */
@@ -450,14 +450,14 @@ GO
 SELECT
     s.label,
     our_energy = s.energy,
-    vector_distance_energy = 
+    vector_distance_energy =
         c.v_distance,
     match =
         CASE
-            WHEN 
+            WHEN
                 ABS
                 (
-                    s.energy - 
+                    s.energy -
                     c.v_distance
                 ) < 0.0001
             THEN 'YES'
@@ -528,21 +528,21 @@ GO
     1. Validate before converting to vector
        - Once it's a vector, bad math can crash your transaction
        - OPENJSON lets you inspect components as plain numbers
-    
+
     2. Route, don't reject
        - Healthy vectors → store
        - Bad vectors → quarantine with a reason
        - Now you can debug your pipeline
-    
+
     3. What to check:
        - Dimension count (model switches)
        - Magnitude (zero/near-zero)
        - Valid JSON and numeric components
-    
+
     4. Energy = self-dot-product
        - Quick way to measure magnitude
        - Near zero = degenerate = quarantine it
-    
+
     Next: What about data that was valid when inserted,
     but the source document changed?
 

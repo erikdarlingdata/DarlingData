@@ -1,4 +1,4 @@
-﻿USE VectorDefense;
+USE VectorDefense;
 SET NOCOUNT ON;
 GO
 
@@ -36,21 +36,21 @@ DROP TABLE IF EXISTS
 GO
 
 /*
-    Source documents - the "ground truth" content    
+    Source documents - the "ground truth" content
      * content_hash is a persisted computed column.
      * SQL Server updates it automatically when content changes.
 */
 CREATE TABLE
     dbo.Documents
 (
-    document_id integer 
-        IDENTITY 
+    document_id integer
+        IDENTITY
         PRIMARY KEY CLUSTERED,
     title nvarchar(200) NOT NULL,
     content nvarchar(MAX) NOT NULL,
-    /* 
+    /*
         modified_at is set manually by callers; in production
-        you'd back this with an UPDATE trigger or ~something~ 
+        you'd back this with an UPDATE trigger or ~something~
     */
     modified_at datetime2(3) NOT NULL
         DEFAULT SYSUTCDATETIME(),
@@ -69,23 +69,23 @@ GO
 CREATE TABLE
     dbo.DocumentEmbeddings
 (
-    embedding_id integer 
-        IDENTITY 
+    embedding_id integer
+        IDENTITY
         PRIMARY KEY CLUSTERED,
     document_id integer NOT NULL,
     embedding vector(4, float32) NOT NULL,
-    source_hash binary(32) NOT NULL,  
+    source_hash binary(32) NOT NULL,
     /* SHA2_256 of source content at embed time */
-    embedded_at datetime2(3) NOT NULL 
+    embedded_at datetime2(3) NOT NULL
         DEFAULT SYSUTCDATETIME(),
-    CONSTRAINT 
-        fk_DocumentEmbeddings_Documents 
-            FOREIGN KEY 
-                (document_id) 
-            REFERENCES 
-                dbo.Documents 
+    CONSTRAINT
+        fk_DocumentEmbeddings_Documents
+            FOREIGN KEY
+                (document_id)
+            REFERENCES
+                dbo.Documents
                     (document_id),
-    INDEX 
+    INDEX
         DocumentEmbeddings_document_id
             (document_id)
 );
@@ -101,7 +101,7 @@ GO
 
     In production, this would call an embedding API, or the
     AI_GENERATE_EMBEDDINGS() function in SQL Server 2025.
-    
+
     For demo purposes, we generate a deterministic fake embedding
     based on content hash so we can verify staleness detection.
 
@@ -151,25 +151,25 @@ BEGIN
                 N'[' +
                 CONVERT
                 (
-                  nvarchar(20), 
+                  nvarchar(20),
                   CONVERT(tinyint, SUBSTRING(@source_hash, 1, 1)) / 255.0
                 ) +
                 N', ' +
                 CONVERT
                 (
-                  nvarchar(20), 
+                  nvarchar(20),
                   CONVERT(tinyint, SUBSTRING(@source_hash, 2, 1)) / 255.0
                 ) +
                 N', ' +
                 CONVERT
                 (
-                  nvarchar(20), 
+                  nvarchar(20),
                   CONVERT(tinyint, SUBSTRING(@source_hash, 3, 1)) / 255.0
                 ) +
                 N', ' +
                 CONVERT
                 (
-                  nvarchar(20), 
+                  nvarchar(20),
                   CONVERT(tinyint, SUBSTRING(@source_hash, 4, 1)) / 255.0
                 ) +
                 N']'
@@ -244,11 +244,11 @@ SELECT
     d.title,
     d.modified_at,
     de.embedded_at,
-    staleness_minutes = 
+    staleness_minutes =
         DATEDIFF
         (
-            MINUTE, 
-            de.embedded_at, 
+            MINUTE,
+            de.embedded_at,
             d.modified_at
         ),
     current_hash = d.content_hash,
@@ -334,32 +334,32 @@ SELECT
     total_documents =
     (
         SELECT TOP (1)
-            COUNT_BIG(*) 
+            COUNT_BIG(*)
         FROM dbo.Documents AS d
     ),
     unique_content =
     (
         SELECT TOP (1)
-            COUNT_BIG(DISTINCT d.content_hash) 
+            COUNT_BIG(DISTINCT d.content_hash)
         FROM dbo.Documents AS d
     ),
     duplicate_groups =
     (
-        SELECT TOP (1) 
-            COUNT_BIG(*) 
+        SELECT TOP (1)
+            COUNT_BIG(*)
         FROM dbo.DuplicateDocuments AS dd
     ),
     stale_embeddings =
     (
-        SELECT TOP (1) 
-            COUNT_BIG(*) 
-        FROM dbo.StaleEmbeddings AS se 
+        SELECT TOP (1)
+            COUNT_BIG(*)
+        FROM dbo.StaleEmbeddings AS se
         WHERE se.is_stale = 1
     ),
     missing_embeddings =
     (
-        SELECT TOP (1) 
-            COUNT_BIG(*) 
+        SELECT TOP (1)
+            COUNT_BIG(*)
         FROM dbo.MissingEmbeddings AS me
     );
 GO
@@ -384,22 +384,22 @@ INSERT INTO
 )
 VALUES
 (
-  N'SQL Server Performance Tuning', 
+  N'SQL Server Performance Tuning',
   N'Index maintenance, query optimization, and wait statistics analysis are key to SQL Server performance.'
 ),
 
 (
-  N'Vector Search Basics', 
+  N'Vector Search Basics',
   N'Embeddings represent semantic meaning as high-dimensional vectors. Cosine similarity measures directional alignment.'
 ),
 
 (
-  N'Database Backup Strategies', 
+  N'Database Backup Strategies',
   N'Full, differential, and transaction log backups provide point-in-time recovery capabilities.'
 ),
 
 (
-  N'Query Store Overview', 
+  N'Query Store Overview',
   N'Query Store captures query plans and runtime statistics for performance troubleshooting.'
 );
 
@@ -413,9 +413,9 @@ DECLARE
     @doc_cursor CURSOR;
 
 SET
-    @doc_cursor = 
-    CURSOR 
-    LOCAL 
+    @doc_cursor =
+    CURSOR
+    LOCAL
     FAST_FORWARD
 FOR
 SELECT
@@ -424,8 +424,8 @@ FROM dbo.Documents AS d;
 
 OPEN @doc_cursor;
 
-FETCH NEXT 
-FROM @doc_cursor 
+FETCH NEXT
+FROM @doc_cursor
 INTO @doc_id;
 
 WHILE @@FETCH_STATUS = 0
@@ -433,8 +433,8 @@ BEGIN
     EXECUTE dbo.EmbedDocument
         @document_id = @doc_id;
 
-    FETCH NEXT 
-    FROM @doc_cursor 
+    FETCH NEXT
+    FROM @doc_cursor
     INTO @doc_id;
 END;
 GO
@@ -470,8 +470,8 @@ GO
 UPDATE
     d
 SET
-    d.content = 
-        d.content + 
+    d.content =
+        d.content +
         N' Updated with new information about parameter sniffing.',
     d.modified_at = SYSUTCDATETIME()
 FROM dbo.Documents AS d
@@ -526,25 +526,25 @@ WITH
                 N'[' +
                 CONVERT
                 (
-                  nvarchar(20), 
+                  nvarchar(20),
                   CONVERT(tinyint, SUBSTRING(d.content_hash, 1, 1)) / 255.0
                 ) +
                 N', ' +
                 CONVERT
                 (
-                  nvarchar(20), 
+                  nvarchar(20),
                   CONVERT(tinyint, SUBSTRING(d.content_hash, 2, 1)) / 255.0
                 ) +
                 N', ' +
                 CONVERT
                 (
-                  nvarchar(20), 
+                  nvarchar(20),
                   CONVERT(tinyint, SUBSTRING(d.content_hash, 3, 1)) / 255.0
                 ) +
                 N', ' +
                 CONVERT
                 (
-                  nvarchar(20), 
+                  nvarchar(20),
                   CONVERT(tinyint, SUBSTRING(d.content_hash, 4, 1)) / 255.0
                 ) +
                 N']'
@@ -609,8 +609,8 @@ GO
 ████████████████████████████████████████████████████████████████████████████████
 
     Step 7: Insert duplicate content
-    
-    Different titles, same content. 
+
+    Different titles, same content.
     This happens when ETL runs twice or someone copy/pastes.
 
 */
@@ -623,11 +623,11 @@ INSERT INTO
 )
 VALUES
 (
-  N'Query Store Overview (copy)', 
+  N'Query Store Overview (copy)',
   N'Query Store captures query plans and runtime statistics for performance troubleshooting.'
 ),
 (
-  N'Query Store Overview (another copy)', 
+  N'Query Store Overview (another copy)',
   N'Query Store captures query plans and runtime statistics for performance troubleshooting.'
 );
 GO
@@ -682,9 +682,9 @@ BEGIN
     DECLARE
         @stale_cursor CURSOR;
 
-    SET @stale_cursor = 
-        CURSOR 
-        LOCAL 
+    SET @stale_cursor =
+        CURSOR
+        LOCAL
         FAST_FORWARD
     FOR
     SELECT
@@ -693,9 +693,9 @@ BEGIN
     WHERE se.is_stale = 1;
 
     OPEN @stale_cursor;
-    
-    FETCH NEXT 
-    FROM @stale_cursor 
+
+    FETCH NEXT
+    FROM @stale_cursor
     INTO @doc_id;
 
     WHILE @@FETCH_STATUS = 0
@@ -710,8 +710,8 @@ BEGIN
 
         SET @refreshed_count += 1;
 
-        FETCH NEXT 
-        FROM @stale_cursor 
+        FETCH NEXT
+        FROM @stale_cursor
         INTO @doc_id;
     END;
 
@@ -720,9 +720,9 @@ BEGIN
     DECLARE
         @missing_cursor CURSOR;
 
-    SET @missing_cursor = 
-        CURSOR 
-        LOCAL 
+    SET @missing_cursor =
+        CURSOR
+        LOCAL
         FAST_FORWARD
     FOR
     SELECT
@@ -730,9 +730,9 @@ BEGIN
     FROM dbo.MissingEmbeddings AS me;
 
     OPEN @missing_cursor;
-    
-    FETCH NEXT 
-    FROM @missing_cursor 
+
+    FETCH NEXT
+    FROM @missing_cursor
     INTO @doc_id;
 
     WHILE @@FETCH_STATUS = 0
@@ -747,8 +747,8 @@ BEGIN
 
         SET @refreshed_count += 1;
 
-        FETCH NEXT 
-        FROM @missing_cursor 
+        FETCH NEXT
+        FROM @missing_cursor
         INTO @doc_id;
     END;
 
@@ -806,15 +806,15 @@ SELECT
     embedding_copies = COUNT_BIG(*),
     document_ids =
         STRING_AGG(de.document_id, ', ')
-            WITHIN GROUP 
+            WITHIN GROUP
             (
-                ORDER BY 
+                ORDER BY
                     de.document_id
              ),
-    sample_embedding = 
+    sample_embedding =
         MIN
         (
-            CONVERT(nvarchar(max), 
+            CONVERT(nvarchar(max),
             de.embedding)
         )
 FROM dbo.DocumentEmbeddings AS de
@@ -865,19 +865,19 @@ GO
        silently drops duplicates. The non-duplicate rows in the
        same batch still go in. No error, no rollback, no retry.
 
-           CREATE TABLE 
+           CREATE TABLE
                dbo.EmbeddingStore
            (
-               id integer 
-                   IDENTITY 
+               id integer
+                   IDENTITY
                    PRIMARY KEY CLUSTERED,
                content_hash binary(32) NOT NULL,
                embedding vector(1024, float32) NOT NULL,
-               INDEX 
-                   EmbeddingStore_content_hash 
+               INDEX
+                   EmbeddingStore_content_hash
                UNIQUE
                    (content_hash)
-               WITH 
+               WITH
                    (IGNORE_DUP_KEY = ON)
            );
 
@@ -965,7 +965,7 @@ CROSS APPLY
         COLUMN = Embedding,
         SIMILAR_TO = e.Embedding,
         METRIC = 'cosine'
-    ) AS r 
+    ) AS r
       WITH (FORCE_ANN_ONLY)
     ORDER BY
         r.distance
@@ -985,9 +985,9 @@ GO
 */
 
 SELECT
-    cluster_size = 
+    cluster_size =
         c.n,
-    rows_with_this_neighbor_count = 
+    rows_with_this_neighbor_count =
         COUNT_BIG(*)
 FROM
 (
@@ -1006,7 +1006,7 @@ FROM
                     COLUMN = Embedding,
                     SIMILAR_TO = e.Embedding,
                     METRIC = 'cosine'
-                ) AS r 
+                ) AS r
                   WITH (FORCE_ANN_ONLY)
                 ORDER BY
                     r.distance
@@ -1234,7 +1234,7 @@ GO
     T: https://www.tiktok.com/@darling.data
     L: https://www.linkedin.com/company/darling-data/
     Y: https://www.youtube.com/@ErikDarlingData
-    
+
     Demos:
 
 */

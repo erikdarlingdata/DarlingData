@@ -109,8 +109,8 @@ GO
 CREATE TABLE
     dbo.VectorEmbeddings
 (
-    Id integer 
-        IDENTITY 
+    Id integer
+        IDENTITY
         PRIMARY KEY CLUSTERED,
     Label nvarchar(50) NOT NULL,
     Kind nvarchar(30) NOT NULL,
@@ -409,7 +409,7 @@ FROM VECTOR_SEARCH
     COLUMN = Embedding,
     SIMILAR_TO = @q,
     METRIC = 'cosine'
-) AS vs 
+) AS vs
   WITH (FORCE_ANN_ONLY)
 ORDER BY
     vs.distance;

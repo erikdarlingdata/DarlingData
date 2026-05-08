@@ -1,35 +1,35 @@
-﻿USE VectorDefense;
+USE VectorDefense;
 SET NOCOUNT ON;
 GO
 
 
 /*
-    ██╗   ██╗███████╗ ██████╗████████╗ ██████╗ ██████╗        
-    ██║   ██║██╔════╝██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗       
-    ██║   ██║█████╗  ██║        ██║   ██║   ██║██████╔╝       
-    ╚██╗ ██╔╝██╔══╝  ██║        ██║   ██║   ██║██╔══██╗       
-     ╚████╔╝ ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║       
-      ╚═══╝  ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝       
-                                                              
+    ██╗   ██╗███████╗ ██████╗████████╗ ██████╗ ██████╗
+    ██║   ██║██╔════╝██╔════╝╚══██╔══╝██╔═══██╗██╔══██╗
+    ██║   ██║█████╗  ██║        ██║   ██║   ██║██████╔╝
+    ╚██╗ ██╔╝██╔══╝  ██║        ██║   ██║   ██║██╔══██╗
+     ╚████╔╝ ███████╗╚██████╗   ██║   ╚██████╔╝██║  ██║
+      ╚═══╝  ╚══════╝ ╚═════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝
+
     ██████╗ ███████╗███████╗███████╗███╗   ██╗███████╗███████╗
     ██╔══██╗██╔════╝██╔════╝██╔════╝████╗  ██║██╔════╝██╔════╝
-    ██║  ██║█████╗  █████╗  █████╗  ██╔██╗ ██║███████╗█████╗  
-    ██║  ██║██╔══╝  ██╔══╝  ██╔══╝  ██║╚██╗██║╚════██║██╔══╝  
+    ██║  ██║█████╗  █████╗  █████╗  ██╔██╗ ██║███████╗█████╗
+    ██║  ██║██╔══╝  ██╔══╝  ██╔══╝  ██║╚██╗██║╚════██║██╔══╝
     ██████╔╝███████╗██║     ███████╗██║ ╚████║███████║███████╗
     ╚═════╝ ╚══════╝╚═╝     ╚══════╝╚═╝  ╚═══╝╚══════╝╚══════╝
-    
+
     I'm Erik!
     (Consultare Maximus - Rationabile Pretium)
-    
+
     W: https://erikdarling.com
     E: mailto:erik@erikdarling.com
     T: https://twitter.com/erikdarlingdata
     T: https://www.tiktok.com/@darling.data
     L: https://www.linkedin.com/company/darling-data/
     Y: https://www.youtube.com/@ErikDarlingData
-    
+
     Demos:
-     * 
+     *
 
 */
 
@@ -58,7 +58,7 @@ GO
 
     A nightly import job crashed and retried, now half your articles
     got entered twice, maybe a bulk CSV had duplicate rows nobody noticed.
-    
+
     Support tickets all share the same footer text. Product
     descriptions reuse the same feature lists. Boring infrastructure
     stuff that happens every Tuesday at 3 in the morning.
@@ -104,10 +104,10 @@ GO
 ████████████████████████████████████████████████████████████████████████████████
 
     A vector is a list of numbers.
-    
+
     Embedding models turn text into vectors with magic GPUs.
      * Similar text > similar vectors.
-    
+
     SQL Server 2025 has a native vector type, and three ways
     to measure distances between them. More on that below.
 
@@ -129,35 +129,35 @@ SELECT
 
 /*
     Three distance metrics:
-    
+
     COSINE:    Based on direction only
     DOT:       Based on magnitude AND direction
     EUCLIDEAN: More like GPS coordinates (we won't use it today).
 
     Magnitude = length of the vector.
      * Think of it as "how big" the numbers are overall.
-    
-    Direction = which way it points in Vector Space.    
+
+    Direction = which way it points in Vector Space.
      * [1, 2, 3, 4]
-     * [100, 200, 300, 400] 
-    
-    Both point the same direction...   
+     * [100, 200, 300, 400]
+
+    Both point the same direction...
     But one is 100× longer than the other.
-     * Cosine ignores that difference. 
+     * Cosine ignores that difference.
      * Dot product doesn't.
-    
+
     SQL Server returns DISTANCE, not similarity.
      * Everyone calls it "similarity search" anyway.
 
-    For cosine: 
+    For cosine:
      * 0 = identical
      * 1 = perpendicular (unrelated)
      * 2 = opposite
-    
+
     Lower is better, 0 indicates ~exact match
-    
-    For dot: more negative = more similar. 
-     * It's a different scale. 
+
+    For dot: more negative = more similar.
+     * It's a different scale.
      * SQL Server flips these negative.
 
 */
@@ -171,20 +171,20 @@ SELECT
 ████████████████████████████████████████████████████████████████████████████████
 
     Embedding models encode meaning as direction.
-    
+
     Magnitude is noise, an artifact of tokenization,
     model internals, batch normalization, etc.
 
     https://en.wikipedia.org/wiki/Batch_normalization
     https://en.wikipedia.org/wiki/Text_segmentation#Word_segmentation
-    
-    Cosine asks: 
+
+    Cosine asks:
      * "Are these pointing the same way?"
-    
-    Dot asks:    
+
+    Dot asks:
      * "Are these pointing the same way AND how long are they?"
        (Or how far are they pointing; size matters, in other words)
-    
+
     For semantic search, we really only care about direction.
      * Similarity without the magnitude differentiation
 
@@ -196,12 +196,12 @@ SELECT
 
     Objective = (1 / 2n) * Σ(yᵢ - ŷᵢ)² + λ * Σ(wⱼ²)
 
-    L2 normalization takes a vector and shrinks it so its length equals 1, 
+    L2 normalization takes a vector and shrinks it so its length equals 1,
     while keeping it pointing the same direction.
-    
-    Once everything is length 1, comparing two vectors with dot product gives 
-    you cosine similarity for free, because the magnitudes cancel out. 
-    
+
+    Once everything is length 1, comparing two vectors with dot product gives
+    you cosine similarity for free, because the magnitudes cancel out.
+
     Same direction with the SAME magnitude (duplicate text producing
     duplicate embeddings) is extremely common, and triggers the exact
     same cosine blindness this demo shows.
@@ -211,11 +211,11 @@ SELECT
 */
 
 DECLARE
-    @doc_short vector(4, float32) = 
+    @doc_short vector(4, float32) =
         CONVERT(VECTOR(4, float32), N'[1, 1, 1, 1]'),
-    @doc_medium VECTOR(4, float32) = 
+    @doc_medium VECTOR(4, float32) =
         CONVERT(VECTOR(4, float32), N'[50, 50, 50, 50]'),
-    @doc_long VECTOR(4, float32) = 
+    @doc_long VECTOR(4, float32) =
         CONVERT(VECTOR(4, float32), N'[100, 100, 100, 100]');
 
 SELECT
@@ -238,10 +238,10 @@ SELECT
 GO
 
 /*
-    Results:  
-     Cosine: 
+    Results:
+     Cosine:
       * All zeros. Same direction = identical semantically.
-     Dot: 
+     Dot:
       * Very different numbers. Magnitude differences.
 
     Now add documents that are semantically different.
@@ -309,34 +309,34 @@ GO
 ████████████████████████████████████████████████████████████████████████████████
 
     SQL Server displays tiny numbers in scientific notation.
-    
+
     This will trip you up if you're not expecting it.
-    
+
     -4.00000044464832E-06 means -0.000004
-    
+
     The E-06 means "move the decimal 6 places left."
-    
+
     The E+20 means "move the decimal 20 places right."
-    
+
     Converting to a decimal is a good way to not feel dumb.
 
 */
 
 SELECT
-    scientific = 
+    scientific =
         VECTOR_DISTANCE
         (
-            'dot', 
+            'dot',
             CONVERT(vector(4, float32), N'[0.001, 0.001, 0.001, 0.001]'),
             CONVERT(vector(4, float32), N'[0.001, 0.001, 0.001, 0.001]')
         ),
-    readable = 
+    readable =
         CONVERT
         (
-            decimal(20,19), 
+            decimal(20,19),
             VECTOR_DISTANCE
             (
-                'dot', 
+                'dot',
                  CONVERT(vector(4, float32), N'[0.001, 0.001, 0.001, 0.001]'),
                  CONVERT(vector(4, float32), N'[0.001, 0.001, 0.001, 0.001]')
             )
@@ -358,7 +358,7 @@ SELECT
 
     A near-zero vector and a healthy vector can point the same
     direction. Cosine says "identical!" and moves on. Oopsie.
-    
+
     It can't see that one of them is basically empty.
 
     Dot product *can* see it: Magnitude sensitivity is a bug
@@ -369,12 +369,12 @@ SELECT
      * Dot for detecting garbage (magnitude is the whole point)
 
     We compute energy = VECTOR_DISTANCE('dot', vector1, vector1)
-    
+
     That's the self-dot-product, it returns the negative
     sum of each component squared. A magnitude check.
 
     We don't care if energy is -1 or -4 or -400.
-    
+
     Any real number means the vector has something in it.
 
     We care if it's close to zero.
@@ -436,12 +436,12 @@ DECLARE
         CONVERT(vector(4, float32), N'[0.001, 0.001, 0.001, 0.001]');
 
 SELECT
-    vector_text = 
+    vector_text =
         N'[0.5, 0.5, 0.5, 0.5]',
-    energy = 
+    energy =
         CONVERT
         (
-            decimal(25, 19), 
+            decimal(25, 19),
             VECTOR_DISTANCE('dot', @normalized, @normalized)
         ),
     verdict = N'healthy'
@@ -450,7 +450,7 @@ SELECT
     N'[1, 1, 1, 1]',
         CONVERT
         (
-            decimal(25, 19), 
+            decimal(25, 19),
             VECTOR_DISTANCE('dot', @unnormalized, @unnormalized)
         ),
     N'healthy'
@@ -459,7 +459,7 @@ SELECT
     N'[100, 100, 100, 100]',
     CONVERT
     (
-        decimal(25, 19), 
+        decimal(25, 19),
         VECTOR_DISTANCE('dot', @big_healthy, @big_healthy)
     ),
     N'healthy'
@@ -468,7 +468,7 @@ SELECT
     N'[0, 0, 0, 0]',
     CONVERT
     (
-        decimal(25, 19), 
+        decimal(25, 19),
         VECTOR_DISTANCE('dot', @zero, @zero)
     ),
     N'degenerate'
@@ -477,18 +477,18 @@ SELECT
     N'[0.001, 0.001, 0.001, 0.001]',
     CONVERT
     (
-        decimal(25, 19), 
+        decimal(25, 19),
         VECTOR_DISTANCE('dot', @near_zero, @near_zero)
     ),
     N'degenerate';
 GO
 
 /*
-    Healthy normalized vector: 
+    Healthy normalized vector:
       Energy ≈ -1
-    Degenerate vector:         
+    Degenerate vector:
       Energy ≈ 0 or way off from -1
-    
+
     This is the foundation of our validation strategy.
 
 */
@@ -503,15 +503,15 @@ GO
 
     1. Embedding models encode meaning as DIRECTION
        Magnitude is noise.
-    
+
     2. Use COSINE for semantic search
        It normalizes magnitude out of the equation.
-    
+
     3. Self-dot-product is your health check
        energy = VECTOR_DISTANCE('dot', v, v)
        Healthy: some negative number (-1 for normalized, bigger is fine)
        Degenerate: energy ≈ 0
-    
+
     4. Duplicate vectors are dangerous
        Cosine-identical copies flood the graph.
        They don't just return wrong results,

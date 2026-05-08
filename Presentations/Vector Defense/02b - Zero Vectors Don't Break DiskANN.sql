@@ -25,8 +25,8 @@ GO
 CREATE TABLE
     dbo.VectorEmbeddings
 (
-    Id integer 
-        IDENTITY 
+    Id integer
+        IDENTITY
         PRIMARY KEY CLUSTERED,
     Label nvarchar(50) NOT NULL,
     Kind nvarchar(30) NOT NULL,
