@@ -256,6 +256,20 @@ def run_tests(rows):
     assert_test("11-UC-Replace", "11b: NC replacement has CREATE UNIQUE",
                 has_unique, f"found {len(matches)} merge rows, unique={has_unique}")
 
+    # 11c: UC-vs-UC duplicates with no NC sibling (issue #782, Rule 7.5b)
+    # Keeper (alphabetically first) must NOT be dropped
+    matches = find_rows(rows, table_name="test_ic_uc_dup", index_name="uq_ucd_keeper",
+                        script_type="DISABLE CONSTRAINT SCRIPT")
+    assert_test("11-UC-Replace", "11c: Duplicate UC keeper NOT dropped (#782)",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
+
+    # 11d: Loser UC must get exactly one DROP CONSTRAINT pointing at the keeper
+    matches = find_rows(rows, table_name="test_ic_uc_dup", index_name="uq_ucd_zloser",
+                        script_type="DISABLE CONSTRAINT SCRIPT")
+    target_ok = len(matches) == 1 and matches[0].get("target_index_name") == "uq_ucd_keeper"
+    assert_test("11-UC-Replace", "11d: Duplicate UC loser dropped, target = keeper (#782)",
+                target_ok, f"found {len(matches)} drops, target={matches[0].get('target_index_name') if matches else None}")
+
     # ---- Group 12: Rule interactions ----
 
     # 12a: Multi-level subset: ix_int_a ⊂ ix_int_ab ⊂ ix_int_abc

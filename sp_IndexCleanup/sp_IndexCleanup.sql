@@ -61,7 +61,7 @@ ALTER PROCEDURE
     @get_all_databases bit = 'false', /*looks for all accessible user databases and returns combined results*/
     @include_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
     @exclude_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
-    @sort_order varchar(20) = 'default', /*controls final result ordering: default (script type first) or object (cluster all rows for the same database/schema/table/index)*/
+    @sort_order varchar(20) = 'default', /*controls final result ordering: default (script type first) or object (cluster rows for the same index; Key Subset disables sort under their replacement)*/
     @help bit = 'false', /*learn about the procedure and parameters*/
     @debug bit = 'false', /*print dynamic sql, show temp table contents*/
     @version varchar(20) = NULL OUTPUT, /*script version number*/
@@ -149,7 +149,7 @@ BEGIN TRY
                     WHEN N'@get_all_databases' THEN 'set to 1 to analyze all accessible user databases'
                     WHEN N'@include_databases' THEN 'comma-separated list of databases to include when @get_all_databases = 1'
                     WHEN N'@exclude_databases' THEN 'comma-separated list of databases to exclude when @get_all_databases = 1'
-                    WHEN N'@sort_order' THEN 'controls final result ordering: default groups by script type within each database, object groups all rows for the same index together'
+                    WHEN N'@sort_order' THEN 'controls final result ordering: default groups by script type within each database, object groups all rows for the same index together (Key Subset disables sort under their replacement index)'
                     WHEN N'@help' THEN 'displays this help information'
                     WHEN N'@debug' THEN 'prints debug information during execution'
                     WHEN N'@version' THEN 'returns the version number of the procedure'
@@ -3878,6 +3878,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id_fk.is_foreign_key_reference = 1
         AND   id_fk.is_included_column = 0
     )
+    /* ia_nc must be a true nonclustered index, not another unique constraint.
+       Without this, two UCs with identical keys both match each other and
+       both get action = DISABLE pointing at the other, with neither getting
+       MAKE UNIQUE in the next step — so every UC in the group ends up
+       dropped. UC-vs-UC duplicates are handled in Rule 7.5b below. */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_nc
+        WHERE id_nc.index_hash = ia_nc.index_hash
+        AND   id_nc.is_unique_constraint = 1
+    )
     OPTION(RECOMPILE);
 
     /* Second, mark nonclustered indexes to be made unique */
@@ -3958,6 +3971,111 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         SELECT
             table_name = '#index_analysis after rule 7.5',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
+
+    /* Rule 7.5b: Duplicate unique constraints with no replacement nonclustered
+       index. Rule 7 marks every UC with a matching-key sibling as KEEP under
+       'Unique Constraint Replacement'. When two or more UCs share identical
+       keys and there is no separate nonclustered index to promote (Rule 7.5
+       would otherwise fold them in), we still need to drop all but one.
+       Demote the loser(s) to DISABLE so the existing DISABLE CONSTRAINT
+       SCRIPT path emits a single DROP CONSTRAINT for the duplicates while
+       the keeper stays silent. */
+    UPDATE
+        ia_loser
+    SET
+        ia_loser.action = N'DISABLE',
+        ia_loser.target_index_name = ia_keeper.index_name
+    FROM #index_analysis AS ia_loser
+    JOIN #index_analysis AS ia_keeper
+      ON  ia_keeper.scope_hash = ia_loser.scope_hash
+      AND ia_keeper.index_name <> ia_loser.index_name
+      AND ia_keeper.key_columns = ia_loser.key_columns
+      AND ISNULL(ia_keeper.filter_definition, N'') = ISNULL(ia_loser.filter_definition, N'')
+    WHERE ia_loser.action = N'KEEP'
+    AND   ia_loser.consolidation_rule = N'Unique Constraint Replacement'
+    AND   ia_keeper.action = N'KEEP'
+    AND   ia_keeper.consolidation_rule = N'Unique Constraint Replacement'
+    /* Both rows must be unique constraints (not regular nonclustered indexes
+       that Rule 7 also marked KEEP for some reason) */
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_loser
+        WHERE id_loser.index_hash = ia_loser.index_hash
+        AND   id_loser.is_unique_constraint = 1
+    )
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_keeper
+        WHERE id_keeper.index_hash = ia_keeper.index_hash
+        AND   id_keeper.is_unique_constraint = 1
+    )
+    /* Demote the loser deterministically: lower priority, or alphabetically
+       later when tied. Mirrors the keep/drop tiebreak used by Rule 2. */
+    AND
+    (
+        ia_loser.index_priority < ia_keeper.index_priority
+        OR
+        (
+            ia_loser.index_priority = ia_keeper.index_priority
+            AND ia_loser.index_name > ia_keeper.index_name
+        )
+    )
+    /* When 3+ UCs are duplicates, ensure ia_keeper is the single overall
+       winner (no other UC beats it). This makes target_index_name
+       deterministic and points every loser at the same surviving UC. */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_better
+        WHERE ia_better.scope_hash = ia_keeper.scope_hash
+        AND   ia_better.index_name <> ia_keeper.index_name
+        AND   ia_better.key_columns = ia_keeper.key_columns
+        AND   ISNULL(ia_better.filter_definition, N'') = ISNULL(ia_keeper.filter_definition, N'')
+        AND   ia_better.action = N'KEEP'
+        AND   ia_better.consolidation_rule = N'Unique Constraint Replacement'
+        AND EXISTS
+        (
+            SELECT
+                1/0
+            FROM #index_details AS id_better
+            WHERE id_better.index_hash = ia_better.index_hash
+            AND   id_better.is_unique_constraint = 1
+        )
+        AND
+        (
+            ia_better.index_priority > ia_keeper.index_priority
+            OR
+            (
+                ia_better.index_priority = ia_keeper.index_priority
+                AND ia_better.index_name < ia_keeper.index_name
+            )
+        )
+    )
+    /* Don't propose dropping a UC that backs an inbound foreign key */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_fk
+        WHERE id_fk.index_hash = ia_loser.index_hash
+        AND   id_fk.is_foreign_key_reference = 1
+        AND   id_fk.is_included_column = 0
+    )
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 7.5b',
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
@@ -5404,6 +5522,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         table_name,
         index_name,
         script_type,
+        consolidation_rule,
+        target_index_name,
         additional_info,
         script,
         original_index_definition,
@@ -5420,6 +5540,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia_uc.table_name,
         ia_uc.index_name,
         script_type = 'DISABLE CONSTRAINT SCRIPT',
+        ia_uc.consolidation_rule,
+        ia_uc.target_index_name,
         additional_info =
             N'This constraint is being replaced by: ' +
             ISNULL(ia_uc.target_index_name, N'(unknown)'),
@@ -6596,7 +6718,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Object mode: cluster by schema/table/index before script type */
         CASE WHEN @sort_order = N'object' THEN ir.schema_name END,
         CASE WHEN @sort_order = N'object' THEN ir.table_name END,
-        CASE WHEN @sort_order = N'object' THEN ir.index_name END,
+        /*
+        Any DISABLE SCRIPT or DISABLE CONSTRAINT row that points at a
+        replacement (target_index_name IS NOT NULL) sorts under that
+        replacement's index_name, so losers end up next to their keeper
+        regardless of consolidation_rule (Key Subset, Unique Constraint
+        Replacement, Exact Duplicate, Key Duplicate, etc.).
+        */
+        CASE
+            WHEN @sort_order = N'object'
+             AND ir.script_type IN (N'DISABLE SCRIPT', N'DISABLE CONSTRAINT SCRIPT')
+             AND ir.target_index_name IS NOT NULL
+            THEN ir.target_index_name
+            WHEN @sort_order = N'object'
+            THEN ir.index_name
+        END,
+        /*
+        Within a paired cluster, the keeper sorts before its losers. Without
+        this, a keeper that's a KEPT index (sort_order 95) would sort after
+        its DISABLE losers (sort_order 20).
+        */
+        CASE
+            WHEN @sort_order = N'object'
+             AND ir.script_type IN (N'DISABLE SCRIPT', N'DISABLE CONSTRAINT SCRIPT')
+             AND ir.target_index_name IS NOT NULL
+            THEN 2
+            WHEN @sort_order = N'object'
+            THEN 1
+        END,
         /* Always order by script type within the current grouping */
         ir.sort_order,
         /* Default mode: within each sort_order group, prioritize by size and usage */

@@ -38,6 +38,7 @@ DROP TABLE IF EXISTS dbo.test_ic_exact;
 DROP TABLE IF EXISTS dbo.test_ic_reverse;
 DROP TABLE IF EXISTS dbo.test_ic_filter_eq;
 DROP TABLE IF EXISTS dbo.test_ic_uc_replace;
+DROP TABLE IF EXISTS dbo.test_ic_uc_dup;
 DROP TABLE IF EXISTS dbo.test_ic_interact;
 GO
 
@@ -121,6 +122,14 @@ CREATE TABLE dbo.test_ic_uc_replace
     col_d integer NOT NULL
 );
 
+CREATE TABLE dbo.test_ic_uc_dup
+(
+    id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL
+);
+
 CREATE TABLE dbo.test_ic_interact
 (
     id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY CLUSTERED,
@@ -202,6 +211,11 @@ SELECT TOP (10000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
     ABS(CHECKSUM(NEWID())) % 100
 FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
 
+INSERT INTO dbo.test_ic_uc_dup (col_a, col_b, col_c)
+SELECT TOP (10000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    ABS(CHECKSUM(NEWID())) % 500, ABS(CHECKSUM(NEWID())) % 200
+FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
+
 INSERT INTO dbo.test_ic_interact (col_a, col_b, col_c, col_d, col_e)
 SELECT TOP (10000) ABS(CHECKSUM(NEWID())) % 1000, ABS(CHECKSUM(NEWID())) % 500,
     ABS(CHECKSUM(NEWID())) % 200, ABS(CHECKSUM(NEWID())) % 100, LEFT(NEWID(), 20)
@@ -275,6 +289,11 @@ CREATE INDEX ix_feq_a_filt ON dbo.test_ic_filter_eq (col_a) WHERE status_code = 
 ALTER TABLE dbo.test_ic_uc_replace ADD CONSTRAINT uq_ucr_ab UNIQUE (col_a, col_b);
 CREATE NONCLUSTERED INDEX ix_ucr_ab_inc ON dbo.test_ic_uc_replace (col_a, col_b) INCLUDE (col_c);
 
+/* Group 11b: UC-vs-UC duplicates with no replacement NC (issue #782, Rule 7.5b)
+   — keeper kept, duplicate dropped via DROP CONSTRAINT */
+ALTER TABLE dbo.test_ic_uc_dup ADD CONSTRAINT uq_ucd_keeper UNIQUE (col_a, col_b, col_c);
+ALTER TABLE dbo.test_ic_uc_dup ADD CONSTRAINT uq_ucd_zloser UNIQUE (col_a, col_b, col_c);
+
 /* Group 12: Rule interactions */
 /* 12a: Multi-level subset: A ⊂ AB ⊂ ABC */
 CREATE INDEX ix_int_a ON dbo.test_ic_interact (col_a);
@@ -336,6 +355,9 @@ BEGIN
     /* Group 11: UC replacement */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_replace WITH (INDEX = uq_ucr_ab) WHERE col_a = 1;
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_replace WITH (INDEX = ix_ucr_ab_inc) WHERE col_a = 1;
+    /* Group 11b: UC-vs-UC duplicates */
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_dup WITH (INDEX = uq_ucd_keeper) WHERE col_a = 1;
+    SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_uc_dup WITH (INDEX = uq_ucd_zloser) WHERE col_a = 1;
     /* Group 12: Interactions */
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_interact WITH (INDEX = ix_int_a) WHERE col_a = 1;
     SELECT @c = COUNT_BIG(*) FROM dbo.test_ic_interact WITH (INDEX = ix_int_ab) WHERE col_a = 1;
@@ -377,5 +399,6 @@ DROP TABLE IF EXISTS dbo.test_ic_exact;
 DROP TABLE IF EXISTS dbo.test_ic_reverse;
 DROP TABLE IF EXISTS dbo.test_ic_filter_eq;
 DROP TABLE IF EXISTS dbo.test_ic_uc_replace;
+DROP TABLE IF EXISTS dbo.test_ic_uc_dup;
 DROP TABLE IF EXISTS dbo.test_ic_interact;
 GO
