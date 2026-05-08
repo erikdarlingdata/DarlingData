@@ -3878,6 +3878,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id_fk.is_foreign_key_reference = 1
         AND   id_fk.is_included_column = 0
     )
+    /* ia_nc must be a true nonclustered index, not another unique constraint.
+       Without this, two UCs with identical keys both match each other and
+       both get action = DISABLE pointing at the other, with neither getting
+       MAKE UNIQUE in the next step — so every UC in the group ends up
+       dropped. UC-vs-UC duplicates are handled in Rule 7.5b below. */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_nc
+        WHERE id_nc.index_hash = ia_nc.index_hash
+        AND   id_nc.is_unique_constraint = 1
+    )
     OPTION(RECOMPILE);
 
     /* Second, mark nonclustered indexes to be made unique */
@@ -3958,6 +3971,111 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         SELECT
             table_name = '#index_analysis after rule 7.5',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
+
+    /* Rule 7.5b: Duplicate unique constraints with no replacement nonclustered
+       index. Rule 7 marks every UC with a matching-key sibling as KEEP under
+       'Unique Constraint Replacement'. When two or more UCs share identical
+       keys and there is no separate nonclustered index to promote (Rule 7.5
+       would otherwise fold them in), we still need to drop all but one.
+       Demote the loser(s) to DISABLE so the existing DISABLE CONSTRAINT
+       SCRIPT path emits a single DROP CONSTRAINT for the duplicates while
+       the keeper stays silent. */
+    UPDATE
+        ia_loser
+    SET
+        ia_loser.action = N'DISABLE',
+        ia_loser.target_index_name = ia_keeper.index_name
+    FROM #index_analysis AS ia_loser
+    JOIN #index_analysis AS ia_keeper
+      ON  ia_keeper.scope_hash = ia_loser.scope_hash
+      AND ia_keeper.index_name <> ia_loser.index_name
+      AND ia_keeper.key_columns = ia_loser.key_columns
+      AND ISNULL(ia_keeper.filter_definition, N'') = ISNULL(ia_loser.filter_definition, N'')
+    WHERE ia_loser.action = N'KEEP'
+    AND   ia_loser.consolidation_rule = N'Unique Constraint Replacement'
+    AND   ia_keeper.action = N'KEEP'
+    AND   ia_keeper.consolidation_rule = N'Unique Constraint Replacement'
+    /* Both rows must be unique constraints (not regular nonclustered indexes
+       that Rule 7 also marked KEEP for some reason) */
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_loser
+        WHERE id_loser.index_hash = ia_loser.index_hash
+        AND   id_loser.is_unique_constraint = 1
+    )
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_keeper
+        WHERE id_keeper.index_hash = ia_keeper.index_hash
+        AND   id_keeper.is_unique_constraint = 1
+    )
+    /* Demote the loser deterministically: lower priority, or alphabetically
+       later when tied. Mirrors the keep/drop tiebreak used by Rule 2. */
+    AND
+    (
+        ia_loser.index_priority < ia_keeper.index_priority
+        OR
+        (
+            ia_loser.index_priority = ia_keeper.index_priority
+            AND ia_loser.index_name > ia_keeper.index_name
+        )
+    )
+    /* When 3+ UCs are duplicates, ensure ia_keeper is the single overall
+       winner (no other UC beats it). This makes target_index_name
+       deterministic and points every loser at the same surviving UC. */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_better
+        WHERE ia_better.scope_hash = ia_keeper.scope_hash
+        AND   ia_better.index_name <> ia_keeper.index_name
+        AND   ia_better.key_columns = ia_keeper.key_columns
+        AND   ISNULL(ia_better.filter_definition, N'') = ISNULL(ia_keeper.filter_definition, N'')
+        AND   ia_better.action = N'KEEP'
+        AND   ia_better.consolidation_rule = N'Unique Constraint Replacement'
+        AND EXISTS
+        (
+            SELECT
+                1/0
+            FROM #index_details AS id_better
+            WHERE id_better.index_hash = ia_better.index_hash
+            AND   id_better.is_unique_constraint = 1
+        )
+        AND
+        (
+            ia_better.index_priority > ia_keeper.index_priority
+            OR
+            (
+                ia_better.index_priority = ia_keeper.index_priority
+                AND ia_better.index_name < ia_keeper.index_name
+            )
+        )
+    )
+    /* Don't propose dropping a UC that backs an inbound foreign key */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_fk
+        WHERE id_fk.index_hash = ia_loser.index_hash
+        AND   id_fk.is_foreign_key_reference = 1
+        AND   id_fk.is_included_column = 0
+    )
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after rule 7.5b',
             ia.*
         FROM #index_analysis AS ia
         OPTION(RECOMPILE);
