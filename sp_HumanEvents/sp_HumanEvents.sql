@@ -4308,7 +4308,7 @@ FROM
                     varbinary(64),
                     bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)''),
                     1
-                ) AS sqlhandle,
+                ),
             process_report = oa.c.query(''.'')
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
