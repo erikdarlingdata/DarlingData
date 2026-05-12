@@ -4032,9 +4032,12 @@ BEGIN
                                 N'.'  +
                                 vc.output_table
                             ),
-                            N'[dbo]' +
-                            '.' +
-                            QUOTENAME(vc.view_name),
+                            /* view bodies are stored unbracketed as
+                               "dbo.<view_name>" — match that form, not
+                               "[dbo].[<view_name>]", or the swap to the
+                               user's @output_schema_name silently no-ops */
+                            N'dbo.' +
+                            vc.view_name,
                             QUOTENAME(vc.output_schema) +
                             '.' +
                             QUOTENAME(vc.view_name)
@@ -4305,7 +4308,7 @@ FROM
                     varbinary(64),
                     bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)''),
                     1
-                ) AS sqlhandle,
+                ),
             process_report = oa.c.query(''.'')
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
