@@ -1,4 +1,4 @@
--- Compile Date: 05/08/2026 20:38:30 UTC
+-- Compile Date: 05/12/2026 09:19:06 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -10308,9 +10308,12 @@ BEGIN
                                 N'.'  +
                                 vc.output_table
                             ),
-                            N'[dbo]' +
-                            '.' +
-                            QUOTENAME(vc.view_name),
+                            /* view bodies are stored unbracketed as
+                               "dbo.<view_name>" — match that form, not
+                               "[dbo].[<view_name>]", or the swap to the
+                               user's @output_schema_name silently no-ops */
+                            N'dbo.' +
+                            vc.view_name,
                             QUOTENAME(vc.output_schema) +
                             '.' +
                             QUOTENAME(vc.view_name)
@@ -10581,7 +10584,7 @@ FROM
                     varbinary(64),
                     bd.value(''(process/executionStack/frame/@sqlhandle)[1]'', ''nvarchar(260)''),
                     1
-                ) AS sqlhandle,
+                ),
             process_report = oa.c.query(''.'')
         FROM #human_events_xml_internal AS xet
         OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
@@ -40300,7 +40303,7 @@ ALTER PROCEDURE
     @timezone sysname = NULL, /*user specified time zone to override dates displayed in results*/
     @execution_count bigint = NULL, /*the minimum number of executions a query must have*/
     @duration_ms bigint = NULL, /*the minimum duration a query must have to show up in results*/
-    @execution_type_desc nvarchar(60) = NULL, /*the type of execution you want to filter by (regular, aborted, exception)*/
+    @execution_type_desc nvarchar(60) = NULL, /*the type of execution you want to filter by (regular, aborted, exception, failed); failed bundles aborted and exception*/
     @procedure_schema sysname = NULL, /*the schema of the procedure you're searching for*/
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
     @include_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
@@ -40403,7 +40406,7 @@ BEGIN
                 WHEN N'@timezone' THEN 'user specified time zone to override dates displayed in results'
                 WHEN N'@execution_count' THEN 'the minimum number of executions a query must have'
                 WHEN N'@duration_ms' THEN 'the minimum duration a query must have to show up in results'
-                WHEN N'@execution_type_desc' THEN 'the type of execution you want to filter by (regular, aborted, exception)'
+                WHEN N'@execution_type_desc' THEN 'the type of execution you want to filter by (regular, aborted, exception, failed); failed bundles aborted and exception'
                 WHEN N'@procedure_schema' THEN 'the schema of the procedure you''re searching for'
                 WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
                 WHEN N'@include_plan_ids' THEN 'a list of plan ids to search for'
@@ -40466,7 +40469,7 @@ BEGIN
                 WHEN N'@timezone' THEN 'SELECT tzi.* FROM sys.time_zone_info AS tzi;'
                 WHEN N'@execution_count' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
                 WHEN N'@duration_ms' THEN 'a positive integer between 1 and 9,223,372,036,854,775,807'
-                WHEN N'@execution_type_desc' THEN 'regular, aborted, exception'
+                WHEN N'@execution_type_desc' THEN 'regular, aborted, exception, failed'
                 WHEN N'@procedure_schema' THEN 'a valid schema in your database'
                 WHEN N'@procedure_name' THEN 'a valid programmable object in your database, can use wildcards'
                 WHEN N'@include_plan_ids' THEN 'a string; comma separated for multiple ids'
@@ -43126,13 +43129,14 @@ Error out if the @execution_type_desc value is invalid.
 IF
 (
     @execution_type_desc IS NOT NULL
-AND @execution_type_desc NOT IN ('regular', 'aborted', 'exception')
+AND @execution_type_desc NOT IN ('regular', 'aborted', 'exception', 'failed')
 )
 BEGIN
-    RAISERROR('@execution_type_desc can only take one of these three non-NULL values:
+    RAISERROR('@execution_type_desc can only take one of these four non-NULL values:
     1) ''regular'' (meaning a successful execution),
     2) ''aborted'' (meaning that the client cancelled the query),
-    3) ''exception'' (meaning that an exception cancelled the query).
+    3) ''exception'' (meaning that an exception cancelled the query),
+    4) ''failed'' (a convenience value that bundles both ''aborted'' and ''exception'').
 
 You supplied ''%s''.
 
@@ -47090,8 +47094,16 @@ END;
 
 IF @execution_type_desc IS NOT NULL
 BEGIN
-    SELECT
-        @where_clause += N'    AND   qsrs.execution_type_desc = @execution_type_desc' + @nc10;
+    IF @execution_type_desc = N'failed'
+    BEGIN
+        SELECT
+            @where_clause += N'    AND   qsrs.execution_type_desc IN (N''aborted'', N''exception'')' + @nc10;
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            @where_clause += N'    AND   qsrs.execution_type_desc = @execution_type_desc' + @nc10;
+    END;
 END;
 
 IF @workdays = 1
