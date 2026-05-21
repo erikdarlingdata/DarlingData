@@ -6238,8 +6238,29 @@ OPTION(RECOMPILE);' + @nc10;
                 THEN qw.top_waits
             END,
         s.query_hash,
-        s.query_count,
-        s.plan_count,
+        /*
+        query_count and plan_count are the all-time number of distinct
+        query_ids and plans for this query_hash (matching query_id_list
+        and plan_id_list), not just the ones active in the analyzed
+        window. The #hi_query_stats counts only cover window-active
+        query_ids and plans, which under-counts here; #hi_query_stats.
+        plan_count is still used below for the window-scoped plan
+        instability diagnostics.
+        */
+        query_count =
+        (
+            SELECT
+                COUNT_BIG(DISTINCT sq.query_id)
+            FROM #hi_id_staging_queries AS sq
+            WHERE sq.query_hash = s.query_hash
+        ),
+        plan_count =
+        (
+            SELECT
+                COUNT_BIG(DISTINCT sp.plan_id)
+            FROM #hi_id_staging_plans AS sp
+            WHERE sp.query_hash = s.query_hash
+        ),
         qi.query_id_list,
         qi.plan_id_list,
         impact_score =
