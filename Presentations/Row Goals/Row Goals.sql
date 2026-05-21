@@ -1,10 +1,10 @@
-﻿USE StackOverflow2013;
+USE StackOverflow2013;
 EXECUTE dbo.DropIndexes;
 ALTER DATABASE StackOverflow2013
 SET COMPATIBILITY_LEVEL = 160;
 SET NOCOUNT ON;
 DBCC FREEPROCCACHE;
-GO 
+GO
 
 DROP TABLE IF EXISTS
     dbo.HighRepUsers;
@@ -18,13 +18,13 @@ SELECT
 INTO dbo.HighRepUsers
 FROM dbo.Users AS u
 WHERE u.Reputation >= 100000;
-GO 
+GO
 
 ALTER TABLE
     dbo.HighRepUsers
-ADD CONSTRAINT 
+ADD CONSTRAINT
     PK_HighRepUsers
-PRIMARY KEY CLUSTERED 
+PRIMARY KEY CLUSTERED
     (Id)
 WITH
     (SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);
@@ -36,25 +36,25 @@ ON dbo.HighRepUsers
     (DisplayName, Reputation)
 WITH
     (SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);
-GO 
+GO
 
-CREATE INDEX 
-    [UserId] 
+CREATE INDEX
+    [UserId]
 ON dbo.Badges
     (UserId)
 WITH
     (SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);
 GO
 
-CREATE INDEX 
-    [OwnerUserId, LastActivityDate] 
+CREATE INDEX
+    [OwnerUserId, LastActivityDate]
 ON dbo.Posts
     (OwnerUserId, LastActivityDate)
 INCLUDE
     (Score)
 WITH
     (SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);
-GO 
+GO
 
 CREATE INDEX
     [OwnerUserId, Score]
@@ -86,17 +86,17 @@ WITH
     (SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);
 GO
 
-CREATE INDEX 
-    [VoteTypeId, PostId] 
+CREATE INDEX
+    [VoteTypeId, PostId]
 ON dbo.Votes
     (VoteTypeId, PostId)
 WITH
     (SORT_IN_TEMPDB = ON, DATA_COMPRESSION = PAGE);
 GO
 
-CREATE INDEX 
+CREATE INDEX
     [PostTypeId]
-ON dbo.Posts 
+ON dbo.Posts
     (PostTypeId)
 WHERE
     (PostTypeId = 1)
@@ -105,13 +105,13 @@ WITH
 
 
 /*
-██████╗  ██████╗ ██╗    ██╗               
-██╔══██╗██╔═══██╗██║    ██║               
-██████╔╝██║   ██║██║ █╗ ██║               
-██╔══██╗██║   ██║██║███╗██║               
-██║  ██║╚██████╔╝╚███╔███╔╝               
-╚═╝  ╚═╝ ╚═════╝  ╚══╝╚══╝                
-                                          
+██████╗  ██████╗ ██╗    ██╗
+██╔══██╗██╔═══██╗██║    ██║
+██████╔╝██║   ██║██║ █╗ ██║
+██╔══██╗██║   ██║██║███╗██║
+██║  ██║╚██████╔╝╚███╔███╔╝
+╚═╝  ╚═╝ ╚═════╝  ╚══╝╚══╝
+
  ██████╗  ██████╗  █████╗ ██╗     ███████╗
 ██╔════╝ ██╔═══██╗██╔══██╗██║     ██╔════╝
 ██║  ███╗██║   ██║███████║██║     ███████╗
@@ -130,7 +130,7 @@ L: https://www.linkedin.com/company/darling-data/
 Y: https://www.youtube.com/@ErikDarlingData
 
 Demos: https://go.erikdarling.com/RowGoals
-Database: https://go.erikdarling.com/Stack2013 
+Database: https://go.erikdarling.com/Stack2013
 
 */
 
@@ -147,7 +147,7 @@ A row goal is a bit of a short circuit for the
 optimizer, because rather than coming up with a
 plan to process and return all rows, it can come
 up with a plan that's more well-suited to meet
-the row goal, which is usually fewer rows. 
+the row goal, which is usually fewer rows.
 
 You can also think of a row goal as a promise
 that only N number of rows will be produced, or that
@@ -160,7 +160,7 @@ execution plan shape. They give you some control.
 It's important to establish the difference between
 a row goal and a row limit early on. The terms may
 feel interchangeable, but consider first that many
-SQL dialects use the LIMIT keyword instead of the 
+SQL dialects use the LIMIT keyword instead of the
 TOP keyword. There's also an important distinction
 between *you* limiting rows to a certain number,
 like "I only want the first 100 rows" and the
@@ -202,19 +202,19 @@ Query optimization is largely driven by how many
 rows are expected to come from tables, survive
 where and join clauses, or get past group by clauses.
 and row goals are a way to influence optimization
-choices without query or table hints being used, 
+choices without query or table hints being used,
 because the number of estimated rows has a huge
 impact on SQL Server's cost-based optimizer.
 
 A slight digression...
 
-What are query costs? 
+What are query costs?
  * Estimates! Nothing but estimates!
 
-Cost does not equal time, measure speed or efficiency,  
+Cost does not equal time, measure speed or efficiency,
 or anything else useful. They are unitless metrics.
  * Even in actual execution plans costs are all estimates
- * There are no *actual* equivalents for costs derived 
+ * There are no *actual* equivalents for costs derived
    *after* queries execute like other metrics
 
 */
@@ -255,44 +255,44 @@ ORDER BY
 Queries are just descriptions of what you *want* to see.
 The optimizer figures out *how* best-enough to do it.
 
-Sort of like how indexes contain data and statistics 
-describe data. Databases contain data, and we describe 
+Sort of like how indexes contain data and statistics
+describe data. Databases contain data, and we describe
 what data we want to see from them with our queries.
 
-Costs are based on a bunch of internal algorithms that 
-SQL Server uses to shape and choose execution plans for 
-queries, in the hopes that those costing mechanisms are 
-correct-enough and have correct-enough information to 
-get you a good-enough plan to answer the question your 
+Costs are based on a bunch of internal algorithms that
+SQL Server uses to shape and choose execution plans for
+queries, in the hopes that those costing mechanisms are
+correct-enough and have correct-enough information to
+get you a good-enough plan to answer the question your
 query is asking quickly and efficiently.
 
 Costing considers:
- * Rows 
+ * Rows
    * Cardinality Estimates from where/join, grouping...
    * Data distribution from statistics histograms
- * I/O type 
-   * Random I/O like Key Lookups/Loops is costed higher 
+ * I/O type
+   * Random I/O like Key Lookups/Loops is costed higher
      than sequential I/O like scans
    * Random I/O costs scale back when you perform many
      of them. This reflects the fact that previous random
      fetches *might* have already brought in the currently
      needed page. The more random I/O you perform, the
      higher this chance becomes.
- * CPU effort 
+ * CPU effort
    * Parallelism may reduce costs overall
- * Memory requirements 
+ * Memory requirements
    * Buffer Pool, row sizes, etc.
 
 Cost is generalized
- * Based on one very old piece of hardware, not your 
+ * Based on one very old piece of hardware, not your
    *specific* hardware setup
  * https://go.erikdarling.com/Nick
- * Meant to come up with good-enough plans on *any* 
+ * Meant to come up with good-enough plans on *any*
    set of hardware, not just *your* hardware
 
 All plan decisions are based on those costs
  * Some costs are fixed per unit (CPU, I/O)
- * Many have a higher first-row cost, or other 
+ * Many have a higher first-row cost, or other
    complexities, but number of rows is important
 
 Other costs are based on statistics and metadata
@@ -300,7 +300,7 @@ Other costs are based on statistics and metadata
  * Histograms
  * Uniqueness
 
-Some things can really help the optimizer make 
+Some things can really help the optimizer make
 better-enough plan choices in general, like...
  * Useful Indexes
  * SARGable predicates
@@ -311,7 +311,7 @@ better-enough plan choices in general, like...
  * Up to date statistics
  * Limited query complexity
  * Avoiding things without good costing support
-   * XML 
+   * XML
    * JSON
    * String splitting
    * Built-in functions
@@ -338,20 +338,20 @@ People act ridiculously with EXISTS.
 
 There is already a row goal of one.
 
-A semi join row goal only appears if the semi join is 
+A semi join row goal only appears if the semi join is
 an apply (correlated join). Nested loops semi join does
 *not* come with a row goal on the inner side.
 
 */
 
-SELECT 
-    hru.* 
-FROM dbo.HighRepUsers AS hru 
+SELECT
+    hru.*
+FROM dbo.HighRepUsers AS hru
 WHERE EXISTS
 (
-    SELECT 
-        1/0 
-    FROM dbo.Badges AS b 
+    SELECT
+        1/0
+    FROM dbo.Badges AS b
     WHERE b.UserId = hru.Id
 );
 
@@ -365,14 +365,14 @@ What do you not see in the query plan?
 
 */
 
-SELECT 
-    hru.* 
-FROM dbo.HighRepUsers AS hru 
+SELECT
+    hru.*
+FROM dbo.HighRepUsers AS hru
 WHERE EXISTS
 (
     SELECT DISTINCT TOP (1)
-        1/0 
-    FROM dbo.Badges AS b 
+        1/0
+    FROM dbo.Badges AS b
     WHERE b.UserId = hru.Id
     GROUP BY
         b.UserId
@@ -386,50 +386,50 @@ It's another way to express a logical semi join.
 
 */
 
-SELECT 
-    hru.* 
-FROM dbo.HighRepUsers AS hru 
+SELECT
+    hru.*
+FROM dbo.HighRepUsers AS hru
 WHERE hru.Id IN
 (
-    SELECT 
+    SELECT
         b.UserId
-    FROM dbo.Badges AS b 
+    FROM dbo.Badges AS b
 )
 ORDER BY
     hru.Id;
 
-SELECT 
-    hru.* 
-FROM dbo.HighRepUsers AS hru 
+SELECT
+    hru.*
+FROM dbo.HighRepUsers AS hru
 WHERE hru.Id = ANY /*IN equivalent*/
 (
-    SELECT 
+    SELECT
         b.UserId
-    FROM dbo.Badges AS b 
+    FROM dbo.Badges AS b
 )
 ORDER BY
     hru.Id;
 
-SELECT 
-    hru.* 
-FROM dbo.HighRepUsers AS hru 
+SELECT
+    hru.*
+FROM dbo.HighRepUsers AS hru
 WHERE hru.Id = SOME /*ANY equivalent*/
 (
-    SELECT 
+    SELECT
         b.UserId
-    FROM dbo.Badges AS b 
+    FROM dbo.Badges AS b
 )
 ORDER BY
     hru.Id;
 
-SELECT 
-    hru.* 
-FROM dbo.HighRepUsers AS hru 
+SELECT
+    hru.*
+FROM dbo.HighRepUsers AS hru
 WHERE hru.Id = ALL /*Strange bird*/
 (
-    SELECT 
+    SELECT
         b.UserId
-    FROM dbo.Badges AS b 
+    FROM dbo.Badges AS b
 )
 ORDER BY
     hru.Id;
@@ -437,18 +437,18 @@ ORDER BY
 
 /*
 DECLARE
-    @t1 table 
+    @t1 table
 (
     id integer NOT NULL
 )
 
 DECLARE
-    @t2 table 
+    @t2 table
 (
     id integer NOT NULL
 )
 
-INSERT 
+INSERT
     @t1
 (
     id
@@ -456,7 +456,7 @@ INSERT
 VALUES
     (1)--, (2)
 
-INSERT 
+INSERT
     @t2
 (
     id
@@ -464,13 +464,13 @@ INSERT
 VALUES
     (1)--, (3)
 
-SELECT 
-    t1.* 
+SELECT
+    t1.*
 FROM @t1 AS t1
-WHERE t1.id = ALL 
+WHERE t1.id = ALL
 (
-    SELECT 
-        t2.id 
+    SELECT
+        t2.id
     FROM @t2 AS t2
 );
 
@@ -525,7 +525,7 @@ Other ways that row goals can sneak in:
 
 SELECT
     hru2.*
-FROM 
+FROM
 (
     SELECT
         hru.*,
@@ -571,7 +571,7 @@ There is a query plan difference though:
   * FAST n hint produces a row goal at the plan root
 
 Look at the operator properties for the
-EstimateRowsWithoutRowGoal attribute, especially in 
+EstimateRowsWithoutRowGoal attribute, especially in
 table or index access operators (seek or scan).
 
 Of course, FAST n hints don't limit query results like
@@ -619,7 +619,7 @@ Top + Sort = Top N Sort
 
 SELECT TOP (1)
     hru.*
-FROM dbo.HighRepUsers AS hru 
+FROM dbo.HighRepUsers AS hru
 WHERE hru.DisplayName = N'Jon Skeet'
 ORDER BY
     hru.Reputation DESC;
@@ -627,7 +627,7 @@ ORDER BY
 
 SELECT TOP (9223372036854775807)
     hru.*
-FROM dbo.HighRepUsers AS hru 
+FROM dbo.HighRepUsers AS hru
 WHERE hru.DisplayName = N'Jon Skeet'
 ORDER BY
     hru.Reputation DESC;
@@ -638,34 +638,34 @@ This one gets weird.
 
 Row limits are so powerful that SQL Server's
 optimizer will honor them to the detriment of
-performance, by not pushing a predicate past 
+performance, by not pushing a predicate past
 the TOP operator in a query's execution plan.
 
 Note to you: Do not write queries like this.
 
 There's no row goal here because the number of
 rows in the limit exceeds the maximum rows
-expected from the Top's subtree. To me, row 
-limits and row goals are separate things. 
+expected from the Top's subtree. To me, row
+limits and row goals are separate things.
 
 On the specific example: Pushing a filter past
 a TOP might change the results in general. The
 optimizer won't do that. Wouldn't be right.
 
 Finding Jon Skeet among the first n high rep users
-(in no particular order) is not the same as finding 
+(in no particular order) is not the same as finding
 the first n users named Jon Skeet in the high rep user
 table.
 
 It *is* the same if you use bigint max in the TOP, but
-we can still take advantage of that knowledge in other 
+we can still take advantage of that knowledge in other
 places, to change query plans for our delight/amusement.
 
 */
 
 SELECT
     hru2.*
-FROM 
+FROM
 (
     SELECT TOP (9223372036854775807)
         hru.*
@@ -723,7 +723,7 @@ SELECT
     u.Reputation
 FROM dbo.Users AS u
 WHERE u.Reputation >= 1000
-AND 
+AND
     (
         SELECT
             MAX(p.LastActivityDate)
@@ -747,13 +747,13 @@ SELECT
     u.Reputation
 FROM dbo.Users AS u
 WHERE u.Reputation >= 1000
-AND 
+AND
     (
         SELECT TOP (1)
             MAX(p.LastActivityDate)
         FROM dbo.Posts AS p
         WHERE p.OwnerUserId = u.Id
-        --GROUP BY () 
+        --GROUP BY ()
         /*Unquote this to see two TOPs*/
     ) <= CONVERT(datetime, '20091031', 112)
 ORDER BY
@@ -774,7 +774,7 @@ This query has neither one available.
 /*What's the problem here?*/
 IF EXISTS
 (
-    SELECT 
+    SELECT
         1/0
     FROM dbo.Posts AS p
     JOIN dbo.Votes AS v
@@ -783,7 +783,7 @@ IF EXISTS
     AND   p.PostTypeId = 1
 )
 BEGIN
-    SELECT 
+    SELECT
         x = 1;
 END;
 /*Look at estimated rows, properties*/
@@ -792,8 +792,8 @@ END;
 /*How to fix it.*/
 IF EXISTS
 (
-    SELECT 
-        1/0 
+    SELECT
+        1/0
     FROM dbo.Posts AS p
     JOIN dbo.Votes AS v
       ON p.Id = v.PostId
@@ -801,9 +801,9 @@ IF EXISTS
     AND   p.PostTypeId = 1
     HAVING
         COUNT_BIG(*) > 0
-) 
+)
 BEGIN
-    SELECT 
+    SELECT
         x = 1;
 END;
 
@@ -935,7 +935,7 @@ CROSS APPLY
     SELECT --TOP (9223372036854775807)
            /*Intra-query row goal*/
         PostScore = p.Score,
-        CommentScore = c.Score    
+        CommentScore = c.Score
     FROM dbo.Posts AS p
     JOIN dbo.Comments AS c
       ON c.PostId = p.Id
@@ -966,7 +966,7 @@ SELECT
     u.DisplayName,
     PostId = p.Id
 FROM dbo.Users AS u
-JOIN dbo.Posts AS p 
+JOIN dbo.Posts AS p
   --WITH(FORCESEEK)
   ON p.OwnerUserId = u.Id
 WHERE u.CreationDate > CONVERT(datetime, '20131210', 112)
@@ -979,7 +979,7 @@ AND   NOT EXISTS
               1/0
           FROM dbo.Comments AS c
           WHERE c.PostId = p.Id
-      ) 
+      )
 ORDER BY
     u.Id;
 
@@ -1028,9 +1028,9 @@ OPTION(MAXDOP 1);
 
 
 /*
-One thing worth noting here is that the 
+One thing worth noting here is that the
 SELECT p.* makes no difference inside the
-CROSS APPLY, because the outer query only 
+CROSS APPLY, because the outer query only
 gets one column from within it, which SQL
 Server is thankfully smart enough to handle.
 
@@ -1069,7 +1069,7 @@ AND   NOT EXISTS
               1/0
           FROM dbo.Comments AS c
           WHERE c.PostId = p.Id
-      ) 
+      )
 ORDER BY
     u.CreationDate;
 
@@ -1080,7 +1080,7 @@ DECLARE
 SELECT
     u.*,
     PostId = p.Id
-FROM 
+FROM
 (
     SELECT TOP (@Top)
         u.*
@@ -1098,13 +1098,13 @@ AND   NOT EXISTS
               1/0
           FROM dbo.Comments AS c
           WHERE c.PostId = p.Id
-      ) 
+      )
 ORDER BY
     u.CreationDate
 OPTION
 (
-    OPTIMIZE FOR 
-    ( 
+    OPTIMIZE FOR
+    (
         @Top = 1
     )
 );
@@ -1114,34 +1114,34 @@ OPTION
 Row Goals
 
 What they are:
- * Promises from the optimizer about how many rows 
+ * Promises from the optimizer about how many rows
    will be produced
- * Set explicitly (TOP, OFFSET/FETCH, FAST n) or 
+ * Set explicitly (TOP, OFFSET/FETCH, FAST n) or
    implicitly (EXISTS, IN)
  * Optimization fences that reshape execution plans
 
 Why they matter:
  * Change how the optimizer costs and builds plans
- * Can make impossible queries fast by forcing 
+ * Can make impossible queries fast by forcing
    better join orders
  * Give you control without hints
 
 You oughtta know:
- * EXISTS already has a row goal of 1 - don't 
+ * EXISTS already has a row goal of 1 - don't
    add useless stuff
  * TOP 100 PERCENT is ignored - stop using it
  * Always use deterministic ordering with TOP
 
 Trickery:
- * CROSS APPLY + TOP forces nested loops from 
+ * CROSS APPLY + TOP forces nested loops from
    outer table
- * Use HAVING COUNT_BIG(*) for EXISTS on missing 
+ * Use HAVING COUNT_BIG(*) for EXISTS on missing
    data
- * OPTIMIZE FOR with parameterized TOP for consistent 
+ * OPTIMIZE FOR with parameterized TOP for consistent
    plans
 
-Bottom line (get it?): Row goals can help the optimizer 
-make better choices when it knows you don't need every row. 
+Bottom line (get it?): Row goals can help the optimizer
+make better choices when it knows you don't need every row.
 
 Use them wisely.
 
@@ -1157,14 +1157,14 @@ My rates are reasonable.
    ██║   ██╔══██║██╔══██║██║╚██╗██║██╔═██╗
    ██║   ██║  ██║██║  ██║██║ ╚████║██║  ██╗
    ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝
-                                          
-██╗   ██╗ ██████╗ ██╗   ██╗██╗            
-╚██╗ ██╔╝██╔═══██╗██║   ██║██║            
- ╚████╔╝ ██║   ██║██║   ██║██║            
-  ╚██╔╝  ██║   ██║██║   ██║╚═╝            
-   ██║   ╚██████╔╝╚██████╔╝██╗            
-   ╚═╝    ╚═════╝  ╚═════╝ ╚═╝            
-                                          
+
+██╗   ██╗ ██████╗ ██╗   ██╗██╗
+╚██╗ ██╔╝██╔═══██╗██║   ██║██║
+ ╚████╔╝ ██║   ██║██║   ██║██║
+  ╚██╔╝  ██║   ██║██║   ██║╚═╝
+   ██║   ╚██████╔╝╚██████╔╝██╗
+   ╚═╝    ╚═════╝  ╚═════╝ ╚═╝
+
 W: https://erikdarling.com
 E: mailto:erik@erikdarling.com
 T: https://twitter.com/erikdarlingdata
@@ -1173,7 +1173,7 @@ L: https://www.linkedin.com/company/darling-data/
 Y: https://www.youtube.com/@ErikDarlingData
 
 Demos:https://go.erikdarling.com/RowGoals
-Database: https://go.erikdarling.com/Stack2013 
+Database: https://go.erikdarling.com/Stack2013
 
 
 Important material:
