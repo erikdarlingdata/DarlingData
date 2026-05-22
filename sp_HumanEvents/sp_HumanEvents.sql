@@ -173,7 +173,7 @@ BEGIN
            CASE ap.name
                WHEN N'@event_type' THEN N'"blocking", "query", "waits", "recompiles", "compiles" and certain variations on those words'
                WHEN N'@query_duration_ms' THEN N'an integer'
-               WHEN N'@query_sort_order' THEN '"cpu", "reads", "writes", "duration", "memory", "spills", and you can add "avg" to sort by averages, e.g. "avg cpu"'
+               WHEN N'@query_sort_order' THEN '"cpu", "reads", "writes", "duration", "memory", "spills", "event_time", and you can add "avg" to sort by averages, e.g. "avg cpu"'
                WHEN N'@skip_plans' THEN '1 or 0'
                WHEN N'@blocking_duration_ms' THEN N'an integer'
                WHEN N'@wait_type' THEN N'a single wait type, or a CSV list of wait types'
@@ -924,7 +924,8 @@ IF @query_sort_order NOT IN
     N'avg writes',
     N'avg duration',
     N'avg memory',
-    N'avg spills'
+    N'avg spills',
+    N'event_time'
 )
 BEGIN
    RAISERROR(N'That sort order (%s) you chose is so out of this world that i''m ignoring it', 0, 1, @query_sort_order) WITH NOWAIT;
@@ -2237,7 +2238,8 @@ BEGIN
               WHEN N'avg duration' THEN q.avg_duration_ms
               WHEN N'avg spills' THEN q.avg_spills_mb
               WHEN N'avg memory' THEN q.avg_granted_memory_mb
-              ELSE N'cpu'
+              WHEN N'event_time' THEN DATEDIFF_BIG(MILLISECOND, '20000101', q.event_time)
+              ELSE q.total_cpu_ms
          END DESC
      OPTION(RECOMPILE);
 END;
