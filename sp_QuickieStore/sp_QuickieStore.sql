@@ -127,8 +127,8 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.6',
-    @version_date = '20260501';
+    @version = '6.7',
+    @version_date = '20260601';
 
 /*
 Helpful section! For help.

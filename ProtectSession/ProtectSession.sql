@@ -75,7 +75,7 @@ BEGIN
 
     SELECT
         @version = '1.0',
-        @version_date = '20260522';
+        @version_date = '20260601';
 
     BEGIN TRY
         IF @help = 1
@@ -161,6 +161,26 @@ BEGIN
             ORDER BY
                 ap.parameter_id
             OPTION(MAXDOP 1, RECOMPILE);
+
+            /*
+            Example calls
+            */
+            SELECT
+                example_calls = N'EXAMPLE CALLS' UNION ALL
+            SELECT N'run this from a separate connection -- not the session you''re protecting' UNION ALL
+            SELECT REPLICATE(N'-', 100) UNION ALL
+            SELECT N'basic: protect spid 55, kill any read or temp-table blocker holding it up for 10+ seconds' UNION ALL
+            SELECT REPLICATE(N'-', 100) UNION ALL
+            SELECT N'EXECUTE dbo.ProtectSession @protected_session_id = 55, @block_threshold_seconds = 10;' UNION ALL
+            SELECT REPLICATE(N'-', 100) UNION ALL
+            SELECT N'aggressive: kill anyone in the way, including blockers actively modifying permanent data (rolls back their work)' UNION ALL
+            SELECT REPLICATE(N'-', 100) UNION ALL
+            SELECT N'EXECUTE dbo.ProtectSession @protected_session_id = 55, @block_threshold_seconds = 10, @kill_modification_blockers = 1;' UNION ALL
+            SELECT REPLICATE(N'-', 100) UNION ALL
+            SELECT N'defensive: when blocked by a permanent-data modification, kill the PROTECTED session instead (preserves the blocker''s work)' UNION ALL
+            SELECT REPLICATE(N'-', 100) UNION ALL
+            SELECT N'EXECUTE dbo.ProtectSession @protected_session_id = 55, @block_threshold_seconds = 10, @abort_on_modification_block = 1, @abort_reason = N''import job blocked by reporting query'';' UNION ALL
+            SELECT REPLICATE(N'-', 100);
 
             /*
             MIT License
