@@ -106,8 +106,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '1.0',
-    @version_date = '20260327';
+    @version = '1.1',
+    @version_date = '20260601';
 
 
 IF @help = 1
