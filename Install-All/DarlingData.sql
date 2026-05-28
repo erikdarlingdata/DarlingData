@@ -1,4 +1,4 @@
--- Compile Date: 05/23/2026 16:07:57 UTC
+-- Compile Date: 05/28/2026 18:07:18 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -6364,8 +6364,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '7.6',
-    @version_date = '20260501';
+    @version = '7.7',
+    @version_date = '20260601';
 
 IF @help = 1
 BEGIN
@@ -9127,7 +9127,7 @@ BEGIN
         currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
         currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
-        sort_order = CAST('' AS varchar(400)),
+        sort_order = CONVERT(varchar(400), ''),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
         blocked_process_report = oa.c.query('.')
     INTO #blocked
@@ -9154,17 +9154,17 @@ BEGIN
             ISNULL
             (
                 '(' +
-                CAST(blocking_spid AS varchar(10)) +
+                CONVERT(varchar(10), blocking_spid) +
                 ':' +
-                CAST(blocking_ecid AS varchar(10)) +
+                CONVERT(varchar(10), blocking_ecid) +
                 ')',
                 'unresolved process'
             ) PERSISTED,
         blocked_desc AS
             '(' +
-            CAST(blocked_spid AS varchar(10)) +
+            CONVERT(varchar(10), blocked_spid) +
             ':' +
-            CAST(blocked_ecid AS varchar(10)) +
+            CONVERT(varchar(10), blocked_ecid) +
             ')' PERSISTED;
 
     CREATE CLUSTERED INDEX
@@ -9222,7 +9222,7 @@ BEGIN
         currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
         currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
-        sort_order = CAST('' AS varchar(400)),
+        sort_order = CONVERT(varchar(400), ''),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
         blocked_process_report = oa.c.query('.')
     INTO #blocking
@@ -9249,17 +9249,17 @@ BEGIN
             ISNULL
             (
                 '(' +
-                CAST(blocking_spid AS varchar(10)) +
+                CONVERT(varchar(10), blocking_spid) +
                 ':' +
-                CAST(blocking_ecid AS varchar(10)) +
+                CONVERT(varchar(10), blocking_ecid) +
                 ')',
                 'unresolved process'
             ) PERSISTED,
         blocked_desc AS
             '(' +
-            CAST(blocked_spid AS varchar(10)) +
+            CONVERT(varchar(10), blocked_spid) +
             ':' +
-            CAST(blocked_ecid AS varchar(10)) +
+            CONVERT(varchar(10), blocked_ecid) +
             ')' PERSISTED;
 
     CREATE CLUSTERED INDEX
@@ -9283,11 +9283,12 @@ BEGIN
             b.blocked_desc,
             level = 0,
             sort_order =
-                CAST
+                CONVERT
                 (
+                    varchar(400),
                     b.blocking_desc +
                     ' <-- ' +
-                    b.blocked_desc AS varchar(400)
+                    b.blocked_desc
                 )
         FROM #blocking AS b
         WHERE NOT EXISTS
@@ -9307,13 +9308,14 @@ BEGIN
             bg.blocked_desc,
             h.level + 1,
             sort_order =
-                CAST
+                CONVERT
                 (
+                    varchar(400),
                     h.sort_order +
                     ' ' +
                     bg.blocking_desc +
                     ' <-- ' +
-                    bg.blocked_desc AS varchar(400)
+                    bg.blocked_desc
                 )
         FROM hierarchy AS h
         JOIN #blocking AS bg
@@ -15580,8 +15582,8 @@ ALTER PROCEDURE
     @min_rows bigint = 0, /*only look at indexes with a minimum number of rows*/
     @dedupe_only bit = 'false', /*only perform deduplication, don't mark unused indexes for removal*/
     @get_all_databases bit = 'false', /*looks for all accessible user databases and returns combined results*/
-    @include_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
-    @exclude_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
+    @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
+    @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
     @sort_order varchar(20) = 'default', /*controls final result ordering: default (script type first) or object (cluster rows for the same index; Key Subset disables sort under their replacement)*/
     @help bit = 'false', /*learn about the procedure and parameters*/
     @debug bit = 'false', /*print dynamic sql, show temp table contents*/
@@ -15594,8 +15596,8 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.6',
-        @version_date = '20260501';
+        @version = '2.7',
+        @version_date = '20260601';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */
@@ -15779,7 +15781,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     DECLARE
         /*general script variables*/
-        @sql nvarchar(MAX) = N'',
+        @sql nvarchar(max) = N'',
         @object_id integer = NULL,
         @full_object_name nvarchar(768) = NULL,
         @uptime_warning bit = 0, /* Will set after @uptime_days is calculated */
@@ -15903,7 +15905,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @current_database_name sysname,
         @current_database_id integer,
         @error_msg nvarchar(2048),
-        @conflict_list nvarchar(MAX) = N'',
+        @conflict_list nvarchar(max) = N'',
         @rc bigint;
 
     /* Set uptime warning flag after @uptime_days is calculated */
@@ -16197,11 +16199,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         index_id integer NOT NULL,
         index_name sysname NOT NULL,
         is_unique bit NULL,
-        key_columns nvarchar(MAX) NULL,
-        included_columns nvarchar(MAX) NULL,
-        filter_definition nvarchar(MAX) NULL,
+        key_columns nvarchar(max) NULL,
+        included_columns nvarchar(max) NULL,
+        filter_definition nvarchar(max) NULL,
         /* Query plan for original CREATE INDEX statement */
-        original_index_definition nvarchar(MAX) NULL,
+        original_index_definition nvarchar(max) NULL,
         /*
         Consolidation rule that matched (e.g., Key Duplicate, Key Subset, etc)
         For exact duplicates, use one of: Exact Duplicate, Reverse Duplicate, or Equal Except For Filter
@@ -17959,7 +17961,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN ' + QUOTENAME(@current_database_name) +
     CONVERT
     (
-        nvarchar(MAX),
+        nvarchar(max),
         N'.sys.columns AS c
       ON  ic.object_id = c.object_id
       AND ic.column_id = c.column_id
@@ -17987,7 +17989,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     ) + QUOTENAME(@current_database_name) +
         CONVERT
         (
-            nvarchar(MAX),
+            nvarchar(max),
             N'.sys.dm_db_partition_stats ps
         WHERE ps.object_id = i.object_id
         AND   ps.index_id IN (0, 1)
@@ -19913,7 +19915,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             XML
                             PATH(''),
                             TYPE
-                    ).value('.', 'nvarchar(MAX)'),
+                    ).value('.', 'nvarchar(max)'),
                     1,
                     2,
                     N''
@@ -40331,8 +40333,8 @@ ALTER PROCEDURE
     @hide_help_table bit = 0, /*hides the "bottom table" that shows help and support information*/
     @format_output bit = 1, /*returns numbers formatted with commas and most decimals rounded away*/
     @get_all_databases bit = 0, /*looks for query store enabled user databases and returns combined results from all of them*/
-    @include_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
-    @exclude_databases nvarchar(MAX) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
+    @include_databases nvarchar(max) = NULL, /*comma-separated list of databases to include (only when @get_all_databases = 1)*/
+    @exclude_databases nvarchar(max) = NULL, /*comma-separated list of databases to exclude (only when @get_all_databases = 1)*/
     @workdays bit = 0, /*Use this to filter out weekends and after-hours queries*/
     @work_start time(0) = '9am', /*Use this to set a specific start of your work days*/
     @work_end time(0) = '5pm', /*Use this to set a specific end of your work days*/
@@ -40368,8 +40370,8 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.6',
-    @version_date = '20260501';
+    @version = '6.7',
+    @version_date = '20260601';
 
 /*
 Helpful section! For help.
