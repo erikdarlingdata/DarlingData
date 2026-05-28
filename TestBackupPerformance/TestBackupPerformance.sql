@@ -48,7 +48,37 @@ https://code.erikdarling.com
 
 IF OBJECT_ID(N'dbo.TestBackupPerformance', N'P') IS NULL
     EXECUTE (N'CREATE PROCEDURE dbo.TestBackupPerformance AS RETURN 138;');
+
 GO
+
+/*
+    Upgrade path only: if dbo.backup_performance_results already exists from
+    a prior version without the encryption column, add it before the
+    ALTER PROCEDURE batch compiles.
+
+    SQL Server validates column references (bpr.encryption in the result set
+    queries) at ALTER PROCEDURE compile time, not at runtime. If the table
+    exists but lacks the column, compilation fails with:
+        Msg 207 "Invalid column name 'encryption'"
+    before a single line of the proc body executes.
+
+    Fresh installs: table does not exist yet, so this block is skipped.
+    The CREATE TABLE inside the proc body handles fresh installs and already
+    includes the encryption column.
+
+    Upgrades from prior versions: table exists without encryption column,
+    so we add it here before the ALTER PROCEDURE batch is submitted.
+*/
+
+IF  OBJECT_ID(N'dbo.backup_performance_results', N'U') IS NOT NULL
+AND COL_LENGTH(N'dbo.backup_performance_results', N'encryption') IS NULL
+BEGIN
+    ALTER TABLE dbo.backup_performance_results
+        ADD encryption bit NOT NULL
+            CONSTRAINT df_bpr_encryption DEFAULT 0;
+END;
+GO
+
 
 ALTER PROCEDURE
     dbo.TestBackupPerformance
@@ -57,6 +87,7 @@ ALTER PROCEDURE
     @backup_path nvarchar(4000) = NULL, /*directory path or NUL for discard*/
     @file_count_list varchar(100) = '1,2,4', /*comma-separated file counts*/
     @compression_list varchar(100) = '0,1', /*0 = no compression, 1 = compressed*/
+    @encryption_list varchar(100) = '0', /*0 = no encryption, 1 = encrypted (requires a server certificate in master)*/
     @buffer_count_list varchar(100) = '0,15,30,50', /*0 = SQL Server default*/
     @max_transfer_size_list varchar(100) = '0,2097152,4194304', /*0 = default (1MB), max 4194304 (4MB)*/
     @stats tinyint = 1, /*backup completion percent to print progress at*/
@@ -75,8 +106,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '1.0',
-    @version_date = '20260327';
+    @version = '1.1',
+    @version_date = '20260601';
 
 
 IF @help = 1
@@ -91,6 +122,7 @@ BEGIN
     SELECT 'i test backup performance across combinations of:' UNION ALL
     SELECT ' * file count (striping)' UNION ALL
     SELECT ' * compression (on/off)' UNION ALL
+    SELECT ' * encryption (on/off)' UNION ALL
     SELECT ' * buffer count' UNION ALL
     SELECT ' * max transfer size' UNION ALL
     SELECT 'results are stored in dbo.backup_performance_results' UNION ALL
@@ -110,6 +142,7 @@ BEGIN
                 WHEN N'@backup_path' THEN N'directory path, DEFAULT for instance default, or NUL to discard'
                 WHEN N'@file_count_list' THEN N'comma-separated list of file counts (backup stripes)'
                 WHEN N'@compression_list' THEN N'comma-separated list: 0 = no compression, 1 = compressed'
+                WHEN N'@encryption_list' THEN N'comma-separated list: 0 = no encryption, 1 = encrypted (requires a server certificate in master)'
                 WHEN N'@buffer_count_list' THEN N'comma-separated list of buffer counts (0 = SQL Server default)'
                 WHEN N'@max_transfer_size_list' THEN N'comma-separated list of max transfer sizes in bytes (0 = default 1MB, max 4MB)'
                 WHEN N'@stats' THEN N'backup completion percent to print progress at'
@@ -126,6 +159,7 @@ BEGIN
                 WHEN N'@backup_path' THEN N'a valid directory path, DEFAULT, or NUL'
                 WHEN N'@file_count_list' THEN N'comma-separated integers'
                 WHEN N'@compression_list' THEN N'comma-separated 0s and 1s'
+                WHEN N'@encryption_list' THEN N'comma-separated 0s and 1s'
                 WHEN N'@buffer_count_list' THEN N'comma-separated integers (0 for default)'
                 WHEN N'@max_transfer_size_list' THEN N'comma-separated integers, multiples of 65536, max 4194304'
                 WHEN N'@stats' THEN N'1-100'
@@ -142,6 +176,7 @@ BEGIN
                 WHEN N'@backup_path' THEN N'(required)'
                 WHEN N'@file_count_list' THEN N'1,2,4'
                 WHEN N'@compression_list' THEN N'0,1'
+                WHEN N'@encryption_list' THEN N'0'
                 WHEN N'@buffer_count_list' THEN N'0,15,30,50'
                 WHEN N'@max_transfer_size_list' THEN N'0,2097152,4194304'
                 WHEN N'@stats' THEN N'1'
@@ -211,12 +246,13 @@ END; /*End help section*/
     /*
         EXECUTE dbo.TestBackupPerformance
             @database_name = N'YourDatabase',
-            @backup_path = N'D:\Backups',       /* or N'NUL' to test throughput without disk I/O */
-            @file_count_list = '1,2,4',         /* number of backup stripes */
-            @compression_list = '0,1',          /* 0 = none, 1 = compressed */
-            @buffer_count_list = '0,15,30,50',  /* 0 = SQL Server default */
+            @backup_path = N'D:\Backups',          /* or N'NUL' to test throughput without disk I/O */
+            @file_count_list = '1,2,4',            /* number of backup stripes */
+            @compression_list = '0,1',             /* 0 = none, 1 = compressed */
+            @encryption_list = '0,1',              /* 0 = none, 1 = encrypted (requires server certificate in master) */
+            @buffer_count_list = '0,15,30,50',     /* 0 = SQL Server default */
             @max_transfer_size_list = '0,2097152,4194304', /* 0 = default (1MB), values in bytes, max 4MB */
-            @iterations = 3;                    /* repeat each combination for averaging */
+            @iterations = 3;                       /* repeat each combination for averaging */
     */
 
     /*
@@ -241,6 +277,7 @@ END; /*End help section*/
         High values risk out-of-memory errors (buffers allocated outside buffer pool).
         Default BUFFERCOUNT formula: (NumDevices * 3) + NumDevices + (2 * NumVolumes)
     */
+
     /*
         Resolve DEFAULT to the server's default backup directory
     */
@@ -366,6 +403,7 @@ END; /*End help section*/
             backup_path nvarchar(4000) NOT NULL,
             file_count integer NOT NULL,
             compression bit NOT NULL,
+            encryption bit NOT NULL,
             buffer_count integer NOT NULL,
             max_transfer_size integer NOT NULL,
             iteration integer NOT NULL,
@@ -407,6 +445,12 @@ END; /*End help section*/
     );
 
     CREATE TABLE
+        #encryption_values
+    (
+        encryption integer NOT NULL
+    );
+
+    CREATE TABLE
         #buffer_count_values
     (
         buffer_count integer NOT NULL
@@ -444,6 +488,21 @@ END; /*End help section*/
     (
         SELECT
             CONVERT(xml, N'<i>' + REPLACE(@compression_list, N',', N'</i><i>') + N'</i>')
+    ) AS d (x)
+    CROSS APPLY d.x.nodes(N'i') AS x(i)
+    WHERE LTRIM(RTRIM(x.i.value(N'.', N'varchar(20)'))) <> N'';
+
+    INSERT INTO
+        #encryption_values
+    (
+        encryption
+    )
+    SELECT
+        CONVERT(integer, LTRIM(RTRIM(x.i.value(N'.', N'varchar(20)'))))
+    FROM
+    (
+        SELECT
+            CONVERT(xml, N'<i>' + REPLACE(@encryption_list, N',', N'</i><i>') + N'</i>')
     ) AS d (x)
     CROSS APPLY d.x.nodes(N'i') AS x(i)
     WHERE LTRIM(RTRIM(x.i.value(N'.', N'varchar(20)'))) <> N'';
@@ -493,6 +552,12 @@ END; /*End help section*/
         RETURN;
     END;
 
+    IF NOT EXISTS (SELECT 1/0 FROM #encryption_values)
+    BEGIN
+        RAISERROR(N'@encryption_list produced no valid values.', 16, 1);
+        RETURN;
+    END;
+
     IF NOT EXISTS (SELECT 1/0 FROM #buffer_count_values)
     BEGIN
         RAISERROR(N'@buffer_count_list produced no valid values.', 16, 1);
@@ -506,6 +571,73 @@ END; /*End help section*/
     END;
 
     /*
+        If any encryption=1 combinations are requested, verify a usable
+        certificate exists in master before we spin up the test loop.
+        A certificate is "usable" when its private key is present and
+        protected by the master key (pvt_key_encryption_type = 'MK').
+        We also accept password-protected keys (pvt_key_encryption_type = 'PW')
+        though those are uncommon for backup certs.
+        Encrypted backups also require the Database Master Key to exist in master.
+    */
+    IF EXISTS (SELECT 1/0 FROM #encryption_values WHERE encryption = 1)
+    BEGIN
+        DECLARE
+            @msg nvarchar(2047);
+
+        IF NOT EXISTS
+        (
+            SELECT 1/0
+            FROM master.sys.symmetric_keys
+            WHERE name = N'##MS_DatabaseMasterKey##'
+        )
+        BEGIN
+            SET @msg =
+                N'@encryption_list includes 1 (encrypted), but no Database Master Key exists in master. ' +
+                N'Create one first: USE master; ' +
+                N'CREATE MASTER KEY ENCRYPTION BY PASSWORD = N''<strong_password>'';';
+
+            RAISERROR(@msg, 16, 1);
+            RETURN;
+        END;
+
+        IF NOT EXISTS
+        (
+            SELECT 1/0
+            FROM master.sys.certificates
+            WHERE pvt_key_encryption_type IN (N'MK', N'PW')
+        )
+        BEGIN
+            SET @msg =
+                N'@encryption_list includes 1 (encrypted), but no certificate with a usable private key was found in master. ' +
+                N'Create one first: USE master; ' +
+                N'CREATE CERTIFICATE BackupEncryptionCert WITH SUBJECT = N''Backup Encryption''; ' +
+                N'Then back it up immediately: BACKUP CERTIFICATE BackupEncryptionCert TO FILE = N''...'';';
+
+            RAISERROR(@msg, 16, 1);
+            RETURN;
+        END;
+    END;
+
+    /*
+        Resolve the certificate name once up front so we're not querying
+        sys.certificates inside the hot loop on every encrypted iteration.
+    */
+    DECLARE
+        @cert_name sysname = NULL;
+
+    IF EXISTS (SELECT 1/0 FROM #encryption_values WHERE encryption = 1)
+    BEGIN
+        SELECT TOP (1)
+            @cert_name = c.name
+        FROM master.sys.certificates AS c
+        WHERE c.pvt_key_encryption_type IN (N'MK', N'PW')
+        ORDER BY
+            c.certificate_id;
+
+        RAISERROR(N'Encryption certificate resolved to: [%s]', 0, 1, @cert_name) WITH NOWAIT;
+    END;
+
+    /*
         Generate all test combinations via cross join
     */
     CREATE TABLE
@@ -514,6 +646,7 @@ END; /*End help section*/
         combination_id integer IDENTITY(1, 1) NOT NULL,
         file_count integer NOT NULL,
         compression integer NOT NULL,
+        encryption integer NOT NULL,
         buffer_count integer NOT NULL,
         max_transfer_size integer NOT NULL
     );
@@ -523,16 +656,19 @@ END; /*End help section*/
     (
         file_count,
         compression,
+        encryption,
         buffer_count,
         max_transfer_size
     )
     SELECT
         fc.file_count,
         cv.compression,
+        ev.encryption,
         bc.buffer_count,
         mt.max_transfer_size
     FROM #file_count_values AS fc
     CROSS JOIN #compression_values AS cv
+    CROSS JOIN #encryption_values AS ev
     CROSS JOIN #buffer_count_values AS bc
     CROSS JOIN #max_transfer_size_values AS mt;
 
@@ -621,6 +757,7 @@ END; /*End help section*/
         @combination_id integer,
         @file_count integer,
         @compression integer,
+        @encryption integer,
         @buffer_count integer,
         @max_transfer_size integer,
         @iteration integer,
@@ -650,6 +787,7 @@ END; /*End help section*/
         tc.combination_id,
         tc.file_count,
         tc.compression,
+        tc.encryption,
         tc.buffer_count,
         tc.max_transfer_size
     FROM #test_combinations AS tc
@@ -664,6 +802,7 @@ END; /*End help section*/
         @combination_id,
         @file_count,
         @compression,
+        @encryption,
         @buffer_count,
         @max_transfer_size;
 
@@ -719,6 +858,12 @@ END; /*End help section*/
                 + CONVERT(nvarchar(10), @file_count)
                 + N', Compression='
                 + CASE @compression
+                      WHEN 1
+                      THEN N'YES'
+                      ELSE N'NO'
+                  END
+                + N', Encryption='
+                + CASE @encryption
                       WHEN 1
                       THEN N'YES'
                       ELSE N'NO'
@@ -806,6 +951,20 @@ END; /*End help section*/
                 SET @backup_cmd += N', NO_COMPRESSION';
             END;
 
+            IF @encryption = 1
+            BEGIN
+                /*
+                    ENCRYPTION clause requires both an ALGORITHM and a SERVER CERTIFICATE.
+                    AES_256 is the recommended algorithm (strongest available).
+                    Note: encryption and compression can be combined; SQL Server handles both.
+                    The certificate name was resolved once before the loop (@cert_name).
+                */
+                SET @backup_cmd +=
+                    N', ENCRYPTION (ALGORITHM = AES_256, SERVER CERTIFICATE = '
+                    + QUOTENAME(@cert_name)
+                    + N')';
+            END;
+
             IF @buffer_count > 0
             BEGIN
                 SET @backup_cmd +=
@@ -890,6 +1049,7 @@ END; /*End help section*/
                 backup_path,
                 file_count,
                 compression,
+                encryption,
                 buffer_count,
                 max_transfer_size,
                 iteration,
@@ -911,7 +1071,8 @@ END; /*End help section*/
                 @database_name,
                 @backup_path,
                 @file_count,
-                @compression,
+                CONVERT(bit, @compression),
+                CONVERT(bit, @encryption),
                 @buffer_count,
                 @max_transfer_size,
                 @iteration,
@@ -999,6 +1160,7 @@ END; /*End help section*/
             @combination_id,
             @file_count,
             @compression,
+            @encryption,
             @buffer_count,
             @max_transfer_size;
     END;
@@ -1009,6 +1171,7 @@ END; /*End help section*/
     DECLARE
         @best_file_count integer,
         @best_compression bit,
+        @best_encryption bit,
         @best_buffer_count integer,
         @best_max_transfer_size integer,
         @best_avg_throughput decimal(18,2),
@@ -1018,6 +1181,7 @@ END; /*End help section*/
     SELECT TOP (1)
         @best_file_count = bpr.file_count,
         @best_compression = bpr.compression,
+        @best_encryption = bpr.encryption,
         @best_buffer_count = bpr.buffer_count,
         @best_max_transfer_size = bpr.max_transfer_size,
         @best_avg_throughput = AVG(bpr.throughput_mbps),
@@ -1028,6 +1192,7 @@ END; /*End help section*/
     GROUP BY
         bpr.file_count,
         bpr.compression,
+        bpr.encryption,
         bpr.buffer_count,
         bpr.max_transfer_size
     ORDER BY
@@ -1045,6 +1210,12 @@ END; /*End help section*/
         + CONVERT(nvarchar(10), @best_file_count)
         + N', Compression='
         + CASE @best_compression
+              WHEN 1
+              THEN N'YES'
+              ELSE N'NO'
+          END
+        + N', Encryption='
+        + CASE @best_encryption
               WHEN 1
               THEN N'YES'
               ELSE N'NO'
@@ -1097,6 +1268,12 @@ END; /*End help section*/
                  THEN N'YES'
                  ELSE N'NO'
             END,
+        encryption =
+            CASE bpr.encryption
+                 WHEN 1
+                 THEN N'YES'
+                 ELSE N'NO'
+            END,
         buffer_count =
             CASE bpr.buffer_count
                  WHEN 0
@@ -1132,6 +1309,7 @@ END; /*End help section*/
     GROUP BY
         bpr.file_count,
         bpr.compression,
+        bpr.encryption,
         bpr.buffer_count,
         bpr.max_transfer_size
     ORDER BY
@@ -1140,18 +1318,19 @@ END; /*End help section*/
         AVG(bpr.buffer_memory_mb) ASC;
 
     /*
-        Result Set 2: Best configuration per compression setting
-        Shows the fastest config for compressed and uncompressed separately.
-        Useful because these are different recommendations:
-        compressed = smaller backups (less disk), uncompressed = less CPU.
+        Result Set 2: Best configuration per compression + encryption pairing
+        Shows the fastest config for each combination of compression and encryption.
+        Four possible pairings: NO/NO, YES/NO, NO/YES, YES/YES.
+        Useful for comparing the overhead of encryption within each compression mode.
     */
-    RAISERROR(N'-- [2/5] Best config per compression setting (fastest compressed vs fastest uncompressed):', 0, 1) WITH NOWAIT;
+    RAISERROR(N'-- [2/5] Best config per compression+encryption pairing (fastest in each category):', 0, 1) WITH NOWAIT;
 
     WITH
         ranked
     (
         file_count,
         compression,
+        encryption,
         buffer_count,
         max_transfer_size,
         avg_throughput_mbps,
@@ -1164,6 +1343,7 @@ END; /*End help section*/
         SELECT
             bpr.file_count,
             bpr.compression,
+            bpr.encryption,
             bpr.buffer_count,
             bpr.max_transfer_size,
             AVG(bpr.throughput_mbps),
@@ -1173,7 +1353,8 @@ END; /*End help section*/
             ROW_NUMBER() OVER
             (
                 PARTITION BY
-                    bpr.compression
+                    bpr.compression,
+                    bpr.encryption
                 ORDER BY
                     AVG(bpr.throughput_mbps) DESC,
                     AVG(bpr.duration_seconds) ASC,
@@ -1185,12 +1366,19 @@ END; /*End help section*/
         GROUP BY
             bpr.file_count,
             bpr.compression,
+            bpr.encryption,
             bpr.buffer_count,
             bpr.max_transfer_size
     )
     SELECT
         compression =
             CASE r.compression
+                WHEN 1
+                THEN N'YES'
+                ELSE N'NO'
+            END,
+        encryption =
+            CASE r.encryption
                 WHEN 1
                 THEN N'YES'
                 ELSE N'NO'
@@ -1215,7 +1403,8 @@ END; /*End help section*/
     FROM ranked AS r
     WHERE r.rn = 1
     ORDER BY
-        r.compression;
+        r.compression,
+        r.encryption;
 
     /*
         Result Set 3: Parameter impact
@@ -1264,6 +1453,24 @@ END; /*End help section*/
         AND   bpr.error_message IS NULL
         GROUP BY
             bpr.compression
+
+        UNION ALL
+
+        SELECT
+            N'encryption',
+            CASE bpr.encryption
+                WHEN 1
+                THEN N'YES'
+                ELSE N'NO'
+            END,
+            AVG(bpr.throughput_mbps),
+            AVG(bpr.duration_seconds),
+            COUNT_BIG(*)
+        FROM dbo.backup_performance_results AS bpr
+        WHERE bpr.test_run_id = @test_run_id
+        AND   bpr.error_message IS NULL
+        GROUP BY
+            bpr.encryption
 
         UNION ALL
 
@@ -1391,6 +1598,12 @@ END; /*End help section*/
                 THEN N'YES'
                 ELSE N'NO'
             END,
+        encryption =
+            CASE bpr.encryption
+                WHEN 1
+                THEN N'YES'
+                ELSE N'NO'
+            END,
         buffer_count =
             CASE bpr.buffer_count
                 WHEN 0
@@ -1421,6 +1634,7 @@ END; /*End help section*/
     GROUP BY
         bpr.file_count,
         bpr.compression,
+        bpr.encryption,
         bpr.buffer_count,
         bpr.max_transfer_size
     HAVING
@@ -1446,6 +1660,12 @@ END; /*End help section*/
             bpr.file_count,
             compression =
                 CASE bpr.compression
+                    WHEN 1
+                    THEN N'YES'
+                    ELSE N'NO'
+                END,
+            encryption =
+                CASE bpr.encryption
                     WHEN 1
                     THEN N'YES'
                     ELSE N'NO'
@@ -1478,6 +1698,7 @@ END; /*End help section*/
         GROUP BY
             bpr.file_count,
             bpr.compression,
+            bpr.encryption,
             bpr.buffer_count,
             bpr.max_transfer_size
         ORDER BY

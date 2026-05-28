@@ -88,8 +88,8 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '7.6',
-    @version_date = '20260501';
+    @version = '7.7',
+    @version_date = '20260601';
 
 IF @help = 1
 BEGIN
@@ -2851,7 +2851,7 @@ BEGIN
         currentdbname = bd.value('(process/@currentdbname)[1]', 'sysname'),
         currentdbid = bd.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
-        sort_order = CAST('' AS varchar(400)),
+        sort_order = CONVERT(varchar(400), ''),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocked-process') = 1 THEN 'blocked' END,
         blocked_process_report = oa.c.query('.')
     INTO #blocked
@@ -2878,17 +2878,17 @@ BEGIN
             ISNULL
             (
                 '(' +
-                CAST(blocking_spid AS varchar(10)) +
+                CONVERT(varchar(10), blocking_spid) +
                 ':' +
-                CAST(blocking_ecid AS varchar(10)) +
+                CONVERT(varchar(10), blocking_ecid) +
                 ')',
                 'unresolved process'
             ) PERSISTED,
         blocked_desc AS
             '(' +
-            CAST(blocked_spid AS varchar(10)) +
+            CONVERT(varchar(10), blocked_spid) +
             ':' +
-            CAST(blocked_ecid AS varchar(10)) +
+            CONVERT(varchar(10), blocked_ecid) +
             ')' PERSISTED;
 
     CREATE CLUSTERED INDEX
@@ -2946,7 +2946,7 @@ BEGIN
         currentdbname = bg.value('(process/@currentdbname)[1]', 'sysname'),
         currentdbid = bg.value('(process/@currentdb)[1]', 'integer'),
         blocking_level = 0,
-        sort_order = CAST('' AS varchar(400)),
+        sort_order = CONVERT(varchar(400), ''),
         activity = CASE WHEN oa.c.exist('//blocked-process-report/blocking-process') = 1 THEN 'blocking' END,
         blocked_process_report = oa.c.query('.')
     INTO #blocking
@@ -2973,17 +2973,17 @@ BEGIN
             ISNULL
             (
                 '(' +
-                CAST(blocking_spid AS varchar(10)) +
+                CONVERT(varchar(10), blocking_spid) +
                 ':' +
-                CAST(blocking_ecid AS varchar(10)) +
+                CONVERT(varchar(10), blocking_ecid) +
                 ')',
                 'unresolved process'
             ) PERSISTED,
         blocked_desc AS
             '(' +
-            CAST(blocked_spid AS varchar(10)) +
+            CONVERT(varchar(10), blocked_spid) +
             ':' +
-            CAST(blocked_ecid AS varchar(10)) +
+            CONVERT(varchar(10), blocked_ecid) +
             ')' PERSISTED;
 
     CREATE CLUSTERED INDEX
@@ -3007,11 +3007,12 @@ BEGIN
             b.blocked_desc,
             level = 0,
             sort_order =
-                CAST
+                CONVERT
                 (
+                    varchar(400),
                     b.blocking_desc +
                     ' <-- ' +
-                    b.blocked_desc AS varchar(400)
+                    b.blocked_desc
                 )
         FROM #blocking AS b
         WHERE NOT EXISTS
@@ -3031,13 +3032,14 @@ BEGIN
             bg.blocked_desc,
             h.level + 1,
             sort_order =
-                CAST
+                CONVERT
                 (
+                    varchar(400),
                     h.sort_order +
                     ' ' +
                     bg.blocking_desc +
                     ' <-- ' +
-                    bg.blocked_desc AS varchar(400)
+                    bg.blocked_desc
                 )
         FROM hierarchy AS h
         JOIN #blocking AS bg
