@@ -79,6 +79,7 @@ ALTER PROCEDURE
     @log_table_name_prefix sysname = 'HumanEventsBlockViewer', /*prefix for all logging tables*/
     @log_retention_days integer = 30, /*Number of days to keep logs, 0 = keep indefinitely*/
     @max_blocking_events integer = 5000, /*maximum blocking events to analyze, 0 = unlimited*/
+    @skip_execution_plans bit = 0, /*skip the execution plans result set and go straight to the rollup*/
     @help bit = 0, /*get help with this procedure*/
     @debug bit = 0, /*print dynamic sql and select temp table contents*/
     @version varchar(30) = NULL OUTPUT, /*check the version number*/
@@ -133,6 +134,7 @@ BEGIN
                  WHEN N'@log_table_name_prefix' THEN N'prefix for all logging tables'
                  WHEN N'@log_retention_days' THEN N'how many days of data to retain'
                  WHEN N'@max_blocking_events' THEN N'maximum blocking events to analyze, 0 = unlimited'
+                 WHEN N'@skip_execution_plans' THEN N'skip gathering and returning the execution plans result set and jump straight to the findings rollup'
                  WHEN N'@help' THEN 'how you got here'
                  WHEN N'@debug' THEN 'dumps raw temp table contents'
                  WHEN N'@version' THEN 'OUTPUT; for support'
@@ -157,6 +159,7 @@ BEGIN
                  WHEN N'@log_table_name_prefix' THEN N'any valid identifier'
                  WHEN N'@log_retention_days' THEN N'a positive integer'
                  WHEN N'@max_blocking_events' THEN N'0 to 2147483647 (0 = unlimited)'
+                 WHEN N'@skip_execution_plans' THEN N'0 or 1'
                  WHEN N'@help' THEN '0 or 1'
                  WHEN N'@debug' THEN '0 or 1'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -181,6 +184,7 @@ BEGIN
                  WHEN N'@log_table_name_prefix' THEN N'HumanEventsBlockViewer'
                  WHEN N'@log_retention_days' THEN N'30'
                  WHEN N'@max_blocking_events' THEN N'5000'
+                 WHEN N'@skip_execution_plans' THEN N'0'
                  WHEN N'@help' THEN '0'
                  WHEN N'@debug' THEN '0'
                  WHEN N'@version' THEN 'none; OUTPUT'
@@ -1612,6 +1616,16 @@ BEGIN
         END
     OPTION(RECOMPILE);
 
+    /*
+    When the caller only wants the blocking results, skip gathering and
+    returning the execution plans. system_health has no findings rollup,
+    so we simply return after the blocking results above.
+    */
+    IF @skip_execution_plans = 1
+    BEGIN
+        RETURN;
+    END;
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting to #available_plans_sh', 0, 1) WITH NOWAIT;
@@ -2658,6 +2672,16 @@ when not logging to a table
 */
 IF @log_to_table = 0
 BEGIN
+    /*
+    When the caller only wants the findings rollup, skip gathering and
+    returning the execution plans result set entirely and jump straight
+    to the blocking rollup below.
+    */
+    IF @skip_execution_plans = 1
+    BEGIN
+        GOTO BlockingRollup;
+    END;
+
     IF @debug = 1
     BEGIN
         RAISERROR('Inserting #available_plans', 0, 1) WITH NOWAIT;
@@ -2905,6 +2929,8 @@ BEGIN
     ORDER BY
         ap.avg_worker_time_ms DESC
     OPTION(RECOMPILE, LOOP JOIN, HASH JOIN);
+
+    BlockingRollup:
 
     /* Capture actual date range and event count from the data */
     SELECT
