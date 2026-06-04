@@ -1674,7 +1674,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 ps.object_id
             HAVING
                 SUM(ps.row_count) >= @min_rows
-        )
+        )';
+
+    /*
+    Only filter on index usage when the caller actually asked for a read or write
+    minimum. sys.dm_db_index_usage_stats has no row for an index that hasn't been
+    touched since usage stats were last reset, and on Azure SQL DB / Hyperscale
+    those stats reset on every failover and scaling operation. Appending this
+    EXISTS unconditionally drops every index whenever the DMV is empty, which
+    silently empties #filtered_objects and makes the procedure exit with no result
+    set and no error. With the defaults (@min_reads = 0, @min_writes = 0) we want
+    to analyze every index, including never-used ones (the whole point of the tool).
+    @min_reads and @min_writes are validated to non-NULL, non-negative above.
+    */
+    IF  @min_reads > 0
+    OR  @min_writes > 0
+    BEGIN
+        IF @debug = 1
+        BEGIN
+            RAISERROR('adding index usage reads/writes filter', 0, 0) WITH NOWAIT;
+        END;
+
+        SET @sql += N'
         AND EXISTS
         (
             SELECT
@@ -1688,7 +1709,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) >= @min_reads
             OR
                 SUM(ius.user_updates) >= @min_writes
-        )
+        )';
+    END;
+
+    SET @sql += N'
         OPTION(RECOMPILE);
     ';
 
@@ -1735,15 +1759,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         IF @debug = 1
         BEGIN
-            RAISERROR('No rows inserted into #filtered_objects from %s, continuing to next database...', 10, 0, @current_database_name) WITH NOWAIT;
+            RAISERROR('No rows inserted into #filtered_objects from %s; no indexes met the analysis criteria.', 10, 0, @current_database_name) WITH NOWAIT;
         END;
 
-        IF @get_all_databases = 0
-        BEGIN
-            RETURN;
-        END;
-
-        /* Get the next database and continue the loop */
+        /*
+        Advance the cursor instead of bare-RETURNing. A bare RETURN here (the old
+        single-database behavior) exited the procedure with no result set and no
+        error. Falling through lets the database surface in the 'DATABASES WITH NO
+        QUALIFYING OBJECTS' result set below, so the caller always gets feedback. In
+        single-database mode the cursor is now exhausted and the loop ends normally.
+        */
         FETCH NEXT
         FROM @database_cursor
         INTO
