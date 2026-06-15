@@ -6062,8 +6062,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND us.index_id = ia.index_id
         LEFT JOIN #operational_stats AS os
           ON os.index_hash = ia.index_hash
+        /*
+        index_id > 0 keeps heaps out but includes clustered indexes. #index_analysis
+        only carries clustered indexes that are compression candidates (see the
+        clustered-index insert), so this counts every index the tool actually
+        examined and can act on: nonclustered dedup candidates plus clustered
+        compression candidates. That makes the headline reflect tables we looked
+        at for compression even when they have no nonclustered indexes, and lets
+        compressable_indexes line up with the compression scripts.
+        */
         WHERE ia.database_id = @current_database_id
-        AND   ia.index_id > 1
+        AND   ia.index_id > 0
     ),
         analyzed_table_rows AS
     (
@@ -7242,6 +7251,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             list, using DROP_EXISTING so the existing index is replaced in a
             single statement. Pieces are reused from #index_analysis, so the
             key columns, existing includes, and filter all match the original.
+            The WITH options and partition ON clause mirror the merge/create
+            scripts so this advice stays consistent with the rest of the tool.
             */
             create_index_script =
                 N'CREATE ' +
@@ -7273,7 +7284,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     THEN N' WHERE ' + fica.filter_definition
                     ELSE N''
                 END +
-                N' WITH (DROP_EXISTING = ON);',
+                N' WITH (DROP_EXISTING = ON, FILLFACTOR = 100, SORT_IN_TEMPDB = ON, ONLINE = ' +
+                CASE
+                    WHEN @online = 1
+                    THEN N'ON'
+                    ELSE N'OFF'
+                END +
+                CASE
+                    WHEN ce.can_compress = 1
+                    THEN N', DATA_COMPRESSION = PAGE'
+                    ELSE N''
+                END +
+                N')' +
+                CASE
+                    WHEN ps.partition_function_name IS NOT NULL
+                    THEN N' ON ' +
+                         QUOTENAME(ps.built_on) +
+                         N'(' +
+                         ISNULL(ps.partition_columns, N'') +
+                         N')'
+                    WHEN ps.built_on IS NOT NULL
+                    THEN N' ON ' +
+                         QUOTENAME(ps.built_on)
+                    ELSE N''
+                END +
+                N';',
             recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
         FROM #filtered_index_columns_analysis AS fica
         JOIN #index_analysis AS ia
@@ -7281,6 +7316,24 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND ia.schema_id = fica.schema_id
           AND ia.object_id = fica.object_id
           AND ia.index_id = fica.index_id
+        LEFT JOIN
+        (
+            /* One row per index carrying its storage/partition layout */
+            SELECT
+                ps.index_hash,
+                ps.built_on,
+                ps.partition_function_name,
+                ps.partition_columns
+            FROM #partition_stats AS ps
+            GROUP BY
+                ps.index_hash,
+                ps.built_on,
+                ps.partition_function_name,
+                ps.partition_columns
+        ) AS ps
+          ON ps.index_hash = ia.index_hash
+        LEFT JOIN #compression_eligibility AS ce
+          ON ce.index_hash = ia.index_hash
         WHERE fica.should_include_filter_columns = 1
         ORDER BY
             fica.database_name,
