@@ -3061,7 +3061,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             /* Find column names mentioned in filter_definition that aren''t already key or included columns */
                             SELECT
                                 N'', '' +
-                                c.name
+                                QUOTENAME(c.name)
                             FROM ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
                             WHERE c.object_id = ia.object_id
                             AND   ia.filter_definition LIKE N''%'' + c.name + N''%'' COLLATE DATABASE_DEFAULT
@@ -5997,397 +5997,85 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     OPTION(RECOMPILE);
 
-    /* Insert overall summary information */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Generating #index_reporting_stats insert, SUMMARY', 0, 0) WITH NOWAIT;
-    END;
+    /*
+    Table-level reporting statistics.
 
-    INSERT INTO
-        #index_reporting_stats
-    WITH
-        (TABLOCK)
-    (
-        summary_level,
-        server_uptime_days,
-        uptime_warning,
-        tables_analyzed,
-        index_count,
-        total_size_gb,
-        indexes_to_disable,
-        indexes_to_merge,
-        compressable_indexes,
-        avg_indexes_per_table,
-        space_saved_gb,
-        compression_min_savings_gb,
-        compression_max_savings_gb,
-        total_min_savings_gb,
-        total_max_savings_gb,
-        total_rows
-    )
-    SELECT
-        summary_level = 'SUMMARY',
-        server_uptime_days = @uptime_days,
-        uptime_warning = @uptime_warning,
-        tables_analyzed =
-            COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
-        index_count = COUNT_BIG(*),
-        total_size_gb = SUM(ps.total_space_gb),
-        indexes_to_disable =
-            SUM
-            (
-                CASE
-                    WHEN ia.action = N'DISABLE'
-                    THEN 1
-                    ELSE 0
-                END
-            ),
-        indexes_to_merge =
-            SUM
-            (
-                CASE
-                    WHEN ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
-                    THEN 1
-                    ELSE 0
-                END
-            ),
-        compressable_indexes =
-            SUM
-            (
-                CASE
-                    WHEN ce.can_compress = 1
-                    THEN 1
-                    ELSE 0
-                END
-            ),
-        avg_indexes_per_table =
-            COUNT_BIG(*) * 1.0 /
-            NULLIF
-            (
-                COUNT_BIG(DISTINCT CONCAT(ia.database_id, N'.', ia.schema_id, N'.', ia.object_id)),
-                0
-            ),
-        /* Space savings from cleanup - only count DISABLE actions */
-        space_saved_gb =
-            SUM
-            (
-                CASE
-                    WHEN ia.action = N'DISABLE'
-                    THEN ps.total_space_gb
-                    ELSE 0
-                END
-            ),
-        /* Conservative compression savings estimate (20%) */
-        compression_min_savings_gb =
-            SUM
-            (
-                CASE
-                    WHEN (ia.action IS NULL OR ia.action = N'KEEP')
-                    AND   ce.can_compress = 1
-                    THEN ps.total_space_gb * 0.20
-                    ELSE 0
-                END
-            ),
-        /* Optimistic compression savings estimate (60%) */
-        compression_max_savings_gb =
-            SUM
-            (
-                CASE
-                    WHEN (ia.action IS NULL OR ia.action = N'KEEP')
-                    AND   ce.can_compress = 1
-                    THEN ps.total_space_gb * 0.60
-                    ELSE 0
-                END
-            ),
-        /* Total conservative savings - only count DISABLE actions for space savings */
-        total_min_savings_gb =
-            SUM
-            (
-                CASE
-                    WHEN ia.action = N'DISABLE'
-                    THEN ps.total_space_gb
-                    WHEN (ia.action IS NULL OR ia.action = N'KEEP')
-                    AND   ce.can_compress = 1
-                    THEN ps.total_space_gb * 0.20
-                    ELSE 0
-                END
-            ),
-        /* Total optimistic savings - only count DISABLE actions for space savings */
-        total_max_savings_gb =
-            SUM
-            (
-                CASE
-                    WHEN ia.action = N'DISABLE'
-                    THEN ps.total_space_gb
-                    WHEN (ia.action IS NULL OR ia.action = N'KEEP')
-                    AND   ce.can_compress = 1
-                    THEN ps.total_space_gb * 0.60
-                    ELSE 0
-                END
-            ),
-        /* Get total rows from database unique tables */
-        total_rows =
-        (
-            SELECT
-                SUM(t.row_count)
-            FROM
-            (
-                SELECT
-                    ps_distinct.object_id,
-                    row_count =
-                        MAX
-                        (
-                            CASE
-                                WHEN ps_distinct.index_id IN (0, 1)
-                                THEN ps_distinct.total_rows
-                                ELSE 0
-                            END
-                        )
-                FROM #partition_stats AS ps_distinct
-                WHERE ps_distinct.index_id IN (0, 1)
-                GROUP BY
-                    ps_distinct.object_id
-            ) AS t
-        )
-    FROM #index_analysis AS ia
-    LEFT JOIN #partition_stats AS ps
-      ON ia.index_hash = ps.index_hash
-    LEFT JOIN #compression_eligibility AS ce
-      ON  ia.database_id = ce.database_id
-      AND ia.object_id = ce.object_id
-      AND ia.index_id = ce.index_id
-    WHERE ia.index_id > 1
-    OPTION(RECOMPILE);
-
-    /* Return enhanced database impact summaries */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Generating enhanced summary reports', 0, 0) WITH NOWAIT;
-    END;
-
-    /* Insert database-level summaries */
-    IF @debug = 1
-    BEGIN
-        RAISERROR('Generating #index_reporting_stats insert, DATABASE', 0, 0) WITH NOWAIT;
-    END;
-
-    INSERT INTO
-        #index_reporting_stats
-    WITH
-        (TABLOCK)
-    (
-        summary_level,
-        database_name,
-        index_count,
-        total_size_gb,
-        total_rows,
-        indexes_to_merge,
-        compressable_indexes,
-        unused_indexes,
-        unused_size_gb,
-        compression_min_savings_gb,
-        compression_max_savings_gb,
-        total_min_savings_gb,
-        total_max_savings_gb,
-        total_reads,
-        total_writes,
-        user_seeks,
-        user_scans,
-        user_lookups,
-        user_updates,
-        range_scan_count,
-        singleton_lookup_count,
-        row_lock_count,
-        row_lock_wait_count,
-        row_lock_wait_in_ms,
-        page_lock_count,
-        page_lock_wait_count,
-        page_lock_wait_in_ms,
-        page_latch_wait_count,
-        page_latch_wait_in_ms,
-        page_io_latch_wait_count,
-        page_io_latch_wait_in_ms,
-        forwarded_fetch_count,
-        leaf_insert_count,
-        leaf_update_count,
-        leaf_delete_count
-    )
-    SELECT
-        summary_level = 'DATABASE',
-        ps.database_name,
-        index_count =
-            COUNT_BIG(DISTINCT CONCAT(ps.object_id, N'.', ps.index_id)),
-        total_size_gb = SUM(DISTINCT ps.total_space_gb),
-        /* Use a simple aggregation to avoid double-counting */
-        /* Get actual row count by grabbing the real row count from clustered index/heap per table */
-        total_rows = SUM(DISTINCT d.actual_rows),
-        indexes_to_merge =
-            (
-                SELECT
-                    COUNT_BIG(*)
-                FROM #index_analysis AS ia
-                WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
-                AND   ia.database_id = ps.database_id
-            ),
-        compressable_indexes =
-            (
-                SELECT
-                    COUNT_BIG(*)
-                FROM #compression_eligibility AS ce
-                WHERE ce.can_compress = 1
-                AND   ce.database_id = ps.database_id
-            ),
-        /* Use count from analysis to keep consistent with SUMMARY level */
-        unused_indexes =
-            (
-                SELECT
-                    COUNT_BIG(*)
-                FROM #index_analysis AS ia
-                WHERE ia.action = N'DISABLE'
-                AND   ia.database_id = ps.database_id
-            ),
-        unused_size_gb =
-            (
-                SELECT
-                    SUM(subps.total_space_gb)
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                WHERE subia.action = N'DISABLE'
-                AND   subia.database_id = ps.database_id
-            ),
-        /* Conservative compression savings estimate (20%) */
-        compression_min_savings_gb =
-            (
-                SELECT
-                    SUM(subps.total_space_gb * 0.20)
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                JOIN #compression_eligibility AS subce
-                  ON subce.index_hash = subia.index_hash
-                WHERE (subia.action IS NULL OR subia.action = N'KEEP')
-                AND   subce.can_compress = 1
-                AND   subia.database_id = ps.database_id
-            ),
-        /* Optimistic compression savings estimate (60%) */
-        compression_max_savings_gb =
-            (
-                SELECT
-                    SUM(subps.total_space_gb * 0.60)
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                JOIN #compression_eligibility AS subce
-                  ON subce.index_hash = subia.index_hash
-                WHERE (subia.action IS NULL OR subia.action = N'KEEP')
-                AND   subce.can_compress = 1
-                AND   subia.database_id = ps.database_id
-            ),
-        /* Total conservative savings */
-        total_min_savings_gb =
-            (
-                SELECT
-                    SUM
-                    (
-                        CASE
-                            WHEN subia.action = N'DISABLE'
-                            THEN subps.total_space_gb
-                            WHEN (subia.action IS NULL OR subia.action = N'KEEP')
-                            AND   subce.can_compress = 1
-                            THEN subps.total_space_gb * 0.20
-                            ELSE 0
-                        END
-                    )
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                LEFT JOIN #compression_eligibility AS subce
-                  ON subce.index_hash = subia.index_hash
-                WHERE subia.database_id = ps.database_id
-            ),
-        /* Total optimistic savings */
-        total_max_savings_gb =
-            (
-                SELECT
-                    SUM
-                    (
-                        CASE
-                            WHEN subia.action = N'DISABLE'
-                            THEN subps.total_space_gb
-                            WHEN (subia.action IS NULL OR subia.action = N'KEEP')
-                            AND   subce.can_compress = 1
-                            THEN subps.total_space_gb * 0.60
-                            ELSE 0
-                        END
-                    )
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                LEFT JOIN #compression_eligibility AS subce
-                  ON subce.index_hash = subia.index_hash
-                WHERE subia.database_id = ps.database_id
-            ),
-        total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
-        total_writes = SUM(id.user_updates),
-        user_seeks = SUM(id.user_seeks),
-        user_scans = SUM(id.user_scans),
-        user_lookups = SUM(id.user_lookups),
-        user_updates = SUM(id.user_updates),
-        range_scan_count = SUM(os.range_scan_count),
-        singleton_lookup_count = SUM(os.singleton_lookup_count),
-        row_lock_count = SUM(os.row_lock_count),
-        row_lock_wait_count = SUM(os.row_lock_wait_count),
-        row_lock_wait_in_ms = SUM(os.row_lock_wait_in_ms),
-        page_lock_count = SUM(os.page_lock_count),
-        page_lock_wait_count = SUM(os.page_lock_wait_count),
-        page_lock_wait_in_ms = SUM(os.page_lock_wait_in_ms),
-        page_latch_wait_count = SUM(os.page_latch_wait_count),
-        page_latch_wait_in_ms = SUM(os.page_latch_wait_in_ms),
-        page_io_latch_wait_count = SUM(os.page_io_latch_wait_count),
-        page_io_latch_wait_in_ms = SUM(os.page_io_latch_wait_in_ms),
-        forwarded_fetch_count = SUM(os.forwarded_fetch_count),
-        leaf_insert_count = SUM(os.leaf_insert_count),
-        leaf_update_count = SUM(os.leaf_update_count),
-        leaf_delete_count = SUM(os.leaf_delete_count)
-    FROM #partition_stats AS ps
-    LEFT JOIN #index_details AS id
-      ON  id.index_hash = ps.index_hash
-      AND id.is_included_column = 0
-      AND id.key_ordinal > 0
-    LEFT JOIN #operational_stats AS os
-      ON os.index_hash = ps.index_hash
-    OUTER APPLY
-    (
-        /* Get actual row count per table using MAX from clustered index/heap */
-        SELECT
-            actual_rows =
-                MAX
-                (
-                    CASE
-                        WHEN ps2.index_id IN (0, 1)
-                        THEN ps2.total_rows
-                        ELSE 0
-                    END
-                )
-        FROM #partition_stats AS ps2
-        WHERE ps2.database_id = ps.database_id
-        AND   ps2.object_id = ps.object_id
-        AND   ps2.index_id IN (0, 1)
-        GROUP BY
-            ps2.object_id
-    ) AS d
-    GROUP BY
-        ps.database_name,
-        ps.database_id
-    OPTION(RECOMPILE);
-
-    /* Insert table-level summaries */
+    All three reporting levels (TABLE, DATABASE, SUMMARY) are built bottom-up
+    from #index_analysis restricted to nonclustered indexes (index_id > 1) so
+    the numbers reconcile exactly: SUM(TABLE) = DATABASE = SUMMARY. The
+    analyzed_indexes spine produces one row per analyzed index with its
+    metrics pre-aggregated, which avoids the partition and key-column fan-out
+    that previously inflated the rolled-up index counts and write totals.
+    */
     IF @debug = 1
     BEGIN
         RAISERROR('Generating #index_reporting_stats insert, TABLE', 0, 0) WITH NOWAIT;
     END;
 
+    WITH
+        analyzed_indexes AS
+    (
+        SELECT
+            ia.database_name,
+            ia.schema_name,
+            ia.table_name,
+            ia.object_id,
+            ia.action,
+            index_size_gb = ISNULL(pps.total_space_gb, 0),
+            can_compress = ISNULL(ce.can_compress, 0),
+            user_seeks = ISNULL(us.user_seeks, 0),
+            user_scans = ISNULL(us.user_scans, 0),
+            user_lookups = ISNULL(us.user_lookups, 0),
+            user_updates = ISNULL(us.user_updates, 0),
+            range_scan_count = ISNULL(os.range_scan_count, 0),
+            singleton_lookup_count = ISNULL(os.singleton_lookup_count, 0),
+            row_lock_count = ISNULL(os.row_lock_count, 0),
+            row_lock_wait_count = ISNULL(os.row_lock_wait_count, 0),
+            row_lock_wait_in_ms = ISNULL(os.row_lock_wait_in_ms, 0),
+            page_lock_count = ISNULL(os.page_lock_count, 0),
+            page_lock_wait_count = ISNULL(os.page_lock_wait_count, 0),
+            page_lock_wait_in_ms = ISNULL(os.page_lock_wait_in_ms, 0),
+            page_latch_wait_count = ISNULL(os.page_latch_wait_count, 0),
+            page_latch_wait_in_ms = ISNULL(os.page_latch_wait_in_ms, 0),
+            page_io_latch_wait_count = ISNULL(os.page_io_latch_wait_count, 0),
+            page_io_latch_wait_in_ms = ISNULL(os.page_io_latch_wait_in_ms, 0),
+            forwarded_fetch_count = ISNULL(os.forwarded_fetch_count, 0),
+            leaf_insert_count = ISNULL(os.leaf_insert_count, 0),
+            leaf_update_count = ISNULL(os.leaf_update_count, 0),
+            leaf_delete_count = ISNULL(os.leaf_delete_count, 0)
+        FROM #index_analysis AS ia
+        LEFT JOIN
+        (
+            /* Roll partition rows up to one size per index */
+            SELECT
+                ps.index_hash,
+                total_space_gb = SUM(ps.total_space_gb)
+            FROM #partition_stats AS ps
+            GROUP BY
+                ps.index_hash
+        ) AS pps
+          ON pps.index_hash = ia.index_hash
+        LEFT JOIN #compression_eligibility AS ce
+          ON ce.index_hash = ia.index_hash
+        LEFT JOIN #usage_stats AS us
+          ON  us.object_id = ia.object_id
+          AND us.index_id = ia.index_id
+        LEFT JOIN #operational_stats AS os
+          ON os.index_hash = ia.index_hash
+        WHERE ia.database_id = @current_database_id
+        AND   ia.index_id > 1
+    ),
+        analyzed_table_rows AS
+    (
+        /* Clustered/heap row count per table, summed across partitions */
+        SELECT
+            ps.object_id,
+            table_rows = SUM(ps.total_rows)
+        FROM #partition_stats AS ps
+        WHERE ps.index_id IN (0, 1)
+        GROUP BY
+            ps.object_id
+    )
     INSERT INTO
         #index_reporting_stats
     WITH
@@ -6397,9 +6085,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         database_name,
         schema_name,
         table_name,
+        tables_analyzed,
         index_count,
         total_size_gb,
         total_rows,
+        indexes_to_disable,
         indexes_to_merge,
         compressable_indexes,
         unused_indexes,
@@ -6433,181 +6123,236 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     )
     SELECT
         summary_level = 'TABLE',
-        ps.database_name,
-        ps.schema_name,
-        ps.table_name,
-        index_count = COUNT_BIG(DISTINCT ps.index_id),
-        total_size_gb = SUM(DISTINCT ps.total_space_gb),
-        /* Use MAX to get the row count from the clustered index or heap */
-        total_rows =
-            MAX
+        ai.database_name,
+        ai.schema_name,
+        ai.table_name,
+        tables_analyzed = 1,
+        index_count = COUNT_BIG(*),
+        total_size_gb = SUM(ai.index_size_gb),
+        total_rows = MAX(atr.table_rows),
+        indexes_to_disable =
+            SUM
             (
                 CASE
-                    WHEN ps.index_id IN (0, 1)
-                    THEN ps.total_rows
+                    WHEN ai.action = N'DISABLE'
+                    THEN 1
                     ELSE 0
                 END
             ),
         indexes_to_merge =
+            SUM
             (
-                SELECT
-                    COUNT_BIG(*)
-                FROM #index_analysis AS ia
-                WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
-                AND   ia.database_id = ps.database_id
-                AND   ia.schema_id = ps.schema_id
-                AND   ia.object_id = ps.object_id
+                CASE
+                    WHEN ai.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
+                    THEN 1
+                    ELSE 0
+                END
             ),
         compressable_indexes =
+            SUM
             (
-                SELECT
-                    COUNT_BIG(*)
-                FROM #compression_eligibility AS ce
-                WHERE ce.can_compress = 1
-                AND   ce.database_id = ps.database_id
-                AND   ce.schema_id = ps.schema_id
-                AND   ce.object_id = ps.object_id
+                CASE
+                    WHEN ai.can_compress = 1
+                    THEN 1
+                    ELSE 0
+                END
             ),
-        /* Use count from analysis to keep consistent with SUMMARY level */
         unused_indexes =
+            SUM
             (
-                SELECT
-                    COUNT_BIG(*)
-                FROM #index_analysis AS ia
-                WHERE ia.action = N'DISABLE'
-                AND   ia.database_id = ps.database_id
-                AND   ia.schema_id = ps.schema_id
-                AND   ia.object_id = ps.object_id
+                CASE
+                    WHEN ai.action = N'DISABLE'
+                    THEN 1
+                    ELSE 0
+                END
             ),
         unused_size_gb =
+            SUM
             (
-                SELECT
-                    SUM(subps.total_space_gb)
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                WHERE subia.action = N'DISABLE'
-                AND   subia.database_id = ps.database_id
-                AND   subia.schema_id = ps.schema_id
-                AND   subia.object_id = ps.object_id
+                CASE
+                    WHEN ai.action = N'DISABLE'
+                    THEN ai.index_size_gb
+                    ELSE 0
+                END
             ),
-        /* Conservative compression savings estimate (20%) */
         compression_min_savings_gb =
+            SUM
             (
-                SELECT
-                    SUM(subps.total_space_gb * 0.20)
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                JOIN #compression_eligibility AS subce
-                  ON subce.index_hash = subia.index_hash
-                WHERE (subia.action IS NULL OR subia.action = N'KEEP')
-                AND   subce.can_compress = 1
-                AND   subia.database_id = ps.database_id
-                AND   subia.schema_id = ps.schema_id
-                AND   subia.object_id = ps.object_id
+                CASE
+                    WHEN (ai.action IS NULL OR ai.action = N'KEEP')
+                    AND   ai.can_compress = 1
+                    THEN ai.index_size_gb * 0.20
+                    ELSE 0
+                END
             ),
-        /* Optimistic compression savings estimate (60%) */
         compression_max_savings_gb =
+            SUM
             (
-                SELECT
-                    SUM(subps.total_space_gb * 0.60)
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                JOIN #compression_eligibility AS subce
-                  ON subce.index_hash = subia.index_hash
-                WHERE (subia.action IS NULL OR subia.action = N'KEEP')
-                AND   subce.can_compress = 1
-                AND   subia.database_id = ps.database_id
-                AND   subia.schema_id = ps.schema_id
-                AND   subia.object_id = ps.object_id
+                CASE
+                    WHEN (ai.action IS NULL OR ai.action = N'KEEP')
+                    AND   ai.can_compress = 1
+                    THEN ai.index_size_gb * 0.60
+                    ELSE 0
+                END
             ),
-        /* Total conservative savings */
         total_min_savings_gb =
+            SUM
             (
-                SELECT
-                    SUM
-                    (
-                        CASE
-                            WHEN subia.action = N'DISABLE'
-                            THEN subps.total_space_gb
-                            WHEN (subia.action IS NULL OR subia.action = N'KEEP')
-                            AND   subce.can_compress = 1
-                            THEN subps.total_space_gb * 0.20
-                            ELSE 0
-                        END
-                    )
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                LEFT JOIN #compression_eligibility AS subce
-                  ON subce.index_hash = subia.index_hash
-                WHERE subia.database_id = ps.database_id
-                AND   subia.schema_id = ps.schema_id
-                AND   subia.object_id = ps.object_id
+                CASE
+                    WHEN ai.action = N'DISABLE'
+                    THEN ai.index_size_gb
+                    WHEN (ai.action IS NULL OR ai.action = N'KEEP')
+                    AND   ai.can_compress = 1
+                    THEN ai.index_size_gb * 0.20
+                    ELSE 0
+                END
             ),
-        /* Total optimistic savings */
         total_max_savings_gb =
+            SUM
             (
-                SELECT
-                    SUM
-                    (
-                        CASE
-                            WHEN subia.action = N'DISABLE'
-                            THEN subps.total_space_gb
-                            WHEN (subia.action IS NULL OR subia.action = N'KEEP')
-                            AND   subce.can_compress = 1
-                            THEN subps.total_space_gb * 0.60
-                            ELSE 0
-                        END
-                    )
-                FROM #partition_stats AS subps
-                JOIN #index_analysis AS subia
-                  ON subps.index_hash = subia.index_hash
-                LEFT JOIN #compression_eligibility AS subce
-                  ON subce.index_hash = subia.index_hash
-                WHERE subia.database_id = ps.database_id
-                AND   subia.schema_id = ps.schema_id
-                AND   subia.object_id = ps.object_id
+                CASE
+                    WHEN ai.action = N'DISABLE'
+                    THEN ai.index_size_gb
+                    WHEN (ai.action IS NULL OR ai.action = N'KEEP')
+                    AND   ai.can_compress = 1
+                    THEN ai.index_size_gb * 0.60
+                    ELSE 0
+                END
             ),
-        total_reads = SUM(id.user_seeks + id.user_scans + id.user_lookups),
-        total_writes = SUM(id.user_updates),
-        user_seeks = SUM(id.user_seeks),
-        user_scans = SUM(id.user_scans),
-        user_lookups = SUM(id.user_lookups),
-        user_updates = SUM(id.user_updates),
-        range_scan_count = SUM(os.range_scan_count),
-        singleton_lookup_count = SUM(os.singleton_lookup_count),
-        row_lock_count = SUM(os.row_lock_count),
-        row_lock_wait_count = SUM(os.row_lock_wait_count),
-        row_lock_wait_in_ms = SUM(os.row_lock_wait_in_ms),
-        page_lock_count = SUM(os.page_lock_count),
-        page_lock_wait_count = SUM(os.page_lock_wait_count),
-        page_lock_wait_in_ms = SUM(os.page_lock_wait_in_ms),
-        page_latch_wait_count = SUM(os.page_latch_wait_count),
-        page_latch_wait_in_ms = SUM(os.page_latch_wait_in_ms),
-        page_io_latch_wait_count = SUM(os.page_io_latch_wait_count),
-        page_io_latch_wait_in_ms = SUM(os.page_io_latch_wait_in_ms),
-        forwarded_fetch_count = SUM(os.forwarded_fetch_count),
-        leaf_insert_count = SUM(os.leaf_insert_count),
-        leaf_update_count = SUM(os.leaf_update_count),
-        leaf_delete_count = SUM(os.leaf_delete_count)
-    FROM #partition_stats AS ps
-    LEFT JOIN #index_details AS id
-      ON  id.index_hash = ps.index_hash
-      AND id.is_included_column = 0
-      AND id.key_ordinal > 0
-    LEFT JOIN #operational_stats AS os
-      ON os.index_hash = ps.index_hash
+        total_reads = SUM(ai.user_seeks + ai.user_scans + ai.user_lookups),
+        total_writes = SUM(ai.user_updates),
+        user_seeks = SUM(ai.user_seeks),
+        user_scans = SUM(ai.user_scans),
+        user_lookups = SUM(ai.user_lookups),
+        user_updates = SUM(ai.user_updates),
+        range_scan_count = SUM(ai.range_scan_count),
+        singleton_lookup_count = SUM(ai.singleton_lookup_count),
+        row_lock_count = SUM(ai.row_lock_count),
+        row_lock_wait_count = SUM(ai.row_lock_wait_count),
+        row_lock_wait_in_ms = SUM(ai.row_lock_wait_in_ms),
+        page_lock_count = SUM(ai.page_lock_count),
+        page_lock_wait_count = SUM(ai.page_lock_wait_count),
+        page_lock_wait_in_ms = SUM(ai.page_lock_wait_in_ms),
+        page_latch_wait_count = SUM(ai.page_latch_wait_count),
+        page_latch_wait_in_ms = SUM(ai.page_latch_wait_in_ms),
+        page_io_latch_wait_count = SUM(ai.page_io_latch_wait_count),
+        page_io_latch_wait_in_ms = SUM(ai.page_io_latch_wait_in_ms),
+        forwarded_fetch_count = SUM(ai.forwarded_fetch_count),
+        leaf_insert_count = SUM(ai.leaf_insert_count),
+        leaf_update_count = SUM(ai.leaf_update_count),
+        leaf_delete_count = SUM(ai.leaf_delete_count)
+    FROM analyzed_indexes AS ai
+    LEFT JOIN analyzed_table_rows AS atr
+      ON atr.object_id = ai.object_id
     GROUP BY
-        ps.database_name,
-        ps.database_id,
-        ps.schema_name,
-        ps.schema_id,
-        ps.table_name,
-        ps.object_id
+        ai.database_name,
+        ai.schema_name,
+        ai.table_name,
+        ai.object_id
     OPTION(RECOMPILE);
+
+    /*
+    Database-level reporting statistics: a straight roll-up of this database's
+    TABLE rows, which guarantees DATABASE = SUM(TABLE) for every column.
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_reporting_stats insert, DATABASE', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO
+        #index_reporting_stats
+    WITH
+        (TABLOCK)
+    (
+        summary_level,
+        database_name,
+        tables_analyzed,
+        index_count,
+        total_size_gb,
+        total_rows,
+        indexes_to_disable,
+        indexes_to_merge,
+        compressable_indexes,
+        unused_indexes,
+        unused_size_gb,
+        compression_min_savings_gb,
+        compression_max_savings_gb,
+        total_min_savings_gb,
+        total_max_savings_gb,
+        total_reads,
+        total_writes,
+        user_seeks,
+        user_scans,
+        user_lookups,
+        user_updates,
+        range_scan_count,
+        singleton_lookup_count,
+        row_lock_count,
+        row_lock_wait_count,
+        row_lock_wait_in_ms,
+        page_lock_count,
+        page_lock_wait_count,
+        page_lock_wait_in_ms,
+        page_latch_wait_count,
+        page_latch_wait_in_ms,
+        page_io_latch_wait_count,
+        page_io_latch_wait_in_ms,
+        forwarded_fetch_count,
+        leaf_insert_count,
+        leaf_update_count,
+        leaf_delete_count
+    )
+    SELECT
+        summary_level = 'DATABASE',
+        irs.database_name,
+        tables_analyzed = SUM(irs.tables_analyzed),
+        index_count = SUM(irs.index_count),
+        total_size_gb = SUM(irs.total_size_gb),
+        total_rows = SUM(irs.total_rows),
+        indexes_to_disable = SUM(irs.indexes_to_disable),
+        indexes_to_merge = SUM(irs.indexes_to_merge),
+        compressable_indexes = SUM(irs.compressable_indexes),
+        unused_indexes = SUM(irs.unused_indexes),
+        unused_size_gb = SUM(irs.unused_size_gb),
+        compression_min_savings_gb = SUM(irs.compression_min_savings_gb),
+        compression_max_savings_gb = SUM(irs.compression_max_savings_gb),
+        total_min_savings_gb = SUM(irs.total_min_savings_gb),
+        total_max_savings_gb = SUM(irs.total_max_savings_gb),
+        total_reads = SUM(irs.total_reads),
+        total_writes = SUM(irs.total_writes),
+        user_seeks = SUM(irs.user_seeks),
+        user_scans = SUM(irs.user_scans),
+        user_lookups = SUM(irs.user_lookups),
+        user_updates = SUM(irs.user_updates),
+        range_scan_count = SUM(irs.range_scan_count),
+        singleton_lookup_count = SUM(irs.singleton_lookup_count),
+        row_lock_count = SUM(irs.row_lock_count),
+        row_lock_wait_count = SUM(irs.row_lock_wait_count),
+        row_lock_wait_in_ms = SUM(irs.row_lock_wait_in_ms),
+        page_lock_count = SUM(irs.page_lock_count),
+        page_lock_wait_count = SUM(irs.page_lock_wait_count),
+        page_lock_wait_in_ms = SUM(irs.page_lock_wait_in_ms),
+        page_latch_wait_count = SUM(irs.page_latch_wait_count),
+        page_latch_wait_in_ms = SUM(irs.page_latch_wait_in_ms),
+        page_io_latch_wait_count = SUM(irs.page_io_latch_wait_count),
+        page_io_latch_wait_in_ms = SUM(irs.page_io_latch_wait_in_ms),
+        forwarded_fetch_count = SUM(irs.forwarded_fetch_count),
+        leaf_insert_count = SUM(irs.leaf_insert_count),
+        leaf_update_count = SUM(irs.leaf_update_count),
+        leaf_delete_count = SUM(irs.leaf_delete_count)
+    FROM #index_reporting_stats AS irs
+    WHERE irs.summary_level = 'TABLE'
+    AND   irs.database_name = @current_database_name
+    GROUP BY
+        irs.database_name
+    OPTION(RECOMPILE);
+
+    /*
+    The server-wide SUMMARY row is generated after the database cursor
+    completes (see below), rolling up every DATABASE row so the top line
+    always equals the sum of the detail.
+    */
 
     /* We're not doing index-level summaries - focusing on database and table level reports */
 
@@ -6650,6 +6395,61 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             @current_database_name,
             @current_database_id;
     END;
+
+    /*
+    Server-wide SUMMARY row. Built after the cursor finishes by rolling up
+    every DATABASE row, so SUMMARY = SUM(DATABASE) = SUM(TABLE) regardless of
+    how many databases were processed.
+    */
+    IF @debug = 1
+    BEGIN
+        RAISERROR('Generating #index_reporting_stats insert, SUMMARY', 0, 0) WITH NOWAIT;
+    END;
+
+    INSERT INTO
+        #index_reporting_stats
+    WITH
+        (TABLOCK)
+    (
+        summary_level,
+        server_uptime_days,
+        uptime_warning,
+        tables_analyzed,
+        index_count,
+        total_size_gb,
+        indexes_to_disable,
+        indexes_to_merge,
+        compressable_indexes,
+        avg_indexes_per_table,
+        space_saved_gb,
+        compression_min_savings_gb,
+        compression_max_savings_gb,
+        total_min_savings_gb,
+        total_max_savings_gb,
+        total_rows
+    )
+    SELECT
+        summary_level = 'SUMMARY',
+        server_uptime_days = @uptime_days,
+        uptime_warning = @uptime_warning,
+        tables_analyzed = SUM(irs.tables_analyzed),
+        index_count = SUM(irs.index_count),
+        total_size_gb = SUM(irs.total_size_gb),
+        indexes_to_disable = SUM(irs.unused_indexes),
+        indexes_to_merge = SUM(irs.indexes_to_merge),
+        compressable_indexes = SUM(irs.compressable_indexes),
+        avg_indexes_per_table =
+            SUM(irs.index_count) * 1.0 /
+            NULLIF(SUM(irs.tables_analyzed), 0),
+        space_saved_gb = SUM(irs.unused_size_gb),
+        compression_min_savings_gb = SUM(irs.compression_min_savings_gb),
+        compression_max_savings_gb = SUM(irs.compression_max_savings_gb),
+        total_min_savings_gb = SUM(irs.total_min_savings_gb),
+        total_max_savings_gb = SUM(irs.total_max_savings_gb),
+        total_rows = SUM(irs.total_rows)
+    FROM #index_reporting_stats AS irs
+    WHERE irs.summary_level = 'DATABASE'
+    OPTION(RECOMPILE);
 
     IF @debug = 1
     BEGIN
@@ -6773,7 +6573,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         END,
         /* Always order by script type within the current grouping */
         ir.sort_order,
-        /* Default mode: within each sort_order group, prioritize by size and usage */
+        /*
+        Default mode: within each sort_order group, prioritize by writes,
+        then size and usage. Writes rank first because an unused index that
+        absorbs heavy writes is pure write-amplification overhead, making it
+        the highest-value removal even when it isn't the largest on disk.
+        */
+        CASE
+            WHEN @sort_order <> N'default'
+            THEN NULL
+            /* For SUMMARY, keep the original order */
+            WHEN ir.result_type = 'SUMMARY'
+            THEN 0
+            /* For script categories, order by write overhead first */
+            ELSE ISNULL(ir.index_writes, 0)
+        END DESC,
         CASE
             WHEN @sort_order <> N'default'
             THEN NULL
@@ -6963,17 +6777,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             database_info = irs.database_name,
             schema_name = N'N/A',
             table_name = N'N/A',
-            tables_analyzed =
-                FORMAT
-                (
-                    (
-                        SELECT
-                            COUNT_BIG(DISTINCT CONCAT(ia.schema_id, N'.', ia.object_id))
-                        FROM #index_analysis AS ia
-                        WHERE ia.database_name = irs.database_name
-                    ),
-                    'N0'
-                ),
+            tables_analyzed = FORMAT(ISNULL(irs.tables_analyzed, 0), 'N0'),
             total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
             removable_indexes = FORMAT(ISNULL(irs.unused_indexes, 0), 'N0'),
             mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
@@ -7095,7 +6899,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             database_info = irs.database_name,
             schema_name = irs.schema_name,
             table_name = irs.table_name,
-            tables_analyzed = FORMAT(1, 'N0'),
+            tables_analyzed = FORMAT(ISNULL(irs.tables_analyzed, 0), 'N0'),
             total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
             removable_indexes = FORMAT(ISNULL(irs.unused_indexes, 0), 'N0'),
             mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
@@ -7433,6 +7237,43 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             fica.filter_definition,
             ia.original_index_definition,
             fica.missing_included_columns,
+            /*
+            Rebuild the index with the filter columns appended to the INCLUDE
+            list, using DROP_EXISTING so the existing index is replaced in a
+            single statement. Pieces are reused from #index_analysis, so the
+            key columns, existing includes, and filter all match the original.
+            */
+            create_index_script =
+                N'CREATE ' +
+                CASE
+                    WHEN ia.is_unique = 1
+                    THEN N'UNIQUE '
+                    ELSE N''
+                END +
+                N'NONCLUSTERED INDEX ' +
+                QUOTENAME(fica.index_name) +
+                N' ON ' +
+                QUOTENAME(fica.database_name) +
+                N'.' +
+                QUOTENAME(fica.schema_name) +
+                N'.' +
+                QUOTENAME(fica.table_name) +
+                N' (' +
+                ia.key_columns +
+                N') INCLUDE (' +
+                CASE
+                    WHEN ia.included_columns IS NOT NULL
+                    AND  LEN(ia.included_columns) > 0
+                    THEN ia.included_columns + N', ' + fica.missing_included_columns
+                    ELSE fica.missing_included_columns
+                END +
+                N')' +
+                CASE
+                    WHEN fica.filter_definition IS NOT NULL
+                    THEN N' WHERE ' + fica.filter_definition
+                    ELSE N''
+                END +
+                N' WITH (DROP_EXISTING = ON);',
             recommendation = 'Add filter columns to INCLUDE list to improve performance and avoid key lookups'
         FROM #filtered_index_columns_analysis AS fica
         JOIN #index_analysis AS ia
