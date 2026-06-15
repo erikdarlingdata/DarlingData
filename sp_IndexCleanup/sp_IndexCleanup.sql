@@ -3000,8 +3000,37 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN N' WHERE ' + id1.filter_definition
                 ELSE N''
             END +
+            /* Place the index back on its own filegroup or partition scheme */
+            CASE
+                WHEN psfg.partition_function_name IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(psfg.built_on) +
+                     N'(' +
+                     ISNULL(psfg.partition_columns, N'') +
+                     N')'
+                WHEN psfg.built_on IS NOT NULL
+                THEN N' ON ' +
+                     QUOTENAME(psfg.built_on)
+                ELSE N''
+            END +
             N';'
     FROM #index_details id1
+    LEFT JOIN
+    (
+        /* One row per index carrying its storage/partition layout */
+        SELECT
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+        FROM #partition_stats AS ps
+        GROUP BY
+            ps.index_hash,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+    ) AS psfg
+      ON psfg.index_hash = id1.index_hash
     WHERE id1.is_eligible_for_dedupe = 1
     GROUP BY
         id1.schema_name,
@@ -3013,7 +3042,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         id1.object_id,
         id1.index_id,
         id1.filter_definition,
-        id1.is_unique_constraint
+        id1.is_unique_constraint,
+        psfg.built_on,
+        psfg.partition_function_name,
+        psfg.partition_columns
     OPTION(RECOMPILE);
 
     SET @rc = ROWCOUNT_BIG();
@@ -5302,7 +5334,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                       2,
                       ''
                     ) +
-                    N');'
+                    N')' +
+                    CASE
+                        WHEN psfg.partition_function_name IS NOT NULL
+                        THEN N' ON ' +
+                             QUOTENAME(psfg.built_on) +
+                             N'(' +
+                             ISNULL(psfg.partition_columns, N'') +
+                             N')'
+                        WHEN psfg.built_on IS NOT NULL
+                        THEN N' ON ' +
+                             QUOTENAME(psfg.built_on)
+                        ELSE N''
+                    END +
+                    N';'
                 WHEN id.is_primary_key = 0
                 THEN N'CREATE ' +
                     CASE
@@ -5349,7 +5394,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   2,
                   ''
                 ) +
-                N');'
+                N')' +
+                CASE
+                    WHEN psfg.partition_function_name IS NOT NULL
+                    THEN N' ON ' +
+                         QUOTENAME(psfg.built_on) +
+                         N'(' +
+                         ISNULL(psfg.partition_columns, N'') +
+                         N')'
+                    WHEN psfg.built_on IS NOT NULL
+                    THEN N' ON ' +
+                         QUOTENAME(psfg.built_on)
+                    ELSE N''
+                END +
+                N';'
             ELSE N''
         END
     FROM #filtered_objects AS fo
@@ -5362,6 +5420,28 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  ce.database_id = fo.database_id
       AND ce.object_id = fo.object_id
       AND ce.index_id = fo.index_id
+    LEFT JOIN
+    (
+        /* One row per index carrying its storage/partition layout */
+        SELECT
+            ps.database_id,
+            ps.object_id,
+            ps.index_id,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+        FROM #partition_stats AS ps
+        GROUP BY
+            ps.database_id,
+            ps.object_id,
+            ps.index_id,
+            ps.built_on,
+            ps.partition_function_name,
+            ps.partition_columns
+    ) AS psfg
+      ON  psfg.database_id = fo.database_id
+      AND psfg.object_id = fo.object_id
+      AND psfg.index_id = fo.index_id
     WHERE
     (
          fo.index_id = 1 /* Clustered indexes only */
