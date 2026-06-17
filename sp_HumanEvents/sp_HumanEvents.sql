@@ -5005,33 +5005,51 @@ BEGIN CATCH
                 @event_type = 'blocking' but the blocked process report isn't
                 configured), trying to stop a session that was never created
                 raises its own error (Msg 15151) that masks the real problem.
+
+                This existence check runs inside the CATCH, so it gets its own
+                TRY/CATCH: if the check itself fails (for example, missing
+                permission on the catalog views), default to leaving the
+                session alone so the original error still surfaces via THROW.
+                Azure SQL DB uses database-scoped sessions, so the catalog
+                view differs; that's the only reason for the @azure branch.
                 */
-                IF @azure = 0
-                BEGIN
-                    IF EXISTS
-                    (
-                        SELECT
-                            1/0
-                        FROM sys.server_event_sessions AS ses
-                        WHERE ses.name = @session_name
-                    )
+                BEGIN TRY
+                    IF @azure = 0
                     BEGIN
-                        SET @session_exists = 1;
-                    END;
-                END;
-                ELSE
-                BEGIN
-                    IF EXISTS
-                    (
                         SELECT
-                            1/0
-                        FROM sys.database_event_sessions AS ses
-                        WHERE ses.name = @session_name
-                    )
-                    BEGIN
-                        SET @session_exists = 1;
+                            @session_exists =
+                                CASE
+                                    WHEN EXISTS
+                                         (
+                                             SELECT
+                                                 1
+                                             FROM sys.server_event_sessions AS ses
+                                             WHERE ses.name = @session_name
+                                         )
+                                    THEN 1
+                                    ELSE 0
+                                END;
                     END;
-                END;
+                    ELSE
+                    BEGIN
+                        SELECT
+                            @session_exists =
+                                CASE
+                                    WHEN EXISTS
+                                         (
+                                             SELECT
+                                                 1
+                                             FROM sys.database_event_sessions AS ses
+                                             WHERE ses.name = @session_name
+                                         )
+                                    THEN 1
+                                    ELSE 0
+                                END;
+                    END;
+                END TRY
+                BEGIN CATCH
+                    SET @session_exists = 0;
+                END CATCH;
 
                 IF @session_exists = 1
                 BEGIN
