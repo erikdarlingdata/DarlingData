@@ -501,6 +501,7 @@ DECLARE
     @requested_memory_mb_filter nvarchar(max) = N'',
     @compile_events bit = 0,
     @parameterization_events bit = 0,
+    @session_exists bit = 0,
     @fully_formed_babby nvarchar(1000) = N'',
     @s_out integer,
     @s_sql nvarchar(max) = N'',
@@ -4998,19 +4999,56 @@ BEGIN CATCH
             IF (@output_database_name = N''
                   AND @output_schema_name IN (N'', N'dbo'))
             BEGIN
-                IF @debug = 1
+                /*
+                Only stop and drop the session if it actually got created.
+                If setup failed before the session existed (for example, when
+                @event_type = 'blocking' but the blocked process report isn't
+                configured), trying to stop a session that was never created
+                raises its own error (Msg 15151) that masks the real problem.
+                */
+                IF @azure = 0
                 BEGIN
-                    RAISERROR(@stop_sql, 0, 1) WITH NOWAIT;
-                    RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
+                    IF EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM sys.server_event_sessions AS ses
+                        WHERE ses.name = @session_name
+                    )
+                    BEGIN
+                        SET @session_exists = 1;
+                    END;
                 END;
-                EXECUTE (@stop_sql);
+                ELSE
+                BEGIN
+                    IF EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM sys.database_event_sessions AS ses
+                        WHERE ses.name = @session_name
+                    )
+                    BEGIN
+                        SET @session_exists = 1;
+                    END;
+                END;
 
-                IF @debug = 1
+                IF @session_exists = 1
                 BEGIN
-                    RAISERROR(@drop_sql, 0, 1) WITH NOWAIT;
-                    RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
+                    IF @debug = 1
+                    BEGIN
+                        RAISERROR(@stop_sql, 0, 1) WITH NOWAIT;
+                        RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
+                    END;
+                    EXECUTE (@stop_sql);
+
+                    IF @debug = 1
+                    BEGIN
+                        RAISERROR(@drop_sql, 0, 1) WITH NOWAIT;
+                        RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
+                    END;
+                    EXECUTE (@drop_sql);
                 END;
-                EXECUTE (@drop_sql);
             END;
 
             THROW;
