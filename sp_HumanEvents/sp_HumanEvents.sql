@@ -501,6 +501,7 @@ DECLARE
     @requested_memory_mb_filter nvarchar(max) = N'',
     @compile_events bit = 0,
     @parameterization_events bit = 0,
+    @session_exists bit = 0,
     @fully_formed_babby nvarchar(1000) = N'',
     @s_out integer,
     @s_sql nvarchar(max) = N'',
@@ -4998,19 +4999,74 @@ BEGIN CATCH
             IF (@output_database_name = N''
                   AND @output_schema_name IN (N'', N'dbo'))
             BEGIN
-                IF @debug = 1
-                BEGIN
-                    RAISERROR(@stop_sql, 0, 1) WITH NOWAIT;
-                    RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
-                END;
-                EXECUTE (@stop_sql);
+                /*
+                Only stop and drop the session if it actually got created.
+                If setup failed before the session existed (for example, when
+                @event_type = 'blocking' but the blocked process report isn't
+                configured), trying to stop a session that was never created
+                raises its own error (Msg 15151) that masks the real problem.
 
-                IF @debug = 1
+                This existence check runs inside the CATCH, so it gets its own
+                TRY/CATCH: if the check itself fails (for example, missing
+                permission on the catalog views), default to leaving the
+                session alone so the original error still surfaces via THROW.
+                Azure SQL DB uses database-scoped sessions, so the catalog
+                view differs; that's the only reason for the @azure branch.
+                */
+                BEGIN TRY
+                    IF @azure = 0
+                    BEGIN
+                        SELECT
+                            @session_exists =
+                                CASE
+                                    WHEN EXISTS
+                                         (
+                                             SELECT
+                                                 1
+                                             FROM sys.server_event_sessions AS ses
+                                             WHERE ses.name = @session_name
+                                         )
+                                    THEN 1
+                                    ELSE 0
+                                END;
+                    END;
+                    ELSE
+                    BEGIN
+                        SELECT
+                            @session_exists =
+                                CASE
+                                    WHEN EXISTS
+                                         (
+                                             SELECT
+                                                 1
+                                             FROM sys.database_event_sessions AS ses
+                                             WHERE ses.name = @session_name
+                                         )
+                                    THEN 1
+                                    ELSE 0
+                                END;
+                    END;
+                END TRY
+                BEGIN CATCH
+                    SET @session_exists = 0;
+                END CATCH;
+
+                IF @session_exists = 1
                 BEGIN
-                    RAISERROR(@drop_sql, 0, 1) WITH NOWAIT;
-                    RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
+                    IF @debug = 1
+                    BEGIN
+                        RAISERROR(@stop_sql, 0, 1) WITH NOWAIT;
+                        RAISERROR(N'all done, stopping session', 0, 1) WITH NOWAIT;
+                    END;
+                    EXECUTE (@stop_sql);
+
+                    IF @debug = 1
+                    BEGIN
+                        RAISERROR(@drop_sql, 0, 1) WITH NOWAIT;
+                        RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
+                    END;
+                    EXECUTE (@drop_sql);
                 END;
-                EXECUTE (@drop_sql);
             END;
 
             THROW;
