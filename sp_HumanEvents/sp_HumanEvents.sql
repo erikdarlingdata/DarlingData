@@ -5022,7 +5022,7 @@ BEGIN CATCH
                                     WHEN EXISTS
                                          (
                                              SELECT
-                                                 1
+                                                 1/0
                                              FROM sys.server_event_sessions AS ses
                                              WHERE ses.name = @session_name
                                          )
@@ -5038,7 +5038,7 @@ BEGIN CATCH
                                     WHEN EXISTS
                                          (
                                              SELECT
-                                                 1
+                                                 1/0
                                              FROM sys.database_event_sessions AS ses
                                              WHERE ses.name = @session_name
                                          )
