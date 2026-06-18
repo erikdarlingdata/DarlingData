@@ -3891,6 +3891,65 @@ BEGIN
             ls.stmtstart,
             ls.stmtend,
             bl.transaction_id
+    ),
+        per_victim_named AS
+    (
+        /*
+        Resolve the lead blocker's identity the same way the detail
+        output does (see the #blocks query_text resolution above): when
+        the captured inputbuf is a stored procedure call of the form
+        "Proc [Database Id = N Object Id = M]", turn it into
+        schema.procedure via OBJECT_SCHEMA_NAME / OBJECT_NAME instead of
+        dropping the raw "Proc [Database Id = ...]" marker into the
+        rollup. Falls back to the raw inputbuf text for ad hoc
+        statements, or when the object can't be resolved (procedure
+        dropped, different database context, etc.).
+        */
+        SELECT
+            pv.*,
+            lead_object_name =
+                CASE
+                    WHEN pv.query_text_pre LIKE @inputbuf_bom + N'Proc |[Database Id = %' ESCAPE N'|'
+                    THEN
+                        ISNULL
+                        (
+                            OBJECT_SCHEMA_NAME
+                            (
+                                SUBSTRING
+                                (
+                                    pv.query_text_pre,
+                                    CHARINDEX(N'Object Id = ', pv.query_text_pre) + 12,
+                                    LEN(pv.query_text_pre) - (CHARINDEX(N'Object Id = ', pv.query_text_pre) + 12)
+                                ),
+                                SUBSTRING
+                                (
+                                    pv.query_text_pre,
+                                    CHARINDEX(N'Database Id = ', pv.query_text_pre) + 14,
+                                    CHARINDEX(N'Object Id', pv.query_text_pre) - (CHARINDEX(N'Database Id = ', pv.query_text_pre) + 14)
+                                )
+                            ) +
+                            N'.' +
+                            OBJECT_NAME
+                            (
+                                SUBSTRING
+                                (
+                                    pv.query_text_pre,
+                                    CHARINDEX(N'Object Id = ', pv.query_text_pre) + 12,
+                                    LEN(pv.query_text_pre) - (CHARINDEX(N'Object Id = ', pv.query_text_pre) + 12)
+                                ),
+                                SUBSTRING
+                                (
+                                    pv.query_text_pre,
+                                    CHARINDEX(N'Database Id = ', pv.query_text_pre) + 14,
+                                    CHARINDEX(N'Object Id', pv.query_text_pre) - (CHARINDEX(N'Database Id = ', pv.query_text_pre) + 14)
+                                )
+                            ),
+                            pv.query_text_pre
+                        )
+                    ELSE
+                        pv.query_text_pre
+                END
+        FROM per_victim AS pv
     )
     INSERT
         #block_findings
@@ -3915,7 +3974,7 @@ BEGIN
                     (
                         ISNULL
                         (
-                            MAX(pv.query_text_pre),
+                            MAX(pv.lead_object_name),
                             N'[Unknown]'
                         ),
                         NCHAR(13),
@@ -4022,7 +4081,7 @@ BEGIN
                        )
                    ) DESC
            )
-    FROM per_victim AS pv
+    FROM per_victim_named AS pv
     GROUP BY
         pv.database_name,
         pv.sql_handle,
