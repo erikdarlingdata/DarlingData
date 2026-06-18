@@ -382,7 +382,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     1
                 ) + N');',
             query_text =
-                st.text,
+                (
+                    SELECT
+                        [processing-instruction(query)] =
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                st.text COLLATE Latin1_General_BIN2,
+                            NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+                            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+                            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'')
+                    FOR
+                        XML
+                        PATH(N''),
+                        TYPE
+                ),
             query_plan =
                 CASE
                     WHEN TRY_CAST(qp.query_plan AS xml) IS NOT NULL
@@ -452,60 +466,102 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     IF @find_duplicate_plans = 1
     BEGIN
-        SELECT TOP (@top)
-            database_name =
-                DB_NAME(CONVERT(integer, MAX(pa.value))),
-            qs.query_hash,
-            plan_count =
-                FORMAT(COUNT_BIG(DISTINCT qs.plan_handle), N'N0'),
-            total_executions =
-                FORMAT(SUM(qs.execution_count), N'N0'),
-            total_cpu_ms =
-                FORMAT(SUM(qs.total_worker_time) / 1000.0, N'N3'),
-            total_duration_ms =
-                FORMAT(SUM(qs.total_elapsed_time) / 1000.0, N'N3'),
-            total_logical_reads =
-                FORMAT(SUM(qs.total_logical_reads), N'N0'),
-            total_logical_writes =
-                FORMAT(SUM(qs.total_logical_writes), N'N0'),
-            total_physical_reads =
-                FORMAT(SUM(qs.total_physical_reads), N'N0'),
-            total_rows =
-                FORMAT(SUM(qs.total_rows), N'N0'),
-            min_rows =
-                FORMAT(MIN(qs.min_rows), N'N0'),
-            max_rows =
-                FORMAT(MAX(qs.max_rows), N'N0'),
-            total_cached_size_mb =
-                FORMAT(SUM(cp.size_in_bytes) / 1048576.0, N'N2'),
-            oldest_plan =
-                MIN(qs.creation_time),
-            newest_plan =
-                MAX(qs.creation_time),
+        SELECT
+            d.database_name,
+            d.query_hash,
+            d.plan_count,
+            d.total_executions,
+            d.total_cpu_ms,
+            d.total_duration_ms,
+            d.total_logical_reads,
+            d.total_logical_writes,
+            d.total_physical_reads,
+            d.total_rows,
+            d.min_rows,
+            d.max_rows,
+            d.total_cached_size_mb,
+            d.oldest_plan,
+            d.newest_plan,
             sample_query_text =
-                MAX(st.text)
-        FROM sys.dm_exec_query_stats AS qs
-        JOIN sys.dm_exec_cached_plans AS cp
-          ON cp.plan_handle = qs.plan_handle
-        CROSS APPLY
+                (
+                    SELECT
+                        [processing-instruction(query)] =
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                                d.sample_query_text COLLATE Latin1_General_BIN2,
+                            NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+                            NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+                            NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'')
+                    FOR
+                        XML
+                        PATH(N''),
+                        TYPE
+                )
+        FROM
         (
-            SELECT TOP (1)
-                value = pa.value
-            FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
-            WHERE pa.attribute = N'dbid'
-        ) AS pa
-        CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
-        WHERE qs.query_hash <> 0x0000000000000000
-        AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
-        AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
-        AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
-        GROUP BY
-            qs.query_hash
-        HAVING
-            COUNT_BIG(DISTINCT qs.plan_handle) > 1
+            SELECT TOP (@top)
+                database_name =
+                    DB_NAME(CONVERT(integer, MAX(pa.value))),
+                qs.query_hash,
+                plan_count =
+                    FORMAT(COUNT_BIG(DISTINCT qs.plan_handle), N'N0'),
+                total_executions =
+                    FORMAT(SUM(qs.execution_count), N'N0'),
+                total_cpu_ms =
+                    FORMAT(SUM(qs.total_worker_time) / 1000.0, N'N3'),
+                total_duration_ms =
+                    FORMAT(SUM(qs.total_elapsed_time) / 1000.0, N'N3'),
+                total_logical_reads =
+                    FORMAT(SUM(qs.total_logical_reads), N'N0'),
+                total_logical_writes =
+                    FORMAT(SUM(qs.total_logical_writes), N'N0'),
+                total_physical_reads =
+                    FORMAT(SUM(qs.total_physical_reads), N'N0'),
+                total_rows =
+                    FORMAT(SUM(qs.total_rows), N'N0'),
+                min_rows =
+                    FORMAT(MIN(qs.min_rows), N'N0'),
+                max_rows =
+                    FORMAT(MAX(qs.max_rows), N'N0'),
+                total_cached_size_mb =
+                    FORMAT(SUM(cp.size_in_bytes) / 1048576.0, N'N2'),
+                oldest_plan =
+                    MIN(qs.creation_time),
+                newest_plan =
+                    MAX(qs.creation_time),
+                sample_query_text =
+                    MAX(st.text),
+                sort_plan_count =
+                    COUNT_BIG(DISTINCT qs.plan_handle),
+                sort_cpu =
+                    SUM(qs.total_worker_time)
+            FROM sys.dm_exec_query_stats AS qs
+            JOIN sys.dm_exec_cached_plans AS cp
+              ON cp.plan_handle = qs.plan_handle
+            CROSS APPLY
+            (
+                SELECT TOP (1)
+                    value = pa.value
+                FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
+                WHERE pa.attribute = N'dbid'
+            ) AS pa
+            CROSS APPLY sys.dm_exec_sql_text(qs.sql_handle) AS st
+            WHERE qs.query_hash <> 0x0000000000000000
+            AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
+            AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
+            AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
+            GROUP BY
+                qs.query_hash
+            HAVING
+                COUNT_BIG(DISTINCT qs.plan_handle) > 1
+            ORDER BY
+                COUNT_BIG(DISTINCT qs.plan_handle) DESC,
+                SUM(qs.total_worker_time) DESC
+        ) AS d
         ORDER BY
-            COUNT_BIG(DISTINCT qs.plan_handle) DESC,
-            SUM(qs.total_worker_time) DESC
+            d.sort_plan_count DESC,
+            d.sort_cpu DESC
         OPTION(RECOMPILE, MAXDOP 1);
 
         RETURN;
@@ -534,9 +590,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     Plan creation time distribution:
     What % of plans were created in the last 24h / 4h / 1h?
     High percentages suggest plan cache instability or memory pressure.
+
+    @total_cached_plans is the true compiled-plan count from
+    sys.dm_exec_cached_plans — the number the user actually sees in the
+    cache — so the finding reconciles with what they observe. The age
+    buckets are computed at plan grain (DISTINCT plan_handle) from
+    sys.dm_exec_query_stats, the only source with per-plan compile
+    times. Counting raw query_stats rows (statement grain) inflated
+    every number, because a multi-statement plan contributes one row
+    per statement; @total_plans is now distinct plans with execution
+    stats, the consistent denominator for the recency percentages.
     */
     DECLARE
         @total_plans bigint = 0,
+        @total_cached_plans bigint = 0,
         @plans_24h bigint = 0,
         @plans_4h bigint = 0,
         @plans_1h bigint = 0,
@@ -546,32 +613,49 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         @oldest_plan_date datetime = NULL;
 
     SELECT
-        @total_plans = COUNT_BIG(*),
+        @total_cached_plans = COUNT_BIG(*)
+    FROM sys.dm_exec_cached_plans AS cp
+    CROSS APPLY
+    (
+        SELECT TOP (1)
+            value = pa.value
+        FROM sys.dm_exec_plan_attributes(cp.plan_handle) AS pa
+        WHERE pa.attribute = N'dbid'
+    ) AS pa
+    WHERE cp.cacheobjtype = N'Compiled Plan'
+    AND   pa.value IS NOT NULL
+    AND   (@ignore_system_databases = 0 OR CONVERT(integer, pa.value) NOT IN (1, 2, 3, 4))
+    AND   CONVERT(integer, pa.value) < 32761
+    AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
+    OPTION(RECOMPILE);
+
+    SELECT
+        @total_plans = COUNT_BIG(DISTINCT qs.plan_handle),
         @plans_24h =
-            SUM
+            COUNT_BIG
             (
+                DISTINCT
                 CASE
                     WHEN DATEDIFF(HOUR, qs.creation_time, GETDATE()) <= 24
-                    THEN 1
-                    ELSE 0
+                    THEN qs.plan_handle
                 END
             ),
         @plans_4h =
-            SUM
+            COUNT_BIG
             (
+                DISTINCT
                 CASE
                     WHEN DATEDIFF(HOUR, qs.creation_time, GETDATE()) <= 4
-                    THEN 1
-                    ELSE 0
+                    THEN qs.plan_handle
                 END
             ),
         @plans_1h =
-            SUM
+            COUNT_BIG
             (
+                DISTINCT
                 CASE
                     WHEN DATEDIFF(HOUR, qs.creation_time, GETDATE()) <= 1
-                    THEN 1
-                    ELSE 0
+                    THEN qs.plan_handle
                 END
             ),
         @oldest_plan_date = MIN(qs.creation_time)
@@ -583,7 +667,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
         WHERE pa.attribute = N'dbid'
     ) AS pa
-    WHERE 1 = 1
+    WHERE (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
+    AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
     AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
     OPTION(RECOMPILE);
 
@@ -610,9 +695,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'Plan Cache Instability',
             N'Most plans are recent',
             1,
-            N'Of ' + FORMAT(@total_plans, N'N0') +
-            N' cached plans, ' +
-            CONVERT(nvarchar(10), @pct_24h) + N'% created in the last 24 hours, ' +
+            N'Of ' + FORMAT(@total_cached_plans, N'N0') +
+            N' cached compiled plans, ' + FORMAT(@total_plans, N'N0') +
+            N' have execution stats; of those, ' +
+            CONVERT(nvarchar(10), @pct_24h) + N'% were compiled in the last 24 hours, ' +
             CONVERT(nvarchar(10), @pct_4h) + N'% in the last 4 hours, ' +
             CONVERT(nvarchar(10), @pct_1h) + N'% in the last 1 hour. ' +
             N'This may indicate memory pressure, frequent recompiles, or plan cache flushes. ' +
@@ -634,9 +720,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'Plan Cache Stability',
             N'Plan age distribution looks healthy',
             254,
-            N'Of ' + FORMAT(@total_plans, N'N0') +
-            N' cached plans, ' +
-            CONVERT(nvarchar(10), @pct_24h) + N'% created in the last 24 hours, ' +
+            N'Of ' + FORMAT(@total_cached_plans, N'N0') +
+            N' cached compiled plans, ' + FORMAT(@total_plans, N'N0') +
+            N' have execution stats; of those, ' +
+            CONVERT(nvarchar(10), @pct_24h) + N'% were compiled in the last 24 hours, ' +
             CONVERT(nvarchar(10), @pct_4h) + N'% in the last 4 hours, ' +
             CONVERT(nvarchar(10), @pct_1h) + N'% in the last 1 hour. ' +
             N'Oldest cached plan: ' + CONVERT(nvarchar(30), @oldest_plan_date, 120) + N'.'
@@ -645,9 +732,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
     /*
     Single-use plan bloat per database:
-    High % of execution_count = 1 plans suggests ad hoc workload
-    that may benefit from Forced Parameterization.
-    Only surfaces databases where single-use plans exceed 10%.
+    A high percentage of single-use adhoc/prepared plans suggests an
+    unparameterized ad hoc workload that bloats the plan cache and may
+    benefit from Optimize for Ad Hoc Workloads and/or Forced
+    Parameterization. Only surfaces databases where single-use plans
+    exceed 10% of that database's cached compiled plans.
+
+    Sourced from sys.dm_exec_cached_plans on purpose, NOT
+    sys.dm_exec_query_stats. query_stats is statement-grained and only
+    contains plans that have executed and are still cached, so its
+    per-database counts are a small, misleading slice of the cache
+    (e.g. "27 of 27 plans" on a server whose cache actually holds
+    100k+ plans). dm_exec_cached_plans IS the plan cache the user sees,
+    and usecounts = 1 on an Adhoc/Prepared compiled plan is the
+    canonical single-use plan signal. total_count is every cached
+    compiled plan for the database (the denominator the user counts),
+    so the percentage reconciles with what they observe.
     */
     INSERT
         #plan_cache_health
@@ -661,29 +761,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SELECT TOP (5)
         finding_group =
             CASE
-                WHEN single_use_pct > 75
+                WHEN x.single_use_pct > 75
                 THEN N'Single-Use Plan Bloat'
                 ELSE N'Single-Use Plans'
             END,
         finding =
             CASE
-                WHEN single_use_pct > 75
+                WHEN x.single_use_pct > 75
                 THEN N'Excessive single-use plans in cache'
                 ELSE N'Notable single-use plan percentage'
             END,
         x.database_name,
         priority =
             CASE
-                WHEN single_use_pct > 75
+                WHEN x.single_use_pct > 75
                 THEN 1
                 ELSE 254
             END,
         details =
             FORMAT(x.single_use_count, N'N0') +
             N' of ' + FORMAT(x.total_count, N'N0') +
-            N' plans (' +
+            N' cached plans (' +
             CONVERT(nvarchar(10), x.single_use_pct) +
-            N'%) executed only once. Consider Forced Parameterization if these are unparameterized ad hoc queries.'
+            N'%) are single-use adhoc or prepared plans. Consider Optimize for Ad Hoc Workloads, and Forced Parameterization if these are unparameterized ad hoc queries.'
     FROM
     (
         SELECT
@@ -695,7 +795,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 SUM
                 (
                     CASE
-                        WHEN qs.execution_count = 1
+                        WHEN cp.usecounts = 1
+                        AND  cp.objtype IN (N'Adhoc', N'Prepared')
                         THEN 1
                         ELSE 0
                     END
@@ -707,21 +808,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     SUM
                     (
                         CASE
-                            WHEN qs.execution_count = 1
+                            WHEN cp.usecounts = 1
+                            AND  cp.objtype IN (N'Adhoc', N'Prepared')
                             THEN 1
                             ELSE 0
                         END
                     ) * 100.0 / COUNT_BIG(*)
                 )
-        FROM sys.dm_exec_query_stats AS qs
+        FROM sys.dm_exec_cached_plans AS cp
         CROSS APPLY
         (
             SELECT TOP (1)
                 value = pa.value
-            FROM sys.dm_exec_plan_attributes(qs.plan_handle) AS pa
+            FROM sys.dm_exec_plan_attributes(cp.plan_handle) AS pa
             WHERE pa.attribute = N'dbid'
         ) AS pa
-        WHERE pa.value IS NOT NULL
+        WHERE cp.cacheobjtype = N'Compiled Plan'
+        AND   pa.value IS NOT NULL
         AND   (@ignore_system_databases = 0 OR CONVERT(integer, pa.value) NOT IN (1, 2, 3, 4))
         AND   CONVERT(integer, pa.value) < 32761
         AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
@@ -749,7 +852,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM
     (
         SELECT
-            plan_count = COUNT_BIG(*)
+            plan_count = COUNT_BIG(DISTINCT qs.plan_handle)
         FROM sys.dm_exec_query_stats AS qs
         CROSS APPLY
         (
@@ -759,11 +862,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE pa.attribute = N'dbid'
         ) AS pa
         WHERE qs.query_hash <> 0x0000000000000000
+        AND   (@ignore_system_databases = 0 OR ISNULL(CONVERT(integer, pa.value), 0) NOT IN (1, 2, 3, 4))
+        AND   ISNULL(CONVERT(integer, pa.value), 0) < 32761
         AND   (@database_id IS NULL OR CONVERT(integer, pa.value) = @database_id)
         GROUP BY
             qs.query_hash
         HAVING
-            COUNT_BIG(*) > 5
+            COUNT_BIG(DISTINCT qs.plan_handle) > 5
     ) AS x
     OPTION(RECOMPILE);
 
@@ -808,7 +913,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             details =
                 FORMAT(COUNT_BIG(DISTINCT qs2.query_hash), N'N0') +
                 N' query hashes with 5+ plans, totaling ' +
-                FORMAT(COUNT_BIG(*), N'N0') + N' plans. ' +
+                FORMAT(COUNT_BIG(DISTINCT qs2.plan_handle), N'N0') + N' plans. ' +
                 N'Most likely unparameterized queries. SET option differences between sessions can also cause this. Consider Forced Parameterization.'
         FROM
         (
@@ -819,7 +924,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             GROUP BY
                 qs.query_hash
             HAVING
-                COUNT_BIG(*) > 5
+                COUNT_BIG(DISTINCT qs.plan_handle) > 5
         ) AS x
         JOIN sys.dm_exec_query_stats AS qs2
           ON qs2.query_hash = x.query_hash
@@ -837,7 +942,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         GROUP BY
             pa.value
         ORDER BY
-            COUNT_BIG(*) DESC
+            COUNT_BIG(DISTINCT qs2.plan_handle) DESC
         OPTION(RECOMPILE);
     END;
 
@@ -910,8 +1015,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     BEGIN
         SELECT
             @debug_msg =
-                N'Plan cache health: ' + CONVERT(nvarchar(20), @total_plans) +
-                N' total plans, ' + CONVERT(nvarchar(10), @pct_24h) +
+                N'Plan cache health: ' + CONVERT(nvarchar(20), @total_cached_plans) +
+                N' cached compiled plans, ' + CONVERT(nvarchar(20), @total_plans) +
+                N' with stats, ' + CONVERT(nvarchar(10), @pct_24h) +
                 N'% < 24h, ' + CONVERT(nvarchar(10), @pct_4h) +
                 N'% < 4h, ' + CONVERT(nvarchar(10), @pct_1h) + N'% < 1h';
         RAISERROR(N'%s', 0, 1, @debug_msg) WITH NOWAIT;
@@ -2330,22 +2436,36 @@ OPTION(RECOMPILE, MAXDOP 1);';
         s.query_type,
         s.object_name,
         query_text =
-            CASE
-                WHEN s.query_type = 'Statement'
-                THEN SUBSTRING
-                     (
-                         st.text,
-                         (s.sample_statement_start / 2) + 1,
-                         (
-                             CASE s.sample_statement_end
-                                 WHEN -1
-                                 THEN DATALENGTH(st.text)
-                                 ELSE s.sample_statement_end
-                             END - s.sample_statement_start
-                         ) / 2 + 1
-                     )
-                ELSE st.text
-            END,
+            (
+                SELECT
+                    [processing-instruction(query)] =
+                        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            CASE
+                                WHEN s.query_type = 'Statement'
+                                THEN SUBSTRING
+                                     (
+                                         st.text,
+                                         (s.sample_statement_start / 2) + 1,
+                                         (
+                                             CASE s.sample_statement_end
+                                                 WHEN -1
+                                                 THEN DATALENGTH(st.text)
+                                                 ELSE s.sample_statement_end
+                                             END - s.sample_statement_start
+                                         ) / 2 + 1
+                                     )
+                                ELSE st.text
+                            END COLLATE Latin1_General_BIN2,
+                        NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+                        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+                        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'')
+                FOR
+                    XML
+                    PATH(N''),
+                    TYPE
+            ),
         query_plan =
             CASE
                 WHEN TRY_CAST(qp.query_plan AS xml) IS NOT NULL

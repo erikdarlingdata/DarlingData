@@ -4956,6 +4956,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN ', DATA_COMPRESSION = PAGE'
                 ELSE N''
                 END +
+            CASE
+                WHEN @supports_optimize_for_sequential_key = 1
+                AND EXISTS
+                (
+                    SELECT
+                        1/0
+                    FROM #index_details AS id_ofsk
+                    WHERE id_ofsk.index_hash = ia.index_hash
+                    AND   id_ofsk.optimize_for_sequential_key = 1
+                )
+                THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                ELSE N''
+            END +
             N')' +
             CASE
                 WHEN ps.partition_function_name IS NOT NULL
@@ -6020,7 +6033,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         THEN N'ON'
                         ELSE N'OFF'
                     END +
-                    N', DATA_COMPRESSION = PAGE);'
+                    N', DATA_COMPRESSION = PAGE' +
+                    CASE
+                        WHEN @supports_optimize_for_sequential_key = 1
+                        AND EXISTS
+                        (
+                            SELECT
+                                1/0
+                            FROM #index_details AS id_ofsk
+                            WHERE id_ofsk.index_hash = ia.index_hash
+                            AND   id_ofsk.optimize_for_sequential_key = 1
+                        )
+                        THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
+                        ELSE N''
+                    END +
+                    N');'
                 ELSE NULL
             END
     FROM #index_analysis AS ia
@@ -6673,6 +6700,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             THEN NULL
             /* For SUMMARY, keep the original order */
             WHEN ir.result_type = 'SUMMARY'
+            THEN 0
+            /*
+            Compression candidates are prioritized by size (the next key),
+            not by writes: the goal is reclaiming the most space, so the
+            largest indexes come first regardless of write volume. Returning
+            a constant here ties all COMPRESS / COMPRESS_PARTITION rows on
+            this key so the size key below becomes their primary sort.
+            */
+            WHEN ir.result_type IN ('COMPRESS', 'COMPRESS_PARTITION')
             THEN 0
             /* For script categories, order by write overhead first */
             ELSE ISNULL(ir.index_writes, 0)
@@ -7373,6 +7409,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 CASE
                     WHEN ce.can_compress = 1
                     THEN N', DATA_COMPRESSION = PAGE'
+                    ELSE N''
+                END +
+                CASE
+                    WHEN @supports_optimize_for_sequential_key = 1
+                    AND EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS id_ofsk
+                        WHERE id_ofsk.index_hash = ia.index_hash
+                        AND   id_ofsk.optimize_for_sequential_key = 1
+                    )
+                    THEN N', OPTIMIZE_FOR_SEQUENTIAL_KEY = ON'
                     ELSE N''
                 END +
                 N')' +
