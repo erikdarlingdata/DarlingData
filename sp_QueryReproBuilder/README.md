@@ -24,8 +24,14 @@ You can filter queries by plan_id or query_id, and optionally specify a date ran
 | @end_date              | datetimeoffset(7)  | the end date of your search, will be converted to UTC internally      | January 1, 1753, through December 31, 9999         | current date/time                |
 | @include_plan_ids      | nvarchar(4000)     | a list of plan ids to search for                                      | a string; comma separated for multiple ids         | NULL                             |
 | @include_query_ids     | nvarchar(4000)     | a list of query ids to search for                                     | a string; comma separated for multiple ids         | NULL                             |
+| @include_query_hashes  | nvarchar(4000)     | a list of query hashes to search for                                  | a string; comma separated for multiple hashes      | NULL                             |
+| @include_plan_hashes   | nvarchar(4000)     | a list of query plan hashes to search for                             | a string; comma separated for multiple hashes      | NULL                             |
+| @include_sql_handles   | nvarchar(4000)     | a list of sql handles to search for                                   | a string; comma separated for multiple handles     | NULL                             |
 | @ignore_plan_ids       | nvarchar(4000)     | a list of plan ids to ignore                                          | a string; comma separated for multiple ids         | NULL                             |
 | @ignore_query_ids      | nvarchar(4000)     | a list of query ids to ignore                                         | a string; comma separated for multiple ids         | NULL                             |
+| @ignore_query_hashes   | nvarchar(4000)     | a list of query hashes to ignore                                      | a string; comma separated for multiple hashes      | NULL                             |
+| @ignore_plan_hashes    | nvarchar(4000)     | a list of query plan hashes to ignore                                 | a string; comma separated for multiple hashes      | NULL                             |
+| @ignore_sql_handles    | nvarchar(4000)     | a list of sql handles to ignore                                       | a string; comma separated for multiple handles     | NULL                             |
 | @procedure_schema      | sysname            | the schema of the procedure you're searching for                      | a valid schema in your database                    | NULL                             |
 | @procedure_name        | sysname            | the name of the programmable object you're searching for              | a valid programmable object in your database       | NULL                             |
 | @query_text_search     | nvarchar(4000)     | query text to search for                                              | a string; leading and trailing wildcards added    | NULL                             |
@@ -52,6 +58,21 @@ EXECUTE dbo.sp_QueryReproBuilder
 -- Exclude specific plan IDs
 EXECUTE dbo.sp_QueryReproBuilder
     @ignore_plan_ids = '999,888';
+
+-- Search by query hash, query plan hash, or sql handle
+EXECUTE dbo.sp_QueryReproBuilder
+    @include_query_hashes = '0x2D3C7F502BA2AEE9';
+
+-- Include filters intersect (AND across filters, OR within a list): this
+-- returns only plan 12345 when it belongs to query 100, not every plan for
+-- that query
+EXECUTE dbo.sp_QueryReproBuilder
+    @include_query_ids = '100',
+    @include_plan_ids = '12345';
+
+-- Exclude by plan hash or sql handle (ignore filters exclude/union)
+EXECUTE dbo.sp_QueryReproBuilder
+    @ignore_plan_hashes = '0xEF890B52AACFA367';
 
 -- Filter by date range
 EXECUTE dbo.sp_QueryReproBuilder
