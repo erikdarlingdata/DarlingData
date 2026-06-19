@@ -59,8 +59,14 @@ ALTER PROCEDURE
     @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
     @include_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to search for*/
     @include_query_ids nvarchar(4000) = NULL, /*a list of query ids to search for*/
+    @include_query_hashes nvarchar(4000) = NULL, /*a list of query hashes to search for*/
+    @include_plan_hashes nvarchar(4000) = NULL, /*a list of query plan hashes to search for*/
+    @include_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to search for*/
     @ignore_plan_ids nvarchar(4000) = NULL, /*a list of plan ids to ignore*/
     @ignore_query_ids nvarchar(4000) = NULL, /*a list of query ids to ignore*/
+    @ignore_query_hashes nvarchar(4000) = NULL, /*a list of query hashes to ignore*/
+    @ignore_plan_hashes nvarchar(4000) = NULL, /*a list of query plan hashes to ignore*/
+    @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
     @procedure_schema sysname = NULL, /*the schema of the procedure you're searching for*/
     @procedure_name sysname = NULL, /*the name of the programmable object you're searching for*/
     @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
@@ -113,8 +119,14 @@ BEGIN
                 WHEN N'@end_date' THEN 'the end date of your search, will be converted to UTC internally'
                 WHEN N'@include_plan_ids' THEN 'a list of plan ids to search for'
                 WHEN N'@include_query_ids' THEN 'a list of query ids to search for'
+                WHEN N'@include_query_hashes' THEN 'a list of query hashes to search for'
+                WHEN N'@include_plan_hashes' THEN 'a list of query plan hashes to search for'
+                WHEN N'@include_sql_handles' THEN 'a list of sql handles to search for'
                 WHEN N'@ignore_plan_ids' THEN 'a list of plan ids to ignore'
                 WHEN N'@ignore_query_ids' THEN 'a list of query ids to ignore'
+                WHEN N'@ignore_query_hashes' THEN 'a list of query hashes to ignore'
+                WHEN N'@ignore_plan_hashes' THEN 'a list of query plan hashes to ignore'
+                WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
                 WHEN N'@procedure_schema' THEN 'the schema of the procedure you''re searching for'
                 WHEN N'@procedure_name' THEN 'the name of the programmable object you''re searching for'
                 WHEN N'@query_text_search' THEN 'query text to search for'
@@ -134,8 +146,14 @@ BEGIN
                 WHEN N'@end_date' THEN 'January 1, 1753, through December 31, 9999'
                 WHEN N'@include_plan_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN N'@include_query_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN N'@include_query_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN N'@include_plan_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN N'@include_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@ignore_plan_ids' THEN 'a string; comma separated for multiple ids'
                 WHEN N'@ignore_query_ids' THEN 'a string; comma separated for multiple ids'
+                WHEN N'@ignore_query_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN N'@ignore_plan_hashes' THEN 'a string; comma separated for multiple hashes'
+                WHEN N'@ignore_sql_handles' THEN 'a string; comma separated for multiple handles'
                 WHEN N'@procedure_schema' THEN 'a valid schema in your database'
                 WHEN N'@procedure_name' THEN 'a valid programmable object in your database'
                 WHEN N'@query_text_search' THEN 'a string; leading and trailing wildcards will be added if missing'
@@ -155,8 +173,14 @@ BEGIN
                 WHEN N'@end_date' THEN 'NULL'
                 WHEN N'@include_plan_ids' THEN 'NULL'
                 WHEN N'@include_query_ids' THEN 'NULL'
+                WHEN N'@include_query_hashes' THEN 'NULL'
+                WHEN N'@include_plan_hashes' THEN 'NULL'
+                WHEN N'@include_sql_handles' THEN 'NULL'
                 WHEN N'@ignore_plan_ids' THEN 'NULL'
                 WHEN N'@ignore_query_ids' THEN 'NULL'
+                WHEN N'@ignore_query_hashes' THEN 'NULL'
+                WHEN N'@ignore_plan_hashes' THEN 'NULL'
+                WHEN N'@ignore_sql_handles' THEN 'NULL'
                 WHEN N'@procedure_schema' THEN 'NULL; dbo if NULL and procedure name is not NULL'
                 WHEN N'@procedure_name' THEN 'NULL'
                 WHEN N'@query_text_search' THEN 'NULL'
@@ -204,7 +228,9 @@ DECLARE
     @sql_2017 bit = 0,
     @sql_2022_views bit = 0,
     @new bit = 0,
-    @current_table nvarchar(100)
+    @current_table nvarchar(100),
+    @include_plans_seeded bit = 0,
+    @match nvarchar(max) = N''
 
 /*Fix NULL @database_name*/
 IF
@@ -525,10 +551,22 @@ SELECT
         NULLIF(@include_plan_ids, ''),
     @include_query_ids =
         NULLIF(@include_query_ids, ''),
+    @include_query_hashes =
+        NULLIF(@include_query_hashes, ''),
+    @include_plan_hashes =
+        NULLIF(@include_plan_hashes, ''),
+    @include_sql_handles =
+        NULLIF(@include_sql_handles, ''),
     @ignore_plan_ids =
         NULLIF(@ignore_plan_ids, ''),
     @ignore_query_ids =
         NULLIF(@ignore_query_ids, ''),
+    @ignore_query_hashes =
+        NULLIF(@ignore_query_hashes, ''),
+    @ignore_plan_hashes =
+        NULLIF(@ignore_plan_hashes, ''),
+    @ignore_sql_handles =
+        NULLIF(@ignore_sql_handles, ''),
     @query_text_search =
         NULLIF(@query_text_search, ''),
     @query_text_search_not =
@@ -751,6 +789,48 @@ CREATE TABLE
 (
     query_id bigint NOT NULL,
     INDEX query_id CLUSTERED (query_id)
+);
+
+CREATE TABLE
+    #include_query_hashes
+(
+    query_hash binary(8) NOT NULL,
+    INDEX query_hash CLUSTERED (query_hash)
+);
+
+CREATE TABLE
+    #include_plan_hashes
+(
+    plan_hash binary(8) NOT NULL,
+    INDEX plan_hash CLUSTERED (plan_hash)
+);
+
+CREATE TABLE
+    #include_sql_handles
+(
+    sql_handle varbinary(64) NOT NULL,
+    INDEX sql_handle CLUSTERED (sql_handle)
+);
+
+CREATE TABLE
+    #ignore_query_hashes
+(
+    query_hash binary(8) NOT NULL,
+    INDEX query_hash CLUSTERED (query_hash)
+);
+
+CREATE TABLE
+    #ignore_plan_hashes
+(
+    plan_hash binary(8) NOT NULL,
+    INDEX plan_hash CLUSTERED (plan_hash)
+);
+
+CREATE TABLE
+    #ignore_sql_handles
+(
+    sql_handle varbinary(64) NOT NULL,
+    INDEX sql_handle CLUSTERED (sql_handle)
 );
 
 CREATE TABLE
@@ -1368,6 +1448,21 @@ Populate filter temp tables using XML-based string splitting for compatibility
 IF @query_plan_xml IS NULL
 BEGIN
 
+/*
+Resolve the include filters into #include_plan_ids.
+
+Multiple include filters combine as an INTERSECTION: OR within a single filter's
+comma-separated list, but AND across different filters. The first filter that is
+supplied seeds #include_plan_ids with every plan id it matches; each later filter
+then DELETEs any plan id it does not also match. This keeps results narrowed to
+exactly what the caller asked for, instead of widening back out to every plan
+(which is what unioning the filters would do).
+
+@include_plan_ids is handled first, so when it is supplied it always seeds the
+set with the literal plan ids requested. @match holds the per-filter predicate
+(correlated to a sys.query_store_plan row aliased qsp) used for both seeding and
+intersecting.
+*/
 IF @include_plan_ids IS NOT NULL
 BEGIN
     SELECT
@@ -1425,6 +1520,9 @@ BEGIN
         @sql,
         N'@include_plan_ids nvarchar(4000)',
         @include_plan_ids;
+
+    SELECT
+        @include_plans_seeded = 1;
 END;
 
 IF @include_query_ids IS NOT NULL
@@ -1485,12 +1583,25 @@ BEGIN
         N'@include_query_ids nvarchar(4000)',
         @include_query_ids;
 
-    /*Convert query IDs to plan IDs for filtering*/
+    /*
+    Resolve these query ids into #include_plan_ids (seed or intersect).
+    */
     SELECT
-        @sql = @isolation_level;
+        @match = N'EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #include_query_ids AS iqi
+              WHERE iqi.query_id = qsp.query_id
+          )';
 
-    SELECT
-        @sql += N'
+    IF @include_plans_seeded = 0
+    BEGIN
+        SELECT
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
     INSERT
         #include_plan_ids
     WITH
@@ -1501,13 +1612,111 @@ BEGIN
     SELECT DISTINCT
         qsp.plan_id
     FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
-    WHERE EXISTS
+    WHERE ' + @match + N'
+    OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        SELECT
+            @include_plans_seeded = 1;
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+    DELETE
+        ipi
+    FROM #include_plan_ids AS ipi
+    WHERE NOT EXISTS
           (
               SELECT
                   1/0
-              FROM #include_query_ids AS iqi
-              WHERE iqi.query_id = qsp.query_id
+              FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              WHERE qsp.plan_id = ipi.plan_id
+              AND   ' + @match + N'
           )
+    OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+    END;
+END;
+
+/*
+@include_query_hashes: match plans whose query has one of these query hashes.
+*/
+IF @include_query_hashes IS NOT NULL
+BEGIN
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+    INSERT
+        #include_query_hashes
+    WITH
+        (TABLOCK)
+    (
+        query_hash
+    )
+    SELECT
+        query_hash =
+            CONVERT(binary(8), ids.query_hash_s, 1)
+    FROM
+    (
+        SELECT
+            query_hash_s =
+                NULLIF
+                (
+                    LTRIM
+                    (
+                        RTRIM
+                        (
+                            x.x.value
+                            (
+                                ''(./text())[1]'',
+                                ''varchar(131)''
+                            )
+                        )
+                    ),
+                    ''''
+                )
+        FROM
+        (
+            SELECT
+                ids =
+                    CONVERT
+                    (
+                        xml,
+                        ''<x>'' +
+                        REPLACE
+                        (
+                            @include_query_hashes,
+                            '','',
+                            ''</x><x>''
+                        ) +
+                        ''</x>''
+                    )
+        ) AS ids
+        CROSS APPLY ids.ids.nodes(''x'') AS x (x)
+    ) AS ids
+    WHERE ids.query_hash_s IS NOT NULL
     OPTION(RECOMPILE);' + @nc10;
 
     IF @debug = 1
@@ -1517,7 +1726,389 @@ BEGIN
     END;
 
     EXECUTE sys.sp_executesql
-        @sql;
+        @sql,
+        N'@include_query_hashes nvarchar(4000)',
+        @include_query_hashes;
+
+    SELECT
+        @match = N'EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+              WHERE qsq.query_id = qsp.query_id
+              AND   EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #include_query_hashes AS iqh
+                        WHERE iqh.query_hash = qsq.query_hash
+                    )
+          )';
+
+    IF @include_plans_seeded = 0
+    BEGIN
+        SELECT
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+    INSERT
+        #include_plan_ids
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE ' + @match + N'
+    OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        SELECT
+            @include_plans_seeded = 1;
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+    DELETE
+        ipi
+    FROM #include_plan_ids AS ipi
+    WHERE NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              WHERE qsp.plan_id = ipi.plan_id
+              AND   ' + @match + N'
+          )
+    OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+    END;
+END;
+
+/*
+@include_plan_hashes: match plans with one of these query plan hashes.
+*/
+IF @include_plan_hashes IS NOT NULL
+BEGIN
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+    INSERT
+        #include_plan_hashes
+    WITH
+        (TABLOCK)
+    (
+        plan_hash
+    )
+    SELECT
+        plan_hash =
+            CONVERT(binary(8), ids.plan_hash_s, 1)
+    FROM
+    (
+        SELECT
+            plan_hash_s =
+                NULLIF
+                (
+                    LTRIM
+                    (
+                        RTRIM
+                        (
+                            x.x.value
+                            (
+                                ''(./text())[1]'',
+                                ''varchar(131)''
+                            )
+                        )
+                    ),
+                    ''''
+                )
+        FROM
+        (
+            SELECT
+                ids =
+                    CONVERT
+                    (
+                        xml,
+                        ''<x>'' +
+                        REPLACE
+                        (
+                            @include_plan_hashes,
+                            '','',
+                            ''</x><x>''
+                        ) +
+                        ''</x>''
+                    )
+        ) AS ids
+        CROSS APPLY ids.ids.nodes(''x'') AS x (x)
+    ) AS ids
+    WHERE ids.plan_hash_s IS NOT NULL
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+        N'@include_plan_hashes nvarchar(4000)',
+        @include_plan_hashes;
+
+    SELECT
+        @match = N'EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #include_plan_hashes AS iph
+              WHERE iph.plan_hash = qsp.query_plan_hash
+          )';
+
+    IF @include_plans_seeded = 0
+    BEGIN
+        SELECT
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+    INSERT
+        #include_plan_ids
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE ' + @match + N'
+    OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        SELECT
+            @include_plans_seeded = 1;
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+    DELETE
+        ipi
+    FROM #include_plan_ids AS ipi
+    WHERE NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              WHERE qsp.plan_id = ipi.plan_id
+              AND   ' + @match + N'
+          )
+    OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+    END;
+END;
+
+/*
+@include_sql_handles: match plans whose query text has one of these sql handles.
+*/
+IF @include_sql_handles IS NOT NULL
+BEGIN
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+    INSERT
+        #include_sql_handles
+    WITH
+        (TABLOCK)
+    (
+        sql_handle
+    )
+    SELECT
+        sql_handle =
+            CONVERT(varbinary(64), ids.sql_handle_s, 1)
+    FROM
+    (
+        SELECT
+            sql_handle_s =
+                NULLIF
+                (
+                    LTRIM
+                    (
+                        RTRIM
+                        (
+                            x.x.value
+                            (
+                                ''(./text())[1]'',
+                                ''varchar(131)''
+                            )
+                        )
+                    ),
+                    ''''
+                )
+        FROM
+        (
+            SELECT
+                ids =
+                    CONVERT
+                    (
+                        xml,
+                        ''<x>'' +
+                        REPLACE
+                        (
+                            @include_sql_handles,
+                            '','',
+                            ''</x><x>''
+                        ) +
+                        ''</x>''
+                    )
+        ) AS ids
+        CROSS APPLY ids.ids.nodes(''x'') AS x (x)
+    ) AS ids
+    WHERE ids.sql_handle_s IS NOT NULL
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+        N'@include_sql_handles nvarchar(4000)',
+        @include_sql_handles;
+
+    SELECT
+        @match = N'EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+              WHERE qsq.query_id = qsp.query_id
+              AND   EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                        WHERE qsqt.query_text_id = qsq.query_text_id
+                        AND   EXISTS
+                              (
+                                  SELECT
+                                      1/0
+                                  FROM #include_sql_handles AS ish
+                                  WHERE ish.sql_handle = qsqt.statement_sql_handle
+                              )
+                    )
+          )';
+
+    IF @include_plans_seeded = 0
+    BEGIN
+        SELECT
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+    INSERT
+        #include_plan_ids
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE ' + @match + N'
+    OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+
+        SELECT
+            @include_plans_seeded = 1;
+    END;
+    ELSE
+    BEGIN
+        SELECT
+            @sql = @isolation_level;
+
+        SELECT
+            @sql += N'
+    DELETE
+        ipi
+    FROM #include_plan_ids AS ipi
+    WHERE NOT EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+              WHERE qsp.plan_id = ipi.plan_id
+              AND   ' + @match + N'
+          )
+    OPTION(RECOMPILE);' + @nc10;
+
+        IF @debug = 1
+        BEGIN
+            PRINT LEN(@sql);
+            PRINT @sql;
+        END;
+
+        EXECUTE sys.sp_executesql
+            @sql;
+    END;
 END;
 
 IF @ignore_plan_ids IS NOT NULL
@@ -1659,6 +2250,345 @@ BEGIN
                   1/0
               FROM #ignore_query_ids AS iqi
               WHERE iqi.query_id = qsp.query_id
+          )
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql;
+END;
+
+/*
+Ignore filters union into #ignore_plan_ids. Unlike the include filters, exclusion
+is correct as a union: "ignore plan Z AND all plans of query X AND all plans with
+hash H" excludes plan Z, X's plans, and H's plans, which the single NOT EXISTS
+against #ignore_plan_ids handles directly.
+*/
+IF @ignore_query_hashes IS NOT NULL
+BEGIN
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+    INSERT
+        #ignore_query_hashes
+    WITH
+        (TABLOCK)
+    (
+        query_hash
+    )
+    SELECT
+        query_hash =
+            CONVERT(binary(8), ids.query_hash_s, 1)
+    FROM
+    (
+        SELECT
+            query_hash_s =
+                NULLIF
+                (
+                    LTRIM
+                    (
+                        RTRIM
+                        (
+                            x.x.value
+                            (
+                                ''(./text())[1]'',
+                                ''varchar(131)''
+                            )
+                        )
+                    ),
+                    ''''
+                )
+        FROM
+        (
+            SELECT
+                ids =
+                    CONVERT
+                    (
+                        xml,
+                        ''<x>'' +
+                        REPLACE
+                        (
+                            @ignore_query_hashes,
+                            '','',
+                            ''</x><x>''
+                        ) +
+                        ''</x>''
+                    )
+        ) AS ids
+        CROSS APPLY ids.ids.nodes(''x'') AS x (x)
+    ) AS ids
+    WHERE ids.query_hash_s IS NOT NULL
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+        N'@ignore_query_hashes nvarchar(4000)',
+        @ignore_query_hashes;
+
+    /*Convert query hashes to plan IDs for filtering*/
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+    INSERT
+        #ignore_plan_ids
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+              WHERE qsq.query_id = qsp.query_id
+              AND   EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #ignore_query_hashes AS iqh
+                        WHERE iqh.query_hash = qsq.query_hash
+                    )
+          )
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql;
+END;
+
+IF @ignore_plan_hashes IS NOT NULL
+BEGIN
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+    INSERT
+        #ignore_plan_hashes
+    WITH
+        (TABLOCK)
+    (
+        plan_hash
+    )
+    SELECT
+        plan_hash =
+            CONVERT(binary(8), ids.plan_hash_s, 1)
+    FROM
+    (
+        SELECT
+            plan_hash_s =
+                NULLIF
+                (
+                    LTRIM
+                    (
+                        RTRIM
+                        (
+                            x.x.value
+                            (
+                                ''(./text())[1]'',
+                                ''varchar(131)''
+                            )
+                        )
+                    ),
+                    ''''
+                )
+        FROM
+        (
+            SELECT
+                ids =
+                    CONVERT
+                    (
+                        xml,
+                        ''<x>'' +
+                        REPLACE
+                        (
+                            @ignore_plan_hashes,
+                            '','',
+                            ''</x><x>''
+                        ) +
+                        ''</x>''
+                    )
+        ) AS ids
+        CROSS APPLY ids.ids.nodes(''x'') AS x (x)
+    ) AS ids
+    WHERE ids.plan_hash_s IS NOT NULL
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+        N'@ignore_plan_hashes nvarchar(4000)',
+        @ignore_plan_hashes;
+
+    /*Convert plan hashes to plan IDs for filtering*/
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+    INSERT
+        #ignore_plan_ids
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM #ignore_plan_hashes AS iph
+              WHERE iph.plan_hash = qsp.query_plan_hash
+          )
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql;
+END;
+
+IF @ignore_sql_handles IS NOT NULL
+BEGIN
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+    INSERT
+        #ignore_sql_handles
+    WITH
+        (TABLOCK)
+    (
+        sql_handle
+    )
+    SELECT
+        sql_handle =
+            CONVERT(varbinary(64), ids.sql_handle_s, 1)
+    FROM
+    (
+        SELECT
+            sql_handle_s =
+                NULLIF
+                (
+                    LTRIM
+                    (
+                        RTRIM
+                        (
+                            x.x.value
+                            (
+                                ''(./text())[1]'',
+                                ''varchar(131)''
+                            )
+                        )
+                    ),
+                    ''''
+                )
+        FROM
+        (
+            SELECT
+                ids =
+                    CONVERT
+                    (
+                        xml,
+                        ''<x>'' +
+                        REPLACE
+                        (
+                            @ignore_sql_handles,
+                            '','',
+                            ''</x><x>''
+                        ) +
+                        ''</x>''
+                    )
+        ) AS ids
+        CROSS APPLY ids.ids.nodes(''x'') AS x (x)
+    ) AS ids
+    WHERE ids.sql_handle_s IS NOT NULL
+    OPTION(RECOMPILE);' + @nc10;
+
+    IF @debug = 1
+    BEGIN
+        PRINT LEN(@sql);
+        PRINT @sql;
+    END;
+
+    EXECUTE sys.sp_executesql
+        @sql,
+        N'@ignore_sql_handles nvarchar(4000)',
+        @ignore_sql_handles;
+
+    /*Convert sql handles to plan IDs for filtering*/
+    SELECT
+        @sql = @isolation_level;
+
+    SELECT
+        @sql += N'
+    INSERT
+        #ignore_plan_ids
+    WITH
+        (TABLOCK)
+    (
+        plan_id
+    )
+    SELECT DISTINCT
+        qsp.plan_id
+    FROM ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
+    WHERE EXISTS
+          (
+              SELECT
+                  1/0
+              FROM ' + @database_name_quoted + N'.sys.query_store_query AS qsq
+              WHERE qsq.query_id = qsp.query_id
+              AND   EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM ' + @database_name_quoted + N'.sys.query_store_query_text AS qsqt
+                        WHERE qsqt.query_text_id = qsq.query_text_id
+                        AND   EXISTS
+                              (
+                                  SELECT
+                                      1/0
+                                  FROM #ignore_sql_handles AS ish
+                                  WHERE ish.sql_handle = qsqt.statement_sql_handle
+                              )
+                    )
           )
     OPTION(RECOMPILE);' + @nc10;
 
@@ -2257,6 +3187,9 @@ IF
 (
     @include_plan_ids IS NOT NULL
  OR @include_query_ids IS NOT NULL
+ OR @include_query_hashes IS NOT NULL
+ OR @include_plan_hashes IS NOT NULL
+ OR @include_sql_handles IS NOT NULL
 )
 BEGIN
     SELECT
@@ -2275,6 +3208,9 @@ IF
 (
     @ignore_plan_ids IS NOT NULL
  OR @ignore_query_ids IS NOT NULL
+ OR @ignore_query_hashes IS NOT NULL
+ OR @ignore_plan_hashes IS NOT NULL
+ OR @ignore_sql_handles IS NOT NULL
 )
 BEGIN
     SELECT
@@ -2526,6 +3462,9 @@ IF
 (
     @include_plan_ids IS NOT NULL
  OR @include_query_ids IS NOT NULL
+ OR @include_query_hashes IS NOT NULL
+ OR @include_plan_hashes IS NOT NULL
+ OR @include_sql_handles IS NOT NULL
 )
 BEGIN
     SELECT
@@ -2544,6 +3483,9 @@ IF
 (
     @ignore_plan_ids IS NOT NULL
  OR @ignore_query_ids IS NOT NULL
+ OR @ignore_query_hashes IS NOT NULL
+ OR @ignore_plan_hashes IS NOT NULL
+ OR @ignore_sql_handles IS NOT NULL
 )
 BEGIN
     SELECT
