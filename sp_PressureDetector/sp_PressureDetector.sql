@@ -2516,6 +2516,87 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     PATH('tempdb_query_activity'),
                                     TYPE
 
+                            ),
+                        /*
+                        Version store cleanup is gated instance-wide by the
+                        oldest active transaction touching row-versioned data
+                        (RCSI or snapshot isolation), in ANY database. A single
+                        such transaction freezes version store cleanup for the
+                        whole instance, which is what inflates version_store_gb
+                        above. These are the transaction(s) holding it open,
+                        oldest first.
+                        */
+                        version_store_blockers =
+                            (
+                                SELECT
+                                    asdt.session_id,
+                                    database_context =
+                                        DB_NAME(ses.database_id),
+                                    ses.login_name,
+                                    ses.host_name,
+                                    ses.program_name,
+                                    session_status =
+                                        ses.status,
+                                    open_transaction_count =
+                                        ses.open_transaction_count,
+                                    isolation_level =
+                                        CASE
+                                            WHEN ses.transaction_isolation_level = 0
+                                            THEN N'Unspecified'
+                                            WHEN ses.transaction_isolation_level = 1
+                                            THEN N'Read Uncommitted'
+                                            WHEN ses.transaction_isolation_level = 2
+                                            THEN N'Read Committed'
+                                            WHEN ses.transaction_isolation_level = 3
+                                            THEN N'Repeatable Read'
+                                            WHEN ses.transaction_isolation_level = 4
+                                            THEN N'Serializable'
+                                            WHEN ses.transaction_isolation_level = 5
+                                            THEN N'Snapshot'
+                                            ELSE N'Unknown'
+                                        END,
+                                    is_snapshot_transaction =
+                                        asdt.is_snapshot,
+                                    transaction_age =
+                                        CONCAT
+                                        (
+                                            asdt.elapsed_time_seconds / 86400, N'd ',
+                                            (asdt.elapsed_time_seconds % 86400) / 3600, N'h ',
+                                            (asdt.elapsed_time_seconds % 3600) / 60, N'm ',
+                                            asdt.elapsed_time_seconds % 60, N's'
+                                        ),
+                                    elapsed_seconds =
+                                        asdt.elapsed_time_seconds,
+                                    seconds_since_last_request =
+                                        DATEDIFF
+                                        (
+                                            SECOND,
+                                            ses.last_request_end_time,
+                                            SYSDATETIME()
+                                        ),
+                                    transaction_begin_time =
+                                        dtat.transaction_begin_time,
+                                    max_version_chain_traversed =
+                                        asdt.max_version_chain_traversed,
+                                    transaction_sequence_num =
+                                        asdt.transaction_sequence_num,
+                                    transaction_name =
+                                        dtat.name,
+                                    last_query =
+                                        dest.text
+                                FROM sys.dm_tran_active_snapshot_database_transactions AS asdt
+                                JOIN sys.dm_exec_sessions AS ses
+                                  ON ses.session_id = asdt.session_id
+                                LEFT JOIN sys.dm_tran_active_transactions AS dtat
+                                  ON dtat.transaction_id = asdt.transaction_id
+                                LEFT JOIN sys.dm_exec_connections AS dconn
+                                  ON dconn.session_id = asdt.session_id
+                                OUTER APPLY sys.dm_exec_sql_text(dconn.most_recent_sql_handle) AS dest
+                                ORDER BY
+                                    asdt.elapsed_time_seconds DESC
+                                FOR XML
+                                    PATH('version_store_blockers'),
+                                    TYPE
                             )
                         FOR XML
                             PATH('tempdb'),
