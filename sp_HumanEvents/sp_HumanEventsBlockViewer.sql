@@ -4098,6 +4098,63 @@ BEGIN
 
     IF @debug = 1
     BEGIN
+        RAISERROR('Inserting #block_findings, check_id 10', 0, 1) WITH NOWAIT;
+    END;
+
+    /*
+    Non-lock and self-referential blocked process reports.
+
+    The blocked process monitor fires for any task that waits longer than
+    the configured blocked process threshold, not only lock waits. So a long
+    memory grant (RESOURCE_SEMAPHORE), parallelism (CXPACKET/exchange), or
+    other non-lock wait surfaces as a blocked process report, frequently with
+    the blocked and blocking process being the same session (a session
+    "blocking itself"). These carry a real signal but are not lock contention,
+    so they would otherwise be miscounted alongside genuine lock blocking in
+    the findings above. resource_owner_type is LOCK only for real lock waits;
+    every other value (GENERIC, EXCHANGE, THREAD, etc.) is a non-lock wait.
+    */
+    INSERT
+        #block_findings
+    (
+        check_id,
+        database_name,
+        object_name,
+        finding_group,
+        finding,
+        sort_order
+    )
+    SELECT
+        check_id =
+            10,
+        database_name =
+            ISNULL(b.database_name, N'unknown'),
+        object_name =
+            N'-',
+        finding_group =
+            N'Non-Lock and Self Blocking',
+        finding =
+            N'The database ' +
+            ISNULL(b.database_name, N'unknown') +
+            N' has had ' +
+            CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.event_time)) +
+            N' blocked process report(s) for non-lock waits such as memory grants, parallelism, or other non-lock resources. ' +
+            N'The blocked process monitor fires for any task that waits longer than the configured blocked process threshold, not only lock waits, ' +
+            N'so these frequently show a session blocking itself and do not indicate lock contention.',
+        sort_order =
+            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.event_time) DESC)
+    FROM #blocks AS b
+    WHERE b.resource_owner_type <> N'LOCK'
+    AND   (b.database_name = @database_name
+           OR @database_name IS NULL)
+    AND   (b.contentious_object = @object_name
+           OR @object_name IS NULL)
+    GROUP BY
+        b.database_name
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
         RAISERROR('Inserting #block_findings, check_id 1000', 0, 1) WITH NOWAIT;
     END;
 
