@@ -3020,7 +3020,12 @@ BEGIN
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
     FROM #blocks AS b
-    WHERE (b.database_name = @database_name
+    /* Genuine lock contention only. Non-lock and self-referential reports are
+       counted separately in check_id 10; IS NULL keeps unknown-type rows here
+       so nothing is silently dropped. */
+    WHERE (b.resource_owner_type = N'LOCK'
+           OR b.resource_owner_type IS NULL)
+    AND   (b.database_name = @database_name
            OR @database_name IS NULL)
     AND   (b.contentious_object = @object_name
            OR @object_name IS NULL)
@@ -3067,7 +3072,12 @@ BEGIN
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
     FROM #blocks AS b
-    WHERE (b.database_name = @database_name
+    /* Genuine lock contention only. Non-lock and self-referential reports are
+       counted separately in check_id 10; IS NULL keeps unknown-type rows here
+       so nothing is silently dropped. */
+    WHERE (b.resource_owner_type = N'LOCK'
+           OR b.resource_owner_type IS NULL)
+    AND   (b.database_name = @database_name
            OR @database_name IS NULL)
     AND   (b.contentious_object = @object_name
            OR @object_name IS NULL)
