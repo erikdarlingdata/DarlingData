@@ -328,6 +328,20 @@ DECLARE
             THEN 1
             ELSE 0
         END,
+    @product_version integer =
+        CONVERT
+        (
+            integer,
+            PARSENAME
+            (
+                CONVERT(sysname, SERVERPROPERTY('ProductVersion')),
+                4
+            )
+        ),
+    @resolve_sql nvarchar(max),
+    @resolve_database_id integer,
+    @key_resolution_dbs CURSOR,
+    @page_resolution_dbs CURSOR,
     @azure_msg nchar(1),
     @session_id integer,
     @target_session_id integer,
@@ -2277,6 +2291,16 @@ SELECT
     kheb.database_name,
     kheb.object_id,
     contentious_object = CONVERT(nvarchar(4000), NULL),
+    /* wait_resource-decoded contended object, populated after this SELECT. Typed NULLs here
+       so the columns exist at compile time (ALTER + same-batch reference would not compile).
+       lock_type holds the resource-type token, wide enough for the longest (ALLOCATION_UNIT). */
+    lock_type = CONVERT(varchar(32), NULL),
+    frag = CONVERT(nvarchar(1024), NULL),
+    resource_database_id = CONVERT(integer, NULL),
+    resource_hobt_id = CONVERT(bigint, NULL),
+    resource_file_id = CONVERT(integer, NULL),
+    resource_page_id = CONVERT(bigint, NULL),
+    resource_object_id = CONVERT(integer, NULL),
     kheb.activity,
     blocking_tree =
         REPLICATE(' > ', kheb.blocking_level) +
@@ -2467,36 +2491,245 @@ BEGIN
     RAISERROR('Updating #blocks contentious_object column', 0, 1) WITH NOWAIT;
 END;
 
+/*
+Resolve the contended object from wait_resource. The blocked_process_report event's
+object_id is unreliable for KEY/PAGE/RID lock waits (it reports 0 or a non-object id),
+so decode the lock resource string instead:
+    KEY:    db:hobt (hash)    -> sys.partitions(hobt_id) -> object_id (per contended db)
+    OBJECT: db:objid[:part]   -> object_id directly
+    PAGE:   db:file:page      -> sys.dm_db_page_info -> object_id (2019+, VIEW DATABASE STATE)
+    RID:    db:file:page:slot -> as PAGE
+Anything else (DATABASE, XACT, METADATA, APPLICATION, HOBT, ...) has no user object and
+keeps the 'Unresolved' sentinel the findings/output logic depends on. Compound resources
+('XACT: ... KEY: ...') resolve off the embedded KEY/PAGE token. The resolved value stays
+plain schema.object so the @object_name filter still matches.
+*/
+
+/* Classify by the resolvable token (prefers an embedded KEY/PAGE in a compound resource). */
 UPDATE
     b
 SET
-    b.contentious_object =
-    ISNULL
-    (
-        co.contentious_object,
-        N'Unresolved: ' +
-        N'database: ' +
-        ISNULL(b.database_name, N'unknown') +
-        N' object_id: ' +
-        ISNULL(CONVERT(nvarchar(20), b.object_id), N'unknown')
-    )
+    b.lock_type =
+        CASE
+            WHEN b.wait_resource LIKE N'%KEY: %'    THEN 'KEY'
+            WHEN b.wait_resource LIKE N'%OBJECT: %' THEN 'OBJECT'
+            WHEN b.wait_resource LIKE N'%RID: %'    THEN 'RID'
+            WHEN b.wait_resource LIKE N'%PAGE: %'   THEN 'PAGE'
+            ELSE LEFT(UPPER(LEFT(b.wait_resource, CHARINDEX(N':', b.wait_resource + N':') - 1)), 32)
+        END
+FROM #blocks AS b
+WHERE b.wait_resource IS NOT NULL
+AND   b.wait_resource <> N''
+OPTION(RECOMPILE);
+
+/* Fragment after the '<type>: ' prefix (resolvable types only). */
+UPDATE
+    b
+SET
+    b.frag =
+        SUBSTRING
+        (
+            b.wait_resource,
+            CHARINDEX(b.lock_type + N': ', b.wait_resource) + LEN(b.lock_type) + 2,
+            1024
+        )
+FROM #blocks AS b
+WHERE b.lock_type IN ('KEY', 'OBJECT', 'RID', 'PAGE')
+OPTION(RECOMPILE);
+
+/* Database id = first token of the fragment. */
+UPDATE
+    b
+SET
+    b.resource_database_id =
+        TRY_CONVERT(integer, LEFT(b.frag, CHARINDEX(N':', b.frag + N':') - 1))
+FROM #blocks AS b
+WHERE b.frag IS NOT NULL
+OPTION(RECOMPILE);
+
+/* KEY: hobt id is token 2, up to the space before the row hash. */
+UPDATE
+    b
+SET
+    b.resource_hobt_id =
+        TRY_CONVERT(bigint, LTRIM(LEFT(r.rest, CHARINDEX(N' ', r.rest + N' ') - 1)))
 FROM #blocks AS b
 CROSS APPLY
 (
     SELECT
-        contentious_object =
-            OBJECT_SCHEMA_NAME
-            (
-                b.object_id,
-                b.database_id
-            ) +
-            N'.' +
-            OBJECT_NAME
-            (
-                b.object_id,
-                b.database_id
-            )
-) AS co
+        rest = SUBSTRING(b.frag, CHARINDEX(N':', b.frag) + 1, 1024)
+) AS r
+WHERE b.lock_type = 'KEY'
+OPTION(RECOMPILE);
+
+/* OBJECT: object id is token 2. */
+UPDATE
+    b
+SET
+    b.resource_object_id =
+        TRY_CONVERT(integer, LEFT(r.rest, CHARINDEX(N':', r.rest + N':') - 1))
+FROM #blocks AS b
+CROSS APPLY
+(
+    SELECT
+        rest = SUBSTRING(b.frag, CHARINDEX(N':', b.frag) + 1, 1024)
+) AS r
+WHERE b.lock_type = 'OBJECT'
+OPTION(RECOMPILE);
+
+/* PAGE / RID: file id is token 2, page id is token 3. */
+UPDATE
+    b
+SET
+    b.resource_file_id =
+        TRY_CONVERT(integer, LEFT(r.rest, CHARINDEX(N':', r.rest + N':') - 1)),
+    b.resource_page_id =
+        TRY_CONVERT(bigint, LEFT(p.rest2, CHARINDEX(N':', p.rest2 + N':') - 1))
+FROM #blocks AS b
+CROSS APPLY
+(
+    SELECT
+        rest = SUBSTRING(b.frag, CHARINDEX(N':', b.frag) + 1, 1024)
+) AS r
+CROSS APPLY
+(
+    SELECT
+        rest2 = SUBSTRING(r.rest, CHARINDEX(N':', r.rest) + 1, 1024)
+) AS p
+WHERE b.lock_type IN ('PAGE', 'RID')
+OPTION(RECOMPILE);
+
+/* KEY -> object_id via sys.partitions, per contended database (no cross-db form of the view). */
+SET @key_resolution_dbs =
+    CURSOR
+    LOCAL FAST_FORWARD
+    FOR
+    SELECT DISTINCT
+        b.resource_database_id
+    FROM #blocks AS b
+    WHERE b.lock_type = 'KEY'
+    AND   b.resource_database_id IS NOT NULL
+    AND   b.resource_hobt_id IS NOT NULL;
+
+OPEN @key_resolution_dbs;
+FETCH NEXT FROM @key_resolution_dbs INTO @resolve_database_id;
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF DB_NAME(@resolve_database_id) IS NOT NULL
+    AND DATABASEPROPERTYEX(DB_NAME(@resolve_database_id), 'Status') = N'ONLINE'
+    BEGIN
+        SET @resolve_sql = N'
+        BEGIN TRY
+            UPDATE
+                b
+            SET
+                b.resource_object_id = p.object_id
+            FROM #blocks AS b
+            JOIN ' + QUOTENAME(DB_NAME(@resolve_database_id)) + N'.sys.partitions AS p
+              ON p.hobt_id = b.resource_hobt_id
+            WHERE b.lock_type = ''KEY''
+            AND   b.resource_database_id = @resolve_database_id
+            OPTION(RECOMPILE);
+        END TRY
+        BEGIN CATCH
+            /* no metadata access to the database -> leave for labeling */
+        END CATCH;';
+
+        EXECUTE sys.sp_executesql
+            @resolve_sql,
+          N'@resolve_database_id integer',
+            @resolve_database_id;
+    END;
+    FETCH NEXT FROM @key_resolution_dbs INTO @resolve_database_id;
+END;
+
+/* PAGE / RID -> object_id via sys.dm_db_page_info (2019+ or Azure SQL DB; needs VIEW DATABASE
+   STATE, so TRY/CATCH per database). @product_version reads 12 on Azure SQL DB regardless of
+   engine, so @azure carries the gate there. */
+IF @product_version >= 15
+OR @azure = 1
+BEGIN
+    SET @page_resolution_dbs =
+        CURSOR
+        LOCAL FAST_FORWARD
+        FOR
+        SELECT DISTINCT
+            b.resource_database_id
+        FROM #blocks AS b
+        WHERE b.lock_type IN ('PAGE', 'RID')
+        AND   b.resource_database_id IS NOT NULL
+        AND   b.resource_page_id IS NOT NULL;
+
+    OPEN @page_resolution_dbs;
+    FETCH NEXT FROM @page_resolution_dbs INTO @resolve_database_id;
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        IF DB_NAME(@resolve_database_id) IS NOT NULL
+        AND DATABASEPROPERTYEX(DB_NAME(@resolve_database_id), 'Status') = N'ONLINE'
+        BEGIN
+            SET @resolve_sql = N'
+            BEGIN TRY
+                UPDATE
+                    b
+                SET
+                    b.resource_object_id = pi.object_id
+                FROM #blocks AS b
+                CROSS APPLY sys.dm_db_page_info(b.resource_database_id, b.resource_file_id, b.resource_page_id, ''LIMITED'') AS pi
+                WHERE b.lock_type IN (''PAGE'', ''RID'')
+                AND   b.resource_database_id = @resolve_database_id
+                OPTION(RECOMPILE);
+            END TRY
+            BEGIN CATCH
+                /* no VIEW DATABASE STATE / page reallocated -> leave for labeling */
+            END CATCH;';
+
+            EXECUTE sys.sp_executesql
+                @resolve_sql,
+              N'@resolve_database_id integer',
+                @resolve_database_id;
+        END;
+        FETCH NEXT FROM @page_resolution_dbs INTO @resolve_database_id;
+    END;
+END;
+
+/* Format (plain schema.object so the @object_name filter still matches) + label. Order:
+   wait_resource-decoded object, then the event object_id (the previous behavior) as a fallback,
+   then the 'Unresolved' sentinel the findings/output logic keys on. */
+UPDATE
+    b
+SET
+    b.contentious_object =
+        COALESCE
+        (
+            CASE
+                WHEN b.resource_object_id > 0
+                AND  OBJECT_NAME(b.resource_object_id, b.resource_database_id) IS NOT NULL
+                THEN CONCAT
+                     (
+                         OBJECT_SCHEMA_NAME(b.resource_object_id, b.resource_database_id),
+                         N'.',
+                         OBJECT_NAME(b.resource_object_id, b.resource_database_id)
+                     )
+            END,
+            CASE
+                WHEN b.object_id > 0
+                AND  OBJECT_NAME(b.object_id, b.database_id) IS NOT NULL
+                THEN CONCAT
+                     (
+                         OBJECT_SCHEMA_NAME(b.object_id, b.database_id),
+                         N'.',
+                         OBJECT_NAME(b.object_id, b.database_id)
+                     )
+            END,
+            N'Unresolved: ' +
+            CASE
+                WHEN b.lock_type IS NULL
+                THEN N''
+                ELSE LOWER(b.lock_type) + N' lock, '
+            END +
+            N'database: ' + ISNULL(b.database_name, N'unknown')
+        )
+FROM #blocks AS b
 OPTION(RECOMPILE);
 
 /*Either return results or log to a table*/
