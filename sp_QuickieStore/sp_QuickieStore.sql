@@ -127,7 +127,7 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.8',
+    @version = '6.7',
     @version_date = '20260701';
 
 /*
