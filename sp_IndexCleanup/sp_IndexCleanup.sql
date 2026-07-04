@@ -75,7 +75,7 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.8',
+        @version = '2.7',
         @version_date = '20260701';
 
     IF
