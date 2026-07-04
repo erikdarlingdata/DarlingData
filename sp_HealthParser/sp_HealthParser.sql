@@ -73,7 +73,7 @@ BEGIN
 
     SELECT
         @version = '3.6',
-        @version_date = '20260501';
+        @version_date = '20260701';
 
     IF @help = 1
     BEGIN
