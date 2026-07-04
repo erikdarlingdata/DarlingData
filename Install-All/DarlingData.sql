@@ -1,4 +1,4 @@
--- Compile Date: 07/04/2026 17:36:35 UTC
+-- Compile Date: 07/04/2026 17:49:56 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -6364,7 +6364,7 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '7.8',
+    @version = '7.7',
     @version_date = '20260701';
 
 IF @help = 1
@@ -16048,7 +16048,7 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.8',
+        @version = '2.7',
         @version_date = '20260701';
 
     IF
@@ -42017,7 +42017,7 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.8',
+    @version = '6.7',
     @version_date = '20260701';
 
 /*
