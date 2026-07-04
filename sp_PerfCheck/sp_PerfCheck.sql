@@ -1,3 +1,5 @@
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
@@ -65,7 +67,7 @@ BEGIN
         */
     SELECT
         @version = N'2.6',
-        @version_date = N'20260501';
+        @version_date = N'20260701';
 
     /*
     Help section, for help.
