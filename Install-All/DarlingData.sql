@@ -1,4 +1,4 @@
--- Compile Date: 07/04/2026 17:16:59 UTC
+-- Compile Date: 07/04/2026 17:36:35 UTC
 SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
@@ -73,7 +73,7 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '3.6',
+        @version = '3.7',
         @version_date = '20260701';
 
     IF @help = 1
@@ -6364,7 +6364,7 @@ SET XACT_ABORT ON;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '7.7',
+    @version = '7.8',
     @version_date = '20260701';
 
 IF @help = 1
@@ -11447,7 +11447,7 @@ SET XACT_ABORT OFF;
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
 SELECT
-    @version = '5.6',
+    @version = '5.7',
     @version_date = '20260701';
 
 IF @help = 1
@@ -16048,7 +16048,7 @@ BEGIN
 SET NOCOUNT ON;
 BEGIN TRY
     SELECT
-        @version = '2.7',
+        @version = '2.8',
         @version_date = '20260701';
 
     IF
@@ -23571,7 +23571,7 @@ SET DATEFORMAT MDY;
 
 BEGIN
     SELECT
-        @version = '3.6',
+        @version = '3.7',
         @version_date = '20260701';
 
     IF @help = 1
@@ -24342,7 +24342,7 @@ BEGIN
         Set version information
         */
     SELECT
-        @version = N'2.6',
+        @version = N'2.7',
         @version_date = N'20260701';
 
     /*
@@ -29480,7 +29480,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SET LANGUAGE us_english;
 
 SELECT
-    @version = '6.6',
+    @version = '6.7',
     @version_date = '20260701';
 
 
@@ -34222,7 +34222,7 @@ BEGIN TRY
 
 /*Version*/
 SELECT
-    @version = '1.6',
+    @version = '1.7',
     @version_date = '20260701';
 
 /*Help*/
@@ -39417,7 +39417,7 @@ BEGIN
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 
     SELECT
-        @version = '1.6',
+        @version = '1.7',
         @version_date = '20260701';
 
     /*
@@ -42017,7 +42017,7 @@ BEGIN TRY
 These are for your outputs.
 */
 SELECT
-    @version = '6.7',
+    @version = '6.8',
     @version_date = '20260701';
 
 /*
