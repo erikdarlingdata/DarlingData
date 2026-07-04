@@ -1,3 +1,5 @@
+SET ANSI_NULLS ON;
+SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
 SET CONCAT_NULL_YIELDS_NULL ON;
@@ -74,7 +76,7 @@ SET NOCOUNT ON;
 BEGIN TRY
     SELECT
         @version = '2.7',
-        @version_date = '20260601';
+        @version_date = '20260701';
 
     IF
     /* Check SQL Server 2012+ for FORMAT and CONCAT functions */

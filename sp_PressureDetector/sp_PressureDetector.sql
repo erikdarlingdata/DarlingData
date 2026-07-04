@@ -79,7 +79,7 @@ SET LANGUAGE us_english;
 
 SELECT
     @version = '6.6',
-    @version_date = '20260501';
+    @version_date = '20260701';
 
 
 IF @help = 1
