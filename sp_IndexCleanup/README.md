@@ -33,6 +33,7 @@ The procedure requires SQL Server 2012 (11.0) or later due to the use of FORMAT 
 | @get_all_databases | bit | 0 | When set to 1, analyzes all eligible databases on the server |
 | @include_databases | nvarchar(max) | NULL | Comma-separated list of databases to include (used with @get_all_databases = 1) |
 | @exclude_databases | nvarchar(max) | NULL | Comma-separated list of databases to exclude (used with @get_all_databases = 1) |
+| @sort_order | varchar(20) | default | Controls final result ordering: default groups by script type within each database, object groups all rows for the same index together (Key Subset disables sort under their replacement index) |
 | @help | bit | 0 | Displays help information |
 | @debug | bit | 0 | Prints debug information during execution |
 | @version | varchar(20) | NULL | OUTPUT parameter that returns the version number of the procedure |
