@@ -39,9 +39,9 @@ Typical result set will show you:
 | @skip_waits                  | bit            | skip the wait stats section                                         | 0 or 1                                                                | 0               |
 | @pending_task_threshold      | integer        | minimum number of pending tasks to display                          | a valid integer                                                       | 10              |
 | @use_ring_buffer             | bit            | use ring_buffer target instead of file target for faster collection | 0 or 1                                                                | 0               |
-| @log_to_table                | bit            | enable logging to permanent tables                                  | 0 or 1                                                                | 0               |
-| @log_database_name           | sysname        | database to store logging tables                                    | valid database name                                                   | NULL            |
-| @log_schema_name             | sysname        | schema to store logging tables                                      | valid schema name                                                     | NULL            |
+| @log_to_table                | bit            | enable logging to permanent tables instead of returning results     | 0 or 1                                                                | 0               |
+| @log_database_name           | sysname        | database to store logging tables                                    | valid database name                                                   | NULL (current database) |
+| @log_schema_name             | sysname        | schema to store logging tables                                      | valid schema name                                                     | NULL (dbo)      |
 | @log_table_name_prefix       | sysname        | prefix for all logging tables                                       | valid table name prefix                                               | 'HealthParser'  |
 | @log_retention_days          | integer        | Number of days to keep logs, 0 = keep indefinitely                  | integer                                                               | 30              |
 | @debug                       | bit            | prints dynamic sql, selects from temp tables                        | 0 or 1                                                                | 0               |
