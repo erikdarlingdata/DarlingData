@@ -50,7 +50,7 @@ ALTER PROCEDURE
     dbo.sp_HumanEvents
 (
     @event_type sysname = N'query',
-    @query_duration_ms integer = 500,
+    @query_duration_ms decimal(18,3) = 500,
     @query_sort_order nvarchar(20) = N'cpu',
     @skip_plans bit = 0,
     @blocking_duration_ms integer = 500,
@@ -138,7 +138,7 @@ BEGIN
         description =
             CASE ap.name
                 WHEN N'@event_type' THEN N'used to pick which session you want to run'
-                WHEN N'@query_duration_ms' THEN N'(>=) used to set a minimum query duration to collect data for'
+                WHEN N'@query_duration_ms' THEN N'(>=) used to set a minimum query duration (milliseconds) to collect data for; 0 removes the floor and collects every duration'
                 WHEN N'@query_sort_order' THEN 'when you use the "query" event, lets you choose which metrics to sort results by'
                 WHEN N'@skip_plans' THEN 'when you use the "query" event, lets you skip collecting actual execution plans'
                 WHEN N'@blocking_duration_ms' THEN N'(>=) used to set a minimum blocking duration to collect data for'
@@ -172,7 +172,7 @@ BEGIN
         valid_inputs =
            CASE ap.name
                WHEN N'@event_type' THEN N'"blocking", "query", "waits", "recompiles", "compiles" and certain variations on those words'
-               WHEN N'@query_duration_ms' THEN N'an integer'
+               WHEN N'@query_duration_ms' THEN N'a decimal; fractional milliseconds allowed (e.g. 0.5 = 500 microseconds), 0 captures all durations'
                WHEN N'@query_sort_order' THEN '"cpu", "reads", "writes", "duration", "memory", or "spills" (any of which you can prefix with "avg" to sort by averages, e.g. "avg cpu"), or "event_time"'
                WHEN N'@skip_plans' THEN '1 or 0'
                WHEN N'@blocking_duration_ms' THEN N'an integer'
@@ -1294,7 +1294,7 @@ IF @query_duration_ms > 0
 BEGIN
     IF LOWER(@event_type) NOT LIKE N'%comp%' /* compile and recompile durations are tiny */
     BEGIN
-        SET @query_duration_filter += N'     AND duration >= ' + CONVERT(nvarchar(20), (@query_duration_ms * 1000)) + @nc10;
+        SET @query_duration_filter += N'     AND duration >= ' + CONVERT(nvarchar(20), CONVERT(bigint, @query_duration_ms * 1000)) + @nc10;
     END;
 END;
 
