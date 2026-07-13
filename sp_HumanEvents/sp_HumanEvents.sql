@@ -517,6 +517,15 @@ DECLARE
     @max_id integer,
     @event_type_check sysname,
     @object_name_check nvarchar(1000) = N'',
+    /*
+    The parameterization table's fully-quoted name. Built separately
+    because the _parameterization suffix has to land INSIDE the leaf
+    QUOTENAME — appending it after @object_name_check produced
+    [db].[schema].[table]_parameterization, which is not a valid name,
+    and broke every compiles-to-table run on SQL Server 2017+ with a
+    syntax error.
+    */
+    @param_table_check nvarchar(1000) = N'',
     @table_sql nvarchar(max) = N'',
     @view_tracker bit,
     @spe nvarchar(max) = N'.sys.sp_executesql ',
@@ -1304,7 +1313,15 @@ END;
 
 IF @blocking_duration_ms > 0
 BEGIN
-    SET @blocking_duration_ms_filter += N'     AND duration >= ' + CONVERT(nvarchar(20), (@blocking_duration_ms * 1000)) + @nc10;
+    /*
+    The bigint CONVERT must happen BEFORE the multiplication:
+    @blocking_duration_ms is an integer, and int * 1000 is evaluated in
+    int arithmetic, so anything over 2,147,483 ms (~36 minutes)
+    overflowed and killed the procedure with an arithmetic error. The
+    query duration filter above never had this problem — its parameter
+    is decimal(18,3), so its multiplication is decimal arithmetic.
+    */
+    SET @blocking_duration_ms_filter += N'     AND duration >= ' + CONVERT(nvarchar(20), CONVERT(bigint, @blocking_duration_ms) * 1000) + @nc10;
 END;
 
 IF @wait_duration_ms > 0
@@ -1726,12 +1743,35 @@ SET @session_sql +=
 /* This creates the event session */
 SET @session_sql += @session_with;
 
-IF @debug = 1 BEGIN RAISERROR(@session_sql, 0, 1) WITH NOWAIT; END;
-EXECUTE (@session_sql);
+/*
+A pure collector run — output database and schema set, @keep_alive = 0,
+not cleaning up — GOTOs straight to the harvesting loop, which only
+reads keeper_HumanEvents_ sessions. The throwaway GUID session this
+would create is never read by that loop and never dropped by this
+invocation (the teardown sits above the GOTO label), so it just ran
+uselessly until a later invocation's startup cleanup reaped it.
+@keep_alive = 1 with an output database still creates its session here:
+that is the single-call create-and-collect path.
+*/
+IF
+(
+       @output_database_name <> N''
+   AND @output_schema_name <> N''
+   AND @cleanup = 0
+   AND @keep_alive = 0
+)
+BEGIN
+    IF @debug = 1 BEGIN RAISERROR(N'Collector run: skipping throwaway session creation', 0, 1) WITH NOWAIT; END;
+END;
+ELSE
+BEGIN
+    IF @debug = 1 BEGIN RAISERROR(@session_sql, 0, 1) WITH NOWAIT; END;
+    EXECUTE (@session_sql);
 
-/* This starts the event session */
-IF @debug = 1 BEGIN RAISERROR(@start_sql, 0, 1) WITH NOWAIT; END;
-EXECUTE (@start_sql);
+    /* This starts the event session */
+    IF @debug = 1 BEGIN RAISERROR(@start_sql, 0, 1) WITH NOWAIT; END;
+    EXECUTE (@start_sql);
+END;
 
 /* bail out here if we want to keep the session and not log to tables*/
 IF  @keep_alive = 1
@@ -2013,6 +2053,13 @@ BEGIN
            q.query_plan_hash_signed,
            q.query_hash_signed,
            plan_handle = q.plan_handle,
+           /*
+           Only this branch holds real execution events; the showplan
+           branch below contributes memory numbers for the same hash
+           group. The executions count has to see the difference, or
+           collecting plans doubles it.
+           */
+           is_execution = 1,
            /*totals*/
            total_cpu_ms = ISNULL(q.cpu_ms, 0.),
            total_logical_reads = ISNULL(q.logical_reads, 0.),
@@ -2042,6 +2089,7 @@ BEGIN
            q.query_plan_hash_signed,
            q.query_hash_signed,
            q.plan_handle,
+           is_execution = 0,
            /*totals*/
            total_cpu_ms = NULL,
            total_logical_reads = NULL,
@@ -2087,7 +2135,24 @@ BEGIN
         avg_used_memory_mb = AVG(qa.avg_used_memory_mb),
         avg_granted_memory_mb = AVG(qa.avg_granted_memory_mb),
         avg_rows = AVG(qa.avg_rows),
-        executions = COUNT_BIG(qa.plan_handle)
+        /*
+        Counts only rows from the execution branch, exactly as
+        COUNT_BIG(plan_handle) did before plan collection added the
+        showplan branch — which doubled this number whenever
+        @skip_plans = 0, because both branches carry a plan_handle.
+        Written as SUM over 1s and 0s so no NULL ever reaches the
+        aggregate.
+        */
+        executions =
+            SUM
+            (
+                CASE
+                    WHEN qa.is_execution = 1
+                    AND  qa.plan_handle IS NOT NULL
+                    THEN 1
+                    ELSE 0
+                END
+            )
     INTO #totals
     FROM query_agg AS qa
     GROUP BY
@@ -2834,7 +2899,8 @@ BEGIN
         total_waits = COUNT_BIG(*),
         sum_duration_ms = SUM(wa.duration_ms),
         sum_signal_duration_ms = SUM(wa.signal_duration_ms),
-        avg_ms_per_wait = SUM(wa.duration_ms) / COUNT_BIG(*)
+        /* * 1.0 forces decimal division; bigint / bigint truncates */
+        avg_ms_per_wait = CONVERT(decimal(38,2), SUM(wa.duration_ms) * 1.0 / COUNT_BIG(*))
     FROM #waits_agg AS wa
     GROUP BY
         wa.wait_type
@@ -2850,7 +2916,8 @@ BEGIN
         total_waits = COUNT_BIG(*),
         sum_duration_ms = SUM(wa.duration_ms),
         sum_signal_duration_ms = SUM(wa.signal_duration_ms),
-        avg_ms_per_wait = SUM(wa.duration_ms) / COUNT_BIG(*)
+        /* * 1.0 forces decimal division; bigint / bigint truncates */
+        avg_ms_per_wait = CONVERT(decimal(38,2), SUM(wa.duration_ms) * 1.0 / COUNT_BIG(*))
     FROM #waits_agg AS wa
     GROUP BY
         wa.database_name,
@@ -2877,8 +2944,9 @@ BEGIN
                 SUM(wa.duration_ms),
             sum_signal_duration_ms =
                 SUM(wa.signal_duration_ms),
+            /* * 1.0 forces decimal division; bigint / bigint truncates */
             avg_ms_per_wait =
-                SUM(wa.duration_ms) / COUNT_BIG(*)
+                CONVERT(decimal(38,2), SUM(wa.duration_ms) * 1.0 / COUNT_BIG(*))
         FROM #waits_agg AS wa
         GROUP BY
             wa.database_name,
@@ -3655,6 +3723,57 @@ BEGIN
         RAISERROR(N'and dropping session', 0, 1) WITH NOWAIT;
     END;
     EXECUTE (@drop_sql);
+
+    /*
+    DROP EVENT SESSION removes only metadata — the event_file target's
+    .xel files stay on disk, and because every throwaway run uses a
+    fresh GUID in the filename, max_rollover_files never prunes across
+    runs: one orphaned file per run, forever. The file has served its
+    whole purpose by now (it was read into the temp tables above), so
+    delete it where we can. sys.xp_delete_files is checked by existence
+    rather than version on purpose — it is present on 2017 and 2019 as
+    well as 2022+ (verified live), just not documented until 2022 — and
+    it wants one absolute path pattern. Where it does not exist, say
+    where the file was left rather than leaving it silently.
+    */
+    IF  @azure = 0
+    AND LOWER(@target_output) = N'event_file'
+    BEGIN
+        DECLARE
+            @xel_pattern nvarchar(4000) =
+                LEFT
+                (
+                    CONVERT(nvarchar(4000), SERVERPROPERTY('ErrorLogFileName')),
+                    LEN(CONVERT(nvarchar(4000), SERVERPROPERTY('ErrorLogFileName'))) -
+                    CHARINDEX(N'\', REVERSE(CONVERT(nvarchar(4000), SERVERPROPERTY('ErrorLogFileName'))))
+                ) +
+                N'\' +
+                @session_name +
+                N'*.xel';
+
+        IF EXISTS
+        (
+            SELECT
+                1/0
+            FROM sys.all_objects AS ao
+            WHERE ao.name = N'xp_delete_files'
+        )
+        BEGIN
+            BEGIN TRY
+                EXECUTE sys.xp_delete_files
+                    @xel_pattern;
+
+                IF @debug = 1 BEGIN RAISERROR(N'Deleted session files: %s', 0, 1, @xel_pattern) WITH NOWAIT; END;
+            END TRY
+            BEGIN CATCH
+                RAISERROR(N'Could not delete session files matching %s; clean them up manually.', 10, 1, @xel_pattern) WITH NOWAIT;
+            END CATCH;
+        END;
+        ELSE
+        BEGIN
+            RAISERROR(N'This SQL Server version cannot delete files from T-SQL; session files matching %s were left behind.', 10, 1, @xel_pattern) WITH NOWAIT;
+        END;
+    END;
 END;
 RETURN;
 
@@ -3852,16 +3971,35 @@ BEGIN
         SET
             hew.event_type_short =
                 CASE
-                    WHEN hew.event_type LIKE N'%block%'
+                    /*
+                    Every pattern here is anchored to the event-type
+                    segment of the session name —
+                    keeper_HumanEvents_<event_type>[_<custom_name>] —
+                    never floated over the whole string. A floating
+                    match lets @custom_name contaminate the routing: a
+                    waits session named with @custom_name = 'deadlock'
+                    contains 'lock', and a floating %lock% classified
+                    it as Blocking while the table-creation logic
+                    (correctly) built it a waits table, so the Blocking
+                    view was pointed at a waits table and the CREATE
+                    VIEW error killed the entire harvest.
+
+                    Anchored, the aliases still all land: block, blocks,
+                    blocking, lock, locks, and locking are covered by
+                    the two blocking prefixes, and the compiles branch
+                    needs no recompile exclusion because 'recomp...'
+                    cannot start with 'comp'.
+                    */
+                    WHEN hew.event_type LIKE N'keeper[_]HumanEvents[_]block%'
+                    OR   hew.event_type LIKE N'keeper[_]HumanEvents[_]lock%'
                     THEN N'[_]Blocking'
-                    WHEN ( hew.event_type LIKE N'%comp%'
-                             AND hew.event_type NOT LIKE N'%re%' )
+                    WHEN hew.event_type LIKE N'keeper[_]HumanEvents[_]comp%'
                     THEN N'[_]Compiles'
-                    WHEN hew.event_type LIKE N'%quer%'
+                    WHEN hew.event_type LIKE N'keeper[_]HumanEvents[_]quer%'
                     THEN N'[_]Queries'
-                    WHEN hew.event_type LIKE N'%recomp%'
+                    WHEN hew.event_type LIKE N'keeper[_]HumanEvents[_]recomp%'
                     THEN N'[_]Recompiles'
-                    WHEN hew.event_type LIKE N'%wait%'
+                    WHEN hew.event_type LIKE N'keeper[_]HumanEvents[_]wait%'
                     THEN N'[_]Waits'
                     ELSE N'?'
                 END
@@ -3902,7 +4040,19 @@ BEGIN
                     N'.' +
                     QUOTENAME(hew.output_schema) +
                     N'.' +
-                    QUOTENAME(hew.output_table)
+                    QUOTENAME(hew.output_table),
+                /*
+                REPLACE on the RAW table name before quoting, so the
+                companion _parameterization worker row and the base
+                compiles row both resolve to the same, valid
+                [db].[schema].[base_parameterization] name.
+                */
+                @param_table_check =
+                    QUOTENAME(hew.output_database) +
+                    N'.' +
+                    QUOTENAME(hew.output_schema) +
+                    N'.' +
+                    QUOTENAME(REPLACE(hew.output_table, N'_parameterization', N'') + N'_parameterization')
             FROM #human_events_worker AS hew
             WHERE hew.id = @min_id
             AND   hew.is_table_created = 0;
@@ -3913,12 +4063,13 @@ BEGIN
                 SELECT
                     @table_sql =
                         CASE
-                            WHEN @event_type_check LIKE N'%wait%'
+                            WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]wait%'
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +
                                  N'  database_name sysname NULL, wait_type nvarchar(60) NULL, duration_ms bigint NULL, signal_duration_ms bigint NULL, ' + @nc10 +
                                  N'  wait_resource sysname NULL, query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, plan_handle varbinary(64) NULL );'
-                            WHEN @event_type_check LIKE N'%lock%'
+                            WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]block%'
+                            OR   @event_type_check LIKE N'keeper[_]HumanEvents[_]lock%'
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, ' + @nc10 +
                                  N'  activity nvarchar(20) NULL, database_name sysname NULL, database_id integer NULL, object_id bigint NULL, contentious_object AS OBJECT_NAME(object_id, database_id), ' + @nc10 +
@@ -3926,7 +4077,7 @@ BEGIN
                                  N'  wait_time bigint NULL, transaction_name sysname NULL, last_transaction_started nvarchar(30) NULL, wait_resource nvarchar(100) NULL, ' + @nc10 +
                                  N'  lock_mode nvarchar(10) NULL, status nvarchar(10) NULL, priority integer NULL, transaction_count integer NULL, ' + @nc10 +
                                  N'  client_app sysname NULL, host_name sysname NULL, login_name sysname NULL, isolation_level nvarchar(30) NULL, sql_handle varbinary(64) NULL, blocked_process_report XML NULL );'
-                            WHEN @event_type_check LIKE N'%quer%'
+                            WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]quer%'
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL, ' + @nc10 +
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, sql_text nvarchar(max) NULL, statement nvarchar(max) NULL, ' + @nc10 +
@@ -3935,12 +4086,12 @@ BEGIN
                                  N'  spills_mb decimal(18,2) NULL, row_count decimal(18,2) NULL, estimated_rows decimal(18,2) NULL, dop integer NULL,  ' + @nc10 +
                                  N'  serial_ideal_memory_mb decimal(18,2) NULL, requested_memory_mb decimal(18,2) NULL, used_memory_mb decimal(18,2) NULL, ideal_memory_mb decimal(18,2) NULL, ' + @nc10 +
                                  N'  granted_memory_mb decimal(18,2) NULL, query_plan_hash_signed binary(8) NULL, query_hash_signed binary(8) NULL, plan_handle varbinary(64) NULL );'
-                            WHEN @event_type_check LIKE N'%recomp%'
+                            WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]recomp%'
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, recompile_cause sysname NULL, statement_text nvarchar(max) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
                                  + CASE WHEN @compile_events = 1 THEN N', compile_cpu_ms bigint NULL, compile_duration_ms bigint NULL );' ELSE N' );' END
-                            WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%'
+                            WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]comp%'
                             THEN N'CREATE TABLE ' + @object_name_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL, event_type sysname NULL,  ' + @nc10 +
                                  N'  database_name sysname NULL, object_name nvarchar(512) NULL, statement_text nvarchar(max) NULL, statement_text_checksum AS CHECKSUM(database_name + statement_text) PERSISTED '
@@ -3948,7 +4099,7 @@ BEGIN
                                  + CASE WHEN @parameterization_events = 1
                                         THEN
                                  @nc10 +
-                                 N'CREATE TABLE ' + @object_name_check + N'_parameterization' + @nc10 +
+                                 N'CREATE TABLE ' + @param_table_check + @nc10 +
                                  N'( id bigint PRIMARY KEY IDENTITY, server_name sysname NULL, event_time datetime2 NULL,  event_type sysname NULL,  ' + @nc10 +
                                  N'  database_name sysname NULL, sql_text nvarchar(max) NULL, compile_cpu_time_ms bigint NULL, compile_duration_ms bigint NULL, query_param_type integer NULL,  ' + @nc10 +
                                  N'  is_cached bit NULL, is_recompiled bit NULL, compile_code sysname NULL, has_literals bit NULL, is_parameterizable bit NULL, parameterized_values_count bigint NULL, ' + @nc10 +
@@ -3959,9 +4110,21 @@ BEGIN
                       END;
             END;
 
-            IF @debug = 1 BEGIN RAISERROR(@table_sql, 0, 1) WITH NOWAIT; END;
-            EXECUTE sys.sp_executesql
-                @table_sql;
+            /*
+            Guarded because @table_sql is only assigned inside the
+            IF OBJECT_ID(...) IS NULL block above. When a later worker
+            row's table already exists, the variable still holds the
+            PREVIOUS iteration's CREATE TABLE, and re-executing it threw
+            "There is already an object named..." and killed the loop.
+            */
+            IF @table_sql <> N''
+            BEGIN
+                IF @debug = 1 BEGIN RAISERROR(@table_sql, 0, 1) WITH NOWAIT; END;
+                EXECUTE sys.sp_executesql
+                    @table_sql;
+
+                SET @table_sql = N'';
+            END;
 
             IF @debug = 1 BEGIN RAISERROR(N'Updating #human_events_worker to set is_table_created for %s', 0, 1, @event_type_check) WITH NOWAIT; END;
             UPDATE
@@ -4265,6 +4428,13 @@ END;
                     QUOTENAME(hew.output_schema) +
                     N'.' +
                     QUOTENAME(hew.output_table),
+                /* Same construction as the create-table loop above. */
+                @param_table_check =
+                    QUOTENAME(hew.output_database) +
+                    N'.' +
+                    QUOTENAME(hew.output_schema) +
+                    N'.' +
+                    QUOTENAME(REPLACE(hew.output_table, N'_parameterization', N'') + N'_parameterization'),
                 @date_filter =
                     DATEADD
                     (
@@ -4289,7 +4459,7 @@ END;
                                  (
                                      nvarchar(max),
                         CASE
-                        WHEN @event_type_check LIKE N'%wait%' /*Wait stats!*/
+                        WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]wait%' /*Wait stats!*/
                         THEN CONVERT
                              (
                                  nvarchar(max),
@@ -4345,7 +4515,8 @@ WHERE (c.exist(''(data[@name="duration"]/value/text()[. > 0])'') = 1
     OR @gimme_danger = 1)
 AND   c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1;')
                              )
-                        WHEN @event_type_check LIKE N'%lock%' /*Blocking!*/
+                        WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]block%'
+                        OR   @event_type_check LIKE N'keeper[_]HumanEvents[_]lock%' /*Blocking!*/
                                                               /*To cut down on nonsense, I'm only inserting new blocking scenarios*/
                                                               /*Any existing blocking scenarios will update the blocking duration*/
                         THEN CONVERT
@@ -4525,7 +4696,7 @@ JOIN
     AND   x.hostname = x2.host_name
     AND   x.loginname = x2.login_name;
 '                                ))
-                       WHEN @event_type_check LIKE N'%quer%' /*Queries!*/
+                       WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]quer%' /*Queries!*/
                        THEN
                             CONVERT
                             (
@@ -4588,7 +4759,7 @@ OUTER APPLY xet.human_events_xml.nodes(''//event'') AS oa(c)
 WHERE oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 AND   oa.c.exist(''(action[@name="query_hash_signed"]/value[. != 0])'') = 1; '
                             ))
-                       WHEN @event_type_check LIKE N'%recomp%' /*Recompiles!*/
+                       WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]recomp%' /*Recompiles!*/
                        THEN
                             CONVERT
                             (
@@ -4635,7 +4806,7 @@ AND oa.c.exist(''@timestamp[. > sql:variable("@date_filter")]'') = 1
 ORDER BY
     event_time;'
                             )))
-                       WHEN @event_type_check LIKE N'%comp%' AND @event_type_check NOT LIKE N'%re%' /*Compiles!*/
+                       WHEN @event_type_check LIKE N'keeper[_]HumanEvents[_]comp%' /*Compiles!*/
                        THEN
                             CONVERT
                             (
@@ -4689,7 +4860,7 @@ ORDER BY
                                 CONVERT
                                 (
                                     nvarchar(max),
-                            N'INSERT INTO ' + REPLACE(@object_name_check, N'_parameterization', N'') + N'_parameterization' + N' WITH(TABLOCK) ' + @nc10 +
+                            N'INSERT INTO ' + @param_table_check + N' WITH(TABLOCK) ' + @nc10 +
                             N'( server_name, event_time,  event_type, database_name, sql_text, compile_cpu_time_ms, ' + @nc10 +
                             N'  compile_duration_ms, query_param_type, is_cached, is_recompiled, compile_code, has_literals, ' + @nc10 +
                             N'  is_parameterizable, parameterized_values_count, query_plan_hash, query_hash, plan_handle, statement_sql_hash ) ' + @nc10 +
@@ -5031,23 +5202,47 @@ BEGIN
     /*Clean up tables*/
     IF @debug = 1 BEGIN RAISERROR(N'CLEAN UP PARTY TONIGHT', 0, 1) WITH NOWAIT; END;
 
+    /*
+    Three deliberate things here, all learned the hard way:
+
+    The name pattern is anchored and underscore-escaped. The old
+    unanchored %HumanEvents% happily dropped any user table whose name
+    merely contained the string, in every schema of the output database.
+    The tool's own tables are all named keeper_HumanEvents_..., so that
+    is all this may match.
+
+    The schema is resolved by joining the OUTPUT database's sys.schemas,
+    not with SCHEMA_NAME(), which runs in the calling database's context
+    — for a cross-database schema_id it returns NULL, and one NULL turns
+    the whole += accumulation NULL, silently cleaning up nothing.
+
+    And it only touches @output_schema_name, where the tool created its
+    objects in the first place.
+    */
+    SET @drop_holder = N'';
+
     SELECT
         @cleanup_tables += N'
             SELECT
                 @i_cleanup_tables +=
                     N''DROP TABLE '' +
-                    QUOTENAME(SCHEMA_NAME(s.schema_id)) +
+                    QUOTENAME(sch.name) +
                     N''.'' +
                     QUOTENAME(s.name) +
                     ''; '' +
                     NCHAR(10)
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.tables AS s
-            WHERE s.name LIKE ''' + '%HumanEvents%' + N''';';
+            JOIN ' + QUOTENAME(@output_database_name) + N'.sys.schemas AS sch
+              ON sch.schema_id = s.schema_id
+            WHERE s.name LIKE N''keeper[_]HumanEvents[_]%''
+            AND   sch.name = @sch;';
 
     EXECUTE sys.sp_executesql
         @cleanup_tables,
-      N'@i_cleanup_tables nvarchar(max) OUTPUT',
-        @i_cleanup_tables = @drop_holder OUTPUT;
+      N'@i_cleanup_tables nvarchar(max) OUTPUT,
+        @sch sysname',
+        @i_cleanup_tables = @drop_holder OUTPUT,
+        @sch = @output_schema_name;
 
     IF @debug = 1
     BEGIN
@@ -5062,23 +5257,33 @@ BEGIN
 
     SET @drop_holder = N'';
 
+    /*
+    Same anchoring, schema join, and schema scope as the table cleanup.
+    The tool's views are named HumanEvents_... (no keeper prefix), so
+    the anchor differs from the table pattern on purpose.
+    */
     SELECT
         @cleanup_views += N'
             SELECT
                 @i_cleanup_views +=
                     N''DROP VIEW '' +
-                    QUOTENAME(SCHEMA_NAME(v.schema_id)) +
+                    QUOTENAME(sch.name) +
                     N''.'' +
                     QUOTENAME(v.name) +
                     ''; '' +
                     NCHAR(10)
             FROM ' + QUOTENAME(@output_database_name) + N'.sys.views AS v
-            WHERE v.name LIKE ''' + '%HumanEvents%' + N''';';
+            JOIN ' + QUOTENAME(@output_database_name) + N'.sys.schemas AS sch
+              ON sch.schema_id = v.schema_id
+            WHERE v.name LIKE N''HumanEvents[_]%''
+            AND   sch.name = @sch;';
 
     EXECUTE sys.sp_executesql
         @cleanup_views,
-      N'@i_cleanup_views nvarchar(max) OUTPUT',
-        @i_cleanup_views = @drop_holder OUTPUT;
+      N'@i_cleanup_views nvarchar(max) OUTPUT,
+        @sch sysname',
+        @i_cleanup_views = @drop_holder OUTPUT,
+        @sch = @output_schema_name;
 
     IF @debug = 1
     BEGIN
