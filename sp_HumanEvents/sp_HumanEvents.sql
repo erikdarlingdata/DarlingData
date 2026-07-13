@@ -53,6 +53,7 @@ ALTER PROCEDURE
     @query_duration_ms decimal(18,3) = 500,
     @query_sort_order nvarchar(20) = N'cpu',
     @skip_plans bit = 0,
+    @keep_prepare_rpc bit = 0, /*adds a result set of prepared-statement RPC calls (sp_prepare/sp_prepexec/sp_execute) the query_hash filter hides; helps diagnose driver batching like pyodbc fast_executemany*/
     @blocking_duration_ms integer = 500,
     @wait_type nvarchar(4000) = N'ALL',
     @wait_duration_ms integer = 10,
@@ -141,6 +142,7 @@ BEGIN
                 WHEN N'@query_duration_ms' THEN N'(>=) used to set a minimum query duration (milliseconds) to collect data for; 0 removes the floor and collects every duration'
                 WHEN N'@query_sort_order' THEN 'when you use the "query" event, lets you choose which metrics to sort results by'
                 WHEN N'@skip_plans' THEN 'when you use the "query" event, lets you skip collecting actual execution plans'
+                WHEN N'@keep_prepare_rpc' THEN N'when you use the "query" event, adds a result set of the prepared-statement RPC calls (sp_prepare, sp_prepexec, sp_execute, sp_unprepare) that are normally filtered out; the only reliable way to tell whether a client driver is preparing and reusing statements, e.g. pyodbc''s fast_executemany'
                 WHEN N'@blocking_duration_ms' THEN N'(>=) used to set a minimum blocking duration to collect data for'
                 WHEN N'@wait_type' THEN N'(inclusive) filter to only specific wait types'
                 WHEN N'@wait_duration_ms' THEN N'(>=) used to set a minimum time per wait to collect data for'
@@ -175,6 +177,7 @@ BEGIN
                WHEN N'@query_duration_ms' THEN N'a decimal; fractional milliseconds allowed (e.g. 0.5 = 500 microseconds), 0 captures all durations'
                WHEN N'@query_sort_order' THEN '"cpu", "reads", "writes", "duration", "memory", or "spills" (any of which you can prefix with "avg" to sort by averages, e.g. "avg cpu"), or "event_time"'
                WHEN N'@skip_plans' THEN '1 or 0'
+               WHEN N'@keep_prepare_rpc' THEN N'1 or 0'
                WHEN N'@blocking_duration_ms' THEN N'an integer'
                WHEN N'@wait_type' THEN N'a single wait type, or a CSV list of wait types'
                WHEN N'@wait_duration_ms' THEN N'an integer'
@@ -209,6 +212,7 @@ BEGIN
                WHEN N'@query_duration_ms' THEN N'500 (ms)'
                WHEN N'@query_sort_order' THEN N'"cpu"'
                WHEN N'@skip_plans' THEN '0'
+               WHEN N'@keep_prepare_rpc' THEN N'0'
                WHEN N'@blocking_duration_ms' THEN N'500 (ms)'
                WHEN N'@wait_type' THEN N'"all", which uses a list of "interesting" waits'
                WHEN N'@wait_duration_ms' THEN N'10 (ms)'
@@ -2250,6 +2254,105 @@ BEGIN
               ELSE q.total_cpu_ms
          END DESC
      OPTION(RECOMPILE);
+
+    /*
+    Optional: surface the prepared-statement RPC plumbing that the query_hash_signed
+    filter above intentionally hides. sp_prepare, sp_prepexec, sp_execute, and sp_unprepare
+    all arrive with a zero query hash, so they never appear in the query results above.
+    Seeing them is the only reliable way to tell whether a client driver is preparing and
+    reusing statements. For example, pyodbc's fast_executemany switches an insert workload
+    from sp_prepexec-per-row (prepare and execute every time) to a single sp_prepare followed
+    by sp_execute-per-row (handle reuse); without this result set both look identical.
+    */
+    IF @keep_prepare_rpc = 1
+    BEGIN
+        WITH
+            prepare_rpc AS
+        (
+            SELECT
+                event_time =
+                    DATEADD
+                    (
+                        MINUTE,
+                        DATEDIFF
+                        (
+                            MINUTE,
+                            GETUTCDATE(),
+                            SYSDATETIME()
+                        ),
+                        oa.c.value('@timestamp', 'datetime2')
+                    ),
+                event_type = oa.c.value('@name', 'sysname'),
+                database_name = oa.c.value('(action[@name="database_name"]/value/text())[1]', 'sysname'),
+                object_name = oa.c.value('(data[@name="object_name"]/value/text())[1]', 'sysname'),
+                statement = oa.c.value('(data[@name="statement"]/value/text())[1]', 'nvarchar(max)'),
+                sql_text = oa.c.value('(action[@name="sql_text"]/value/text())[1]', 'nvarchar(max)'),
+                duration_ms = oa.c.value('(data[@name="duration"]/value/text())[1]', 'bigint') / 1000.,
+                cpu_ms = oa.c.value('(data[@name="cpu_time"]/value/text())[1]', 'bigint') / 1000.,
+                logical_reads = (oa.c.value('(data[@name="logical_reads"]/value/text())[1]', 'bigint') * 8) / 1024.,
+                physical_reads = (oa.c.value('(data[@name="physical_reads"]/value/text())[1]', 'bigint') * 8) / 1024.,
+                writes_mb = (oa.c.value('(data[@name="writes"]/value/text())[1]', 'bigint') * 8) / 1024.,
+                row_count = oa.c.value('(data[@name="row_count"]/value/text())[1]', 'bigint')
+            FROM #human_events_xml AS xet
+            OUTER APPLY xet.human_events_xml.nodes('//event') AS oa(c)
+            WHERE oa.c.value('@name', 'sysname') = N'rpc_completed'
+        )
+        SELECT
+            pr.event_time,
+            pr.event_type,
+            pr.database_name,
+            pr.object_name,
+            statement =
+                (
+                    SELECT
+                        [processing-instruction(statement)] =
+                        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            pr.statement COLLATE Latin1_General_BIN2,
+                        NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+                        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+                        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                ),
+            sql_text =
+                (
+                    SELECT
+                        [processing-instruction(sql_text)] =
+                        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                        REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(
+                            pr.sql_text COLLATE Latin1_General_BIN2,
+                        NCHAR(31),N'?'),NCHAR(30),N'?'),NCHAR(29),N'?'),NCHAR(28),N'?'),NCHAR(27),N'?'),NCHAR(26),N'?'),NCHAR(25),N'?'),NCHAR(24),N'?'),NCHAR(23),N'?'),NCHAR(22),N'?'),
+                        NCHAR(21),N'?'),NCHAR(20),N'?'),NCHAR(19),N'?'),NCHAR(18),N'?'),NCHAR(17),N'?'),NCHAR(16),N'?'),NCHAR(15),N'?'),NCHAR(14),N'?'),NCHAR(12),N'?'),
+                        NCHAR(11),N'?'),NCHAR(8),N'?'),NCHAR(7),N'?'),NCHAR(6),N'?'),NCHAR(5),N'?'),NCHAR(4),N'?'),NCHAR(3),N'?'),NCHAR(2),N'?'),NCHAR(1),N'?'),NCHAR(0),N'?')
+                    FOR XML
+                        PATH(N''),
+                        TYPE
+                ),
+            pr.duration_ms,
+            pr.cpu_ms,
+            pr.logical_reads,
+            pr.physical_reads,
+            pr.writes_mb,
+            pr.row_count
+        FROM prepare_rpc AS pr
+        WHERE
+        (
+             pr.statement LIKE N'%sp[_]prepare%'
+          OR pr.statement LIKE N'%sp[_]prepexec%'
+          OR pr.statement LIKE N'%sp[_]execute%'
+          OR pr.statement LIKE N'%sp[_]unprepare%'
+          OR pr.statement LIKE N'%sp[_]cursor%'
+          OR pr.statement LIKE N'%sp[_]describe[_]undeclared[_]parameters%'
+        )
+        AND pr.statement NOT LIKE N'%sp[_]executesql%'
+        ORDER BY
+            pr.event_time
+        OPTION(RECOMPILE);
+    END;
 END;
 
 

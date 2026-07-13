@@ -50,6 +50,7 @@ Misuse of this procedure can harm performance. Be very careful about introducing
 | @query_duration_ms     | decimal        | (>=) used to set a minimum query duration (milliseconds) to collect data for; 0 removes the floor and collects every duration | a decimal; fractional milliseconds allowed (e.g. 0.5 = 500 microseconds), 0 captures all durations | 500 (ms)                                        |
 | @query_sort_order      | nvarchar       | when you use the "query" event, lets you choose which metrics to sort results by             | "cpu", "reads", "writes", "duration", "memory", or "spills" (any of which you can prefix with "avg" to sort by averages, e.g. "avg cpu"), or "event_time" | "cpu"                                           |
 | @skip_plans            | bit            | when you use the "query" event, lets you skip collecting actual execution plans              |1 or 0                                                                                                               | 0                                               |
+| @keep_prepare_rpc      | bit            | when you use the "query" event, adds a result set of the prepared-statement RPC calls (sp_prepare, sp_prepexec, sp_execute, sp_unprepare) that are normally filtered out; shows whether a driver is preparing and reusing statements, e.g. pyodbc's fast_executemany | 1 or 0 | 0                                               |
 | @blocking_duration_ms  | integer        | (>=) used to set a minimum blocking duration to collect data for                             | an integer                                                                                                          | 500 (ms)                                        |
 | @wait_type             | nvarchar       | (inclusive) filter to only specific wait types                                               | a single wait type, or a CSV list of wait types                                                                     | "all", which uses a list of "interesting" waits |
 | @wait_duration_ms      | integer        | (>=) used to set a minimum time per wait to collect data for                                 | an integer                                                                                                          | 10 (ms)                                         |
@@ -96,6 +97,14 @@ EXECUTE dbo.sp_HumanEvents
 EXECUTE dbo.sp_HumanEvents
     @event_type = 'waits',
     @database_name = 'YourDatabase';
+
+-- Diagnose whether a client driver is preparing and reusing statements
+-- (e.g. pyodbc's fast_executemany). Adds a result set of the raw
+-- sp_prepare/sp_prepexec/sp_execute RPC calls that are normally hidden.
+EXECUTE dbo.sp_HumanEvents
+    @event_type = 'query',
+    @keep_prepare_rpc = 1,
+    @query_duration_ms = 0;
 
 -- Set up a permanent session for logging
 EXECUTE dbo.sp_HumanEvents
