@@ -213,6 +213,18 @@ BEGIN
        RETURN;
     END;
 
+    /*
+    Say so, rather than pretending. @language_id is validated and then
+    never used: every search string below is an English literal matched
+    against the error log's raw text, so pointing this at a non-English
+    server finds nothing and says nothing about why. Warn instead of
+    quietly handing back an empty result set that reads like good news.
+    */
+    IF @language_id <> 1033
+    BEGIN
+        RAISERROR(N'The search strings are English literals, so @language_id = %i will not translate them. Expect few or no results on a non-English server; use @custom_message to search in your own language.', 10, 1, @language_id) WITH NOWAIT;
+    END;
+
     /*Fix days back a little bit*/
     IF @days_back = 0
     BEGIN
@@ -226,12 +238,30 @@ BEGIN
             @days_back *= -1;
     END;
 
-    IF  @start_date IS NOT NULL
-    AND @end_date   IS NOT NULL
-    AND @days_back  IS NOT NULL
+    /*
+    A NULL @days_back with no date range is fatal, and silently so: it
+    makes DATEADD return NULL, which makes every generated command NULL,
+    and sys.sp_executesql runs a NULL batch as a no-op. The procedure
+    reads nothing, finds nothing, and reports a clean bill of health on a
+    server that may be on fire. Put it back on the documented default.
+    */
+    IF  @days_back IS NULL
+    AND @start_date IS NULL
+    AND @end_date IS NULL
     BEGIN
         SELECT
-            @days_back = NULL;
+            @days_back = -7;
+    END;
+
+    /*
+    Clamp before DATEADD sees it. An absurd @days_back (a caller reaching
+    for "everything") overflows the datetime range and kills the run with
+    an arithmetic error instead of just searching every log we have.
+    */
+    IF @days_back < -36500
+    BEGIN
+        SELECT
+            @days_back = -36500;
     END;
 
     /*Fix custom message only if NULL*/
@@ -272,6 +302,28 @@ BEGIN
              @start_date = DATEADD(DAY, -7, @end_date);
     END;
 
+    /*
+    Retire @days_back once we are in date-range mode, and do it HERE —
+    after the two fixups above, not before them.
+
+    The check used to require BOTH dates to be present, but a caller who
+    supplies only one gets the other filled in just above. Running the
+    check first meant @days_back survived at its -7 default, and the log
+    file pruner below then deleted every archive older than a week — so
+    searching for an incident from three months ago quietly threw away
+    the only file that contained it and returned nothing.
+    */
+    IF  @days_back IS NOT NULL
+    AND
+    (
+         @start_date IS NOT NULL
+      OR @end_date IS NOT NULL
+    )
+    BEGIN
+        SELECT
+            @days_back = NULL;
+    END;
+
     /*Debuggo*/
     IF @debug = 1
     BEGIN
@@ -309,7 +361,14 @@ BEGIN
     (
         archive integer
           PRIMARY KEY CLUSTERED,
-        log_date date,
+        /*
+        datetime, not date. sp_enumerrorlogs reports each archive's last
+        write with a time component; truncating it to midnight made an
+        archive that ended this afternoon compare as if it had ended at
+        00:00, so the window bound below could rule out a file that
+        actually reaches into the window.
+        */
+        log_date datetime,
         log_size bigint
     );
 
@@ -334,7 +393,14 @@ BEGIN
                 N'EXECUTE master.dbo.xp_readerrorlog [@@@], 1, '
                 + search_string
                 + N', '
-                + N'" "'
+                /*
+                NULL, not " ". xp_readerrorlog ANDs its second search
+                string with the first, so passing a literal space quietly
+                required every matched line to contain one - a filter
+                nobody asked for, applied to every search including
+                @custom_message.
+                */
+                + N'NULL'
                 + N', '
                 + ISNULL(start_date, days_back)
                 + N', '
@@ -372,31 +438,85 @@ BEGIN
         DELETE
             e WITH(TABLOCKX)
         FROM #enum AS e
-        WHERE e.log_date < DATEADD(DAY, @days_back, SYSDATETIME())
+        /*
+        The one-minute grace is not slop. sp_enumerrorlogs reports each
+        archive's last write truncated to the MINUTE, and the file's real
+        final entry lands somewhere in the following 59 seconds - so the
+        reported stamp always understates when the file actually ends.
+        Comparing it exactly prunes archives that really do reach into
+        the window. (HEAD hid this by typing the column as `date`, which
+        floored everything to midnight and bought a full day of slack by
+        accident.) Since enum <= true_end < enum + 60s, one minute is
+        exactly enough.
+        */
+        WHERE DATEADD(MINUTE, 1, e.log_date) < DATEADD(DAY, @days_back, SYSDATETIME())
         AND   e.archive > 0
         OPTION(RECOMPILE);
     END;
 
-    /*filter out log files we won't use, if @start_date and @end_date are set*/
+    /*
+    Filter out log files we won't use, if @start_date and @end_date are set.
+
+    Only the START of the window can rule a log file out, and that is the
+    whole subtlety here. sp_enumerrorlogs reports each archive's LAST
+    write, not its first, so a file stamped "March 10" holds entries
+    reaching back to whenever the previous archive ended. The old
+    predicate also deleted anything stamped AFTER @end_date — which threw
+    away precisely the file that straddles the end of the window, i.e.
+    the one most likely to contain the incident being investigated.
+
+    A file whose last write predates the window truly cannot contain it,
+    so that is the only safe exclusion. Keeping the newer files costs a
+    little extra reading and nothing else: xp_readerrorlog filters by
+    date again on the way out, so no out-of-window rows survive.
+    */
     IF  @start_date IS NOT NULL
     AND @end_date IS NOT NULL
     BEGIN
         DELETE
             e WITH(TABLOCKX)
         FROM #enum AS e
-        WHERE (e.log_date < CONVERT(date, @start_date)
-        OR     e.log_date > CONVERT(date, @end_date))
-        AND   e.archive > 0
+        /*
+        A file's last write is where it ENDS; where it STARTS is the last
+        write of the archive before it (the one rotated out to make room).
+        Archives count upward into the past, so that is the next-higher
+        number. The oldest file has no predecessor and reaches back
+        indefinitely, which a NULL here handles by never matching.
+        */
+        OUTER APPLY
+        (
+            SELECT TOP (1)
+                starts_at = e2.log_date
+            FROM #enum AS e2
+            WHERE e2.archive > e.archive
+            ORDER BY
+                e2.archive
+        ) AS prior
+        WHERE e.archive > 0
+        AND
+        (
+              /*
+              Ended before we started looking. The +1 minute is the same
+              truncation grace as above: sp_enumerrorlogs rounds each
+              archive's last write DOWN to the minute.
+              */
+              DATEADD(MINUTE, 1, e.log_date) < @start_date
+              /*Or did not begin until after we stopped*/
+           OR prior.starts_at > @end_date
+        )
         OPTION(RECOMPILE);
     END;
 
-    /*maybe you only want the first one anyway*/
+    /*
+    Maybe you only want the first one anyway. Archive 0 IS the current
+    log, so keeping "archive > 1" kept two files, not one.
+    */
     IF @first_log_only = 1
     BEGIN
         DELETE
             e WITH(TABLOCKX)
         FROM #enum AS e
-        WHERE e.archive > 1
+        WHERE e.archive > 0
         OPTION(RECOMPILE);
     END;
 
@@ -446,9 +566,9 @@ BEGIN
                 END +
                 N'"',
             start_date =
-                N'"' + CONVERT(nvarchar(30), @start_date) + N'"',
+                N'"' + CONVERT(nvarchar(30), @start_date, 121) + N'"',
             end_date =
-                N'"' + CONVERT(nvarchar(30), @end_date) + N'"'
+                N'"' + CONVERT(nvarchar(30), @end_date, 121) + N'"'
     ) AS c
     WHERE @custom_message_only = 0
     OPTION(RECOMPILE);
@@ -497,9 +617,9 @@ BEGIN
             days_back =
                 N'"' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'"',
             start_date =
-                N'"' + CONVERT(nvarchar(30), @start_date) + N'"',
+                N'"' + CONVERT(nvarchar(30), @start_date, 121) + N'"',
             end_date =
-                N'"' + CONVERT(nvarchar(30), @end_date) + N'"'
+                N'"' + CONVERT(nvarchar(30), @end_date, 121) + N'"'
     ) AS c
     WHERE @custom_message_only = 0
     OPTION(RECOMPILE);
@@ -530,8 +650,8 @@ BEGIN
                    the generated batch. */
                 N'"' + REPLACE(@custom_message, N'"', N'""') + N'"',
                 N'"' + CONVERT(nvarchar(10), DATEADD(DAY, @days_back, SYSDATETIME()), 112) + N'"',
-                N'"' + CONVERT(nvarchar(30), @start_date) + N'"',
-                N'"' + CONVERT(nvarchar(30), @end_date) + N'"'
+                N'"' + CONVERT(nvarchar(30), @start_date, 121) + N'"',
+                N'"' + CONVERT(nvarchar(30), @end_date, 121) + N'"'
            )
     ) AS x (search_string, days_back, start_date, end_date)
     WHERE @custom_message LIKE N'_%'
