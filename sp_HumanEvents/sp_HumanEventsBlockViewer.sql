@@ -107,7 +107,7 @@ BEGIN
     SELECT  'it will also work with any other extended event session that captures blocking' UNION ALL
     SELECT  'just use the @session_name parameter to point me there' UNION ALL
     SELECT  'EXECUTE dbo.sp_HumanEventsBlockViewer @session_name = N''blocked_process_report'';' UNION ALL
-    SELECT  'the system_health session also works, if you are okay with its lousy blocked process report'
+    SELECT  'the system_health session also works, if you are okay with its lousy blocked process report' UNION ALL
     SELECT  'all scripts and documentation are available here: https://code.erikdarling.com' UNION ALL
     SELECT  'from your loving sql server consultant, erik darling: https://erikdarling.com';
 
@@ -285,6 +285,15 @@ IF EXISTS
     AND   CONVERT(integer, c.value_in_use) = 0
 )
 AND @session_name NOT LIKE N'system%health'
+/*
+Table-source mode reads blocked process report XML somebody already
+captured into a table — the server's CURRENT threshold setting has no
+bearing on that, and this gate used to refuse the whole run over it.
+The exemption mirrors the routing condition exactly (@target_table AND
+@target_column both supplied): a partial table-parameter call falls
+back to reading an XE session, where the gate still applies.
+*/
+AND (@target_table IS NULL OR @target_column IS NULL)
 BEGIN
     RAISERROR(N'Unless you want to use the lousy version in system_health, the blocked process report needs to be enabled:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
@@ -304,6 +313,8 @@ IF EXISTS
     AND   CONVERT(integer, c.value_in_use) <> 5
 )
 AND @session_name NOT LIKE N'system%health'
+/* Same table-mode exemption as the hard gate above. */
+AND (@target_table IS NULL OR @target_column IS NULL)
 BEGIN
     RAISERROR(N'For best results, set up the blocked process report like this:
 EXECUTE sys.sp_configure ''show advanced options'', 1;
@@ -340,8 +351,12 @@ DECLARE
         ),
     @resolve_sql nvarchar(max),
     @resolve_database_id integer,
+    @resolve_file_id integer,
+    @resolve_page_id bigint,
+    @resolve_object_id integer,
     @key_resolution_dbs CURSOR,
     @page_resolution_dbs CURSOR,
+    @page_resolution_pages CURSOR,
     @azure_msg nchar(1),
     @session_id integer,
     @target_session_id integer,
@@ -353,13 +368,27 @@ DECLARE
     @start_date_original datetime2 = @start_date,
     @end_date_original datetime2 = @end_date,
     @validation_sql nvarchar(max),
+    /*
+    Set by the table-source validation batch. A RETURN inside dynamic
+    SQL exits only that batch — the caller keeps running — so the batch
+    reports failure through this OUTPUT flag and the procedure checks
+    it right after the EXECUTE. A return code will not work here:
+    RETURN <value> is not allowed in an sp_executesql batch.
+    */
+    @validation_failed bit = 0,
     @extract_sql nvarchar(max),
-    /*Log to table stuff*/
-    @log_table_blocking sysname,
+    /*
+    Log to table stuff. The table-name holder carries a fully-qualified,
+    QUOTENAME'd three-part name — up to 258 characters per part plus two
+    dots — so sysname silently truncated long-but-legal names and the
+    CREATE TABLE failed on the mangled remainder.
+    */
+    @log_table_blocking nvarchar(776),
     @cleanup_date datetime2(7),
     @check_sql nvarchar(max) = N'',
     @create_sql nvarchar(max) = N'',
     @insert_sql nvarchar(max) = N'',
+    @mdsql_execute nvarchar(max) = N'',
     @log_database_schema nvarchar(1024),
     @max_event_time datetime2(7),
     @dsql nvarchar(max) = N'',
@@ -441,30 +470,31 @@ SELECT
             THEN 1
             ELSE 0
         END,
+    /*
+    {table_check_literal} carries the same name as {table_check}, but
+    lands inside a quoted string where an apostrophe in a legal
+    identifier is fatal unless doubled — so the literal position gets
+    the quote-doubled value at the substitution site and the FROM keeps
+    the raw bracketed name.
+
+    The @fallback_date parameter covers the first (empty-table) logging
+    run, and two things about it were wrong before: it hardcoded one
+    day back, silently discarding older events inside the caller's
+    requested window, and it was UTC-shifted while MAX(event_time) —
+    the value it stands in for — is stored in server-local time, which
+    pushed the watermark into the future for west-of-UTC servers and
+    dropped that run's events entirely. The substitution site passes
+    the caller's local-domain start date instead.
+    */
     @mdsql = N'
-IF OBJECT_ID(''{table_check}'', ''U'') IS NOT NULL
+IF OBJECT_ID(''{table_check_literal}'', ''U'') IS NOT NULL
 BEGIN
     SELECT
         @max_event_time =
             ISNULL
             (
                 MAX({date_column}),
-                DATEADD
-                (
-                    MINUTE,
-                    DATEDIFF
-                    (
-                        MINUTE,
-                        SYSDATETIME(),
-                        GETUTCDATE()
-                    ),
-                    DATEADD
-                    (
-                        DAY,
-                        -1,
-                        SYSDATETIME()
-                    )
-                )
+                @fallback_date
             )
     FROM {table_check};
 END;';
@@ -581,6 +611,7 @@ BEGIN
     )
     BEGIN
         RAISERROR(N''The specified @target_schema %s does not exist in @database %s'', 11, 1, @schema, @database) WITH NOWAIT;
+        SET @validation_failed = 1;
         RETURN;
     END;
 
@@ -597,6 +628,7 @@ BEGIN
     )
     BEGIN
         RAISERROR(N''The specified @target_table %s does not exist in @schema %s in database %s'', 11, 1, @table, @schema, @database) WITH NOWAIT;
+        SET @validation_failed = 1;
         RETURN;
     END;
 
@@ -616,6 +648,7 @@ BEGIN
     )
     BEGIN
         RAISERROR(N''The specified @target_column %s does not exist in table %s.%s in database %s'', 11, 1, @column, @schema, @table, @database) WITH NOWAIT;
+        SET @validation_failed = 1;
         RETURN;
     END;
 
@@ -638,6 +671,7 @@ BEGIN
     )
     BEGIN
         RAISERROR(N''The specified @target_column %s must be of XML data type.'', 11, 1, @column) WITH NOWAIT;
+        SET @validation_failed = 1;
         RETURN;
     END;
     ';
@@ -661,6 +695,7 @@ BEGIN
     )
     BEGIN
         RAISERROR(N''The specified @timestamp_column %s does not exist in table %s.%s in database %s'', 11, 1, @timestamp_column, @schema, @table, @database) WITH NOWAIT;
+        SET @validation_failed = 1;
         RETURN;
     END;
 
@@ -683,6 +718,7 @@ BEGIN
     )
     BEGIN
         RAISERROR(N''The specified @timestamp_column %s must be of datetime data type.'', 11, 1, @timestamp_column) WITH NOWAIT;
+        SET @validation_failed = 1;
         RETURN;
     END;';
     END;
@@ -699,13 +735,20 @@ BEGIN
         @schema sysname,
         @table sysname,
         @column sysname,
-        @timestamp_column sysname
+        @timestamp_column sysname,
+        @validation_failed bit OUTPUT
         ',
         @target_database,
         @target_schema,
         @target_table,
         @target_column,
-        @timestamp_column;
+        @timestamp_column,
+        @validation_failed OUTPUT;
+
+    IF @validation_failed = 1
+    BEGIN
+        RETURN;
+    END;
 END;
 
 /* Validate logging parameters */
@@ -722,6 +765,20 @@ BEGIN
                 THEN ABS(@log_retention_days)
                 ELSE @log_retention_days
             END;
+
+    /*
+    QUOTENAME returns NULL for any input over 128 characters, and a NULL
+    table name turns every logging statement below into a silent no-op —
+    no table, no rows, no error. The one suffix appended to the prefix,
+    _BlockedProcessReport, is 21 characters, so the prefix gets 107.
+    */
+    /* DATALENGTH, not LEN: LEN ignores trailing spaces, which still
+       count toward the 128-character identifier limit inside QUOTENAME. */
+    IF DATALENGTH(@log_table_name_prefix) > 214
+    BEGIN
+        RAISERROR('@log_table_name_prefix is limited to 107 characters, so the table name suffix (_BlockedProcessReport) still fits in an identifier. Logging will be disabled.', 11, 1) WITH NOWAIT;
+        RETURN;
+    END;
 
     /* Validate database exists */
     IF NOT EXISTS
@@ -822,7 +879,13 @@ BEGIN
                 blocked_process_report_xml xml NULL
                 PRIMARY KEY CLUSTERED (collection_time, id)
             );
-            IF @debug = 1 BEGIN RAISERROR(''Created table %s for significant waits logging.'', 0, 1, ''' + @log_table_blocking + N''') WITH NOWAIT; END;
+            /*
+            The REPLACE doubles any single quote in the bracketed name:
+            this embed sits inside a string literal, where an apostrophe
+            in a legal identifier otherwise ends the literal early and
+            the whole batch fails to compile.
+            */
+            IF @debug = 1 BEGIN RAISERROR(''Created table %s for blocked process report logging.'', 0, 1, ''' + REPLACE(@log_table_blocking, N'''', N'''''') + N''') WITH NOWAIT; END;
         END';
 
     EXECUTE sys.sp_executesql
@@ -1874,21 +1937,35 @@ BEGIN
         RAISERROR('Extracting blocked process reports from table %s.%s.%s', 0, 1, @target_database, @target_schema, @target_table) WITH NOWAIT;
     END;
 
-    /* Build dynamic SQL to extract the XML */
+    /*
+    Build dynamic SQL to extract the XML.
+
+    The ORDER BY event_timestamp DESC under the TOP is what makes
+    @max_blocking_events keep the MOST RECENT events, matching the
+    ring buffer and event file paths and the summary text. Without it,
+    TOP took whatever scan order produced — for an append-only log
+    table, the OLDEST rows — and silently hid the newest events, which
+    are the ones an investigation is usually after.
+    */
     SET @extract_sql = N'
-    SELECT TOP (' + CONVERT(nvarchar(20), CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 2147483647 END) + N')
-        human_events_xml = e.x.query(''.'')
-    FROM ' +
-    QUOTENAME(@target_database) +
-    N'.' +
-    QUOTENAME(@target_schema) +
-    N'.' +
-    QUOTENAME(@target_table) +
-    N' AS x
-    CROSS APPLY x.' +
-    QUOTENAME(@target_column) +
-    N'.nodes(''/event'') AS e(x)
-    WHERE e.x.exist(''@name[ .= "blocked_process_report"]'') = 1';
+    SELECT
+        me.human_events_xml
+    FROM
+    (
+        SELECT TOP (' + CONVERT(nvarchar(20), CASE WHEN @max_blocking_events > 0 THEN @max_blocking_events ELSE 2147483647 END) + N')
+            human_events_xml = e.x.query(''.''),
+            event_timestamp = e.x.value(''@timestamp'', ''datetime2'')
+        FROM ' +
+        QUOTENAME(@target_database) +
+        N'.' +
+        QUOTENAME(@target_schema) +
+        N'.' +
+        QUOTENAME(@target_table) +
+        N' AS x
+        CROSS APPLY x.' +
+        QUOTENAME(@target_column) +
+        N'.nodes(''/event'') AS e(x)
+        WHERE e.x.exist(''@name[ .= "blocked_process_report"]'') = 1';
 
     /*
     Add timestamp filtering if specified.
@@ -1903,17 +1980,20 @@ BEGIN
     IF @timestamp_column IS NOT NULL
     BEGIN
             SET @extract_sql = @extract_sql + N'
-    AND   x.' + QUOTENAME(@timestamp_column) + N' >= @start_date
-    AND   x.' + QUOTENAME(@timestamp_column) + N' < @end_date';
+        AND   x.' + QUOTENAME(@timestamp_column) + N' >= @start_date
+        AND   x.' + QUOTENAME(@timestamp_column) + N' < @end_date';
     END;
 
     IF @timestamp_column IS NULL
     BEGIN
         SET @extract_sql = @extract_sql + N'
-    AND   e.x.exist(''@timestamp[. >= sql:variable("@start_date") and . < sql:variable("@end_date")]'') = 1';
+        AND   e.x.exist(''@timestamp[. >= sql:variable("@start_date") and . < sql:variable("@end_date")]'') = 1';
     END;
 
     SET @extract_sql = @extract_sql + N'
+        ORDER BY
+            event_timestamp DESC
+    ) AS me
     OPTION(RECOMPILE);
     ';
 
@@ -1967,7 +2047,12 @@ SELECT
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
     resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
-    monitor_loop = c.value('(//@monitorLoop)[1]', 'integer'),
+    /* ISNULL: a BPR with no monitorLoop attribute otherwise NULLs this,
+       which fails the NOT NULL #session_leads inserts and turns every
+       monitor_loop equality UNKNOWN, silently dropping the Top Lead
+       Blocker rollup. Real loop counters are large positive numbers,
+       so 0 cannot collide. */
+    monitor_loop = ISNULL(c.value('(//@monitorLoop)[1]', 'integer'), 0),
     blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
     blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
     blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
@@ -2087,7 +2172,12 @@ SELECT
     object_id = c.value('(data[@name="object_id"]/value/text())[1]', 'integer'),
     transaction_id = c.value('(data[@name="transaction_id"]/value/text())[1]', 'bigint'),
     resource_owner_type = c.value('(data[@name="resource_owner_type"]/text)[1]', 'nvarchar(256)'),
-    monitor_loop = c.value('(//@monitorLoop)[1]', 'integer'),
+    /* ISNULL: a BPR with no monitorLoop attribute otherwise NULLs this,
+       which fails the NOT NULL #session_leads inserts and turns every
+       monitor_loop equality UNKNOWN, silently dropping the Top Lead
+       Blocker rollup. Real loop counters are large positive numbers,
+       so 0 cannot collide. */
+    monitor_loop = ISNULL(c.value('(//@monitorLoop)[1]', 'integer'), 0),
     blocking_spid = bg.value('(process/@spid)[1]', 'integer'),
     blocking_ecid = bg.value('(process/@ecid)[1]', 'integer'),
     blocked_spid = bd.value('(process/@spid)[1]', 'integer'),
@@ -2667,26 +2757,69 @@ BEGIN
         IF DB_NAME(@resolve_database_id) IS NOT NULL
         AND DATABASEPROPERTYEX(DB_NAME(@resolve_database_id), 'Status') = N'ONLINE'
         BEGIN
-            SET @resolve_sql = N'
-            BEGIN TRY
-                UPDATE
-                    b
-                SET
-                    b.resource_object_id = pi.object_id
+            /*
+            One DMV call per distinct page, each in its own TRY/CATCH.
+            dm_db_page_info RAISES for a deallocated or out-of-range
+            page rather than returning NULL, so the previous set-based
+            CROSS APPLY died on the first bad page and its CATCH
+            swallowed the whole database's resolution — one stale page
+            left every other page in that database unresolved. Per-page,
+            a bad page loses only itself.
+            */
+            SET @page_resolution_pages =
+                CURSOR
+                LOCAL FAST_FORWARD
+                FOR
+                SELECT DISTINCT
+                    b.resource_file_id,
+                    b.resource_page_id
                 FROM #blocks AS b
-                CROSS APPLY sys.dm_db_page_info(b.resource_database_id, b.resource_file_id, b.resource_page_id, ''LIMITED'') AS pi
-                WHERE b.lock_type IN (''PAGE'', ''RID'')
+                WHERE b.lock_type IN ('PAGE', 'RID')
                 AND   b.resource_database_id = @resolve_database_id
-                OPTION(RECOMPILE);
-            END TRY
-            BEGIN CATCH
-                /* no VIEW DATABASE STATE / page reallocated -> leave for labeling */
-            END CATCH;';
+                AND   b.resource_file_id IS NOT NULL
+                AND   b.resource_page_id IS NOT NULL;
 
-            EXECUTE sys.sp_executesql
-                @resolve_sql,
-              N'@resolve_database_id integer',
-                @resolve_database_id;
+            OPEN @page_resolution_pages;
+            FETCH NEXT FROM @page_resolution_pages INTO @resolve_file_id, @resolve_page_id;
+            WHILE @@FETCH_STATUS = 0
+            BEGIN
+                SET @resolve_object_id = NULL;
+                SET @resolve_sql = N'
+                BEGIN TRY
+                    SELECT
+                        @resolve_object_id = pi.object_id
+                    FROM sys.dm_db_page_info(@resolve_database_id, @resolve_file_id, @resolve_page_id, ''LIMITED'') AS pi;
+                END TRY
+                BEGIN CATCH
+                    /* no VIEW DATABASE STATE / page reallocated -> leave this page for labeling */
+                END CATCH;';
+
+                EXECUTE sys.sp_executesql
+                    @resolve_sql,
+                  N'@resolve_database_id integer,
+                    @resolve_file_id integer,
+                    @resolve_page_id bigint,
+                    @resolve_object_id integer OUTPUT',
+                    @resolve_database_id,
+                    @resolve_file_id,
+                    @resolve_page_id,
+                    @resolve_object_id OUTPUT;
+
+                IF @resolve_object_id IS NOT NULL
+                BEGIN
+                    UPDATE
+                        b
+                    SET
+                        b.resource_object_id = @resolve_object_id
+                    FROM #blocks AS b
+                    WHERE b.lock_type IN ('PAGE', 'RID')
+                    AND   b.resource_database_id = @resolve_database_id
+                    AND   b.resource_file_id = @resolve_file_id
+                    AND   b.resource_page_id = @resolve_page_id;
+                END;
+
+                FETCH NEXT FROM @page_resolution_pages INTO @resolve_file_id, @resolve_page_id;
+            END;
         END;
         FETCH NEXT FROM @page_resolution_dbs INTO @resolve_database_id;
     END;
@@ -2730,6 +2863,29 @@ SET
             N'database: ' + ISNULL(b.database_name, N'unknown')
         )
 FROM #blocks AS b
+OPTION(RECOMPILE);
+
+/*
+Inherit the victim's resolved object onto its paired lead-blocker row.
+The blocker legitimately has no waitresource to decode — it holds the
+lock rather than waiting on it — and its event-level object_id is
+unreliable for KEY/RID/PAGE locks, so its row fell through to the
+Unresolved sentinel even though the paired victim row in the SAME
+report already named the exact object. Left unpaired, one physical
+contention showed up TWICE in the per-object rollups: once under the
+real object and once under Unresolved.
+*/
+UPDATE
+    unresolved
+SET
+    unresolved.contentious_object = resolved.contentious_object
+FROM #blocks AS unresolved
+JOIN #blocks AS resolved
+  ON  resolved.monitor_loop = unresolved.monitor_loop
+  AND resolved.blocking_desc = unresolved.blocking_desc
+  AND resolved.blocked_desc = unresolved.blocked_desc
+  AND resolved.contentious_object NOT LIKE N'Unresolved%'
+WHERE unresolved.contentious_object LIKE N'Unresolved%'
 OPTION(RECOMPILE);
 
 /*Either return results or log to a table*/
@@ -2789,12 +2945,33 @@ AND  (b.contentious_object = @object_name
 /* Add the WHERE clause only for table logging */
 IF @log_to_table = 1
 BEGIN
-    SET @mdsql =
+    DECLARE
+        @start_date_fallback datetime2(7) =
+            ISNULL
+            (
+                @start_date_original,
+                DATEADD(DAY, -7, SYSDATETIME())
+            );
+
+    /*
+    Substituting into a separate variable keeps @mdsql a pristine
+    template — the old code REPLACEd the name in and then tried to
+    REPLACE it back out afterwards, which breaks the template forever
+    if the table name happens to contain the placeholder text. The
+    literal placeholder gets the quote-doubled name because it lands
+    inside a quoted string; the identifier position takes it raw.
+    */
+    SET @mdsql_execute =
         REPLACE
         (
             REPLACE
             (
-                @mdsql,
+                REPLACE
+                (
+                    @mdsql,
+                    '{table_check_literal}',
+                    REPLACE(@log_table_blocking, N'''', N'''''')
+                ),
                 '{table_check}',
                 @log_table_blocking
             ),
@@ -2802,25 +2979,21 @@ BEGIN
             'event_time'
         );
 
-    IF @debug = 1 BEGIN PRINT @mdsql; END;
+    IF @debug = 1 BEGIN PRINT @mdsql_execute; END;
 
+    /*
+    The fallback rides in as the caller's LOCAL-domain window start —
+    @start_date_original is the raw parameter before the UTC shift,
+    matching the local-time event_time column the watermark compares
+    against; when the caller relied on the defaults, seven days back
+    mirrors the proc's own default window.
+    */
     EXECUTE sys.sp_executesql
-        @mdsql,
-      N'@max_event_time datetime2(7) OUTPUT',
-        @max_event_time OUTPUT;
-
-    SET @mdsql =
-        REPLACE
-        (
-            REPLACE
-            (
-                @mdsql,
-                @log_table_blocking,
-                '{table_check}'
-            ),
-            'event_time',
-            '{date_column}'
-        );
+        @mdsql_execute,
+      N'@max_event_time datetime2(7) OUTPUT,
+        @fallback_date datetime2(7)',
+        @max_event_time OUTPUT,
+        @fallback_date = @start_date_fallback;
 
     SET @dsql += N'
 AND   b.event_time > @max_event_time';
@@ -3173,10 +3346,15 @@ BEGIN
     FROM #blocked
     WHERE event_time IS NOT NULL;
 
-    /* Use original dates if no data found */
+    /*
+    Use original dates if no data found. The originals are NULL when
+    the caller relied on the default window, and a NULL here
+    concatenated the entire header finding away on an empty capture —
+    so fall through to the always-populated defaulted dates.
+    */
     SELECT
-        @actual_start_date = ISNULL(@actual_start_date, @start_date_original),
-        @actual_end_date = ISNULL(@actual_end_date, @end_date_original),
+        @actual_start_date = ISNULL(@actual_start_date, ISNULL(@start_date_original, @start_date)),
+        @actual_end_date = ISNULL(@actual_end_date, ISNULL(@end_date_original, @end_date)),
         @actual_event_count = ISNULL(@actual_event_count, 0);
 
     IF @debug = 1
@@ -3246,7 +3424,7 @@ BEGIN
             N'Database Locks',
         finding =
             N'The database ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N' has been involved in ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' blocking sessions.',
@@ -3358,7 +3536,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' select queries involved in blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3406,7 +3584,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' repeatable read queries involved in blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3448,7 +3626,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' serializable queries involved in blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3490,7 +3668,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' sleeping queries involved in blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3532,7 +3710,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' background queries involved in blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3574,7 +3752,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' done queries involved in blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3616,7 +3794,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' compile locks blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3658,7 +3836,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' application locks blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3700,7 +3878,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' implicit transaction queries involved in blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3742,7 +3920,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' user transaction queries involved in blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -3784,7 +3962,7 @@ BEGIN
             N'There have been ' +
             CONVERT(nvarchar(20), COUNT_BIG(DISTINCT b.transaction_id)) +
             N' auto stats updates involved in blocking sessions in ' +
-            b.database_name +
+            ISNULL(b.database_name, N'unknown') +
             N'.',
        sort_order =
            ROW_NUMBER() OVER (ORDER BY COUNT_BIG(DISTINCT b.transaction_id) DESC)
@@ -4016,27 +4194,36 @@ BEGIN
         JOIN #session_leads AS sl
           ON  sl.monitor_loop = b.monitor_loop
           AND sl.session_desc = b.blocking_desc
-        CROSS APPLY
-        (
-            SELECT
-                contentious_object =
-                    ISNULL
-                    (
-                        OBJECT_SCHEMA_NAME(b.object_id, b.database_id) +
-                        N'.' +
-                        OBJECT_NAME(b.object_id, b.database_id),
-                        N''
-                    )
-        ) AS co
         WHERE
         (
             b.database_name = @database_name
          OR @database_name IS NULL
         )
+        /*
+        The object filter reads the wait_resource-decoded
+        contentious_object from #blocks — the SAME resolution every
+        other check filters on — via EXISTS so repeat BPR fires for one
+        victim cannot fan this row out. It used to re-derive the name
+        from the event-level object_id, which is unreliable for
+        KEY/RID/PAGE locks (the resolution comment on #blocks says as
+        much), so OBJECT_NAME returned NULL, the name collapsed to '',
+        and any real @object_name filtered the Top Lead Blocker finding
+        out of existence while every other check still showed the
+        object.
+        */
         AND
         (
-            co.contentious_object = @object_name
-         OR @object_name IS NULL
+            @object_name IS NULL
+         OR EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #blocks AS bck
+                WHERE bck.monitor_loop = b.monitor_loop
+                AND   bck.blocked_desc = b.blocked_desc
+                AND   bck.activity = 'blocked'
+                AND   bck.contentious_object = @object_name
+            )
         )
     ),
         lead_sql AS
@@ -4285,19 +4472,22 @@ BEGIN
                                 pv.wait_time_ms
                             )
                         ) /
+                        /*
+                        The denominator is a correlated subquery over
+                        the whole per_victim set — the same grand total
+                        the HAVING threshold uses — because a windowed
+                        SUM() OVER () here is computed AFTER the HAVING
+                        filter, so the "% of total" was a share of only
+                        the surviving groups and overstated every
+                        percentage.
+                        */
                         NULLIF
                         (
-                            SUM
                             (
-                                SUM
-                                (
-                                    CONVERT
-                                    (
-                                        bigint,
-                                        pv.wait_time_ms
-                                    )
-                                )
-                            ) OVER (),
+                                SELECT
+                                    SUM(CONVERT(bigint, pv2.wait_time_ms))
+                                FROM per_victim AS pv2
+                            ),
                             0
                         )
                     )
@@ -4414,6 +4604,14 @@ BEGIN
                OR @database_name IS NULL)
         AND   (b.contentious_object = @object_name
                OR @object_name IS NULL)
+        /*
+        Victim rows only: blocking-activity rows carry the blocker's
+        OWN wait (a WAITFOR, an I/O, being blocked elsewhere), which is
+        not lock wait on this resource — and both activities share the
+        event's transaction_id, so without this the MAX could pick the
+        blocker's unrelated wait and report it as lock wait time.
+        */
+        AND   b.activity = 'blocked'
         GROUP BY
             b.database_name,
             b.transaction_id
@@ -4502,6 +4700,8 @@ BEGIN
                OR @database_name IS NULL)
         AND   (b.contentious_object = @object_name
                OR @object_name IS NULL)
+        /* Victim rows only — same reasoning as check_id 1000 above. */
+        AND   b.activity = 'blocked'
         GROUP BY
             b.database_name,
             b.contentious_object,
