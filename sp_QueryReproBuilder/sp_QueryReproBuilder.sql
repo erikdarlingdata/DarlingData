@@ -573,13 +573,19 @@ SELECT
         NULLIF(@query_text_search_not, '');
 
 /*
-Parse schema from procedure name if provided in schema.procedure format
+Parse schema from procedure name if provided in schema.procedure format.
+PARSENAME copes with bracketed ([dbo].[proc]) and unbracketed (dbo.proc)
+alike; the old LIKE '[[]%].[[]%]' pattern only matched the fully bracketed
+form, so an unbracketed dbo.proc fell through and was later QUOTENAME'd whole
+into a single mangled [dbo.proc] identifier that could never resolve.
+Only split when the caller didn't pass @procedure_schema separately, the name
+has a schema part, and it's exactly two parts (part 3 NULL) so a stray
+three-part name doesn't silently drop its database component here.
 */
-IF
-(
-      @procedure_name LIKE N'[[]%].[[]%]'
-  AND @procedure_schema IS NULL
-)
+IF  @procedure_name IS NOT NULL
+AND @procedure_schema IS NULL
+AND PARSENAME(@procedure_name, 2) IS NOT NULL
+AND PARSENAME(@procedure_name, 3) IS NULL
 BEGIN
     SELECT
         @procedure_schema = PARSENAME(@procedure_name, 2),
@@ -745,7 +751,7 @@ OPTION(RECOMPILE);' + @nc10;
         EXECUTE sys.sp_executesql
             @sql,
           N'@procedure_exists bit OUTPUT,
-            @procedure_name_quoted sysname',
+            @procedure_name_quoted nvarchar(1024)', /* nvarchar(1024), matching the variable's own declaration; binding it as sysname truncated the quoted 3-part name to 128 chars, so OBJECT_ID failed and a valid procedure was falsely rejected */
             @procedure_exists OUTPUT,
             @procedure_name_quoted;
 
@@ -1203,6 +1209,20 @@ BEGIN
                   (//StmtSimple/@StatementText)[1]',
                 N'nvarchar(max)'
             );
+
+    /*
+    No StmtSimple node means this isn't a ShowPlanXML document we can build a
+    repro from (wrong XML entirely, or a plan shape with no simple statement,
+    e.g. cursor-only). Stop here rather than silently seeding a blank query and
+    handing the user an empty repro.
+    */
+    IF @synthetic_query_text IS NULL
+    BEGIN
+        RAISERROR('The supplied @query_plan_xml has no StmtSimple statement text
+Pass a valid ShowPlanXML document (the output of an actual/estimated execution plan for a single statement)',
+                   10, 1) WITH NOWAIT;
+        RETURN;
+    END;
 
     INSERT
         #query_store_plan
@@ -2116,6 +2136,12 @@ BEGIN
     SELECT
         @sql = @isolation_level;
 
+    /*
+    The shredded value must be qualified b.x, not x: inside the generated query,
+    a.x is the whole <x>..</x> document and b.x is each per-node <x> from the
+    CROSS APPLY. An unqualified x.value was ambiguous (error 209), so this ignore
+    list silently failed to compile and never filtered anything.
+    */
     SELECT
         @sql += N'
     INSERT
@@ -2131,7 +2157,7 @@ BEGIN
     (
         SELECT
             plan_id =
-                x.value
+                b.x.value
                 (
                     ''(./text())[1]'',
                     ''bigint''
@@ -2175,6 +2201,10 @@ BEGIN
     SELECT
         @sql = @isolation_level;
 
+    /*
+    Same b.x qualification as the @ignore_plan_ids block above: b.x is the
+    per-node <x> from the CROSS APPLY, and leaving it unqualified was error 209.
+    */
     SELECT
         @sql += N'
     INSERT
@@ -2190,7 +2220,7 @@ BEGIN
     (
         SELECT
             query_id =
-                x.value
+                b.x.value
                 (
                     ''(./text())[1]'',
                     ''bigint''
@@ -4285,8 +4315,18 @@ CROSS APPLY
         param_xml =
             TRY_CAST
             (
+                /*
+                Split on ',@' (the parameter boundary), not every comma.
+                A scaled type carries its own comma (numeric(10,2),
+                decimal(38,6)), always followed by a digit; the separator
+                between parameters is always a comma immediately followed by
+                the next parameter's @name. Splitting on every comma tore
+                numeric(10,2) in half, and the malformed fragment blew up
+                LEFT with error 537, aborting the whole procedure for any
+                query with a scaled-type parameter.
+                */
                 N'<p>' +
-                REPLACE(prefix.param_prefix, N',', N'</p><p>') +
+                REPLACE(prefix.param_prefix, N',@', N'</p><p>@') +
                 N'</p>' AS xml
             )
 ) AS px
