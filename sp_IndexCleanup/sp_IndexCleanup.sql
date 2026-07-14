@@ -106,6 +106,29 @@ BEGIN TRY
     END;
 
     /*
+    Default the bit parameters when a caller passes NULL — an
+    uninitialized bit variable, most often. Every downstream test is
+    "= 0" or "= 1", and NULL satisfies neither.
+
+    This has to run HERE, ahead of every consumer, and @dedupe_only is
+    why. The low-uptime guard below both READS and WRITES it:
+
+        IF @uptime_days <= 7 AND @dedupe_only = 0 SET @dedupe_only = 1;
+
+    With NULL, "@dedupe_only = 0" is UNKNOWN, so that safety guard never
+    fires — and defaulting the parameter any later means the procedure
+    goes on to recommend dropping unused indexes based on a few days of
+    usage stats, with the protection silently skipped. @help and @debug
+    are consumed just below too, so a late default would be dead code
+    for them.
+    */
+    SELECT
+        @get_all_databases = ISNULL(@get_all_databases, 0),
+        @dedupe_only = ISNULL(@dedupe_only, 0),
+        @debug = ISNULL(@debug, 0),
+        @help = ISNULL(@help, 0);
+
+    /*
     Help section, for help.
     Will become more helpful when out of beta.
     */
@@ -1079,7 +1102,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         N'<i>' +
                         REPLACE
                         (
-                            @include_databases,
+                            /*
+                            Escape the XML metacharacters before splicing
+                            the list into a document. A database name is a
+                            delimited identifier, so [Sales & Marketing] is
+                            legal, and an unescaped & < or > made the
+                            concatenated string malformed XML — CONVERT
+                            threw 9411 and killed the whole run. The
+                            ampersand MUST be escaped first: doing < first
+                            would produce &lt;, whose & would then be
+                            escaped again into &amp;lt;. .value() decodes
+                            the entities on the way back out, so the real
+                            name comes through intact.
+                            */
+                            REPLACE
+                            (
+                                REPLACE
+                                (
+                                    REPLACE
+                                    (
+                                        @include_databases,
+                                        N'&',
+                                        N'&amp;'
+                                    ),
+                                    N'<',
+                                    N'&lt;'
+                                ),
+                                N'>',
+                                N'&gt;'
+                            ),
                             N',',
                             N'</i><i>'
                         ) +
@@ -1123,7 +1174,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         N'<i>' +
                         REPLACE
                         (
-                            @exclude_databases,
+                            /*
+                            Escape the XML metacharacters before splicing
+                            the list into a document. A database name is a
+                            delimited identifier, so [Sales & Marketing] is
+                            legal, and an unescaped & < or > made the
+                            concatenated string malformed XML — CONVERT
+                            threw 9411 and killed the whole run. The
+                            ampersand MUST be escaped first: doing < first
+                            would produce &lt;, whose & would then be
+                            escaped again into &amp;lt;. .value() decodes
+                            the entities on the way back out, so the real
+                            name comes through intact.
+                            */
+                            REPLACE
+                            (
+                                REPLACE
+                                (
+                                    REPLACE
+                                    (
+                                        @exclude_databases,
+                                        N'&',
+                                        N'&amp;'
+                                    ),
+                                    N'<',
+                                    N'&lt;'
+                                ),
+                                N'>',
+                                N'&gt;'
+                            ),
                             N',',
                             N'</i><i>'
                         ) +
@@ -1214,10 +1293,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             SET @database_name = DB_NAME();
         END;
 
-        /* Strip brackets if user supplied them */
-        IF @database_name IS NOT NULL
+        /*
+        Strip brackets if user supplied them.
+
+        Not PARSENAME: that parses dotted multi-part names, so a real
+        database called Foo.Bar came back as just "Bar" and matched
+        nothing (or worse, the wrong database). Strip only genuine
+        surrounding brackets, and un-escape the doubled ]] that
+        QUOTENAME would have produced inside them.
+        */
+        IF  @database_name IS NOT NULL
+        AND LEFT(@database_name, 1) = N'['
+        AND RIGHT(@database_name, 1) = N']'
         BEGIN
-            SET @database_name = PARSENAME(@database_name, 1);
+            SET @database_name =
+                REPLACE
+                (
+                    SUBSTRING
+                    (
+                        @database_name,
+                        2,
+                        LEN(@database_name) - 2
+                    ),
+                    N']]',
+                    N']'
+                );
         END;
 
         /* Single database mode */
@@ -1689,6 +1789,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     to analyze every index, including never-used ones (the whole point of the tool).
     @min_reads and @min_writes are validated to non-NULL, non-negative above.
     */
+    /*
+    Each term is gated on its own threshold being set. Without that gate,
+    a caller who set only @min_reads still got SUM(user_updates) >= 0 as
+    the other half of the OR - always true - so the whole filter did
+    nothing. The OR itself is intended: an index counts as used if it
+    clears EITHER floor.
+    */
     IF  @min_reads > 0
     OR  @min_writes > 0
     BEGIN
@@ -1708,9 +1815,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             GROUP BY
                 ius.object_id
             HAVING
-                SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) >= @min_reads
+                (
+                    @min_reads > 0
+                    AND SUM(ius.user_seeks + ius.user_scans + ius.user_lookups) >= @min_reads
+                )
             OR
-                SUM(ius.user_updates) >= @min_writes
+                (
+                    @min_writes > 0
+                    AND SUM(ius.user_updates) >= @min_writes
+                )
         )';
     END;
 
@@ -2358,6 +2471,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   fo.object_id = us.object_id
     );
 
+    /*
+    The @min_rows filter in this batch SUMs row_count across partitions,
+    matching the object pre-filter. Comparing each partition row on its
+    own meant a partitioned table whose TOTAL rows cleared @min_rows was
+    still analyzed by the pre-filter but then dropped here unless some
+    single partition cleared the floor alone - the two filters disagreed
+    about what "@min_rows" means.
+    */
     SELECT
         @sql = N'
     SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -2497,7 +2618,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             N'.sys.dm_db_partition_stats ps
         WHERE ps.object_id = i.object_id
         AND   ps.index_id IN (0, 1)
-        AND   ps.row_count >= @min_rows
+        GROUP BY
+            ps.object_id
+        HAVING
+            SUM(ps.row_count) >= @min_rows
     )'
         );
 
@@ -2723,7 +2847,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                   (
                     SELECT
                         N'', '' +
-                        c.name
+                        QUOTENAME(c.name)
                     FROM ' + QUOTENAME(@current_database_name) + N'.sys.index_columns AS ic
                     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.columns AS c
                       ON c.object_id = ic.object_id
@@ -2847,6 +2971,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHERE id2.object_id = id1.object_id
                 AND   id2.index_id = id1.index_id
                 AND   id2.is_included_column = 0
+                /*
+                   A partitioned index's partitioning column rides along at
+                   key_ordinal = 0 when it is not a real key. Without this it was
+                   emitted as a phantom LEADING key, corrupting rebuilt indexes
+                   and poisoning duplicate/subset hashing.
+                */
+                AND   id2.key_ordinal > 0
                 GROUP BY
                     id2.column_name,
                     id2.is_descending_key,
@@ -2942,6 +3073,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHERE id2.object_id = id1.object_id
                     AND   id2.index_id = id1.index_id
                     AND   id2.is_included_column = 0
+                    /*
+                       A partitioned index's partitioning column rides along at
+                       key_ordinal = 0 when it is not a real key. Without this it was
+                       emitted as a phantom LEADING key, corrupting rebuilt indexes
+                       and poisoning duplicate/subset hashing.
+                    */
+                    AND   id2.key_ordinal > 0
                     GROUP BY
                         id2.column_name,
                         id2.is_descending_key,
@@ -3410,6 +3548,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHERE id2_inner.index_hash = ia2_inner.index_hash
                 AND   id2_inner.is_eligible_for_dedupe = 1
             )
+            /* Same constraint exclusion as the outer join below: a
+               unique constraint cannot serve as the merge target. */
+            AND NOT EXISTS
+            (
+                SELECT
+                    1/0
+                FROM #index_details AS id2_uc_inner
+                WHERE id2_uc_inner.index_hash = ia2_inner.index_hash
+                AND   id2_uc_inner.is_unique_constraint = 1
+            )
             AND NOT EXISTS
             (
                 SELECT
@@ -3439,7 +3587,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia1.is_unique = 0
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
-    /* Don't disable unique constraints — but allow them as the wider (target) index */
+    /* Don't disable unique constraints */
     AND NOT EXISTS
     (
         SELECT
@@ -3447,6 +3595,23 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         FROM #index_details AS id1_uc
         WHERE id1_uc.index_hash = ia1.index_hash
         AND   id1_uc.is_unique_constraint = 1
+    )
+    /*
+    And don't pick one as the wider TARGET either. Merging a subset's
+    includes into a constraint-backed index emits CREATE INDEX ... WITH
+    (DROP_EXISTING = ON) against the constraint's index, which SQL
+    Server refuses outright (Msg 1907) — while the paired DISABLE of
+    the subset still runs, silently losing a covering index the
+    constraint never absorbed. Passing on the dedupe entirely is the
+    safe trade: the subset survives, the constraint stays untouched.
+    */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id2_uc
+        WHERE id2_uc.index_hash = ia2.index_hash
+        AND   id2_uc.is_unique_constraint = 1
     )
     AND EXISTS
     (
@@ -3838,6 +4003,31 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_analysis AS ia1
     WHERE ia1.consolidation_rule IS NULL /* Not already processed */
     AND   ia1.action IS NULL /* Not already processed by earlier rules */
+    /*
+    A filtered index can never stand in for a unique constraint: the
+    constraint enforces uniqueness over EVERY row, the filtered index
+    only over rows matching its predicate. Promoting one and dropping
+    the constraint silently un-enforced uniqueness outside the filter.
+    */
+    AND   ia1.filter_definition IS NULL
+    /*
+    A partitioned index can only be made UNIQUE if its partitioning
+    column is part of its key — SQL Server rejects anything else with
+    Msg 1908. The key list correctly excludes a partition column that is
+    not a real key, but the ON clause still partitions by it, so
+    promoting such an index emits a CREATE UNIQUE that can never run
+    while the paired DROP CONSTRAINT runs fine: the constraint goes and
+    nothing replaces it. Pass on the recommendation entirely.
+    */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #partition_stats AS ps_uq
+        WHERE ps_uq.index_hash = ia1.index_hash
+        AND   ps_uq.partition_columns IS NOT NULL
+        AND   CHARINDEX(ps_uq.partition_columns, ia1.key_columns) = 0
+    )
     AND EXISTS
     (
         /* Find nonclustered indexes */
@@ -3922,6 +4112,20 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  ia_nc.scope_hash = ia_uc.scope_hash  /* Same database and object */
       AND ia_nc.index_name <> ia_uc.index_name /* Different index */
       AND ia_uc.key_columns = ia_nc.key_columns  /* Verify key columns EXACT match */
+      /* A filtered index only enforces uniqueness inside its predicate;
+         it can never replace a full-table unique constraint. */
+      AND ia_nc.filter_definition IS NULL
+      /* Same Msg 1908 guard as Rule 7: a partitioned index whose
+         partition column is not in its key cannot be made unique. */
+      AND NOT EXISTS
+      (
+          SELECT
+              1/0
+          FROM #partition_stats AS ps_uq
+          WHERE ps_uq.index_hash = ia_nc.index_hash
+          AND   ps_uq.partition_columns IS NOT NULL
+          AND   CHARINDEX(ps_uq.partition_columns, ia_nc.key_columns) = 0
+      )
     WHERE NOT EXISTS
     (
         /* Don't propose replacing a unique constraint that backs an inbound
@@ -3964,23 +4168,34 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #index_details AS id_nc /* Join to get nonclustered index details */
       ON  id_nc.index_hash = ia_nc.index_hash
       AND id_nc.is_unique_constraint = 0 /* This is not a unique constraint */
-    WHERE
-        /* Two conditions for matching:
-           1. Index key columns exactly match a unique constraint's key columns
-           2. A unique constraint is already marked for DISABLE and has this index as target */
-        EXISTS
-        (
-            /* Find unique constraint with matching keys that should be disabled */
-            SELECT
-                1/0
-            FROM #index_analysis AS ia_uc
-            JOIN #index_details AS id_uc
-              ON  id_uc.index_hash = ia_uc.index_hash
-              AND id_uc.is_unique_constraint = 1
-            WHERE ia_uc.scope_hash = ia_nc.scope_hash
-                  /* Check that both indexes have EXACTLY the same key columns */
-            AND   ia_uc.key_columns = ia_nc.key_columns
-        )
+    /* Same filtered-index guard as the DISABLE marking above. */
+    WHERE ia_nc.filter_definition IS NULL
+    /* Same Msg 1908 guard as the DISABLE marking above. */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #partition_stats AS ps_uq
+        WHERE ps_uq.index_hash = ia_nc.index_hash
+        AND   ps_uq.partition_columns IS NOT NULL
+        AND   CHARINDEX(ps_uq.partition_columns, ia_nc.key_columns) = 0
+    )
+    /* Two conditions for matching:
+       1. Index key columns exactly match a unique constraint's key columns
+       2. A unique constraint is already marked for DISABLE and has this index as target */
+    AND EXISTS
+    (
+        /* Find unique constraint with matching keys that should be disabled */
+        SELECT
+            1/0
+        FROM #index_analysis AS ia_uc
+        JOIN #index_details AS id_uc
+          ON  id_uc.index_hash = ia_uc.index_hash
+          AND id_uc.is_unique_constraint = 1
+        WHERE ia_uc.scope_hash = ia_nc.scope_hash
+        /* Check that both indexes have EXACTLY the same key columns */
+        AND   ia_uc.key_columns = ia_nc.key_columns
+    )
     OPTION(RECOMPILE);
 
     /* CRITICAL: Ensure that only the unique constraints that exactly match get this treatment */
@@ -5029,6 +5244,41 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.action IN (N'MERGE INCLUDES', N'MAKE UNIQUE')
     /* Only create merge scripts for the indexes that should remain after merging */
     AND   ia.target_index_name IS NULL
+    /*
+    Backstop behind the Rule 3 target exclusions: CREATE INDEX ... WITH
+    (DROP_EXISTING = ON) can never succeed against a constraint-backed
+    index (Msg 1907), so no matter what upstream rules decide, never
+    emit a merge script for one.
+    */
+    AND NOT EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_uc_guard
+        WHERE id_uc_guard.index_hash = ia.index_hash
+        AND   id_uc_guard.is_unique_constraint = 1
+    )
+    /*
+    Second backstop, behind the Rule 7 / 7.5 guards: any script that
+    comes out of here as CREATE UNIQUE must not partition on a column
+    outside its own key, or SQL Server rejects it with Msg 1908 — and
+    the paired DROP CONSTRAINT would still succeed, leaving the table
+    with no uniqueness at all.
+    */
+    AND
+    (
+           ia.action <> N'MAKE UNIQUE'
+       AND ia.is_unique = 0
+        OR NOT EXISTS
+           (
+               SELECT
+                   1/0
+               FROM #partition_stats AS ps_uq_guard
+               WHERE ps_uq_guard.index_hash = ia.index_hash
+               AND   ps_uq_guard.partition_columns IS NOT NULL
+               AND   CHARINDEX(ps_uq_guard.partition_columns, ia.key_columns) = 0
+           )
+    )
     OPTION(RECOMPILE);
 
     /* Debug which indexes are getting MERGE scripts */
@@ -5282,6 +5532,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 WHERE id2.object_id = fo.object_id
                 AND   id2.index_id = fo.index_id
                 AND   id2.is_included_column = 0
+                /*
+                   A partitioned index's partitioning column rides along at
+                   key_ordinal = 0 when it is not a real key. Without this it was
+                   emitted as a phantom LEADING key, corrupting rebuilt indexes
+                   and poisoning duplicate/subset hashing.
+                */
+                AND   id2.key_ordinal > 0
                 GROUP BY
                     id2.column_name,
                     id2.is_descending_key,
@@ -5334,6 +5591,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHERE id2.object_id = fo.object_id
                         AND   id2.index_id = fo.index_id
                         AND   id2.is_included_column = 0
+                        /*
+                           A partitioned index's partitioning column rides along at
+                           key_ordinal = 0 when it is not a real key. Without this it was
+                           emitted as a phantom LEADING key, corrupting rebuilt indexes
+                           and poisoning duplicate/subset hashing.
+                        */
+                        AND   id2.key_ordinal > 0
                         GROUP BY
                             id2.column_name,
                             id2.is_descending_key,
@@ -5394,6 +5658,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     WHERE id2.object_id = fo.object_id
                     AND   id2.index_id = fo.index_id
                     AND   id2.is_included_column = 0
+                    /*
+                       A partitioned index's partitioning column rides along at
+                       key_ordinal = 0 when it is not a real key. Without this it was
+                       emitted as a phantom LEADING key, corrupting rebuilt indexes
+                       and poisoning duplicate/subset hashing.
+                    */
+                    AND   id2.key_ordinal > 0
                     GROUP BY
                         id2.column_name,
                         id2.is_descending_key,
@@ -6813,7 +7084,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 END,
             schema_name = 'ALWAYS TEST THESE RECOMMENDATIONS',
             table_name = 'IN A NON-PRODUCTION ENVIRONMENT FIRST!',
-            tables_analyzed = FORMAT(irs.tables_analyzed, 'N0'),
+            /* ISNULL to match the DATABASE and TABLE levels below: an
+               empty scope rendered this as NULL instead of 0 */
+            tables_analyzed = FORMAT(ISNULL(irs.tables_analyzed, 0), 'N0'),
             total_indexes = FORMAT(ISNULL(irs.index_count, 0), 'N0'),
             removable_indexes = FORMAT(ISNULL(irs.indexes_to_disable, 0), 'N0'),
             mergeable_indexes = FORMAT(ISNULL(irs.indexes_to_merge, 0), 'N0'),
