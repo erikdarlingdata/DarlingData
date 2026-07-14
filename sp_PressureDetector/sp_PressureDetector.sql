@@ -409,6 +409,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @database_size_out_gb nvarchar(10) = '0',
         @total_physical_memory_gb bigint,
         @cpu_utilization xml = N'',
+        /*
+        A second, separate CPU signal: the box saturated by processes
+        OTHER than SQL Server. The panel already computes it, but only
+        ever filtered on SQL's own utilization, so a machine pegged by a
+        different instance / AV / backup agent reported "no significant
+        CPU usage" while SQL was being scheduled off the CPU. Reported
+        alongside the SQL-CPU number, not folded into it.
+        */
+        @cpu_utilization_external xml = N'',
+        @pd_catch_msg nvarchar(2048),
         @low_memory xml = N'',
         @health_history bit =
             CASE
@@ -464,15 +474,22 @@ OPTION(MAXDOP 1, RECOMPILE);',
         @resource_semaphores nvarchar(max) = N'',
         @cpu_threads nvarchar(max) = N'',
         /*Log to table stuff*/
-        @log_table_waits sysname,
-        @log_table_file_metrics sysname,
-        @log_table_perfmon sysname,
-        @log_table_memory sysname,
-        @log_table_cpu sysname,
-        @log_table_memory_consumers sysname,
-        @log_table_memory_queries sysname,
-        @log_table_cpu_queries sysname,
-        @log_table_cpu_events sysname,
+        /*
+        nvarchar(1024), not sysname: these hold fully-qualified,
+        QUOTENAME'd three-part names. sysname is 128 chars, so a
+        long-but-legal database/schema/prefix silently truncated the
+        name and the CREATE TABLE then failed partway through setup,
+        after some of the nine tables already existed.
+        */
+        @log_table_waits nvarchar(1024),
+        @log_table_file_metrics nvarchar(1024),
+        @log_table_perfmon nvarchar(1024),
+        @log_table_memory nvarchar(1024),
+        @log_table_cpu nvarchar(1024),
+        @log_table_memory_consumers nvarchar(1024),
+        @log_table_memory_queries nvarchar(1024),
+        @log_table_cpu_queries nvarchar(1024),
+        @log_table_cpu_events nvarchar(1024),
         @cleanup_date datetime2(7),
         @max_sample_time datetime,
         @check_sql nvarchar(max) = N'',
@@ -489,7 +506,31 @@ OPTION(MAXDOP 1, RECOMPILE);',
             /* Default database name to current database if not specified */
             @log_database_name = ISNULL(@log_database_name, DB_NAME()),
             /* Default schema name to dbo if not specified */
-            @log_schema_name = ISNULL(@log_schema_name, N'dbo');
+            @log_schema_name = ISNULL(@log_schema_name, N'dbo'),
+            /*
+            Default the prefix too. It was the one log identifier with no
+            guard, so a NULL (an automation variable that resolved to
+            NULL) made QUOTENAME(NULL + N'_Waits') NULL, which nulled
+            every CREATE / INSERT / DELETE command string — and
+            sp_executesql runs a NULL batch as a silent no-op. The proc
+            returned success having created no tables and logged nothing,
+            with every result set suppressed because it was in logging
+            mode. Total silent data loss.
+            */
+            @log_table_name_prefix = ISNULL(@log_table_name_prefix, N'PressureDetector');
+
+        /*
+        Cap the prefix so prefix + the longest suffix (_MemoryConsumers,
+        16 chars) still fits a 128-char identifier. Past that, QUOTENAME
+        returns NULL for the long leaves and the run half-creates its
+        tables before failing - fail loudly up front instead. DATALENGTH
+        so trailing spaces cannot slip past the limit.
+        */
+        IF DATALENGTH(@log_table_name_prefix) / 2 > 112
+        BEGIN
+            RAISERROR(N'@log_table_name_prefix is limited to 112 characters so the longest table suffix (_MemoryConsumers) still fits in an identifier. Logging will be disabled.', 11, 1) WITH NOWAIT;
+            RETURN;
+        END;
 
         /* Validate database exists */
         IF NOT EXISTS
@@ -593,7 +634,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     waiting_tasks_count bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for wait stats logging.'', 0, 1, ''' + @log_table_waits + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for wait stats logging.'', 0, 1, ''' + REPLACE(@log_table_waits, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -642,7 +683,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     io_stall_write_ms bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for file metrics logging.'', 0, 1, ''' + @log_table_file_metrics + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for file metrics logging.'', 0, 1, ''' + REPLACE(@log_table_file_metrics, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -678,7 +719,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     cntr_type bigint NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for perfmon logging.'', 0, 1, ''' + @log_table_perfmon + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for perfmon logging.'', 0, 1, ''' + REPLACE(@log_table_perfmon, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -726,7 +767,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     pool_id integer NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory logging.'', 0, 1, ''' + @log_table_memory + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory logging.'', 0, 1, ''' + REPLACE(@log_table_memory, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -771,7 +812,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     cpu_utilization_over_threshold xml NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU logging.'', 0, 1, ''' + @log_table_cpu + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU logging.'', 0, 1, ''' + REPLACE(@log_table_cpu, N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -805,7 +846,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     memory_consumed_gb decimal(38,2) NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory consumers logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_MemoryConsumers') + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory consumers logging.'', 0, 1, ''' + REPLACE(@log_database_schema + QUOTENAME(@log_table_name_prefix + N'_MemoryConsumers'), N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -860,7 +901,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     live_query_plan xml NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory queries logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_MemoryQueries') + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for memory queries logging.'', 0, 1, ''' + REPLACE(@log_database_schema + QUOTENAME(@log_table_name_prefix + N'_MemoryQueries'), N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -914,7 +955,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     statement_end_offset integer NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU queries logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_CPUQueries') + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU queries logging.'', 0, 1, ''' + REPLACE(@log_database_schema + QUOTENAME(@log_table_name_prefix + N'_CPUQueries'), N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -950,7 +991,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     total_cpu_utilization integer NULL,
                     PRIMARY KEY CLUSTERED (collection_time, id)
                 );
-                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU utilization events logging.'', 0, 1, ''' + @log_database_schema + QUOTENAME(@log_table_name_prefix + N'_CPUEvents') + N''') WITH NOWAIT; END;
+                IF @debug = 1 BEGIN RAISERROR(''Created table %s for CPU utilization events logging.'', 0, 1, ''' + REPLACE(@log_database_schema + QUOTENAME(@log_table_name_prefix + N'_CPUEvents'), N'''', N'''''') + N''') WITH NOWAIT; END;
             END';
 
         EXECUTE sys.sp_executesql
@@ -1944,7 +1985,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     CONVERT
                                     (
                                         decimal(38, 2),
-                                        (fm2.io_stall_read_ms - fm.io_stall_read_ms) /
+                                        /* 1.0 * forces decimal division; bigint/bigint truncated every latency to a whole ms (and to 0 on fast disks) */
+                                        1.0 * (fm2.io_stall_read_ms - fm.io_stall_read_ms) /
                                         (fm2.total_read_count  - fm.total_read_count)
                                     )
                             END,
@@ -1956,7 +1998,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     CONVERT
                                     (
                                         decimal(38, 2),
-                                        (fm2.io_stall_write_ms - fm.io_stall_write_ms) /
+                                        1.0 * (fm2.io_stall_write_ms - fm.io_stall_write_ms) /
                                         (fm2.total_write_count  - fm.total_write_count)
                                     )
                             END,
@@ -1969,6 +2011,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
                                     CONVERT
                                     (
                                         decimal(38,2),
+                                        1.0 *
                                         (
                                             (fm2.io_stall_read_ms  - fm.io_stall_read_ms) +
                                             (fm2.io_stall_write_ms - fm.io_stall_write_ms)
@@ -2269,7 +2312,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     p.total,
                     p.total_per_second
                 FROM p
-                WHERE p.total_per_second <> N'0'
+                /*
+                Filter on the raw counter, not the per-second STRING.
+                total_per_second is cntr_value / uptime-in-seconds in
+                integer arithmetic, so every counter smaller than the
+                server's uptime floored to '0' and got dropped here —
+                and those are exactly the point-in-time pressure gauges
+                (Memory Grants Pending, Processes Blocked, deadlocks,
+                which sit at single digits). The load step already keeps
+                only cntr_value > 0, so this just stops re-dropping them.
+                */
+                WHERE p.cntr_value > 0
                 ORDER BY
                     p.object_name,
                     p.counter_name,
@@ -3385,6 +3438,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 deqs.query_plan,'
                       ELSE N''
                   END
+                  /*
+                  Without this ELSE, @skip_plan_xml = 1 made the outer
+                  CASE return NULL, CONVERT(nvarchar(max), NULL) is NULL,
+                  and the whole @mem_sql string collapsed to NULL — so
+                  skipping the plan XML silently discarded the entire
+                  "queries with memory grants" result set. The CPU
+                  builder has this ELSE; this one was missing it.
+                  */
+                  ELSE N''
               END +
                       N'
             deqmg.request_time,
@@ -3472,8 +3534,22 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
         IF @log_to_table = 0
         BEGIN
-        EXECUTE sys.sp_executesql
-            @mem_sql;
+            /*
+            TRY/CATCH so a failure fetching query plans does not take the
+            whole report down with it. This batch SETs LOCK_TIMEOUT to
+            fail fast, but with XACT_ABORT ON and no handler a lock
+            timeout (error 1222 — plausible under the very plan-cache
+            churn being diagnosed) aborted the entire procedure, losing
+            every section after this one. Now it degrades to a warning.
+            */
+            BEGIN TRY
+                EXECUTE sys.sp_executesql
+                    @mem_sql;
+            END TRY
+            BEGIN CATCH
+                SET @pd_catch_msg = ERROR_MESSAGE();
+                RAISERROR(N'Memory-grant queries skipped: %s', 10, 1, @pd_catch_msg) WITH NOWAIT;
+            END CATCH;
         END
 
         IF @log_to_table = 1
@@ -3539,8 +3615,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 PRINT @insert_sql;
             END;
 
-            EXECUTE sys.sp_executesql
-                @insert_sql;
+            /* Same plan-fetch TRY/CATCH as the client path above. */
+            BEGIN TRY
+                EXECUTE sys.sp_executesql
+                    @insert_sql;
+            END TRY
+            BEGIN CATCH
+                SET @pd_catch_msg = ERROR_MESSAGE();
+                RAISERROR(N'Memory-grant query logging skipped: %s', 10, 1, @pd_catch_msg) WITH NOWAIT;
+            END CATCH;
         END;
     END;
 
@@ -3692,13 +3775,78 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 );
         END;
 
+        /*
+        The same panel again, but keyed on OTHER-process CPU rather than
+        SQL Server's own. Separate variable, separate result column: a
+        DBA can see "SQL is hot" and "something else on the box is hot"
+        as two distinct answers instead of one masking the other.
+        */
+        SELECT
+            @cpu_utilization_external =
+                x.cpu_utilization
+        FROM
+        (
+            SELECT
+                sample_time =
+                    CONVERT
+                    (
+                        datetime,
+                        DATEADD
+                        (
+                            SECOND,
+                            (t.timestamp - osi.ms_ticks) / 1000,
+                            SYSDATETIME()
+                        )
+                    ),
+                sqlserver_cpu_utilization =
+                    t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','integer'),
+                other_process_cpu_utilization =
+                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/ProcessUtilization)[1]','integer')
+                     - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]','integer')),
+                total_cpu_utilization =
+                    (100 - t.record.value('(Record/SchedulerMonitorEvent/SystemHealth/SystemIdle)[1]', 'integer'))
+            FROM sys.dm_os_sys_info AS osi
+            CROSS JOIN
+            (
+                SELECT
+                    dorb.timestamp,
+                    record =
+                        CONVERT(xml, dorb.record)
+                FROM sys.dm_os_ring_buffers AS dorb
+                WHERE dorb.ring_buffer_type = N'RING_BUFFER_SCHEDULER_MONITOR'
+            ) AS t
+            /* Each value forced to a singleton with [1] before the arithmetic; XQuery treats a bare child step as a sequence and rejects '-' on it */
+            WHERE t.record.exist('(Record/SchedulerMonitorEvent/SystemHealth)[(100 - (ProcessUtilization)[1] - (SystemIdle)[1]) >= sql:variable("@cpu_utilization_threshold")]') = 1
+            ORDER BY
+                sample_time DESC
+            FOR XML
+                PATH('cpu_utilization'),
+                TYPE
+        ) AS x (cpu_utilization)
+        OPTION(MAXDOP 1, RECOMPILE);
+
+        IF @cpu_utilization_external IS NULL
+        BEGIN
+            SELECT
+                @cpu_utilization_external =
+                (
+                    SELECT
+                        N'No significant non-SQL Server CPU usage data available.'
+                    FOR XML
+                        PATH(N'cpu_utilization'),
+                        TYPE
+                );
+        END;
+
         IF @log_to_table = 0
         BEGIN
             SELECT
                 cpu_details_output =
                     @cpu_details_output,
                 cpu_utilization_over_threshold =
-                    @cpu_utilization;
+                    @cpu_utilization,
+                external_cpu_utilization_over_threshold =
+                    @cpu_utilization_external;
         END;
         IF @log_to_table = 1
         BEGIN
@@ -3724,6 +3872,17 @@ OPTION(MAXDOP 1, RECOMPILE);',
                 N'@max_sample_time_out datetime OUTPUT',
                 @max_sample_time OUTPUT;
 
+            /*
+            UNION both CPU signals into the same insert. The event table
+            already carries other_process_cpu_utilization and
+            total_cpu_utilization, but the SQL-CPU XML only holds samples
+            that tripped SQL's own threshold — so a sample where an
+            external process pegged the box while SQL sat idle was never
+            logged. Adding the external XML captures exactly those; UNION
+            (not UNION ALL) collapses samples that tripped both. The
+            no-data placeholder XML has no sample_time node, so its
+            exist() filter is false and it contributes nothing.
+            */
             SET @insert_sql = N'
                 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
                 INSERT INTO ' + @log_table_cpu_events + N'
@@ -3739,6 +3898,16 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     other_process_cpu_utilization = event.value(''(./other_process_cpu_utilization)[1]'', ''integer''),
                     total_cpu_utilization = event.value(''(./total_cpu_utilization)[1]'', ''integer'')
                 FROM @cpu_utilization.nodes(''/cpu_utilization'') AS cpu(event)
+                WHERE event.exist(''(./sample_time)[. > sql:variable("@max_sample_time")]'') = 1
+
+                UNION
+
+                SELECT
+                    sample_time = event.value(''(./sample_time)[1]'', ''datetime''),
+                    sqlserver_cpu_utilization = event.value(''(./sqlserver_cpu_utilization)[1]'', ''integer''),
+                    other_process_cpu_utilization = event.value(''(./other_process_cpu_utilization)[1]'', ''integer''),
+                    total_cpu_utilization = event.value(''(./total_cpu_utilization)[1]'', ''integer'')
+                FROM @cpu_utilization_external.nodes(''/cpu_utilization'') AS cpu(event)
                 WHERE event.exist(''(./sample_time)[. > sql:variable("@max_sample_time")]'') = 1;';
 
             IF @debug = 1
@@ -3749,8 +3918,10 @@ OPTION(MAXDOP 1, RECOMPILE);',
             EXECUTE sys.sp_executesql
                 @insert_sql,
               N'@cpu_utilization xml,
+                @cpu_utilization_external xml,
                 @max_sample_time datetime',
                 @cpu_utilization,
+                @cpu_utilization_external,
                 @max_sample_time;
         END;
 
@@ -3790,7 +3961,7 @@ OPTION(MAXDOP 1, RECOMPILE);',
             total_active_parallel_thread_count =
                 MAX(wg.active_parallel_thread_count),
             avg_runnable_tasks_count =
-                AVG(dos.runnable_tasks_count),
+                AVG(1. * dos.runnable_tasks_count),
             high_runnable_percent =
                 MAX(ISNULL(r.high_runnable_percent, 0))
         FROM sys.dm_os_schedulers AS dos
@@ -3829,8 +4000,8 @@ OPTION(MAXDOP 1, RECOMPILE);',
                             (
                                 x.runnable /
                                 (1. * NULLIF(x.total, 0))
-                            )
-                        ) * 100.
+                            ) * 100.
+                        )
                 FROM
                 (
                     SELECT
@@ -4188,8 +4359,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
 
             IF @log_to_table = 0
             BEGIN
-                EXECUTE sys.sp_executesql
-                    @cpu_sql;
+                /* Same plan-fetch TRY/CATCH as the memory-grants path. */
+                BEGIN TRY
+                    EXECUTE sys.sp_executesql
+                        @cpu_sql;
+                END TRY
+                BEGIN CATCH
+                    SET @pd_catch_msg = ERROR_MESSAGE();
+                    RAISERROR(N'CPU queries skipped: %s', 10, 1, @pd_catch_msg) WITH NOWAIT;
+                END CATCH;
             END;
 
             IF @log_to_table = 1
@@ -4254,8 +4432,15 @@ OPTION(MAXDOP 1, RECOMPILE);',
                     PRINT @insert_sql;
                 END;
 
-                EXECUTE sys.sp_executesql
-                    @insert_sql;
+                /* Same plan-fetch TRY/CATCH as the client path above. */
+                BEGIN TRY
+                    EXECUTE sys.sp_executesql
+                        @insert_sql;
+                END TRY
+                BEGIN CATCH
+                    SET @pd_catch_msg = ERROR_MESSAGE();
+                    RAISERROR(N'CPU query logging skipped: %s', 10, 1, @pd_catch_msg) WITH NOWAIT;
+                END CATCH;
             END;
         END; /*End not skipping queries*/
     END; /*End CPU checks*/
