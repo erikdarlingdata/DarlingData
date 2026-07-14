@@ -392,6 +392,46 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     END;
 
     /*
+    Validate @database_name up front, before any check runs. If the
+    caller named a database that does not exist (a typo), or one that is
+    not ONLINE (mid-restore, RECOVERY_PENDING, SUSPECT, a log-shipping
+    standby), the per-database checks match no rows and the report comes
+    back with no database findings and no error - reading as "this
+    database is clean" when it was never looked at. Fail loudly here
+    rather than running the whole server sweep and then returning empty.
+    Azure SQL DB is exempt: it always analyzes the current database via
+    DB_ID() and ignores the parameter.
+    */
+    IF  @database_name IS NOT NULL
+    AND @azure_sql_db = 0
+    BEGIN
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM sys.databases AS d
+            WHERE d.name = @database_name
+        )
+        BEGIN
+            RAISERROR(N'The database %s does not exist on this server. Check the name and try again.', 11, 1, @database_name) WITH NOWAIT;
+            RETURN;
+        END;
+
+        IF NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM sys.databases AS d
+            WHERE d.name = @database_name
+            AND   d.state = 0 /* ONLINE */
+        )
+        BEGIN
+            RAISERROR(N'The database %s exists but is not ONLINE, so its configuration cannot be analyzed. Run without @database_name for the server-level checks.', 11, 1, @database_name) WITH NOWAIT;
+            RETURN;
+        END;
+    END;
+
+    /*
     Create a table for stuff I care about from sys.databases
     With comments on what we want to check
     */
@@ -585,7 +625,16 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         avg_wait_ms AS (wait_time_ms / NULLIF(waiting_tasks_count, 0)),
         percentage decimal(5, 2) NOT NULL,
         signal_wait_time_ms bigint NOT NULL,
-        wait_time_percent_of_uptime decimal(6, 2) NULL,
+        /*
+        decimal(38, 2), not decimal(6, 2). This is cumulative wait time
+        across all schedulers as a percentage of wall-clock uptime, so
+        on a many-core server it routinely runs to several hundred or
+        several thousand percent (64 cores fully waiting is ~6400%).
+        decimal(6, 2) caps at 9999.99, and the overflow THREW out of the
+        whole procedure - no health findings at all - on exactly the
+        busy, high-core servers that most need checking.
+        */
+        wait_time_percent_of_uptime decimal(38, 2) NULL,
         category nvarchar(50) NOT NULL
     );
 
@@ -1172,7 +1221,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             details =
                 N'SQL Server is not using locked pages in memory (LPIM). This can lead to Windows ' +
                 N'taking memory away from SQL Server under memory pressure, causing performance issues. ' +
-                N'For production SQL Servers with more than 64GB of memory, LPIM should be enabled.',
+                N'For production SQL Servers with 32GB of memory or more, LPIM should be enabled.',
             url = N'https://erikdarling.com/sp_perfcheck/#LPIM'
         FROM sys.dm_os_sys_info AS osi
         WHERE osi.sql_memory_model_desc = N'CONVENTIONAL' /* Conventional means not using LPIM */
@@ -4441,6 +4490,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN 0 THEN N''No specific reason identified.''
                         WHEN 2 THEN N''Database is in single user mode.''
                         WHEN 4 THEN N''Database is in emergency mode.''
+                        WHEN 1 THEN N''Database is in read-only mode.''
                         WHEN 8 THEN N''Database is an Availability Group secondary.''
                         WHEN 65536 THEN N''Query Store has reached maximum size: '' +
                                         CONVERT(nvarchar(20), qso.current_storage_size_mb) +
@@ -4457,7 +4507,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE qso.desired_state <> 0 /* Not intentionally OFF */
             AND   qso.readonly_reason <> 8 /* Ignore AG secondaries */
             AND   qso.desired_state <> qso.actual_state /* States don''t match */
-            AND   qso.actual_state IN (0, 3); /* Either OFF or READ_ONLY when it shouldn''t be */';
+            AND   qso.actual_state IN (0, 1, 3); /* OFF(0), READ_ONLY(1), or ERROR(3) when it should be READ_WRITE - the comment used to say READ_ONLY but the list omitted state 1, so a Query Store auto-flipped to READ_ONLY because it filled up (readonly_reason 65536) never got flagged, its single most common failure. AG secondaries (readonly_reason 8) and intentional READ_ONLY (desired = actual) are already excluded above. */';
 
             IF @debug = 1
             BEGIN
@@ -4595,11 +4645,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     (@current_database_id, @current_database_name, 35, N''OPTIMIZED_PLAN_FORCING'', NULL, NULL, 1),
                     (@current_database_id, @current_database_name, 37, N''DOP_FEEDBACK'', NULL, NULL, 1),
                     (@current_database_id, @current_database_name, 39, N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'', NULL, NULL, 1),
-                    /* SQL Server 2025 options - IDs to be verified against actual SQL Server 2025 instance */
-                    (@current_database_id, @current_database_name, 40, N''PREVIEW_FEATURES'', NULL, NULL, 1),
-                    (@current_database_id, @current_database_name, 41, N''OPTIMIZED_SP_EXECUTESQL'', NULL, NULL, 1),
-                    (@current_database_id, @current_database_name, 42, N''FULLTEXT_INDEX_VERSION'', NULL, NULL, 1),
-                    (@current_database_id, @current_database_name, 43, N''OPTIONAL_PARAMETER_OPTIMIZATION'', NULL, NULL, 1);
+                    /* SQL Server 2025 options, real configuration_ids from the catalog (17.0). */
+                    (@current_database_id, @current_database_name, 42, N''OPTIMIZED_SP_EXECUTESQL'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 44, N''FULLTEXT_INDEX_VERSION'', NULL, NULL, 1),
+                    (@current_database_id, @current_database_name, 47, N''OPTIONAL_PARAMETER_OPTIMIZATION'', NULL, NULL, 1);
 
                 /* Get actual non-default settings */
                 INSERT INTO
@@ -4642,10 +4691,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERSISTENCE'' AND CONVERT(integer, sc.value) = 1 THEN 1
                         WHEN sc.name = N''MEMORY_GRANT_FEEDBACK_PERCENTILE_GRANT'' AND CONVERT(integer, sc.value) = 1 THEN 1
                         WHEN sc.name = N''OPTIMIZED_PLAN_FORCING'' AND CONVERT(integer, sc.value) = 1 THEN 1
-                        WHEN sc.name = N''DOP_FEEDBACK'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        /* DOP_FEEDBACK default flipped from 0 (2019-2022) to 1 (2025+); inject the version-appropriate default so it is not flagged non-default on every 2025 database. */
+                        WHEN sc.name = N''DOP_FEEDBACK'' AND CONVERT(integer, sc.value) = ' + CASE WHEN @product_version_major >= 17 THEN N'1' ELSE N'0' END + N' THEN 1
                         WHEN sc.name = N''FORCE_SHOWPLAN_RUNTIME_PARAMETER_COLLECTION'' AND CONVERT(integer, sc.value) = 0 THEN 1
-                        /* SQL Server 2025 options */
-                        WHEN sc.name = N''PREVIEW_FEATURES'' AND CONVERT(integer, sc.value) = 0 THEN 1
+                        /* SQL Server 2025 options. PREVIEW_FEATURES was dropped: its real default is 1, not 0, and it is not evaluated here. These three defaults match the live 2025 catalog (0, 2, 1). */
                         WHEN sc.name = N''OPTIMIZED_SP_EXECUTESQL'' AND CONVERT(integer, sc.value) = 0 THEN 1
                         WHEN sc.name = N''FULLTEXT_INDEX_VERSION'' AND CONVERT(integer, sc.value) = 2 THEN 1
                         WHEN sc.name = N''OPTIONAL_PARAMETER_OPTIMIZATION'' AND CONVERT(integer, sc.value) = 1 THEN 1
@@ -4657,7 +4706,19 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         1, 2, 3, 4, 7, 8, 9,
                         10, 13, 16, 17, 18, 19, 20, 24,
                         27, 28, 31, 33, 34, 35, 37, 39,
-                        40, 41, 42, 43  /* SQL Server 2025 options */
+                        /*
+                        SQL Server 2025 options, with the real
+                        configuration_ids from the catalog. The IDs used
+                        to be 40, 41, 42, 43: 40/41 are actually
+                        READABLE_SECONDARY_TEMPORARY_STATS_AUTO_CREATE and
+                        _UPDATE, which have no entry in the CASE above, so
+                        they were pulled and flagged non-default on every
+                        2025 database even at their default of 1; 43 does
+                        not exist; and the three options the CASE really
+                        evaluates (42, 44, 47) were never pulled, so they
+                        were silently never checked.
+                        */
+                        42, 44, 47
                       );
             END;';
 
@@ -4789,7 +4850,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE d.database_id = @current_database_id
         AND   d.delayed_durability_desc <> N'DISABLED';
 
-        /* Check if the database has accelerated database recovery disabled with SI/RCSI enabled */
+        /*
+        Check if the database has accelerated database recovery disabled
+        with SI/RCSI enabled.
+
+        Gated on the column actually existing. Accelerated Database
+        Recovery arrived in SQL Server 2019; on 2016/2017 the
+        is_accelerated_database_recovery_on column does not exist, so the
+        #databases builder hardcodes it to 0 for every database. Without
+        this gate the check's "= 0" predicate was ALWAYS true and it
+        recommended enabling ADR - a feature those versions do not have -
+        for any database with snapshot isolation or RCSI on, which is
+        most of them. Advice impossible to act on.
+        */
+        IF @has_is_accelerated_database_recovery = 1
+        BEGIN
         INSERT INTO
             #results
         (
@@ -4819,6 +4894,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
               d.snapshot_isolation_state_desc = N'ON'
            OR d.is_read_committed_snapshot_on = 1
         );
+        END;
 
         /* Check if ledger is enabled */
         INSERT INTO
