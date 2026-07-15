@@ -55,7 +55,7 @@ ALTER PROCEDURE
     dbo.sp_QuickieStore
 (
     @database_name sysname = NULL, /*the name of the database you want to look at query store in*/
-    @sort_order varchar(20) = 'cpu', /*the runtime metric you want to prioritize results by*/
+    @sort_order varchar(50) = 'cpu', /*the runtime metric you want to prioritize results by; varchar(50) so the documented 'average '/'avg ' prefix forms (e.g. 'average buffer latches waits') aren't truncated before normalization and silently fall back to cpu*/
     @top bigint = 10, /*the number of queries you want to pull back*/
     @start_date datetimeoffset(7) = NULL, /*the begin date of your search, will be converted to UTC internally*/
     @end_date datetimeoffset(7) = NULL, /*the end date of your search, will be converted to UTC internally*/
@@ -2006,6 +2006,37 @@ FROM
 WHERE v.parameter_value IS NOT NULL;
 
 /*
+Attempt at overloading procedure name so it can accept a schema.procedure or
+db.schema.procedure pasted from results from other executions of sp_QuickieStore.
+PARSENAME copes with bracketed ([dbo].[proc]) and unbracketed (dbo.proc) forms
+alike; the old LIKE '[[]%].[[]%]' pattern only matched the fully bracketed
+two-part form, so an unbracketed dbo.proc fell through and was later QUOTENAME'd
+whole into a single mangled [dbo.proc] identifier that could never resolve.
+This runs before the @database_name default below so a three-part paste can
+supply its own database.
+*/
+IF  @procedure_name IS NOT NULL
+AND @procedure_schema IS NULL
+AND PARSENAME(@procedure_name, 2) IS NOT NULL
+BEGIN
+    /*
+    A three-part db.schema.proc paste: adopt its database when the caller didn't
+    pass @database_name, rather than dropping it (which looked the procedure up
+    in the wrong database) or refusing to split it (a false 'not found').
+    */
+    IF  PARSENAME(@procedure_name, 3) IS NOT NULL
+    AND @database_name IS NULL
+    BEGIN
+        SELECT
+            @database_name = PARSENAME(@procedure_name, 3);
+    END;
+
+    SELECT
+        @procedure_schema = PARSENAME(@procedure_name, 2),
+        @procedure_name   = PARSENAME(@procedure_name, 1);
+END;
+
+/*
 Try to be helpful by subbing in a database name if null
 */
 IF
@@ -2030,22 +2061,6 @@ BEGIN
     SELECT
         @database_name =
             DB_NAME();
-END;
-
-/*
-Attempt at overloading procedure name so it can
-accept a [schema].[procedure] pasted from results
-from other executions of sp_QuickieStore
-*/
-IF
-(
-      @procedure_name LIKE N'[[]%].[[]%]'
-  AND @procedure_schema IS NULL
-)
-BEGIN
-    SELECT
-        @procedure_schema = PARSENAME(@procedure_name, 2),
-        @procedure_name   = PARSENAME(@procedure_name, 1);
 END;
 
 /*
@@ -2112,15 +2127,16 @@ DECLARE
     @temp_target_table nvarchar(100),
     @exist_or_not_exist nvarchar(20),
     /*Log to table stuff*/
-    @log_table_runtime_stats sysname,
-    @log_table_compilation_stats sysname,
-    @log_table_resource_stats sysname,
-    @log_table_wait_stats_by_query sysname,
-    @log_table_wait_stats_total sysname,
-    @log_table_plan_feedback sysname,
-    @log_table_query_hints sysname,
-    @log_table_query_variants sysname,
-    @log_table_query_store_options sysname,
+    /* nvarchar(1024), not sysname: each holds a full 3-part quoted name (@log_database_schema + QUOTENAME(prefix_suffix)); sysname(128) truncated it, cutting the closing bracket on a long log database/schema name and breaking the generated CREATE/INSERT/DELETE. Matches @log_database_schema's own width. */
+    @log_table_runtime_stats nvarchar(1024),
+    @log_table_compilation_stats nvarchar(1024),
+    @log_table_resource_stats nvarchar(1024),
+    @log_table_wait_stats_by_query nvarchar(1024),
+    @log_table_wait_stats_total nvarchar(1024),
+    @log_table_plan_feedback nvarchar(1024),
+    @log_table_query_hints nvarchar(1024),
+    @log_table_query_variants nvarchar(1024),
+    @log_table_query_store_options nvarchar(1024),
     @cleanup_date datetime2(7),
     @create_sql nvarchar(max),
     @insert_sql nvarchar(max),
@@ -2950,10 +2966,11 @@ BEGIN
                 x = CONVERT
                     (
                         xml,
+                        /* escape &, <, > before building the XML (innermost, so the tags we add stay literal); a legal database name like R&D otherwise makes CONVERT(xml, ...) throw error 9411 and aborts the procedure */
                         N'<i>' +
                         REPLACE
                         (
-                            @include_databases,
+                            REPLACE(REPLACE(REPLACE(@include_databases, N'&', N'&amp;'), N'<', N'&lt;'), N'>', N'&gt;'),
                             N',',
                             N'</i><i>'
                         ) +
@@ -2984,10 +3001,11 @@ BEGIN
                 x = CONVERT
                     (
                         xml,
+                        /* escape &, <, > before building the XML (innermost, so the tags we add stay literal); a legal database name like R&D otherwise makes CONVERT(xml, ...) throw error 9411 and aborts the procedure */
                         N'<i>' +
                         REPLACE
                         (
-                            @exclude_databases,
+                            REPLACE(REPLACE(REPLACE(@exclude_databases, N'&', N'&amp;'), N'<', N'&lt;'), N'>', N'&gt;'),
                             N',',
                             N'</i><i>'
                         ) +
@@ -3445,6 +3463,13 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
     @sql_2022_views = 0,
     @ags_present = 0,
     @current_table = N'',
+    /*
+    Both reusable list splitters below carry WHERE ids.ids IS NOT NULL: a
+    leading, trailing, or doubled comma in a caller's list (e.g. '123,456,')
+    produces an empty <x></x> node whose value is NULL, which otherwise flows
+    into the NOT NULL primary-key id/hash/handle columns and aborts the whole
+    procedure with Msg 515. The @include_databases splitter already guarded this.
+    */
     @string_split_ints = N'
         SELECT DISTINCT
             ids =
@@ -3488,6 +3513,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             ) AS ids
                 CROSS APPLY ids.nodes(''x'') AS x (x)
         ) AS ids
+        WHERE ids.ids IS NOT NULL
         OPTION(RECOMPILE);
         ',
     @string_split_strings = N'
@@ -3533,6 +3559,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;',
             ) AS ids
                 CROSS APPLY ids.nodes(''x'') AS x (x)
         ) AS ids
+        WHERE ids.ids IS NOT NULL
         OPTION(RECOMPILE);
         ',
     @troubleshoot_insert = N'
@@ -4191,7 +4218,7 @@ OPTION(RECOMPILE);' + @nc10;
         EXECUTE sys.sp_executesql
             @sql,
           N'@procedure_exists bit OUTPUT,
-            @procedure_name_quoted sysname',
+            @procedure_name_quoted nvarchar(1024)', /* nvarchar(1024) to match the variable's declaration; sysname truncated a quoted 3-part name over 128 chars, so OBJECT_ID failed and a valid procedure was falsely reported absent */
             @procedure_exists OUTPUT,
             @procedure_name_quoted;
 
@@ -4255,7 +4282,7 @@ OPTION(RECOMPILE);' + @nc10;
         EXECUTE sys.sp_executesql
             @sql,
           N'@procedure_exists bit OUTPUT,
-            @procedure_name_quoted sysname',
+            @procedure_name_quoted nvarchar(1024)', /* nvarchar(1024) to match the variable's declaration; sysname truncated a quoted 3-part name over 128 chars, so OBJECT_ID failed and a valid procedure was falsely reported absent */
             @procedure_exists OUTPUT,
             @procedure_name_quoted;
 
@@ -4379,16 +4406,19 @@ IF
 BEGIN
     RAISERROR('Query Store hints, feedback, and variants are not available prior to SQL Server 2022', 10, 1) WITH NOWAIT;
 
-    IF @get_all_databases = 0
+    /*
+    Instance-level condition: these views are missing for EVERY database on a
+    pre-2022 instance, so halt in both single- and all-databases mode. The old
+    IF @get_all_databases = 0 guard let all-databases mode fall through and
+    return fully unfiltered results after only a level-10 warning.
+    */
+    IF @debug = 1
     BEGIN
-        IF @debug = 1
-        BEGIN
-            GOTO DEBUG;
-        END;
-        ELSE
-        BEGIN
-            RETURN;
-        END;
+        GOTO DEBUG;
+    END;
+    ELSE
+    BEGIN
+        RETURN;
     END;
 END;
 
@@ -4403,16 +4433,19 @@ AND @new = 0
 BEGIN
     RAISERROR('Query Store wait stats are not available prior to SQL Server 2017', 10, 1) WITH NOWAIT;
 
-    IF @get_all_databases = 0
+    /*
+    Instance-level condition (@new is a per-instance version flag): wait stats
+    are missing for EVERY database on a pre-2017 instance, so halt in both
+    single- and all-databases mode rather than falling through in all-databases
+    mode and ignoring the @wait_filter the caller asked for.
+    */
+    IF @debug = 1
     BEGIN
-        IF @debug = 1
-        BEGIN
-            GOTO DEBUG;
-        END;
-        ELSE
-        BEGIN
-            RETURN;
-        END;
+        GOTO DEBUG;
+    END;
+    ELSE
+    BEGIN
+        RETURN;
     END;
 END;
 
@@ -4444,16 +4477,19 @@ AND @wait_filter NOT IN
 BEGIN
     RAISERROR('The wait category (%s) you chose is invalid', 10, 1, @wait_filter) WITH NOWAIT;
 
-    IF @get_all_databases = 0
+    /*
+    An invalid wait category is invalid for every database, so halt in both
+    single- and all-databases mode. Falling through in all-databases mode let
+    the invalid value reach the ELSE-less routing CASE, which returned NULL,
+    NULL'd the whole dynamic SQL, and silently produced zero rows.
+    */
+    IF @debug = 1
     BEGIN
-        IF @debug = 1
-        BEGIN
-            GOTO DEBUG;
-        END;
-        ELSE
-        BEGIN
-            RETURN;
-        END;
+        GOTO DEBUG;
+    END;
+    ELSE
+    BEGIN
+        RETURN;
     END;
 END;
 
@@ -4752,7 +4788,7 @@ BEGIN
         total_tempdb_mb decimal(38, 6) NOT NULL DEFAULT (0),
         avg_tempdb_mb decimal(38, 6) NULL,
         total_rows bigint NOT NULL DEFAULT (0),
-        avg_rows bigint NULL
+        avg_rows decimal(38, 6) NULL /* decimal, like every sibling average; bigint here integer-divided total_rows/total_executions and truncated (3/4 -> 0) */
     );
 
     CREATE TABLE
@@ -5145,7 +5181,7 @@ SELECT
     total_rows =
         SUM(ps.total_rows),
     avg_rows =
-        SUM(ps.total_rows) /
+        CONVERT(decimal(38, 6), SUM(ps.total_rows)) /
         NULLIF(SUM(ps.total_executions), 0)
 FROM #hi_plan_stats AS ps
 JOIN ' + @database_name_quoted + N'.sys.query_store_plan AS qsp
@@ -5526,17 +5562,26 @@ OPTION(RECOMPILE);' + @nc10;
         SET STATISTICS XML ON;
     END;
 
+    /*
+    Weekend detection uses DATEDIFF(DAY, 0, local) % 7 IN (5, 6), which is
+    independent of @@DATEFIRST and language: SQL Server's day 0 (1900-01-01)
+    is a Monday, so the modulo is 0=Mon..5=Sat..6=Sun everywhere. The old
+    DATEPART(WEEKDAY, ...) IN (1, 7) only meant Sat+Sun under @@DATEFIRST = 7;
+    on a DATEFIRST = 1 server it mislabeled Monday as Weekend and Saturday as
+    a weekday. The SELECT and GROUP BY expressions below must stay identical.
+    */
     SELECT
         @sql += N'
 SELECT
     sq.query_hash,
     time_bucket =
         CASE
-            WHEN DATEPART
+            WHEN DATEDIFF
                  (
-                     WEEKDAY,
+                     DAY,
+                     0,
                      DATEADD(MINUTE, @utc_minutes_original, CONVERT(datetime, qsrsi.start_time))
-                 ) IN (1, 7)
+                 ) % 7 IN (5, 6)
                 THEN N''Weekend''
             WHEN CONVERT
                  (
@@ -5565,11 +5610,12 @@ AND   qsrsi.start_time <  @end_date
 GROUP BY
     sq.query_hash,
     CASE
-        WHEN DATEPART
+        WHEN DATEDIFF
              (
-                 WEEKDAY,
+                 DAY,
+                 0,
                  DATEADD(MINUTE, @utc_minutes_original, CONVERT(datetime, qsrsi.start_time))
-             ) IN (1, 7)
+             ) % 7 IN (5, 6)
             THEN N''Weekend''
         WHEN CONVERT
              (
@@ -5660,9 +5706,10 @@ OPTION(RECOMPILE);' + @nc10;
             tb.query_hash,
             tb.time_bucket,
             pct =
+                /* decimal, not integer: CONVERT(integer, 50.99) = 50, so a genuine 50.1-50.99% majority was truncated to exactly 50 and failed the '> 50' test below, mislabeling the query 'Spread' */
                 CONVERT
                 (
-                    integer,
+                    decimal(5, 1),
                     100.0 * tb.executions /
                     SUM(tb.executions) OVER (PARTITION BY tb.query_hash)
                 )
@@ -7053,7 +7100,7 @@ OPTION(RECOMPILE);' + @nc10;
     )
     EXECUTE sys.sp_executesql
         @sql,
-      N'@procedure_name_quoted sysname',
+      N'@procedure_name_quoted nvarchar(1024)', /* nvarchar(1024) to match the variable's declaration; sysname truncated a quoted 3-part name over 128 chars */
         @procedure_name_quoted;
 
     IF @troubleshoot_performance = 1
@@ -9023,7 +9070,7 @@ BEGIN
                      WHEN 'memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                      /* count_executions per interval is meaningful as a plain mean — it''s a count, not an average-of-averages. */
-                     WHEN 'executions' THEN N'AVG(qsrs.count_executions)'
+                     WHEN 'executions' THEN N'AVG(CONVERT(float, qsrs.count_executions))'
                      WHEN 'rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'total cpu' THEN N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)'
                      WHEN 'total logical reads' THEN N'SUM(qsrs.avg_logical_io_reads * qsrs.count_executions)'
@@ -9034,7 +9081,7 @@ BEGIN
                      WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
                      /* Waits and the fallback path — waits are per-interval totals so AVG is correct; fallback mirrors cpu path. */
-                     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(waits.total_query_wait_time_ms)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
+                     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(CONVERT(float, waits.total_query_wait_time_ms))' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                 END
                 + N'
             )
@@ -9139,7 +9186,7 @@ BEGIN
                      WHEN 'duration' THEN N'SUM(qsrs.avg_duration * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
-                     WHEN 'executions' THEN N'AVG(qsrs.count_executions)'
+                     WHEN 'executions' THEN N'AVG(CONVERT(float, qsrs.count_executions))'
                      WHEN 'rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)'
                      WHEN 'total cpu' THEN N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)'
                      WHEN 'total logical reads' THEN N'SUM(qsrs.avg_logical_io_reads * qsrs.count_executions)'
@@ -9149,7 +9196,7 @@ BEGIN
                      WHEN 'total memory' THEN N'SUM(qsrs.avg_query_max_used_memory * qsrs.count_executions)'
                      WHEN 'total tempdb' THEN CASE WHEN @new = 1 THEN N'SUM(qsrs.avg_tempdb_space_used * qsrs.count_executions)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions)' END
                      WHEN 'total rows' THEN N'SUM(qsrs.avg_rowcount * qsrs.count_executions)'
-                     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(waits.total_query_wait_time_ms)' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
+                     ELSE CASE WHEN @sort_order_is_a_wait = 1 THEN N'AVG(CONVERT(float, waits.total_query_wait_time_ms))' ELSE N'SUM(qsrs.avg_cpu_time * qsrs.count_executions) / NULLIF(SUM(CONVERT(float, qsrs.count_executions)), 0)' END
                 END
                 + N'
             )
@@ -12467,6 +12514,7 @@ Format numeric values based on @format_output
 IF
 (
     @expert_mode = 1
+  OR @log_to_table = 1 /* logging must populate every secondary table regardless of expert mode; each section's display and empty-message paths below are guarded by @log_to_table = 0, so opening these gates during a logging run emits no result sets */
   OR
   (
        @only_queries_with_hints = 1
@@ -12485,6 +12533,7 @@ BEGIN
         */
         IF @expert_mode = 1
         OR @only_queries_with_feedback = 1
+        OR @log_to_table = 1
         BEGIN
             IF EXISTS
                (
@@ -12588,6 +12637,7 @@ BEGIN
 
         IF @expert_mode = 1
         OR @only_queries_with_hints = 1
+        OR @log_to_table = 1
         BEGIN
             IF EXISTS
                (
@@ -12667,6 +12717,7 @@ BEGIN
 
         IF @expert_mode = 1
         OR @only_queries_with_variants = 1
+        OR @log_to_table = 1
         BEGIN
             IF EXISTS
                (
@@ -12810,6 +12861,7 @@ BEGIN
     END; /*End 2022 views*/
 
     IF @expert_mode = 1
+    OR @log_to_table = 1
     BEGIN
         IF EXISTS
            (
@@ -13355,6 +13407,7 @@ BEGIN
     IF @new = 1
     BEGIN
         IF @expert_mode = 1
+        OR @log_to_table = 1
         BEGIN
             IF EXISTS
             (
@@ -13735,6 +13788,7 @@ BEGIN
     END; /*End wait stats queries*/
 
     IF @expert_mode = 1
+    OR @log_to_table = 1
     BEGIN
         SELECT
             @current_table = 'selecting query store options',
