@@ -75,9 +75,9 @@ ALTER PROCEDURE
     @ignore_query_hashes nvarchar(4000) = NULL, /*a list of query hashes to ignore*/
     @ignore_plan_hashes nvarchar(4000) = NULL, /*a list of query plan hashes to ignore*/
     @ignore_sql_handles nvarchar(4000) = NULL, /*a list of sql handles to ignore*/
-    @query_text_search nvarchar(4000) = NULL, /*query text to search for*/
-    @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude*/
-    @escape_brackets bit = 0, /*Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)*/
+    @query_text_search nvarchar(4000) = NULL, /*query text to search for; matched with LIKE, so _ % [ ] are wildcards unless @escape_brackets = 1*/
+    @query_text_search_not nvarchar(4000) = NULL, /*query text to exclude; matched with LIKE, so _ % [ ] are wildcards unless @escape_brackets = 1*/
+    @escape_brackets bit = 0, /*Set this bit to 1 to treat [, ], and _ as literals (not LIKE wildcards) in the query text search; helpful for .NET Entity Framework and other ORM queries. Percent (%) stays a wildcard.*/
     @escape_character nchar(1) = N'\', /*Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character*/
     @only_queries_with_hints bit = 0, /*Set this bit to 1 to retrieve only queries with query hints*/
     @only_queries_with_feedback bit = 0, /*Set this bit to 1 to retrieve only queries with query feedback*/
@@ -178,9 +178,9 @@ BEGIN
                 WHEN N'@ignore_query_hashes' THEN 'a list of query hashes to ignore'
                 WHEN N'@ignore_plan_hashes' THEN 'a list of query plan hashes to ignore'
                 WHEN N'@ignore_sql_handles' THEN 'a list of sql handles to ignore'
-                WHEN N'@query_text_search' THEN 'query text to search for'
-                WHEN N'@query_text_search_not' THEN 'query text to exclude'
-                WHEN N'@escape_brackets' THEN 'Set this bit to 1 to search for query text containing square brackets (common in .NET Entity Framework and other ORM queries)'
+                WHEN N'@query_text_search' THEN 'query text to search for; matched with LIKE, so _ % [ ] are treated as wildcards unless you set @escape_brackets = 1'
+                WHEN N'@query_text_search_not' THEN 'query text to exclude; matched with LIKE, so _ % [ ] are treated as wildcards unless you set @escape_brackets = 1'
+                WHEN N'@escape_brackets' THEN 'Set this bit to 1 to treat [, ], and _ as literals (not LIKE wildcards) in @query_text_search / @query_text_search_not; helpful for .NET Entity Framework and other ORM query text. Percent (%) stays a wildcard.'
                 WHEN N'@escape_character' THEN 'Sets the ESCAPE character for special character searches, defaults to the SQL standard backslash (\) character'
                 WHEN N'@only_queries_with_hints' THEN 'only return queries with query hints'
                 WHEN N'@only_queries_with_feedback' THEN 'only return queries with query feedback'
@@ -6985,20 +6985,21 @@ BEGIN
                 @work_end_utc
             );
 
-    IF @df = 1
-    BEGIN
-       SELECT
-           @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 1 AND 5' + @nc10;
-    END;/*df 1*/
-    ELSE IF @df = 7
-    BEGIN
-       SELECT
-           @where_clause += N'AND   DATEPART(WEEKDAY, qsrs.last_execution_time) BETWEEN 2 AND 6' + @nc10;
-    END;/*df 7*/
-    ELSE
-    BEGIN
-       RAISERROR('Warning: @workdays filter does not support @@DATEFIRST = %i, weekday filter skipped', 10, 1, @df) WITH NOWAIT;
-    END;
+    /*
+    Derive the weekday from the LOCAL execution time, not the raw UTC value, so
+    it stays consistent with the local work-hour window above: qsrs.last_execution_time
+    is UTC, so shift it back to local by -@utc_minutes_difference (embedded as a
+    literal because @utc_minutes_difference isn't in the shared @parameters list).
+    Without this, a query run on a local weekday morning that lands on the previous
+    UTC day (far-east time zones) was dropped as a weekend/wrong day.
+    DATEDIFF(DAY, 0, local) % 7 is @@DATEFIRST-independent (0 = Monday .. 4 = Friday,
+    since 1900-01-01 was a Monday), so one predicate covers every server instead of
+    only @@DATEFIRST 1 and 7 (the other values previously skipped the filter).
+    */
+    SELECT
+        @where_clause += N'AND   DATEDIFF(DAY, 0, DATEADD(MINUTE, ' +
+                         CONVERT(nvarchar(20), -1 * @utc_minutes_difference) +
+                         N', qsrs.last_execution_time)) % 7 BETWEEN 0 AND 4' + @nc10;
 
     IF  @work_start_utc IS NOT NULL
     AND @work_end_utc IS NOT NULL
