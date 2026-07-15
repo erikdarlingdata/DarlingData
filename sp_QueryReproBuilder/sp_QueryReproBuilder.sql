@@ -4905,6 +4905,18 @@ WHERE NOT EXISTS
 OPTION(RECOMPILE);
 
 
+/*
+Match sp_QuickieStore: when nothing landed in the search window there is no
+repro to build, so tell the caller which table came back empty instead of
+returning a silent, unexplained empty result set.
+*/
+IF EXISTS
+(
+    SELECT
+        1/0
+    FROM #repro_queries AS rq
+)
+BEGIN
 SELECT
     table_name =
         N'results',
@@ -5095,6 +5107,13 @@ OUTER APPLY
 ORDER BY
     qsrs.last_execution_time DESC
 OPTION(RECOMPILE);
+END;
+ELSE
+BEGIN
+    SELECT
+        result =
+            N'#repro_queries is empty';
+END;
 
 END TRY
 
