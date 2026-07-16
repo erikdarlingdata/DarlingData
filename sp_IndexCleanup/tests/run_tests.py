@@ -93,18 +93,35 @@ def run_tests(rows):
     assert_test("1-UC", "1a: NC subset of UC flagged DISABLE",
                 len(matches) == 1, f"found {len(matches)}")
 
-    # 1a: UC merge script → CREATE UNIQUE
+    # 1a: A unique CONSTRAINT must NOT be picked as the wider merge target.
+    #
+    # These two assertions used to expect the opposite, and the proc used to
+    # oblige, emitting:
+    #   CREATE UNIQUE INDEX [uq_uc_abc] ... INCLUDE ([col_e])
+    #       WITH (DROP_EXISTING = ON, ...)
+    # against a constraint-backed index. SQL Server rejects that outright with
+    # Msg 1907 ("The new index definition does not match the constraint being
+    # enforced by the existing index") - verified on 2016/2019/2022/2025. The
+    # paired DISABLE of the subset ran fine, so the net effect was losing a
+    # covering index while the constraint never absorbed its include.
+    #
+    # Contrast with 1d below: a plain unique INDEX does accept DROP_EXISTING
+    # with an added INCLUDE, so it remains a valid merge target. The dividing
+    # line is is_unique_constraint, not is_unique.
     matches = find_rows(rows, table_name="test_ic_uc", index_name="uq_uc_abc",
                         script_type="MERGE SCRIPT")
-    has_unique = any("CREATE UNIQUE" in m.get("script", "") for m in matches)
-    assert_test("1-UC", "1a: UC merge script has CREATE UNIQUE",
-                has_unique, f"found {len(matches)} merge rows, unique={has_unique}")
+    assert_test("1-UC", "1a: UC NOT used as merge target (Msg 1907)",
+                len(matches) == 0, f"found {len(matches)} merge rows (expected 0)")
 
-    # 1b: NC subset of UC with includes → DISABLE
+    # 1b: A subset carrying an include the constraint cannot absorb must survive.
+    # Disabling it would drop col_e coverage with no working merge to replace it.
+    # (ix_uc_ab, which has no includes, is still correctly disabled above: the
+    # constraint's keys already cover it, so no script against the constraint is
+    # needed.)
     matches = find_rows(rows, table_name="test_ic_uc", index_name="ix_uc_ab_inc",
                         script_type="DISABLE SCRIPT")
-    assert_test("1-UC", "1b: NC subset of UC (with includes) flagged DISABLE",
-                len(matches) == 1, f"found {len(matches)}")
+    assert_test("1-UC", "1b: NC subset of UC (with includes) NOT disabled",
+                len(matches) == 0, f"found {len(matches)} (expected 0)")
 
     # 1c: NC with non-prefix UC keys → NOT subset
     matches = find_rows(rows, table_name="test_ic_uc", index_name="ix_uc_bc",

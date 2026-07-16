@@ -55,8 +55,8 @@ ALTER PROCEDURE
     @database_name sysname = NULL, /*focus on a single database*/
     @schema_name sysname = NULL, /*use when focusing on a single table/view, or to a single schema with no table name*/
     @table_name sysname = NULL, /*use when focusing on a single table or view*/
-    @min_reads bigint = 0, /*only look at indexes with a minimum number of reads*/
-    @min_writes bigint = 0, /*only look at indexes with a minimum number of writes*/
+    @min_reads bigint = 0, /*only dedupe indexes with a minimum number of reads; an index clears by meeting this or @min_writes*/
+    @min_writes bigint = 0, /*only dedupe indexes with a minimum number of writes; an index clears by meeting this or @min_reads*/
     @min_size_gb decimal(10,2) = 0, /*only look at indexes with a minimum size*/
     @min_rows bigint = 0, /*only look at indexes with a minimum number of rows*/
     @dedupe_only bit = 'false', /*only perform deduplication, don't mark unused indexes for removal*/
@@ -166,8 +166,8 @@ BEGIN TRY
                     WHEN N'@database_name' THEN 'the name of the database you wish to analyze'
                     WHEN N'@schema_name' THEN 'limits analysis to tables in the specified schema when used without @table_name'
                     WHEN N'@table_name' THEN 'the table or view name to filter indexes by, requires @schema_name if not dbo'
-                    WHEN N'@min_reads' THEN 'minimum number of reads for an index to be considered used'
-                    WHEN N'@min_writes' THEN 'minimum number of writes for an index to be considered used'
+                    WHEN N'@min_reads' THEN 'minimum reads for an index to be deduped; applied per table AND per index, and an index clears by meeting this or @min_writes. Does not affect unused-index detection or compression'
+                    WHEN N'@min_writes' THEN 'minimum writes for an index to be deduped; applied per table AND per index, and an index clears by meeting this or @min_reads. Does not affect unused-index detection or compression'
                     WHEN N'@min_size_gb' THEN 'minimum size in GB for an index to be analyzed'
                     WHEN N'@min_rows' THEN 'minimum number of rows for a table to be analyzed'
                     WHEN N'@dedupe_only' THEN 'only perform index deduplication, do not mark unused indexes for removal'
@@ -720,6 +720,15 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         target_index_name sysname NULL,
         /* When this is a target, the index which points to it as a supersedes in consolidation */
         superseded_by nvarchar(4000) NULL,
+        /*
+        Whether this index cleared @min_reads / @min_writes on its own. Defaults
+        to 1 and only drops to 0 when a caller sets a floor and this index misses
+        it. The dedupe rules ignore anything marked 0; Rule 1 and compression
+        analysis deliberately do not look at it, since an index can be too cold to
+        be worth deduping while still being worth reporting as unused or worth
+        compressing.
+        */
+        meets_usage_floor bit NOT NULL DEFAULT 1,
         /* Priority score from 0-1 to determine which index to keep (higher is better) */
         index_priority decimal(10,6) NULL,
         /* Hash columns for optimized matching */
@@ -3438,6 +3447,72 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OPTION(RECOMPILE);
     END;
 
+    /*
+    Apply @min_reads / @min_writes per index, not just per object.
+
+    The filter that built #filtered_objects only asks whether a TABLE clears the
+    floors: it groups sys.dm_db_index_usage_stats by object_id, summing usage
+    across every index on the object. A table busy enough to qualify dragged in
+    all of its indexes with it, including ones nowhere near the floor the caller
+    asked for, which is not what '@min_reads: only look at indexes with a
+    minimum number of reads' promises.
+
+    This marks rather than deletes, and it sits between Rule 1 and the dedupe
+    rules. Both of those are deliberate:
+
+      - Marking keeps the row. Compression analysis reaches nonclustered indexes
+        through #index_analysis, and compression eligibility has nothing to do
+        with usage: an index can be far too cold to bother deduping and still be
+        worth compressing. Deleting the row would take its compression
+        recommendation with it.
+      - Rule 1 (unused indexes) has already run, and it does not look at this
+        flag, so a never-read index is still reported as unused. Screening ahead
+        of Rule 1 would make it unreachable: Rule 1's predicate is reads = 0,
+        which is a strict subset of everything a reads floor removes, so
+        @min_reads alone would silently switch unused-index detection off.
+
+    An index clears the screen if it meets EITHER floor, matching the object
+    filter's OR, with each term gated on its own threshold being set so that
+    passing only @min_reads doesn't leave user_updates >= 0 as an always-true
+    escape hatch on the write side.
+    */
+    IF  @min_reads > 0
+    OR  @min_writes > 0
+    BEGIN
+        UPDATE
+            ia
+        SET
+            ia.meets_usage_floor = 0
+        FROM #index_analysis AS ia
+        WHERE EXISTS
+        (
+            SELECT
+                1/0
+            FROM #index_details AS id
+            WHERE id.index_hash = ia.index_hash
+            AND   NOT
+            (
+                (
+                        @min_reads > 0
+                    AND (id.user_seeks + id.user_scans + id.user_lookups) >= @min_reads
+                )
+                OR
+                (
+                        @min_writes > 0
+                    AND id.user_updates >= @min_writes
+                )
+            )
+        )
+        OPTION(RECOMPILE);
+
+        SET @rc = ROWCOUNT_BIG();
+
+        IF @debug = 1
+        BEGIN
+            RAISERROR('Index-level reads/writes filter excluded %I64d indexes from dedupe analysis', 0, 0, @rc) WITH NOWAIT;
+        END;
+    END;
+
     /* Rule 2: Exact duplicates - matching key columns and includes */
     UPDATE
         ia1
@@ -3468,6 +3543,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia1.exact_match_hash = ia2.exact_match_hash  /* Exact match: keys + includes + filter */
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    /* Both sides must have cleared @min_reads / @min_writes on their own */
+    AND   ia1.meets_usage_floor = 1
+    AND   ia2.meets_usage_floor = 1
     /* Exclude unique constraints - we'll handle those separately in Rule 7 */
     AND NOT EXISTS
     (
@@ -3587,6 +3665,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia1.is_unique = 0
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    /* Both sides must have cleared @min_reads / @min_writes on their own */
+    AND   ia1.meets_usage_floor = 1
+    AND   ia2.meets_usage_floor = 1
     /* Don't disable unique constraints */
     AND NOT EXISTS
     (
@@ -3777,6 +3858,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ISNULL(ia1.included_columns, '') <> ISNULL(ia2.included_columns, '')  /* Different includes */
     WHERE ia1.consolidation_rule IS NULL  /* Not already processed */
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    /* Both sides must have cleared @min_reads / @min_writes on their own */
+    AND   ia1.meets_usage_floor = 1
+    AND   ia2.meets_usage_floor = 1
     /* Exclude pairs where either one is a unique constraint (we'll handle those separately in Rule 7) */
     AND NOT EXISTS
     (
@@ -3866,16 +3950,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 (
                     SELECT DISTINCT
                         N', ' +
-                        t.c.value('.', 'sysname')
+                        t.c.value('.', 'nvarchar(258)')
                     FROM
                     (
-                        /* Superset's own includes */
+                        /*
+                        Superset's own includes. Entities are escaped before the
+                        split or CONVERT(xml, ...) fails outright with Msg 9411
+                        on a legal column name like [A&B].
+                        */
                         SELECT
                             x = CONVERT
                             (
                                 xml,
                                 N'<c>' +
-                                REPLACE(superset.included_columns, N', ', N'</c><c>') +
+                                REPLACE
+                                (
+                                    REPLACE
+                                    (
+                                        REPLACE
+                                        (
+                                            REPLACE(superset.included_columns, N'&', N'&amp;'),
+                                            N'<',
+                                            N'&lt;'
+                                        ),
+                                        N'>',
+                                        N'&gt;'
+                                    ),
+                                    N', ',
+                                    N'</c><c>'
+                                ) +
                                 N'</c>'
                             )
                         WHERE superset.included_columns IS NOT NULL
@@ -3888,7 +3991,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             (
                                 xml,
                                 N'<c>' +
-                                REPLACE(subset.included_columns, N', ', N'</c><c>') +
+                                REPLACE
+                                (
+                                    REPLACE
+                                    (
+                                        REPLACE
+                                        (
+                                            REPLACE(subset.included_columns, N'&', N'&amp;'),
+                                            N'<',
+                                            N'&lt;'
+                                        ),
+                                        N'>',
+                                        N'&gt;'
+                                    ),
+                                    N', ',
+                                    N'</c><c>'
+                                ) +
                                 N'</c>'
                             )
                         FROM #index_analysis AS subset
@@ -3900,12 +4018,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ) AS a
                     CROSS APPLY a.x.nodes('/c') AS t(c)
                     /* Filter out columns already in superset's key */
-                    WHERE CHARINDEX(t.c.value('.', 'sysname'), superset.key_columns) = 0
-                    AND   LEN(t.c.value('.', 'sysname')) > 0
+                    WHERE CHARINDEX(t.c.value('.', 'nvarchar(258)'), superset.key_columns) = 0
+                    AND   LEN(t.c.value('.', 'nvarchar(258)')) > 0
+                    /* TYPE plus .value() so the entities don't come back re-encoded */
                     FOR
                         XML
-                        PATH('')
-                ),
+                        PATH(''),
+                        TYPE
+                ).value('text()[1]', 'nvarchar(max)'),
                 1,
                 2,
                 ''
@@ -4003,6 +4123,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_analysis AS ia1
     WHERE ia1.consolidation_rule IS NULL /* Not already processed */
     AND   ia1.action IS NULL /* Not already processed by earlier rules */
+    /* Must have cleared @min_reads / @min_writes on its own */
+    AND   ia1.meets_usage_floor = 1
     /*
     A filtered index can never stand in for a unique constraint: the
     constraint enforces uniqueness over EVERY row, the filtered index
@@ -4396,16 +4518,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     (
                         (
                             SELECT DISTINCT
-                                N', ' + t.c.value('.', 'sysname')
+                                N', ' + t.c.value('.', 'nvarchar(258)')
                             FROM
                             (
-                                /* Winner's includes */
+                                /*
+                                Winner's includes. Entities are escaped first or
+                                CONVERT(xml, ...) fails with Msg 9411 on a legal
+                                column name like [A&B].
+                                */
                                 SELECT
                                     x = CONVERT
                                     (
                                         xml,
                                         N'<c>' +
-                                        REPLACE(ISNULL(ia_winner.included_columns, N''), N', ', N'</c><c>') +
+                                        REPLACE
+                                        (
+                                            REPLACE
+                                            (
+                                                REPLACE
+                                                (
+                                                    REPLACE(ISNULL(ia_winner.included_columns, N''), N'&', N'&amp;'),
+                                                    N'<',
+                                                    N'&lt;'
+                                                ),
+                                                N'>',
+                                                N'&gt;'
+                                            ),
+                                            N', ',
+                                            N'</c><c>'
+                                        ) +
                                         N'</c>'
                                     )
                                 WHERE ia_winner.included_columns IS NOT NULL
@@ -4418,7 +4559,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     (
                                         xml,
                                         N'<c>' +
-                                        REPLACE(ia_loser.included_columns, N', ', N'</c><c>') +
+                                        REPLACE
+                                        (
+                                            REPLACE
+                                            (
+                                                REPLACE
+                                                (
+                                                    REPLACE(ia_loser.included_columns, N'&', N'&amp;'),
+                                                    N'<',
+                                                    N'&lt;'
+                                                ),
+                                                N'>',
+                                                N'&gt;'
+                                            ),
+                                            N', ',
+                                            N'</c><c>'
+                                        ) +
                                         N'</c>'
                                     )
                                 FROM #index_analysis AS ia_loser
@@ -4430,11 +4586,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                 AND   ia_loser.included_columns IS NOT NULL
                             ) AS a
                             CROSS APPLY a.x.nodes('/c') AS t(c)
-                            WHERE LEN(t.c.value('.', 'sysname')) > 0
+                            WHERE LEN(t.c.value('.', 'nvarchar(258)')) > 0
+                            /* TYPE plus .value() so the entities don't come back re-encoded */
                             FOR
                                 XML
-                                PATH('')
-                        ),
+                                PATH(''),
+                                TYPE
+                        ).value('text()[1]', 'nvarchar(max)'),
                         1,
                         2,
                         ''
@@ -4455,10 +4613,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              AND   ia_loser.action = N'DISABLE'
                              AND   ia_loser.consolidation_rule = N'Key Duplicate'
                              AND   ia_loser.target_index_name = ia_winner.index_name
+                             /* TYPE plus .value() so an index named [a&b] isn't reported as [a&amp;b] */
                              FOR
                                  XML
-                                 PATH('')
-                         ),
+                                 PATH(''),
+                                 TYPE
+                         ).value('text()[1]', 'nvarchar(max)'),
                          1,
                          2,
                          ''
@@ -4476,10 +4636,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                              AND   ia_loser.action = N'DISABLE'
                              AND   ia_loser.consolidation_rule = N'Key Duplicate'
                              AND   ia_loser.target_index_name = ia_winner.index_name
+                             /* TYPE plus .value() so an index named [a&b] isn't reported as [a&amp;b] */
                              FOR
                                  XML
-                                 PATH('')
-                         ),
+                                 PATH(''),
+                                 TYPE
+                         ).value('text()[1]', 'nvarchar(max)'),
                          1,
                          2,
                          ''
@@ -4525,6 +4687,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia1.index_name < ia2.index_name  /* Only process each pair once */
       AND ia1.consolidation_rule IS NULL  /* Not already processed */
       AND ia2.consolidation_rule IS NULL  /* Not already processed */
+      /* Both sides must have cleared @min_reads / @min_writes on their own */
+      AND ia1.meets_usage_floor = 1
+      AND ia2.meets_usage_floor = 1
     WHERE
         /* Leading columns match */
         EXISTS
@@ -4871,16 +5036,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                         (
                             SELECT DISTINCT
                                 N', ' +
-                                t.c.value('.', 'sysname')
+                                t.c.value('.', 'nvarchar(258)')
                             FROM
                             (
-                                /* Create XML from winner's includes */
+                                /*
+                                Create XML from winner's includes. Entities are
+                                escaped first or CONVERT(xml, ...) fails with
+                                Msg 9411 on a legal column name like [A&B].
+                                */
                                 SELECT
                                     x = CONVERT
                                     (
                                         xml,
                                         N'<c>' +
-                                        REPLACE(ISNULL(kdi.winner_includes, N''), N', ', N'</c><c>') +
+                                        REPLACE
+                                        (
+                                            REPLACE
+                                            (
+                                                REPLACE
+                                                (
+                                                    REPLACE(ISNULL(kdi.winner_includes, N''), N'&', N'&amp;'),
+                                                    N'<',
+                                                    N'&lt;'
+                                                ),
+                                                N'>',
+                                                N'&gt;'
+                                            ),
+                                            N', ',
+                                            N'</c><c>'
+                                        ) +
                                         N'</c>'
                                     )
                                 FROM KeyDuplicateIncludes AS kdi
@@ -4895,7 +5079,22 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                                     (
                                         xml,
                                         N'<c>' +
-                                        REPLACE(kdi.loser_includes, N', ', N'</c><c>') +
+                                        REPLACE
+                                        (
+                                            REPLACE
+                                            (
+                                                REPLACE
+                                                (
+                                                    REPLACE(kdi.loser_includes, N'&', N'&amp;'),
+                                                    N'<',
+                                                    N'&lt;'
+                                                ),
+                                                N'>',
+                                                N'&gt;'
+                                            ),
+                                            N', ',
+                                            N'</c><c>'
+                                        ) +
                                         N'</c>'
                                     )
                                 FROM KeyDuplicateIncludes AS kdi
@@ -4905,11 +5104,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                             /* Split XML into individual columns */
                             CROSS APPLY a.x.nodes('/c') AS t(c)
                             /* Filter out empty strings that can result from NULL handling */
-                            WHERE LEN(t.c.value('.', 'sysname')) > 0
+                            WHERE LEN(t.c.value('.', 'nvarchar(258)')) > 0
+                            /* TYPE plus .value() so the entities don't come back re-encoded */
                             FOR
                                 XML
-                                PATH('')
-                        ),
+                                PATH(''),
+                                TYPE
+                        ).value('text()[1]', 'nvarchar(max)'),
                         1,
                         2,
                         ''
@@ -4969,6 +5170,204 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ISNULL(loser.included_columns, N'') <> ISNULL(ia.included_columns, N'')
     )
     OPTION(RECOMPILE);
+
+    /*
+    Rule 5 settles a unique-vs-non-unique key duplicate in a single pass: the
+    unique index is marked MERGE INCLUDES and the non-unique loser is marked
+    DISABLE immediately. That leaves the group holding exactly one MERGE INCLUDES
+    row, and #key_duplicate_dedupe above only collects groups holding more than
+    one (HAVING COUNT_BIG(*) > 1), so nothing ever merged the loser's includes
+    into the winner. The winner was then downgraded to KEEP further down for
+    having no merged includes, while the loser's DISABLE still ran: any include
+    the winner did not already carry was silently dropped.
+
+    Rule 5 excludes unique constraints on both sides, so a winner reaching here
+    is always a plain unique index. Unlike a constraint-backed index (Msg 1907),
+    that accepts CREATE UNIQUE INDEX ... INCLUDE (...) WITH (DROP_EXISTING = ON),
+    so the merge is safe to emit.
+
+    Only rows whose merged list actually differs from what the winner already
+    covers are recorded. When a loser's includes are a subset of the winner's,
+    the existing KEEP plus the loser's DISABLE is already correct, and emitting a
+    rebuild that changes nothing would be noise.
+    */
+    INSERT INTO
+        #merged_includes
+    WITH
+        (TABLOCK)
+    (
+        scope_hash,
+        index_name,
+        key_columns,
+        merged_includes
+    )
+    SELECT
+        kd.scope_hash,
+        kd.index_name,
+        kd.key_columns,
+        kd.merged_includes
+    FROM
+    (
+        SELECT
+            ia.scope_hash,
+            ia.index_name,
+            ia.key_columns,
+            original_includes = ia.included_columns,
+            merged_includes =
+                STUFF
+                (
+                    (
+                        SELECT DISTINCT
+                            N', ' +
+                            t.c.value('.', 'nvarchar(258)')
+                        FROM
+                        (
+                            /* The winner's own includes */
+                            SELECT
+                                x =
+                                    CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE
+                                        (
+                                            REPLACE
+                                            (
+                                                REPLACE
+                                                (
+                                                    REPLACE(ia.included_columns, N'&', N'&amp;'),
+                                                    N'<',
+                                                    N'&lt;'
+                                                ),
+                                                N'>',
+                                                N'&gt;'
+                                            ),
+                                            N', ',
+                                            N'</c><c>'
+                                        ) +
+                                        N'</c>'
+                                    )
+                            WHERE ia.included_columns IS NOT NULL
+
+                            UNION ALL
+
+                            /* Every duplicate this winner is about to disable */
+                            SELECT
+                                x =
+                                    CONVERT
+                                    (
+                                        xml,
+                                        N'<c>' +
+                                        REPLACE
+                                        (
+                                            REPLACE
+                                            (
+                                                REPLACE
+                                                (
+                                                    REPLACE(loser.included_columns, N'&', N'&amp;'),
+                                                    N'<',
+                                                    N'&lt;'
+                                                ),
+                                                N'>',
+                                                N'&gt;'
+                                            ),
+                                            N', ',
+                                            N'</c><c>'
+                                        ) +
+                                        N'</c>'
+                                    )
+                            FROM #index_analysis AS loser
+                            WHERE loser.scope_hash = ia.scope_hash
+                            AND   loser.key_filter_hash = ia.key_filter_hash
+                            AND   loser.target_index_name = ia.index_name
+                            AND   loser.action = N'DISABLE'
+                            AND   loser.consolidation_rule = N'Key Duplicate'
+                            AND   loser.included_columns IS NOT NULL
+                        ) AS a
+                        CROSS APPLY a.x.nodes('/c') AS t(c)
+                        /*
+                        nvarchar(258), not sysname. A column name does max out at
+                        128 characters, but these values are already wrapped by
+                        QUOTENAME, and QUOTENAME returns nvarchar(258): a
+                        128-character name comes back 130 characters long, and
+                        pulling that through a sysname bucket lops off the closing
+                        bracket. The merge script then fails with Msg 103 while the
+                        paired DISABLE of the loser still runs.
+                        */
+                        /* A column already in the key doesn't need including */
+                        WHERE CHARINDEX(t.c.value('.', 'nvarchar(258)'), ia.key_columns) = 0
+                        AND   LEN(t.c.value('.', 'nvarchar(258)')) > 0
+                        /*
+                        TYPE plus .value() on the way out is not optional here.
+                        A bare FOR XML PATH('') returns nvarchar and re-encodes
+                        entities, so a column named [A&B] would come back out as
+                        [A&amp;B] and land in the generated script, which then
+                        fails with Msg 1911 (column does not exist) while the
+                        paired DISABLE of the loser still runs - the exact silent
+                        include loss this block exists to prevent.
+                        */
+                        FOR
+                            XML
+                            PATH(''),
+                            TYPE
+                    ).value('text()[1]', 'nvarchar(max)'),
+                    1,
+                    2,
+                    N''
+                )
+        FROM #index_analysis AS ia
+        WHERE ia.action = N'MERGE INCLUDES'
+        AND   ia.consolidation_rule = N'Key Duplicate'
+        /* Leave the multi-winner groups handled above alone */
+        AND   NOT EXISTS
+        (
+            SELECT
+                1/0
+            FROM #merged_includes AS mi
+            WHERE mi.scope_hash = ia.scope_hash
+            AND   mi.index_name = ia.index_name
+        )
+        AND   EXISTS
+        (
+            SELECT
+                1/0
+            FROM #index_analysis AS loser_check
+            WHERE loser_check.scope_hash = ia.scope_hash
+            AND   loser_check.key_filter_hash = ia.key_filter_hash
+            AND   loser_check.target_index_name = ia.index_name
+            AND   loser_check.action = N'DISABLE'
+            AND   loser_check.consolidation_rule = N'Key Duplicate'
+            AND   loser_check.included_columns IS NOT NULL
+        )
+    ) AS kd
+    WHERE ISNULL(kd.merged_includes, N'') <> ISNULL(kd.original_includes, N'')
+    OPTION(RECOMPILE);
+
+    /*
+    Apply them. Winners handled by the multi-winner path above already carry
+    their merged list, so this only moves the single-winner rows just recorded.
+    */
+    UPDATE
+        ia
+    SET
+        ia.included_columns = mi.merged_includes
+    FROM #index_analysis AS ia
+    JOIN #merged_includes AS mi
+      ON  mi.scope_hash = ia.scope_hash
+      AND mi.index_name = ia.index_name
+    WHERE ia.action = N'MERGE INCLUDES'
+    AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   ISNULL(ia.included_columns, N'') <> ISNULL(mi.merged_includes, N'')
+    OPTION(RECOMPILE);
+
+    IF @debug = 1
+    BEGIN
+        SELECT
+            table_name = '#index_analysis after single-winner key duplicate merge',
+            ia.*
+        FROM #index_analysis AS ia
+        OPTION(RECOMPILE);
+    END;
 
     /* Find indexes with same key columns where one has includes that are a subset of another */
     IF @debug = 1
