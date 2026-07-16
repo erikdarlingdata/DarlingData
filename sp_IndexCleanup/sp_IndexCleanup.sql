@@ -3944,83 +3944,62 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         superset.scope_hash,
         superset.index_name,
         superset.key_columns,
+        /*
+        Merge the superset's own includes with those of every subset it
+        supersedes.
+
+        This reads #index_details, one row per column, instead of splitting the
+        included_columns strings on ', '. A column name may legally contain a
+        comma and a space, so that delimiter could tear [Last, First] into two
+        fragments and the DISTINCT sort could then slot another column between
+        them, emitting a broken INCLUDE list while the paired DISABLE still ran.
+        Reading the columns directly also removes the need to escape entities for
+        the XML round-trip.
+        */
         merged_includes =
             STUFF
             (
                 (
-                    SELECT DISTINCT
+                    SELECT
                         N', ' +
-                        t.c.value('.', 'nvarchar(258)')
-                    FROM
+                        QUOTENAME(idc.column_name)
+                    FROM #index_details AS idc
+                    WHERE idc.is_included_column = 1
+                    AND
                     (
-                        /*
-                        Superset's own includes. Entities are escaped before the
-                        split or CONVERT(xml, ...) fails outright with Msg 9411
-                        on a legal column name like [A&B].
-                        */
+                        /* The superset's own includes */
+                        idc.index_hash = superset.index_hash
+                        /* Plus those of every subset it supersedes */
+                        OR EXISTS
+                           (
+                               SELECT
+                                   1/0
+                               FROM #index_analysis AS subset
+                               WHERE subset.scope_hash = superset.scope_hash
+                               AND   subset.target_index_name = superset.index_name
+                               AND   subset.action = N'DISABLE'
+                               AND   subset.consolidation_rule = N'Key Subset'
+                               AND   subset.index_hash = idc.index_hash
+                           )
+                    )
+                    /*
+                    A column already in the superset's key doesn't need
+                    including. Matching column names exactly beats searching the
+                    key_columns string for one.
+                    */
+                    AND NOT EXISTS
+                    (
                         SELECT
-                            x = CONVERT
-                            (
-                                xml,
-                                N'<c>' +
-                                REPLACE
-                                (
-                                    REPLACE
-                                    (
-                                        REPLACE
-                                        (
-                                            REPLACE(superset.included_columns, N'&', N'&amp;'),
-                                            N'<',
-                                            N'&lt;'
-                                        ),
-                                        N'>',
-                                        N'&gt;'
-                                    ),
-                                    N', ',
-                                    N'</c><c>'
-                                ) +
-                                N'</c>'
-                            )
-                        WHERE superset.included_columns IS NOT NULL
-
-                        UNION ALL
-
-                        /* ALL subsets' includes */
-                        SELECT
-                            x = CONVERT
-                            (
-                                xml,
-                                N'<c>' +
-                                REPLACE
-                                (
-                                    REPLACE
-                                    (
-                                        REPLACE
-                                        (
-                                            REPLACE(subset.included_columns, N'&', N'&amp;'),
-                                            N'<',
-                                            N'&lt;'
-                                        ),
-                                        N'>',
-                                        N'&gt;'
-                                    ),
-                                    N', ',
-                                    N'</c><c>'
-                                ) +
-                                N'</c>'
-                            )
-                        FROM #index_analysis AS subset
-                        WHERE subset.scope_hash = superset.scope_hash
-                        AND   subset.target_index_name = superset.index_name
-                        AND   subset.action = N'DISABLE'
-                        AND   subset.consolidation_rule = N'Key Subset'
-                        AND   subset.included_columns IS NOT NULL
-                    ) AS a
-                    CROSS APPLY a.x.nodes('/c') AS t(c)
-                    /* Filter out columns already in superset's key */
-                    WHERE CHARINDEX(t.c.value('.', 'nvarchar(258)'), superset.key_columns) = 0
-                    AND   LEN(t.c.value('.', 'nvarchar(258)')) > 0
-                    /* TYPE plus .value() so the entities don't come back re-encoded */
+                            1/0
+                        FROM #index_details AS idk
+                        WHERE idk.index_hash = superset.index_hash
+                        AND   idk.is_included_column = 0
+                        AND   idk.column_name = idc.column_name
+                    )
+                    GROUP BY
+                        idc.column_name
+                    ORDER BY
+                        idc.column_name
                     FOR
                         XML
                         PATH(''),
@@ -4510,94 +4489,60 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     UPDATE
         ia_winner
     SET
+        /*
+        Merge the disabled Key Duplicates' includes into the index being made
+        unique.
+
+        Sourced from #index_details, one row per column, rather than splitting
+        included_columns on ', '. A column name may legally contain a comma and
+        a space, which made that delimiter ambiguous: [Last, First] tore into two
+        fragments the DISTINCT sort could separate, producing a broken INCLUDE
+        list on a script whose paired DISABLE still ran.
+
+        Winner and losers are key duplicates, so their keys match and SQL Server
+        would not allow a key column to also be an include. No key exclusion is
+        needed.
+        */
         ia_winner.included_columns =
-        (
-            SELECT
-                combined_cols =
-                    STUFF
+            STUFF
+            (
+                (
+                    SELECT
+                        N', ' +
+                        QUOTENAME(idc.column_name)
+                    FROM #index_details AS idc
+                    WHERE idc.is_included_column = 1
+                    AND
                     (
-                        (
-                            SELECT DISTINCT
-                                N', ' + t.c.value('.', 'nvarchar(258)')
-                            FROM
-                            (
-                                /*
-                                Winner's includes. Entities are escaped first or
-                                CONVERT(xml, ...) fails with Msg 9411 on a legal
-                                column name like [A&B].
-                                */
-                                SELECT
-                                    x = CONVERT
-                                    (
-                                        xml,
-                                        N'<c>' +
-                                        REPLACE
-                                        (
-                                            REPLACE
-                                            (
-                                                REPLACE
-                                                (
-                                                    REPLACE(ISNULL(ia_winner.included_columns, N''), N'&', N'&amp;'),
-                                                    N'<',
-                                                    N'&lt;'
-                                                ),
-                                                N'>',
-                                                N'&gt;'
-                                            ),
-                                            N', ',
-                                            N'</c><c>'
-                                        ) +
-                                        N'</c>'
-                                    )
-                                WHERE ia_winner.included_columns IS NOT NULL
-
-                                UNION ALL
-
-                                /* Loser's includes */
-                                SELECT
-                                    x = CONVERT
-                                    (
-                                        xml,
-                                        N'<c>' +
-                                        REPLACE
-                                        (
-                                            REPLACE
-                                            (
-                                                REPLACE
-                                                (
-                                                    REPLACE(ia_loser.included_columns, N'&', N'&amp;'),
-                                                    N'<',
-                                                    N'&lt;'
-                                                ),
-                                                N'>',
-                                                N'&gt;'
-                                            ),
-                                            N', ',
-                                            N'</c><c>'
-                                        ) +
-                                        N'</c>'
-                                    )
-                                FROM #index_analysis AS ia_loser
-                                WHERE ia_loser.scope_hash = ia_winner.scope_hash
-                                AND   ia_loser.key_filter_hash = ia_winner.key_filter_hash
-                                AND   ia_loser.action = N'DISABLE'
-                                AND   ia_loser.consolidation_rule = N'Key Duplicate'
-                                AND   ia_loser.target_index_name = ia_winner.index_name
-                                AND   ia_loser.included_columns IS NOT NULL
-                            ) AS a
-                            CROSS APPLY a.x.nodes('/c') AS t(c)
-                            WHERE LEN(t.c.value('.', 'nvarchar(258)')) > 0
-                            /* TYPE plus .value() so the entities don't come back re-encoded */
-                            FOR
-                                XML
-                                PATH(''),
-                                TYPE
-                        ).value('text()[1]', 'nvarchar(max)'),
-                        1,
-                        2,
-                        ''
+                        /* The winner's own includes */
+                        idc.index_hash = ia_winner.index_hash
+                        /* Plus those of every duplicate being disabled for it */
+                        OR EXISTS
+                           (
+                               SELECT
+                                   1/0
+                               FROM #index_analysis AS ia_loser
+                               WHERE ia_loser.scope_hash = ia_winner.scope_hash
+                               AND   ia_loser.key_filter_hash = ia_winner.key_filter_hash
+                               AND   ia_loser.action = N'DISABLE'
+                               AND   ia_loser.consolidation_rule = N'Key Duplicate'
+                               AND   ia_loser.target_index_name = ia_winner.index_name
+                               AND   ia_loser.index_hash = idc.index_hash
+                           )
                     )
-        ),
+                    GROUP BY
+                        idc.column_name
+                    ORDER BY
+                        idc.column_name
+                    FOR
+                        XML
+                        PATH(''),
+                        TYPE
+                ).value('text()[1]', 'nvarchar(max)'),
+                1,
+                2,
+                ''
+            ),
         ia_winner.superseded_by =
             CASE
                 WHEN ia_winner.superseded_by IS NULL
@@ -4998,124 +4943,64 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Merging included columns from Key Duplicate indexes', 0, 0) WITH NOWAIT;
     END;
 
-    WITH
-        KeyDuplicateIncludes AS
-    (
-        SELECT
-            winner.database_id,
-            winner.object_id,
-            winner.index_id,
-            winner.index_name,
-            winner.index_hash,
-            winner.included_columns AS winner_includes,
-            loser.included_columns AS loser_includes
-        FROM #index_analysis AS winner
-        JOIN #key_duplicate_dedupe AS kdd
-          ON  winner.scope_hash = kdd.scope_hash
-          AND winner.key_filter_hash = kdd.key_filter_hash
-          AND winner.index_name = kdd.winning_index_name
-        JOIN #index_analysis AS loser
-          ON  loser.scope_hash = kdd.scope_hash
-          AND loser.key_filter_hash = kdd.key_filter_hash
-          AND loser.index_name <> kdd.winning_index_name
-          AND loser.action = N'DISABLE'
-          AND loser.consolidation_rule = N'Key Duplicate'
-        WHERE winner.action = N'MERGE INCLUDES'
-        AND   winner.consolidation_rule = N'Key Duplicate'
-    )
+    /*
+    Merge every disabled duplicate's includes into the winner.
+
+    This reads #index_details rather than splitting the winner's and losers'
+    included_columns strings apart on ', '. That delimiter is ambiguous: a column
+    name is allowed to contain a comma and a space, so [Last, First] used to tear
+    into [Last and First], and the DISTINCT sort could then slot another column
+    between the halves - emitting INCLUDE ([col_b], [Last, [zzz], First]), which
+    fails with Msg 102 while the paired DISABLE of the loser still runs.
+
+    #index_details already holds one row per column, so there is nothing to parse
+    and nothing to re-escape. Winner and losers share key_filter_hash, meaning
+    identical keys, and SQL Server will not let a key column also be an include,
+    so no key-column exclusion is needed here.
+    */
     UPDATE
         ia
     SET
         ia.included_columns =
-        (
-            SELECT
-                /* Combine all includes from winner and all losers, removing duplicates */
-                combined_cols =
-                    STUFF
+            STUFF
+            (
+                (
+                    SELECT
+                        N', ' +
+                        QUOTENAME(idc.column_name)
+                    FROM #index_details AS idc
+                    WHERE idc.is_included_column = 1
+                    AND
                     (
-                        (
-                            SELECT DISTINCT
-                                N', ' +
-                                t.c.value('.', 'nvarchar(258)')
-                            FROM
-                            (
-                                /*
-                                Create XML from winner's includes. Entities are
-                                escaped first or CONVERT(xml, ...) fails with
-                                Msg 9411 on a legal column name like [A&B].
-                                */
-                                SELECT
-                                    x = CONVERT
-                                    (
-                                        xml,
-                                        N'<c>' +
-                                        REPLACE
-                                        (
-                                            REPLACE
-                                            (
-                                                REPLACE
-                                                (
-                                                    REPLACE(ISNULL(kdi.winner_includes, N''), N'&', N'&amp;'),
-                                                    N'<',
-                                                    N'&lt;'
-                                                ),
-                                                N'>',
-                                                N'&gt;'
-                                            ),
-                                            N', ',
-                                            N'</c><c>'
-                                        ) +
-                                        N'</c>'
-                                    )
-                                FROM KeyDuplicateIncludes AS kdi
-                                WHERE kdi.index_hash = ia.index_hash
-                                AND   kdi.winner_includes IS NOT NULL
-
-                                UNION ALL
-
-                                /* Create XML from each loser's includes */
-                                SELECT
-                                    x = CONVERT
-                                    (
-                                        xml,
-                                        N'<c>' +
-                                        REPLACE
-                                        (
-                                            REPLACE
-                                            (
-                                                REPLACE
-                                                (
-                                                    REPLACE(kdi.loser_includes, N'&', N'&amp;'),
-                                                    N'<',
-                                                    N'&lt;'
-                                                ),
-                                                N'>',
-                                                N'&gt;'
-                                            ),
-                                            N', ',
-                                            N'</c><c>'
-                                        ) +
-                                        N'</c>'
-                                    )
-                                FROM KeyDuplicateIncludes AS kdi
-                                WHERE kdi.index_hash = ia.index_hash
-                                AND   kdi.loser_includes IS NOT NULL
-                            ) AS a
-                            /* Split XML into individual columns */
-                            CROSS APPLY a.x.nodes('/c') AS t(c)
-                            /* Filter out empty strings that can result from NULL handling */
-                            WHERE LEN(t.c.value('.', 'nvarchar(258)')) > 0
-                            /* TYPE plus .value() so the entities don't come back re-encoded */
-                            FOR
-                                XML
-                                PATH(''),
-                                TYPE
-                        ).value('text()[1]', 'nvarchar(max)'),
-                        1,
-                        2,
-                        ''
+                        /* The winner's own includes */
+                        idc.index_hash = ia.index_hash
+                        /* Plus every duplicate it is about to disable */
+                        OR EXISTS
+                           (
+                               SELECT
+                                   1/0
+                               FROM #index_analysis AS loser
+                               WHERE loser.scope_hash = ia.scope_hash
+                               AND   loser.key_filter_hash = ia.key_filter_hash
+                               AND   loser.index_name <> ia.index_name
+                               AND   loser.action = N'DISABLE'
+                               AND   loser.consolidation_rule = N'Key Duplicate'
+                               AND   loser.index_hash = idc.index_hash
+                           )
                     )
-        )
+                    GROUP BY
+                        idc.column_name
+                    ORDER BY
+                        idc.column_name
+                    FOR
+                        XML
+                        PATH(''),
+                        TYPE
+                ).value('text()[1]', 'nvarchar(max)'),
+                1,
+                2,
+                N''
+            )
     FROM #index_analysis AS ia
     WHERE ia.action = N'MERGE INCLUDES'
     AND   ia.consolidation_rule = N'Key Duplicate'
@@ -5186,6 +5071,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     that accepts CREATE UNIQUE INDEX ... INCLUDE (...) WITH (DROP_EXISTING = ON),
     so the merge is safe to emit.
 
+    Includes come from #index_details, one row per column, rather than from
+    splitting included_columns on ', ' - a column name may legally contain a
+    comma and a space, which made that delimiter ambiguous.
+
     Only rows whose merged list actually differs from what the winner already
     covers are recorded. When a loser's includes are a subset of the winner's,
     the existing KEEP plus the loser's DISABLE is already correct, and emitting a
@@ -5217,95 +5106,33 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 STUFF
                 (
                     (
-                        SELECT DISTINCT
+                        SELECT
                             N', ' +
-                            t.c.value('.', 'nvarchar(258)')
-                        FROM
+                            QUOTENAME(idc.column_name)
+                        FROM #index_details AS idc
+                        WHERE idc.is_included_column = 1
+                        AND
                         (
                             /* The winner's own includes */
-                            SELECT
-                                x =
-                                    CONVERT
-                                    (
-                                        xml,
-                                        N'<c>' +
-                                        REPLACE
-                                        (
-                                            REPLACE
-                                            (
-                                                REPLACE
-                                                (
-                                                    REPLACE(ia.included_columns, N'&', N'&amp;'),
-                                                    N'<',
-                                                    N'&lt;'
-                                                ),
-                                                N'>',
-                                                N'&gt;'
-                                            ),
-                                            N', ',
-                                            N'</c><c>'
-                                        ) +
-                                        N'</c>'
-                                    )
-                            WHERE ia.included_columns IS NOT NULL
-
-                            UNION ALL
-
-                            /* Every duplicate this winner is about to disable */
-                            SELECT
-                                x =
-                                    CONVERT
-                                    (
-                                        xml,
-                                        N'<c>' +
-                                        REPLACE
-                                        (
-                                            REPLACE
-                                            (
-                                                REPLACE
-                                                (
-                                                    REPLACE(loser.included_columns, N'&', N'&amp;'),
-                                                    N'<',
-                                                    N'&lt;'
-                                                ),
-                                                N'>',
-                                                N'&gt;'
-                                            ),
-                                            N', ',
-                                            N'</c><c>'
-                                        ) +
-                                        N'</c>'
-                                    )
-                            FROM #index_analysis AS loser
-                            WHERE loser.scope_hash = ia.scope_hash
-                            AND   loser.key_filter_hash = ia.key_filter_hash
-                            AND   loser.target_index_name = ia.index_name
-                            AND   loser.action = N'DISABLE'
-                            AND   loser.consolidation_rule = N'Key Duplicate'
-                            AND   loser.included_columns IS NOT NULL
-                        ) AS a
-                        CROSS APPLY a.x.nodes('/c') AS t(c)
-                        /*
-                        nvarchar(258), not sysname. A column name does max out at
-                        128 characters, but these values are already wrapped by
-                        QUOTENAME, and QUOTENAME returns nvarchar(258): a
-                        128-character name comes back 130 characters long, and
-                        pulling that through a sysname bucket lops off the closing
-                        bracket. The merge script then fails with Msg 103 while the
-                        paired DISABLE of the loser still runs.
-                        */
-                        /* A column already in the key doesn't need including */
-                        WHERE CHARINDEX(t.c.value('.', 'nvarchar(258)'), ia.key_columns) = 0
-                        AND   LEN(t.c.value('.', 'nvarchar(258)')) > 0
-                        /*
-                        TYPE plus .value() on the way out is not optional here.
-                        A bare FOR XML PATH('') returns nvarchar and re-encodes
-                        entities, so a column named [A&B] would come back out as
-                        [A&amp;B] and land in the generated script, which then
-                        fails with Msg 1911 (column does not exist) while the
-                        paired DISABLE of the loser still runs - the exact silent
-                        include loss this block exists to prevent.
-                        */
+                            idc.index_hash = ia.index_hash
+                            /* Plus every duplicate it is about to disable */
+                            OR EXISTS
+                               (
+                                   SELECT
+                                       1/0
+                                   FROM #index_analysis AS loser
+                                   WHERE loser.scope_hash = ia.scope_hash
+                                   AND   loser.key_filter_hash = ia.key_filter_hash
+                                   AND   loser.target_index_name = ia.index_name
+                                   AND   loser.action = N'DISABLE'
+                                   AND   loser.consolidation_rule = N'Key Duplicate'
+                                   AND   loser.index_hash = idc.index_hash
+                               )
+                        )
+                        GROUP BY
+                            idc.column_name
+                        ORDER BY
+                            idc.column_name
                         FOR
                             XML
                             PATH(''),
