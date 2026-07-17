@@ -5300,9 +5300,12 @@ END TRY
 /*Very professional error handling*/
 BEGIN CATCH
     BEGIN
-        IF @@TRANCOUNT > 0
-            ROLLBACK TRANSACTION;
-
+            /*
+            No ROLLBACK. This procedure manages Extended Events sessions via DDL,
+            which autocommits, and opens no transaction of its own - so a ROLLBACK
+            here could only unwind the CALLER's transaction on an internal error.
+            The session cleanup below is the error handling that actually matters.
+            */
             /*Only try to drop a session if we're not outputting*/
             IF (@output_database_name = N''
                   AND @output_schema_name IN (N'', N'dbo'))

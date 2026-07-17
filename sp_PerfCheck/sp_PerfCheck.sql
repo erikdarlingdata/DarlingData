@@ -5191,11 +5191,13 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         r.check_id;
     END TRY
     BEGIN CATCH
-        IF @@TRANCOUNT > 0
-        BEGIN
-            ROLLBACK;
-        END;
-
+        /*
+        No ROLLBACK. This procedure only reads diagnostics and builds a result
+        set - it opens no transaction of its own, so a ROLLBACK here could only
+        unwind the CALLER's transaction on an internal error, destroying work it
+        had no part in. That is the standard error-handling template misapplied
+        to a read-only procedure.
+        */
         THROW;
     END CATCH;
 END;
