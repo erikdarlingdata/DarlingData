@@ -2487,6 +2487,35 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     still analyzed by the pre-filter but then dropped here unless some
     single partition cleared the floor alone - the two filters disagreed
     about what "@min_rows" means.
+
+    On is_eligible_for_dedupe below: the CASE tests i.type = 1 OR
+    i.is_primary_key = 1 FIRST, and that order is load bearing. A
+    nonclustered primary key is type = 2, so testing type = 2 first matched
+    it as an ordinary nonclustered index and the is_primary_key branch could
+    never be reached for the one kind of index it was written for. That let
+    primary keys into the dedupe rules, which check only
+    is_unique_constraint - 0 for a primary key. Rule 5 then emitted
+    CREATE UNIQUE INDEX ... WITH (DROP_EXISTING = ON) against the PK
+    (Msg 1907, while the paired DISABLE of the other index still ran), and
+    Rule 2 could emit ALTER INDEX ... DISABLE against it, which does not
+    error: it succeeds, and silently disables every inbound foreign key
+    along with it.
+
+    Primary keys are ineligible for dedupe. UNIQUE constraints deliberately
+    are NOT: they stay eligible because Rule 7 and Rule 7.5 exist to replace
+    a unique constraint with an equivalent nonclustered index, and they need
+    the row to do it. A primary key has no such replacement path - nothing
+    should ever drop one - so it is excluded here instead.
+
+    Excluding a PK does not cost it its compression recommendation. The
+    insert that backfills #index_analysis for compression already selects
+    WHERE fo.index_id = 1 OR id.is_primary_key = 1, and already renders the
+    definition as ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY
+    NONCLUSTERED. That code was unreachable until this CASE was fixed.
+
+    Keep prose out of the string literal below. Everything up to the first
+    CONVERT(nvarchar(max), ...) concatenates as nvarchar(4000), so padding
+    it silently truncates the batch mid-statement instead of failing loudly.
     */
     SELECT
         @sql = N'
@@ -2575,14 +2604,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         us.last_user_update,
         is_eligible_for_dedupe =
             CASE
-                WHEN i.type = 2
-                THEN 1
                 WHEN
                 (
                      i.type = 1
                   OR i.is_primary_key = 1
                 )
                 THEN 0
+                WHEN i.type = 2
+                THEN 1
             END
     FROM ' + QUOTENAME(@current_database_name) + N'.sys.indexes AS i
     JOIN ' + QUOTENAME(@current_database_name) + N'.sys.objects AS o
@@ -4483,6 +4512,42 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE id_uc.index_hash = ia_dup.index_hash
         AND   id_uc.is_unique_constraint = 1
     )
+    /*
+    Both sides must still be present in #index_details and eligible, exactly as
+    Rules 2, 3, 5 and 7 require. This is not redundant bookkeeping.
+
+    Under @get_all_databases, #index_details is truncated for each database
+    (see the reset list above) while #index_analysis accumulates across all of
+    them for the final output. Every rule then re-runs over rows belonging to
+    databases already processed. The sibling rules fall out harmlessly because
+    their EXISTS against #index_details finds nothing for those stale rows.
+    This rule had only a NOT EXISTS, which passes VACUOUSLY once the table is
+    empty - so it paired a previous database's leftover MAKE UNIQUE winner with
+    that database's backfilled primary key and marked the PK DISABLE. The
+    script-generation backstops read #index_details too, so they passed
+    vacuously in turn and an ALTER INDEX [pk...] DISABLE shipped: it executes
+    cleanly, silently disables every inbound foreign key, and orphan rows insert
+    afterward with no error.
+
+    An EXISTS is the correct shape here precisely because it fails closed on a
+    stale row, where a NOT EXISTS fails open.
+    */
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_dup
+        WHERE id_dup.index_hash = ia_dup.index_hash
+        AND   id_dup.is_eligible_for_dedupe = 1
+    )
+    AND EXISTS
+    (
+        SELECT
+            1/0
+        FROM #index_details AS id_win
+        WHERE id_win.index_hash = ia_winner.index_hash
+        AND   id_win.is_eligible_for_dedupe = 1
+    )
     OPTION(RECOMPILE);
 
     /* Merge includes from the disabled Key Duplicates into the MAKE UNIQUE index */
@@ -5500,6 +5565,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     (DROP_EXISTING = ON) can never succeed against a constraint-backed
     index (Msg 1907), so no matter what upstream rules decide, never
     emit a merge script for one.
+
+    "Constraint-backed" means a primary key as well as a unique
+    constraint. is_unique_constraint is 0 for a primary key, so testing
+    it alone left PKs unguarded here.
     */
     AND NOT EXISTS
     (
@@ -5507,7 +5576,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             1/0
         FROM #index_details AS id_uc_guard
         WHERE id_uc_guard.index_hash = ia.index_hash
-        AND   id_uc_guard.is_unique_constraint = 1
+        AND
+        (
+             id_uc_guard.is_unique_constraint = 1
+          OR id_uc_guard.is_primary_key = 1
+        )
     )
     /*
     Second backstop, behind the Rule 7 / 7.5 guards: any script that
@@ -5706,14 +5779,29 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     WHERE ia.action = N'DISABLE'
-    /* Exclude unique constraints - they are handled by DISABLE CONSTRAINT scripts */
+    /*
+    Exclude unique constraints - they are handled by DISABLE CONSTRAINT scripts.
+
+    Primary keys are excluded here too, but they are NOT rerouted to that
+    path: a unique constraint can legitimately be replaced by a promoted
+    nonclustered index and dropped, a primary key never can. Excluding one
+    here means it gets no script at all, which is the only safe answer.
+    ALTER INDEX ... DISABLE against a primary key does not error - it
+    succeeds, and silently disables every foreign key referencing it, after
+    which orphan rows insert cleanly. A script that succeeds while being
+    wrong is the worst thing this procedure can emit.
+    */
     AND NOT EXISTS
     (
         SELECT
             1/0
         FROM #index_details AS id_uc
         WHERE id_uc.index_hash = ia.index_hash
-        AND   id_uc.is_unique_constraint = 1
+        AND
+        (
+             id_uc.is_unique_constraint = 1
+          OR id_uc.is_primary_key = 1
+        )
     )
     /* Also exclude any index that is also going to be made unique in rule 7.5 */
     AND NOT EXISTS
