@@ -216,9 +216,21 @@ SELECT TOP (10000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
     ABS(CHECKSUM(NEWID())) % 500, ABS(CHECKSUM(NEWID())) % 200
 FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
 
+/*
+col_c is ROW_NUMBER(), not a random value, and that matters. Group 12b creates
+uq_int_cd UNIQUE (col_c, col_d) below. With col_c and col_d drawn randomly from
+200 and 100 values across 10,000 rows, duplicate pairs were a certainty, so the
+constraint failed to create on EVERY run with Msg 1505, Msg 1750 followed, and
+the read loop's forced hint on the missing index aborted the usage batch with
+Msg 308. Group 12b was never actually tested, and the suite could not see any of
+it because the runner checked stderr while go-sqlcmd reports errors on stdout.
+
+A unique col_c makes (col_c, col_d) unique regardless of col_d. col_a and col_b
+stay duplicated on purpose - the subset chain in 12a needs repeated values.
+*/
 INSERT INTO dbo.test_ic_interact (col_a, col_b, col_c, col_d, col_e)
 SELECT TOP (10000) ABS(CHECKSUM(NEWID())) % 1000, ABS(CHECKSUM(NEWID())) % 500,
-    ABS(CHECKSUM(NEWID())) % 200, ABS(CHECKSUM(NEWID())) % 100, LEFT(NEWID(), 20)
+    ROW_NUMBER() OVER (ORDER BY (SELECT NULL)), ABS(CHECKSUM(NEWID())) % 100, LEFT(NEWID(), 20)
 FROM sys.all_objects AS a CROSS JOIN sys.all_objects AS b;
 GO
 
@@ -301,9 +313,29 @@ CREATE INDEX ix_int_ab ON dbo.test_ic_interact (col_a, col_b);
 CREATE INDEX ix_int_abc ON dbo.test_ic_interact (col_a, col_b, col_c);
 
 /* 12b: UC exact match AND UC superset on same table */
+/*
+This group is the one shape where three rules meet, and every piece of it is
+load-bearing:
+
+  uq_int_cd   the unique CONSTRAINT that Rule 7.5 wants to replace
+  ix_int_cd   a key duplicate of it, with its own include
+  ix_int_cd2  a SECOND key duplicate with a DIFFERENT include, which is what
+              routes the winner through Rule 7.6 at all
+  ix_int_c    a key SUBSET carrying an include of its own
+
+Rule 6 merges ix_int_c's col_b into the winner as a Key Subset. Rule 7.5 then
+rewrites that same row to MAKE UNIQUE. Rule 7.6 recomputes the winner's includes,
+and if it gathers only Key Duplicate losers it silently drops col_b while
+ix_int_c's DISABLE still runs - a covering column gone, on scripts that all
+execute cleanly, which the execute check cannot see.
+
+Drop ix_int_cd2 and the interaction stops firing: with one duplicate there is no
+7.6 pass to lose anything. That is why a fixture without it looked healthy.
+*/
 ALTER TABLE dbo.test_ic_interact ADD CONSTRAINT uq_int_cd UNIQUE (col_c, col_d);
 CREATE INDEX ix_int_cd ON dbo.test_ic_interact (col_c, col_d) INCLUDE (col_e);
-CREATE INDEX ix_int_c ON dbo.test_ic_interact (col_c);
+CREATE INDEX ix_int_cd2 ON dbo.test_ic_interact (col_c, col_d) INCLUDE (col_a);
+CREATE INDEX ix_int_c ON dbo.test_ic_interact (col_c) INCLUDE (col_b);
 
 /* Group 13: @min_reads filter — run separately in Python */
 GO

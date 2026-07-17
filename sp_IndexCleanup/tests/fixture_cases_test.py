@@ -487,9 +487,20 @@ def main():
         stdout, stderr = run_sqlcmd(server, password, input_file=FIXTURE_FILE,
                                     timeout=600)
 
-        if "Msg " in stderr and "Level 16" in stderr:
-            print("ERROR: SQL errors detected:")
-            print(stderr)
+        # go-sqlcmd reports SQL errors on STDOUT, so checking stderr alone made
+        # this decorative: a fixture could fail partway through and the suite
+        # would still go green, asserting against a half-built schema. Match any
+        # severity 16+ on both streams.
+        errors = (re.findall(r"Msg \d+, Level 1[6-9][^\n]*", stdout or "") +
+                  re.findall(r"Msg \d+, Level 1[6-9][^\n]*", stderr or ""))
+
+        if errors:
+            print("ERROR: SQL errors detected while building the fixture:")
+            for e in errors:
+                print("  " + e)
+            print()
+            print("The fixture did not build correctly, so the assertions below")
+            print("would be testing something other than what they claim.")
             sys.exit(1)
 
         rows = parse_output(stdout)

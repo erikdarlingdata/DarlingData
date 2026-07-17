@@ -4490,8 +4490,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia_winner
     SET
         /*
-        Merge the disabled Key Duplicates' includes into the index being made
-        unique.
+        Merge the includes of every index being disabled in this winner's favor
+        into the index being made unique.
 
         Sourced from #index_details, one row per column, rather than splitting
         included_columns on ', '. A column name may legally contain a comma and
@@ -4499,9 +4499,21 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         fragments the DISTINCT sort could separate, producing a broken INCLUDE
         list on a script whose paired DISABLE still ran.
 
-        Winner and losers are key duplicates, so their keys match and SQL Server
-        would not allow a key column to also be an include. No key exclusion is
-        needed.
+        Both loser rules matter, and missing one is not a cosmetic error. Rule 7.5
+        can rewrite a row Rule 6 already processed as a Key Superset into MAKE
+        UNIQUE, so a winner arriving here may own Key SUBSET losers as well as Key
+        DUPLICATE ones. Reading only Key Duplicates discarded the subsets'
+        includes that Rule 6 had already merged in, while their DISABLE still
+        ran - a covering column silently gone, on a script that executes cleanly.
+        The old string-splitting code survived this by accident: it read the
+        accumulated included_columns, so an earlier merge carried forward.
+        Re-deriving from disk does not, which is why every loser has to be
+        gathered here explicitly.
+
+        Key duplicates share the winner's keys, but key subsets do not, so losers
+        are matched on target_index_name rather than key_filter_hash, and a column
+        already in the winner's key is excluded - SQL Server rejects an index that
+        includes its own key column (Msg 1909).
         */
         ia_winner.included_columns =
             STUFF
@@ -4516,19 +4528,32 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     (
                         /* The winner's own includes */
                         idc.index_hash = ia_winner.index_hash
-                        /* Plus those of every duplicate being disabled for it */
+                        /* Plus those of every index being disabled in its favor */
                         OR EXISTS
                            (
                                SELECT
                                    1/0
                                FROM #index_analysis AS ia_loser
                                WHERE ia_loser.scope_hash = ia_winner.scope_hash
-                               AND   ia_loser.key_filter_hash = ia_winner.key_filter_hash
                                AND   ia_loser.action = N'DISABLE'
-                               AND   ia_loser.consolidation_rule = N'Key Duplicate'
                                AND   ia_loser.target_index_name = ia_winner.index_name
+                               AND   ia_loser.consolidation_rule IN
+                                     (
+                                         N'Key Duplicate',
+                                         N'Key Subset'
+                                     )
                                AND   ia_loser.index_hash = idc.index_hash
                            )
+                    )
+                    /* A column already in the winner's key doesn't need including */
+                    AND NOT EXISTS
+                    (
+                        SELECT
+                            1/0
+                        FROM #index_details AS idk
+                        WHERE idk.index_hash = ia_winner.index_hash
+                        AND   idk.is_included_column = 0
+                        AND   idk.column_name = idc.column_name
                     )
                     GROUP BY
                         idc.column_name
