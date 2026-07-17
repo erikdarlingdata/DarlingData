@@ -160,21 +160,23 @@ Statistics) to exercise the per-database cursor path and the `database_name`
 scoping without turning the suite into an exhaustive per-setting matrix. See the
 Auto-Close note below for why that specific one was dropped.
 
-### A real fragility this harness surfaced: AUTO_CLOSE on SQL Server 2025
+### A real fragility this harness surfaced, now fixed and asserted
 
 The database-scoped group was originally written to force **AUTO_CLOSE** as its
-second toggle. On **SQL Server 2025**, forcing `AUTO_CLOSE ON` and then scoping
-`sp_PerfCheck` to that (now closed) database makes `sys.databases` return `NULL`
-for `collation_name`, `target_recovery_time_in_seconds`, and
-`delayed_durability_desc`, which the procedure's `#databases` insert rejects with
-`Msg 515` (`Cannot insert the value NULL`). The database is never analyzed and
-the run aborts. On 2016-2022 the same test passed, so this is a genuine,
-version-dependent fragility in `sp_PerfCheck` itself, not a test artifact.
+second toggle, and it uncovered a crash: a closed (`AUTO_CLOSE`) or `OFFLINE`
+database returns `NULL` for `is_accelerated_database_recovery_on` in
+`sys.databases` -- ADR state lives with the database, not master metadata, so it
+cannot be read while the database is shut -- and that column was `NOT NULL` in the
+procedure's `#databases` table, so the collection `INSERT` rejected the `NULL`
+with `Msg 515` and aborted the whole run. Because the collection has no state
+filter, a single inaccessible database could take down a full-instance run. It
+showed up on SQL Server 2025 first, but the mechanism is version-independent.
 
-Rather than assert around a procedure error (which would make the suite flake by
-version) or edit the procedure, the harness **switched its second toggle to
-AUTO_UPDATE_STATISTICS**, which keeps the database open and behaves identically
-on every version. The AUTO_CLOSE behavior is documented here so it is not lost.
+The column is now nullable, and the `Inaccessible` group asserts the fix stays in:
+it closes and then offlines a scratch database and confirms scoped runs and a
+whole-instance run all complete without `Msg 515`. The database-scoped toggle
+group uses `AUTO_UPDATE_STATISTICS` instead of `AUTO_CLOSE` for a separate reason
+-- it keeps the database open, so the finding it forces is actually assessable.
 
 ## Not wired into CI
 
