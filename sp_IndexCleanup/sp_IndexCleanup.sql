@@ -1610,6 +1610,32 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         RAISERROR('Generating #filtered_object insert', 0, 0) WITH NOWAIT;
     END;
 
+    /*
+    One pass per database. Read this before touching anything inside the loop.
+
+    #index_analysis is NOT truncated between iterations - it accumulates every
+    database's rows because the final result set is built from it after the
+    cursor finishes. Every OTHER working temp table (#index_details,
+    #partition_stats, #compression_eligibility, #merged_includes and the rest,
+    reset just below) holds only the CURRENT database.
+
+    So any statement in this loop that reads or writes #index_analysis must
+    filter to ia.database_id = @current_database_id. Without it the statement
+    also processes rows for databases already handled, whose context tables have
+    since been truncated - and that produced silent, executable, WRONG DDL:
+    merge scripts stripped of their INCLUDE lists (the recompute read an empty
+    #index_details and returned NULL) and ALTER INDEX ... DISABLE against unique
+    constraints (a NOT EXISTS guard passed vacuously against the empty table).
+    Both ship a script that runs cleanly and quietly destroys index coverage or
+    referential integrity.
+
+    The scope is free in single-database runs and semantically free in general:
+    scope_hash already encodes database plus object and every rule joins on it,
+    so no rule can legitimately pair rows across databases anyway. For joins
+    between two #index_analysis aliases, scoping the driven side is enough - the
+    join carries the partner along. Statements that intentionally roll up across
+    ALL databases live AFTER the loop and are not scoped.
+    */
     WHILE @@FETCH_STATUS = 0
     BEGIN
         /*Truncate temp tables between database iterations*/
@@ -3425,6 +3451,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 THEN 50  /* Indexes with includes get priority over those without */
                 ELSE 0
             END /* Prefer indexes with included columns */
+    WHERE #index_analysis.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -3464,6 +3491,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id.is_eligible_for_dedupe = 1 /* Only eligible indexes */
         )
         AND #index_analysis.index_id <> 1 /* Don't disable clustered indexes */
+        AND #index_analysis.database_id = @current_database_id
         OPTION(RECOMPILE);
     END;
 
@@ -3532,6 +3560,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 )
             )
         )
+        AND   ia.database_id = @current_database_id
         OPTION(RECOMPILE);
 
         SET @rc = ROWCOUNT_BIG();
@@ -3620,6 +3649,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
            AND id1.is_descending_key <> id2.is_descending_key
            /* Different sort direction */
     )
+    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -3750,6 +3780,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id2.index_hash = ia2.index_hash  /* Specific index from ia2 */
         AND   id1.is_descending_key <> id2.is_descending_key  /* Different sort direction */
     )
+    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     DECLARE @rule3_rowcount bigint = ROWCOUNT_BIG();
@@ -3785,7 +3816,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia2.consolidation_rule = N'Key Subset'
         AND   ia2.action = N'DISABLE'
         AND   ia2.target_index_name IS NOT NULL
-        AND   ia1.target_index_name <> ia2.target_index_name;
+        AND   ia1.target_index_name <> ia2.target_index_name
+        AND   ia1.database_id = @current_database_id;
 
         SET @chains_resolved = ROWCOUNT_BIG();
     END;
@@ -3824,6 +3856,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia1.consolidation_rule = N'Key Subset'
     AND   ia1.action = N'DISABLE'
     AND   ia2.consolidation_rule IS NULL  /* Not already processed */
+    AND   ia2.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -3923,6 +3956,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE id2.index_hash = ia2.index_hash
         AND   id2.is_eligible_for_dedupe = 1
     )
+    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     DECLARE @rule5_rowcount bigint = ROWCOUNT_BIG();
@@ -4041,6 +4075,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_analysis AS superset
     WHERE superset.action = N'MERGE INCLUDES'
     AND   superset.consolidation_rule = N'Key Superset'
+    AND   superset.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Apply the pre-computed merged includes */
@@ -4052,6 +4087,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #merged_includes AS mi
       ON  mi.scope_hash = ia.scope_hash
       AND mi.index_name = ia.index_name
+    WHERE ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4106,6 +4142,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia1_check.consolidation_rule = N'Key Subset'
         AND   ia1_check.action = N'DISABLE'
     )
+    AND   ia2.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4215,6 +4252,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   id2_inner.is_included_column = 0
         )
     )
+    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4284,6 +4322,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE id_nc.index_hash = ia_nc.index_hash
         AND   id_nc.is_unique_constraint = 1
     )
+    AND   ia_uc.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Second, mark nonclustered indexes to be made unique */
@@ -4326,6 +4365,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         /* Check that both indexes have EXACTLY the same key columns */
         AND   ia_uc.key_columns = ia_nc.key_columns
     )
+    AND   ia_nc.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* CRITICAL: Ensure that only the unique constraints that exactly match get this treatment */
@@ -4349,6 +4389,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia_uc.action = N'DISABLE'
         AND   ia_uc.target_index_name = ia.index_name
     )
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Make sure the nonclustered index has the superseded_by field set correctly */
@@ -4369,6 +4410,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND ia_uc.action = N'DISABLE'
       AND ia_uc.target_index_name = ia_nc.index_name
     WHERE ia_nc.action = N'MAKE UNIQUE'
+    AND   ia_nc.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4474,6 +4516,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id_fk.is_foreign_key_reference = 1
         AND   id_fk.is_included_column = 0
     )
+    AND   ia_loser.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4513,24 +4556,11 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   id_uc.is_unique_constraint = 1
     )
     /*
-    Both sides must still be present in #index_details and eligible, exactly as
-    Rules 2, 3, 5 and 7 require. This is not redundant bookkeeping.
-
-    Under @get_all_databases, #index_details is truncated for each database
-    (see the reset list above) while #index_analysis accumulates across all of
-    them for the final output. Every rule then re-runs over rows belonging to
-    databases already processed. The sibling rules fall out harmlessly because
-    their EXISTS against #index_details finds nothing for those stale rows.
-    This rule had only a NOT EXISTS, which passes VACUOUSLY once the table is
-    empty - so it paired a previous database's leftover MAKE UNIQUE winner with
-    that database's backfilled primary key and marked the PK DISABLE. The
-    script-generation backstops read #index_details too, so they passed
-    vacuously in turn and an ALTER INDEX [pk...] DISABLE shipped: it executes
-    cleanly, silently disables every inbound foreign key, and orphan rows insert
-    afterward with no error.
-
-    An EXISTS is the correct shape here precisely because it fails closed on a
-    stale row, where a NOT EXISTS fails open.
+    Both sides must be present in #index_details and eligible for dedupe, the
+    same check Rules 2, 3, 5 and 7 make: a row still in #index_analysis whose
+    index is a primary key or is otherwise ineligible must not be picked up here.
+    Cross-database staleness is handled by the @current_database_id scope below,
+    not by this predicate.
     */
     AND EXISTS
     (
@@ -4548,6 +4578,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE id_win.index_hash = ia_winner.index_hash
         AND   id_win.is_eligible_for_dedupe = 1
     )
+    /*
+    Only rows for the database being processed. #index_analysis accumulates
+    across the whole cursor for the final output, so without this every rule
+    re-runs over already-processed databases whose per-database context tables
+    (#index_details and the rest) have since been truncated - which produced
+    silent, wrong DDL. See the note at the top of the cursor loop.
+    */
+    AND   ia_dup.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Merge includes from the disabled Key Duplicates into the MAKE UNIQUE index */
@@ -4696,6 +4734,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia_loser.consolidation_rule = N'Key Duplicate'
         AND   ia_loser.target_index_name = ia_winner.index_name
     )
+    AND   ia_winner.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4774,6 +4813,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             WHERE id1.index_hash = ia1.index_hash
             AND   id2.index_hash = ia2.index_hash
         )
+    AND   ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -4977,6 +5017,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     FROM #index_analysis AS ia
     WHERE ia.action = N'MERGE INCLUDES'
       AND ia.consolidation_rule = N'Key Duplicate'
+      AND ia.database_id = @current_database_id
     GROUP BY
         ia.database_id,
         ia.object_id,
@@ -5007,6 +5048,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.index_name <> kdd.winning_index_name
     AND   ia.action = N'MERGE INCLUDES'
     AND   ia.consolidation_rule = N'Key Duplicate'
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Update the winning index's superseded_by to list all other indexes */
@@ -5025,6 +5067,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       ON  ia.scope_hash = kdd.scope_hash
       AND ia.key_filter_hash = kdd.key_filter_hash
     WHERE ia.index_name = kdd.winning_index_name
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Merge all included columns from Key Duplicate indexes into the winning index */
@@ -5102,6 +5145,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE kdd.scope_hash = ia.scope_hash
         AND   kdd.winning_index_name = ia.index_name
     )
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert Key Duplicate winners into #merged_includes so they get MERGE scripts */
@@ -5144,6 +5188,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   loser.included_columns IS NOT NULL
         AND   ISNULL(loser.included_columns, N'') <> ISNULL(ia.included_columns, N'')
     )
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /*
@@ -5256,6 +5301,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             AND   loser_check.consolidation_rule = N'Key Duplicate'
             AND   loser_check.included_columns IS NOT NULL
         )
+        AND   ia.database_id = @current_database_id
     ) AS kd
     WHERE ISNULL(kd.merged_includes, N'') <> ISNULL(kd.original_includes, N'')
     OPTION(RECOMPILE);
@@ -5275,6 +5321,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     WHERE ia.action = N'MERGE INCLUDES'
     AND   ia.consolidation_rule = N'Key Duplicate'
     AND   ISNULL(ia.included_columns, N'') <> ISNULL(mi.merged_includes, N'')
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     IF @debug = 1
@@ -5333,6 +5380,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         OR ia2.included_columns IS NULL
         OR LEN(ia1.included_columns) < LEN(ia2.included_columns)
       )
+    WHERE ia1.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Update the subset indexes to be disabled, since supersets already contain their columns */
@@ -5351,6 +5399,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #include_subset_dedupe AS isd
       ON  ia.scope_hash = isd.scope_hash
       AND ia.index_name = isd.subset_index_name
+    WHERE ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Update the superset indexes to indicate they supersede the subset indexes */
@@ -5370,6 +5419,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     JOIN #include_subset_dedupe AS isd
       ON  ia.scope_hash = isd.scope_hash
       AND ia.index_name = isd.superset_index_name
+    WHERE ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Update winning indexes that don't actually need changes to have action = N'KEEP' */
@@ -5390,6 +5440,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         WHERE mi.scope_hash = ia.scope_hash
         AND   mi.index_name = ia.index_name
     )
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert merge scripts for indexes */
@@ -5603,6 +5654,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                AND   CHARINDEX(ps_uq_guard.partition_columns, ia.key_columns) = 0
            )
     )
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Debug which indexes are getting MERGE scripts */
@@ -5813,6 +5865,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         AND   ia_unique.index_name = ia.index_name
         AND   ia_unique.action = N'MAKE UNIQUE'
     )
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Add clustered indexes to #index_analysis specifically for compression purposes */
@@ -6073,6 +6126,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       OR id.is_primary_key = 1
     )
     AND   ce.can_compress = 1 /* Only those eligible for compression */
+    AND   fo.database_id = @current_database_id
     /* Only add if not already in #index_analysis */
     AND   NOT EXISTS
     (
@@ -6091,7 +6145,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SET
         #index_analysis.action = N'KEEP'
     WHERE #index_analysis.index_id = 1 /* Clustered indexes */
-    AND   #index_analysis.action IS NULL;
+    AND   #index_analysis.action IS NULL
+    AND   #index_analysis.database_id = @current_database_id;
 
     /* Update index priority for clustered indexes to ensure they're not chosen for deduplication */
     UPDATE
@@ -6099,7 +6154,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     SET
         #index_analysis.index_priority = 1000 /* Maximum priority */
     WHERE #index_analysis.index_id = 1 /* Clustered indexes */
-    AND   #index_analysis.index_priority IS NULL;
+    AND   #index_analysis.index_priority IS NULL
+    AND   #index_analysis.database_id = @current_database_id;
 
     IF @debug = 1
     BEGIN
@@ -6232,6 +6288,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         (ia.action IS NULL OR ia.action = N'KEEP')
         /* Only indexes eligible for compression */
     AND  ce.can_compress = 1
+    AND  ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert disable scripts for unique constraints */
@@ -6307,6 +6364,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         ia_uc.action = N'DISABLE'
         /* That have consolidation_rule of 'Unique Constraint Replacement' */
         AND ia_uc.consolidation_rule = N'Unique Constraint Replacement'
+        AND ia_uc.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert per-partition compression scripts */
@@ -6432,6 +6490,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     AND  (ia.action IS NULL OR ia.action = N'KEEP')
         /* Only indexes eligible for compression */
     AND   ce.can_compress = 1
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /* Insert compression ineligible info */
@@ -6495,6 +6554,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     WHERE ce.can_compress = 0
+    AND   ce.database_id = @current_database_id
     OPTION(RECOMPILE);
 
 
@@ -6558,6 +6618,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
       AND id.is_included_column = 0 /* Get only one row per index */
       AND id.key_ordinal > 0
     WHERE ia.action = N'REVIEW'
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
 
@@ -6714,6 +6775,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           AND ia.index_id > 0
         )
     )
+    AND   ia.database_id = @current_database_id
     OPTION(RECOMPILE);
 
     /*
