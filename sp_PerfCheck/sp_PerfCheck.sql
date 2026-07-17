@@ -467,7 +467,17 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
         is_cdc_enabled bit NOT NULL,
         target_recovery_time_in_seconds integer NULL,
         delayed_durability_desc nvarchar(60) NULL,
-        is_accelerated_database_recovery_on bit NOT NULL,
+        /*
+        Nullable on purpose. A database that is closed (AUTO_CLOSE), OFFLINE, or
+        otherwise inaccessible returns NULL for is_accelerated_database_recovery_on
+        in sys.databases - ADR state lives with the database, not in master
+        metadata, so it can't be read while the database is shut. The collection
+        below has no state filter, so a single inaccessible database would
+        otherwise fail this INSERT with Msg 515 and abort the whole check. NULL
+        flows through harmlessly: the ADR finding tests "= 0", which NULL never
+        satisfies, so a database we cannot assess simply gets no recommendation.
+        */
+        is_accelerated_database_recovery_on bit NULL,
         is_ledger_on bit NULL
     );
 

@@ -398,13 +398,12 @@ def database_scoped_tests(server, password, R):
     DATABASE settings, so a scratch database can force each on and off
     deterministically, and both leave the database OPEN.
 
-    (AUTO_CLOSE was deliberately NOT used. Forcing AUTO_CLOSE on and scoping the
-    procedure to the closed database makes sys.databases return NULL for
-    collation_name / target_recovery_time_in_seconds / delayed_durability_desc
-    on SQL Server 2025, which sp_PerfCheck's #databases insert rejects with
-    Msg 515. That is a real, version-dependent fragility in the procedure, not a
-    test artifact; it is documented in README.md rather than asserted, so this
-    harness stays deterministic across versions.)
+    (AUTO_CLOSE is deliberately NOT used for the ON/OFF finding toggles here,
+    because closing the database changes which findings are even assessable. The
+    crash it used to cause -- a closed or offline database made sys.databases
+    return NULL for is_accelerated_database_recovery_on, which the #databases
+    insert rejected with Msg 515 -- is now fixed, and inaccessible_database_tests
+    below asserts it stays fixed.)
 
     The design keeps every absence assertion non-vacuous WITHOUT relying on any
     volatile finding: in each run one toggle is set to its finding-producing
@@ -494,6 +493,69 @@ def database_scoped_tests(server, password, R):
                 not DB_marker(server, password, db), "scratch database still exists")
 
 
+def inaccessible_database_tests(server, password, R):
+    """Regression test for a Msg 515 crash on inaccessible databases.
+
+    sp_PerfCheck's #databases collection has no state filter, so it inspects
+    every user database regardless of accessibility. A database that is closed
+    (AUTO_CLOSE) or OFFLINE returns NULL for is_accelerated_database_recovery_on
+    in sys.databases -- ADR state lives with the database, not master metadata,
+    so it cannot be read while the database is shut. That column used to be
+    NOT NULL in #databases, so the collection INSERT rejected the NULL with
+    Msg 515 and aborted the entire check. One inaccessible database could take
+    down a whole-instance run. The column is now nullable; these assertions prove
+    the procedure completes cleanly instead of crashing.
+    """
+    db = "perfcheck_test_inaccessible"
+    grp = "Inaccessible"
+
+    drop_sql = (
+        "SET NOCOUNT ON; "
+        "IF DB_ID('%s') IS NOT NULL "
+        "BEGIN "
+        "ALTER DATABASE [%s] SET ONLINE; "
+        "ALTER DATABASE [%s] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; "
+        "DROP DATABASE [%s]; "
+        "END;"
+    ) % (db, db, db, db)
+
+    out, err = _sqlcmd(server, password, drop_sql + " CREATE DATABASE [%s];" % db)
+    R.check(grp, "setup: scratch database created",
+            not (find_sql_errors(out) + find_sql_errors(err))
+            and DB_marker(server, password, db),
+            "scratch database not created")
+
+    try:
+        # AUTO_CLOSE, then force it shut with an offline/online cycle so the next
+        # metadata read sees a closed database.
+        _sqlcmd(server, password, "ALTER DATABASE [%s] SET AUTO_CLOSE ON;" % db)
+        _sqlcmd(server, password,
+                "ALTER DATABASE [%s] SET OFFLINE; "
+                "ALTER DATABASE [%s] SET ONLINE;" % (db, db))
+        out, err = run_perfcheck(server, password, "@database_name = N'%s'" % db)
+        errs = find_sql_errors(out) + find_sql_errors(err)
+        R.check(grp, "AUTO_CLOSE-closed database scoped run does not crash (Msg 515)",
+                not errs, str(errs))
+
+        # OFFLINE is the more severe case, and the one a whole-instance run hits.
+        _sqlcmd(server, password, "ALTER DATABASE [%s] SET OFFLINE;" % db)
+        out, err = run_perfcheck(server, password, "@database_name = N'%s'" % db)
+        errs = find_sql_errors(out) + find_sql_errors(err)
+        R.check(grp, "OFFLINE database scoped run does not crash (Msg 515)",
+                not errs, str(errs))
+
+        # The load-bearing case: a whole-instance run must not be aborted by one
+        # inaccessible database sitting on the server.
+        out, err = run_perfcheck(server, password)
+        errs = find_sql_errors(out) + find_sql_errors(err)
+        R.check(grp, "whole-instance run with an OFFLINE database present does not crash",
+                not errs, str(errs))
+    finally:
+        _sqlcmd(server, password, drop_sql)
+        R.check(grp, "cleanup: scratch database dropped",
+                not DB_marker(server, password, db), "scratch database still exists")
+
+
 def DB_marker(server, password, db):
     """True if the named database currently exists."""
     out, _ = _sqlcmd(
@@ -539,6 +601,7 @@ def main():
     structural_tests(args.server, args.password, R)
     forced_condition_tests(args.server, args.password, R)
     database_scoped_tests(args.server, args.password, R)
+    inaccessible_database_tests(args.server, args.password, R)
 
     for r in R.items:
         status = "PASS" if r["passed"] else "FAIL"
