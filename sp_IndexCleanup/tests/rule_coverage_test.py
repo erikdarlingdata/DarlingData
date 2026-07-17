@@ -146,6 +146,18 @@ MDB_DATABASE_SECOND = "CrapB"
 MDB_TABLE = "mdb_test"
 MDB_PK = "pk_mdb"
 
+# Group G reuses the very same CrapA/CrapB (CrapA processed first is exactly the
+# property both groups need) but adds two of its own tables. The two defects it
+# covers live in SEPARATE tables analyzed in SEPARATE @table_name scoped runs on
+# purpose: with both in one table the unique-constraint rules reshuffle the merge
+# dedup and the include strip stops being deterministic. See MDB_G_SETUP_SQL.
+MDB_MERGE_TABLE = "icg_merge"        # superset/subset include-merge pair (bug 1)
+MDB_MERGE_WINNER = "ix_merge_super"  # the Key Superset that must keep its INCLUDE
+MDB_MERGE_SUBSET = "ix_merge_sub"    # the subset it absorbs and disables
+MDB_UC_TABLE = "icg_uc"              # unique constraint + same-key index (bug 2)
+MDB_UC_CONSTRAINT = "uq_icg"         # the constraint that must not get ALTER..DISABLE
+MDB_UC_PLAIN = "ix_uc_plain"         # the index promoted to replace it
+
 # Rows that represent a dedupe action. A COMPRESSION SCRIPT row is not one.
 DEDUPE_SCRIPT_TYPES = ("DISABLE SCRIPT", "MERGE SCRIPT", "DISABLE CONSTRAINT SCRIPT")
 
@@ -676,6 +688,161 @@ BEGIN
     ALTER DATABASE %(second)s SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
     DROP DATABASE %(second)s;
 END;
+GO
+""" % {"first": MDB_DATABASE_FIRST, "second": MDB_DATABASE_SECOND}
+
+
+# Group G's fixture. Runs AFTER MDB_SETUP_SQL has created CrapA and CrapB, and
+# just adds two tables to each. Kept separate from MDB_SETUP_SQL so Group F's
+# narrative stays about mdb_test alone; the shared teardown (MDB_CLEANUP_SQL drops
+# both databases) already carries these tables away.
+#
+# The bug material goes in CrapA because it is processed first, so its rows are
+# the stale ones still sitting in #index_analysis when CrapB's pass truncates
+# #index_details. CrapB gets plain copies so the loop takes a real second
+# iteration for whichever table each scoped run targets.
+#
+# icg_merge: a Key Superset (col_a, col_b) INCLUDE (col_c) over a subset
+# (col_a) INCLUDE (col_d). Rule 4/6 merges the subset's col_d into the superset,
+# whose correct merged script is INCLUDE (col_c, col_d). On CrapB's pass the
+# include-merge recomputes CrapA's superset from an emptied #index_details, gets
+# NULL, and overwrites it -- the merge-script insert then emits a stripped row
+# with no INCLUDE that can win the final ROW_NUMBER tie.
+#
+# icg_uc: a UNIQUE constraint uq_icg (col_a, id) with a same-key plain index
+# ix_uc_plain. Rule 7.5 promotes the index to replace the constraint and drops
+# the constraint. On CrapB's pass the DISABLE-script insert's
+# NOT EXISTS (#index_details ... is_unique_constraint = 1) guard passes vacuously
+# for stale uq_icg and emits ALTER INDEX [uq_icg] ... DISABLE on top of the
+# correct DROP CONSTRAINT.
+#
+# No modulo (%) anywhere in the DDL: this string is %-formatted for the database
+# names, so a literal % would be read as a format specifier.
+MDB_G_SETUP_SQL = """
+SET NOCOUNT ON;
+GO
+
+USE %(first)s;
+GO
+
+/* Bug 1: superset/subset include-merge pair. */
+CREATE TABLE
+    dbo.icg_merge
+(
+    id integer NOT NULL,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL,
+    col_c integer NOT NULL,
+    col_d integer NOT NULL,
+    CONSTRAINT pk_icg_merge PRIMARY KEY CLUSTERED (id)
+);
+
+INSERT INTO
+    dbo.icg_merge
+(
+    id,
+    col_a,
+    col_b,
+    col_c,
+    col_d
+)
+SELECT TOP (20000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    col_a = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    col_b = 1,
+    col_c = 2,
+    col_d = 3
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+CREATE INDEX ix_merge_super ON dbo.icg_merge (col_a, col_b) INCLUDE (col_c);
+CREATE INDEX ix_merge_sub   ON dbo.icg_merge (col_a) INCLUDE (col_d);
+GO
+
+/* Bug 2: unique constraint + same-key plain index. */
+CREATE TABLE
+    dbo.icg_uc
+(
+    id integer NOT NULL,
+    col_a integer NOT NULL,
+    col_c integer NOT NULL,
+    CONSTRAINT pk_icg_uc PRIMARY KEY CLUSTERED (id)
+);
+
+INSERT INTO
+    dbo.icg_uc
+(
+    id,
+    col_a,
+    col_c
+)
+SELECT TOP (20000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    col_a = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    col_c = 1
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+ALTER TABLE dbo.icg_uc ADD CONSTRAINT uq_icg UNIQUE (col_a, id);
+CREATE INDEX ix_uc_plain ON dbo.icg_uc (col_a, id) INCLUDE (col_c);
+GO
+
+USE %(second)s;
+GO
+
+/* Plain copies so the second iteration does real work for the scoped table. */
+CREATE TABLE
+    dbo.icg_merge
+(
+    id integer NOT NULL,
+    col_a integer NOT NULL,
+    col_b integer NOT NULL
+);
+
+INSERT INTO
+    dbo.icg_merge
+(
+    id,
+    col_a,
+    col_b
+)
+SELECT TOP (20000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    col_a = 1,
+    col_b = 2
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+CREATE INDEX ix_merge_b ON dbo.icg_merge (col_a);
+GO
+
+CREATE TABLE
+    dbo.icg_uc
+(
+    id integer NOT NULL,
+    col_a integer NOT NULL,
+    col_c integer NOT NULL
+);
+
+INSERT INTO
+    dbo.icg_uc
+(
+    id,
+    col_a,
+    col_c
+)
+SELECT TOP (20000)
+    id = ROW_NUMBER() OVER (ORDER BY (SELECT NULL)),
+    col_a = 1,
+    col_c = 2
+FROM sys.all_columns AS ac1
+CROSS JOIN sys.all_columns AS ac2
+OPTION(MAXDOP 1);
+
+CREATE INDEX ix_uc_b ON dbo.icg_uc (col_a);
 GO
 """ % {"first": MDB_DATABASE_FIRST, "second": MDB_DATABASE_SECOND}
 
@@ -1211,6 +1378,122 @@ def run_tests(server, password, uptime_days):
                 "found %s" % [(r["database_name"], r["index_name"], r["script_type"])
                               for r in targeting])
 
+    # ---- Group G: include-merge scripts and unique-constraint DISABLE survive the loop ----
+    #
+    # Same defect class as Group F -- per-database temp tables are truncated each
+    # iteration while #index_analysis accumulates, so every rule and every
+    # script-generation statement re-runs over rows belonging to databases
+    # already processed. Group F caught the primary-key DISABLE. These are two
+    # other ways it surfaced before the per-database scoping fix, both in CrapA
+    # (processed first, so its rows are the stale ones during CrapB's pass):
+    #
+    #   Bug 1: the include-merge machinery recomputes CrapA's superset winner from
+    #   an emptied #index_details on CrapB's pass, gets NULL, and overwrites its
+    #   merged includes. The merge-script insert then emits a SECOND, stripped row
+    #   (no INCLUDE, no DATA_COMPRESSION, no ON [filegroup]) and the final
+    #   ROW_NUMBER ties it against the good one. Run, the stripped pair rebuilds
+    #   the winner with every covering column gone while its subset is disabled --
+    #   and it executes without error.
+    #
+    #   Bug 2: the DISABLE-script insert excludes unique constraints with
+    #   NOT EXISTS (#index_details ... is_unique_constraint = 1), which passes
+    #   VACUOUSLY for a stale row whose #index_details was truncated. So CrapA's
+    #   uq_icg got ALTER INDEX ... DISABLE in addition to its correct
+    #   DROP CONSTRAINT -- and ALTER INDEX DISABLE on a unique constraint's index
+    #   silently disables every inbound foreign key.
+    #
+    # Every assertion below is an assertion of absence, so each is preceded by
+    # positive controls: the rule fired, the winner was produced, and CrapB was
+    # reached. Without those a green result could just mean the fixture never
+    # built or the rule silently stopped matching.
+
+    # --- Bug 1: the include-merge winner must keep its INCLUDE list ---
+    merge_rows, _ = run_proc_all_databases(server, password, MDB_MERGE_TABLE)
+
+    # G-PC1: the merge winner was produced at all (Rule 4/6 fired for CrapA). If
+    # it were not, "no merge script is missing its INCLUDE" would pass vacuously.
+    merge_winner = find_rows(merge_rows, database_name=MDB_DATABASE_FIRST,
+                             index_name=MDB_MERGE_WINNER, script_type="MERGE SCRIPT")
+    assert_test("G-MultiDatabase",
+                "positive control: %s.%s gets a MERGE SCRIPT (include-merge fired)"
+                % (MDB_DATABASE_FIRST, MDB_MERGE_WINNER),
+                len(merge_winner) == 1, "found %d" % len(merge_winner))
+
+    # G-PC2: its subset really was disabled -- the other half of the pair whose
+    # includes the merge is supposed to absorb. No subset, no merge to strip.
+    merge_subset = find_rows(merge_rows, database_name=MDB_DATABASE_FIRST,
+                             index_name=MDB_MERGE_SUBSET, script_type="DISABLE SCRIPT")
+    assert_test("G-MultiDatabase",
+                "positive control: %s.%s (the subset) is disabled"
+                % (MDB_DATABASE_FIRST, MDB_MERGE_SUBSET),
+                len(merge_subset) == 1, "found %d" % len(merge_subset))
+
+    # G-PC3: CrapB was reached for this table, so the loop took a real second
+    # iteration and #index_details was truncated out from under CrapA's rows.
+    merge_second = find_rows(merge_rows, database_name=MDB_DATABASE_SECOND)
+    assert_test("G-MultiDatabase",
+                "positive control: %s was reached for %s (a second iteration happened)"
+                % (MDB_DATABASE_SECOND, MDB_MERGE_TABLE),
+                len(merge_second) >= 1,
+                "found %d rows for %s" % (len(merge_second), MDB_DATABASE_SECOND))
+
+    # The assertion. The surviving merge script must still carry an INCLUDE. The
+    # stripped row the bug produced has the INCLUDE clause gone entirely, so any
+    # merge row for the winner whose script has no INCLUDE is the defect.
+    merge_stripped = [
+        r for r in merge_winner
+        if "include" not in r.get("script", "").lower()
+    ]
+    assert_test("G-MultiDatabase",
+                "no merge script for %s is missing its INCLUDE list, in any database"
+                % MDB_MERGE_WINNER,
+                len(merge_stripped) == 0,
+                "found %d stripped (winner rebuilt without its covering columns): %s"
+                % (len(merge_stripped), [r.get("script") for r in merge_stripped]))
+
+    # --- Bug 2: a unique constraint must never get ALTER INDEX ... DISABLE ---
+    uc_rows, _ = run_proc_all_databases(server, password, MDB_UC_TABLE)
+
+    # G-PC4: the constraint really was replaced -- it gets its correct
+    # DROP CONSTRAINT. This is what makes the absence assertion meaningful:
+    # uq_icg WAS in play as a droppable constraint, the tool just must not ALSO
+    # ALTER INDEX it.
+    uc_drop = find_rows(uc_rows, database_name=MDB_DATABASE_FIRST,
+                        index_name=MDB_UC_CONSTRAINT,
+                        script_type="DISABLE CONSTRAINT SCRIPT")
+    assert_test("G-MultiDatabase",
+                "positive control: %s.%s gets a DISABLE CONSTRAINT SCRIPT"
+                % (MDB_DATABASE_FIRST, MDB_UC_CONSTRAINT),
+                len(uc_drop) == 1, "found %d" % len(uc_drop))
+
+    # G-PC5: the plain index that replaces it was promoted (Rule 7.5 fired). This
+    # is the winner the stale constraint used to get paired against.
+    uc_winner = find_rows(uc_rows, database_name=MDB_DATABASE_FIRST,
+                          index_name=MDB_UC_PLAIN, script_type="MERGE SCRIPT")
+    assert_test("G-MultiDatabase",
+                "positive control: %s.%s is the MAKE UNIQUE replacement (Rule 7.5 fired)"
+                % (MDB_DATABASE_FIRST, MDB_UC_PLAIN),
+                len(uc_winner) == 1, "found %d" % len(uc_winner))
+
+    # G-PC6: CrapB was reached for this table too.
+    uc_second = find_rows(uc_rows, database_name=MDB_DATABASE_SECOND)
+    assert_test("G-MultiDatabase",
+                "positive control: %s was reached for %s (a second iteration happened)"
+                % (MDB_DATABASE_SECOND, MDB_UC_TABLE),
+                len(uc_second) >= 1,
+                "found %d rows for %s" % (len(uc_second), MDB_DATABASE_SECOND))
+
+    # The assertion. A unique CONSTRAINT must never be named by an
+    # ALTER INDEX ... DISABLE (a DISABLE SCRIPT row), in any database.
+    uc_disable = find_rows(uc_rows, index_name=MDB_UC_CONSTRAINT,
+                           script_type="DISABLE SCRIPT")
+    assert_test("G-MultiDatabase",
+                "no DISABLE SCRIPT names the unique constraint, in any database",
+                len(uc_disable) == 0,
+                "found %d (ALTER INDEX DISABLE on a UC silently disables inbound FKs) %s"
+                % (len(uc_disable),
+                   [(r["database_name"], r["script"]) for r in uc_disable]))
+
     return results
 
 
@@ -1260,7 +1543,7 @@ def main():
         print("testing something other than what they claim.")
         sys.exit(1)
 
-    print("Building multi-database fixture (%s, %s) for Group F..."
+    print("Building multi-database fixture (%s, %s) for Groups F and G..."
           % (MDB_DATABASE_FIRST, MDB_DATABASE_SECOND))
     print()
 
@@ -1279,6 +1562,20 @@ def main():
                 print("  " + e)
             print()
             print("Group F's fixture did not build, so its assertions of absence")
+            print("would pass for the wrong reason.")
+            sys.exit(1)
+
+        # Group G's tables ride on the same CrapA/CrapB the block above created.
+        stdout, stderr = run_sql_script(server, password, MDB_G_SETUP_SQL,
+                                        database="master")
+        errors = sql_errors(stdout, stderr)
+
+        if errors:
+            print("ERROR: SQL errors during Group G fixture setup:")
+            for e in errors:
+                print("  " + e)
+            print()
+            print("Group G's fixture did not build, so its assertions of absence")
             print("would pass for the wrong reason.")
             sys.exit(1)
 
