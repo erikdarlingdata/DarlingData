@@ -5129,11 +5129,16 @@ BEGIN CATCH
         RAISERROR('%s', 10, 1, @sql) WITH NOWAIT;
     END;
 
-    IF @@TRANCOUNT > 0
-    BEGIN
-        ROLLBACK;
-    END;
-
+    /*
+    No ROLLBACK here on purpose. This procedure only reads Query Store and builds
+    strings - it opens no transaction of its own (there is no BEGIN TRANSACTION
+    anywhere in it), so a ROLLBACK could only ever unwind the CALLER's
+    transaction. That is the standard error-handling template misapplied to a
+    read-only procedure: on any internal error it would silently destroy work the
+    caller was in the middle of. It also broke INSERT ... EXECUTE against this
+    proc, where the ROLLBACK raised Msg 3915 instead of surfacing the real error.
+    sp_QuickieStore, which this was built from, carries no ROLLBACK either.
+    */
     THROW;
 END CATCH;
 
