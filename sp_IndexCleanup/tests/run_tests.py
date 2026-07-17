@@ -12,6 +12,19 @@ import sys
 import re
 
 
+def find_sql_errors(text):
+    """Return any SQL errors of severity 16 or higher found in text.
+
+    go-sqlcmd reports errors on stdout, so both streams have to be checked.
+    Matching the severity numerically catches Level 16 through 19 rather than
+    only the literal "Level 16".
+    """
+    if not text:
+        return []
+
+    return re.findall(r"Msg \d+, Level 1[6-9][^\n]*", text)
+
+
 def run_sqlcmd(server, password):
     """Run the test SQL and capture output."""
     cmd = [
@@ -309,10 +322,52 @@ def run_tests(rows):
                 len(matches) == 0, f"found {len(matches)} (expected 0)")
 
     # 12b: UC + NC + subset on same table
-    # KNOWN ISSUE: uq_int_cd, ix_int_cd, and ix_int_c don't appear in
-    # output at all — needs investigation with @debug = 1 to determine
-    # if they're excluded at collection or rule processing stage.
-    # Skipping assertion for now — tracked as issue for investigation.
+    # 12b: UC + key-duplicate NC + key-subset NC on the same table.
+    #
+    # This was skipped for a long time with a comment saying these three indexes
+    # "don't appear in output at all -- needs investigation". They were absent
+    # because the FIXTURE was broken, not the procedure: col_c and col_d were
+    # random values from 200 and 100 buckets across 10,000 rows, so
+    # uq_int_cd UNIQUE (col_c, col_d) failed to create on every run (Msg 1505),
+    # and the read loop then aborted hinting the missing index (Msg 308). The
+    # runner could not see any of it because it checked stderr and go-sqlcmd
+    # reports errors on stdout. Both are fixed; on clean data the procedure gets
+    # this group right.
+
+    # 12b: the constraint is replaced by its nonclustered twin
+    matches = find_rows(rows, table_name="test_ic_interact", index_name="uq_int_cd",
+                        script_type="DISABLE CONSTRAINT SCRIPT")
+    assert_test("12-Interact", "12b: uq_int_cd constraint dropped for ix_int_cd",
+                len(matches) == 1, f"found {len(matches)}")
+
+    # 12b: that twin is made unique
+    matches = find_rows(rows, table_name="test_ic_interact", index_name="ix_int_cd",
+                        script_type="MERGE SCRIPT")
+    has_unique = any("CREATE UNIQUE" in m.get("script", "") for m in matches)
+    assert_test("12-Interact", "12b: ix_int_cd made unique to replace the constraint",
+                has_unique, f"found {len(matches)} merge rows, unique={has_unique}")
+
+    # 12b: the key subset is disabled into it
+    matches = find_rows(rows, table_name="test_ic_interact", index_name="ix_int_c",
+                        script_type="DISABLE SCRIPT")
+    assert_test("12-Interact", "12b: ix_int_c (key subset) disabled",
+                len(matches) == 1, f"found {len(matches)}")
+
+    # 12b: THE load-bearing one. ix_int_c is being disabled, so whatever it
+    # covered has to survive in the index replacing it. Rule 6 merges col_b in as
+    # a Key Subset; Rule 7.5 then rewrites the row to MAKE UNIQUE and Rule 7.6
+    # recomputes the includes. A 7.6 that gathers only Key Duplicate losers drops
+    # col_b here while ix_int_c's DISABLE still runs -- coverage silently gone on
+    # scripts that all execute cleanly, which the execute check cannot see.
+    matches = find_rows(rows, table_name="test_ic_interact", index_name="ix_int_cd",
+                        script_type="MERGE SCRIPT")
+    script = matches[0].get("script", "") if matches else ""
+    include = script[script.find("INCLUDE"):script.find(")", script.find("INCLUDE")) + 1] if "INCLUDE" in script else ""
+    kept_subset_col = "col_b" in include
+    kept_own_col = "col_e" in include
+    assert_test("12-Interact", "12b: merge keeps BOTH its own include and the disabled subset's",
+                kept_subset_col and kept_own_col,
+                f"INCLUDE={include or '(none)'} col_b={kept_subset_col} col_e={kept_own_col}")
 
     return results
 
@@ -334,9 +389,20 @@ def main():
 
     stdout, stderr = run_sqlcmd(server, password)
 
-    if "Msg " in stderr and "Level 16" in stderr:
-        print("ERROR: SQL errors detected:")
-        print(stderr)
+    # go-sqlcmd writes SQL errors to STDOUT, not stderr. Checking stderr alone
+    # made this detection decorative: adversarial_test.sql was failing partway
+    # through on every run (Msg 1505 on test_ic_interact) and the suite stayed
+    # green, so group 12 was never really tested. Check both streams, and match
+    # any severity 16+ rather than the literal string "Level 16".
+    errors = find_sql_errors(stdout) + find_sql_errors(stderr)
+
+    if errors:
+        print("ERROR: SQL errors detected while running the fixture:")
+        for e in errors:
+            print("  " + e)
+        print()
+        print("The fixture did not build correctly, so the assertions below")
+        print("would be testing something other than what they claim.")
         sys.exit(1)
 
     rows = parse_output(stdout)
