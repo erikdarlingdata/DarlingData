@@ -53,7 +53,9 @@ Exits 1 if any assertion fails.
 """
 
 import argparse
+import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -79,6 +81,16 @@ def find_sql_errors(text):
 
 # ---------------------------------------------------------------- sqlcmd plumbing
 
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment so
+    one harness runs both locally and in CI. Locally SQLCMD_BIN defaults to the
+    go-based 'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI points SQLCMD_BIN
+    at its own binary and sets SQLCMD_CONN_ARGS to the cert-trust flag its
+    container connection needs (e.g. '-C')."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
+
+
 def _sqlcmd(server, password, sql, database="master",
             query_timeout=None, subprocess_timeout=120):
     """Run a batch and return (stdout, stderr) decoded as UTF-8.
@@ -90,8 +102,8 @@ def _sqlcmd(server, password, sql, database="master",
     cancels the batch server-side -- used to stop the never-ending collector
     loop); subprocess_timeout is a hard backstop on the whole process.
     """
-    cmd = [
-        "sqlcmd", "-S", server, "-U", "sa", "-P", password,
+    cmd = _sqlcmd_prefix() + [
+        "-S", server, "-U", "sa", "-P", password,
         "-d", database,
         "-W",            # trim trailing spaces
         "-h", "-1",      # no result-set headers

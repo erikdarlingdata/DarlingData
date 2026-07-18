@@ -47,7 +47,9 @@ Exits 1 if any assertion fails.
 """
 
 import argparse
+import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -92,6 +94,16 @@ def find_sql_errors(text):
     return re.findall(r"Msg \d+, Level 1[6-9][^\n]*", text)
 
 
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment so
+    one harness runs both locally and in CI. Locally SQLCMD_BIN defaults to the
+    go-based 'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI points SQLCMD_BIN
+    at its own binary and sets SQLCMD_CONN_ARGS to the cert-trust flag its
+    container connection needs (e.g. '-C')."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
+
+
 def _sqlcmd(server, password, sql, headers=True):
     """Run a batch and return (stdout, stderr) decoded as UTF-8.
 
@@ -100,8 +112,8 @@ def _sqlcmd(server, password, sql, headers=True):
     that). Output is tab-delimited and trimmed (-W -s TAB) and the line width is
     maxed (-w 65535) so wide rows are not wrapped mid-row.
     """
-    cmd = [
-        "sqlcmd", "-S", server, "-U", "sa", "-P", password,
+    cmd = _sqlcmd_prefix() + [
+        "-S", server, "-U", "sa", "-P", password,
         "-d", "master",
         "-W",            # trim trailing spaces
         "-w", "65535",   # do not wrap wide rows

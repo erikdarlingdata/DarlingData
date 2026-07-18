@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install sqlcmd
+      - name: Install sqlcmd tools
         run: |
           # Ubuntu 24.04 runners have Microsoft repo pre-configured; avoid Signed-By conflicts
           if ! grep -rql 'packages.microsoft.com' /etc/apt/sources.list.d/ 2>/dev/null; then
@@ -50,7 +50,10 @@ jobs:
             echo "deb [arch=amd64,signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/${VERSION_ID}/prod ${VERSION_CODENAME} main" | sudo tee /etc/apt/sources.list.d/mssql-release.list
           fi
           sudo apt-get update
-          sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18
+          # mssql-tools18 for the .sql smoke tests below; the go-based sqlcmd
+          # (on PATH as /usr/bin/sqlcmd) for the Python assertion harnesses,
+          # which were written and validated against that tool.
+          sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 sqlcmd
 
       - name: Create test database
         env:
@@ -105,3 +108,26 @@ jobs:
           SA_PASSWORD: CI_Test#2026!
         run: |
           /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d DarlingData_CI_Test -i ".github/sql/test_basic_execution.sql"
+
+      # Assertion harnesses. These EXECUTE the output the procedures generate
+      # (findings, session DDL) rather than just running them, which is what
+      # catches the "reads correctly but is wrong when run" bugs the smoke tests
+      # above cannot. They are self-contained (build and drop their own scratch
+      # databases, sessions, and config); only PerfCheck and HumanEvents run
+      # here so far - IndexCleanup and ReproBuilder need a data source the CI
+      # containers do not have yet. They use the go-based sqlcmd via the
+      # SQLCMD_* environment overrides; -C trusts the container's self-signed
+      # certificate.
+      - name: sp_PerfCheck assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_CONN_ARGS: "-C"
+        run: |
+          python3 sp_PerfCheck/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+      - name: sp_HumanEvents assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_CONN_ARGS: "-C"
+        run: |
+          python3 sp_HumanEvents/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
