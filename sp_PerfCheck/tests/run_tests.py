@@ -553,7 +553,7 @@ def inaccessible_database_tests(server, password, R):
         # metadata read sees a closed database.
         _sqlcmd(server, password, "ALTER DATABASE [%s] SET AUTO_CLOSE ON;" % db)
         _sqlcmd(server, password,
-                "ALTER DATABASE [%s] SET OFFLINE; "
+                "ALTER DATABASE [%s] SET OFFLINE WITH ROLLBACK IMMEDIATE; "
                 "ALTER DATABASE [%s] SET ONLINE;" % (db, db))
         out, err = run_perfcheck(server, password, "@database_name = N'%s'" % db)
         errs = find_sql_errors(out) + find_sql_errors(err)
@@ -561,7 +561,7 @@ def inaccessible_database_tests(server, password, R):
                 not errs, str(errs))
 
         # OFFLINE is the more severe case, and the one a whole-instance run hits.
-        _sqlcmd(server, password, "ALTER DATABASE [%s] SET OFFLINE;" % db)
+        _sqlcmd(server, password, "ALTER DATABASE [%s] SET OFFLINE WITH ROLLBACK IMMEDIATE;" % db)
         out, err = run_perfcheck(server, password, "@database_name = N'%s'" % db)
         errs = find_sql_errors(out) + find_sql_errors(err)
         R.check(grp, "OFFLINE database scoped run does not crash (Msg 515)",
