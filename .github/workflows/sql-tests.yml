@@ -142,13 +142,13 @@ jobs:
       # (findings, session DDL) rather than just running them, which is what
       # catches the "reads correctly but is wrong when run" bugs the smoke tests
       # above cannot. They are self-contained (build and drop their own scratch
-      # databases, sessions, and config); only PerfCheck and HumanEvents run
-      # here so far - IndexCleanup and ReproBuilder need a data source the CI
-      # containers do not have yet. They use the go-based sqlcmd via the
-      # SQLCMD_* environment overrides. Encryption is disabled (-N disable):
-      # the modern Go TLS stack rejects the SQL Server 2017 container's
-      # self-signed certificate outright, and -C (trust cert) does not bypass
-      # that; there is nothing to secure on a localhost throwaway container.
+      # databases, sessions, and config), except sp_IndexCleanup, which needs a
+      # StackOverflow2013.dbo.Users table that the fixture step below creates.
+      # They use the go-based sqlcmd via the SQLCMD_* environment overrides.
+      # Encryption is disabled (-N disable): the modern Go TLS stack rejects the
+      # SQL Server 2017 container's self-signed certificate outright, and -C
+      # (trust cert) does not bypass that; there is nothing to secure on a
+      # localhost throwaway container.
       - name: sp_PerfCheck assertion harness
         env:
           SA_PASSWORD: CI_Test#2026!
@@ -164,3 +164,39 @@ jobs:
           SQLCMD_CONN_ARGS: "-C -N disable"
         run: |
           python3 sp_HumanEvents/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+      # sp_IndexCleanup's harness needs a StackOverflow2013 with a Users table.
+      # The containers have no such database, so build a faithful-schema
+      # synthetic stand-in. Real values are irrelevant: the harness forces its
+      # index reads and every rule is structural (dedupe / overlap / usage
+      # floor). See sp_IndexCleanup/tests/fixture_stackoverflow2013.sql.
+      - name: Create StackOverflow2013 fixture (for the sp_IndexCleanup harness)
+        env:
+          SA_PASSWORD: CI_Test#2026!
+        run: |
+          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -i "sp_IndexCleanup/tests/fixture_stackoverflow2013.sql"
+
+      # Four runners: adversarial synthetic tables, the Users dedupe cases (which
+      # also EXECUTE every generated MERGE/DISABLE script), rule coverage in its
+      # own Crap databases, and the no-database-access preflight guard.
+      - name: sp_IndexCleanup assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_IndexCleanup/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+          python3 sp_IndexCleanup/tests/fixture_cases_test.py --server localhost --password "$SA_PASSWORD"
+          python3 sp_IndexCleanup/tests/rule_coverage_test.py --server localhost --password "$SA_PASSWORD"
+          python3 sp_IndexCleanup/tests/no_access_test.py --server localhost --password "$SA_PASSWORD"
+
+      # ReproBuilder is fully portable: every plan is an embedded string constant
+      # and its one table-dependent case builds a fixture in tempdb. No user
+      # database needed.
+      - name: sp_QueryReproBuilder assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_QueryReproBuilder/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
