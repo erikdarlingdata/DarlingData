@@ -43,6 +43,7 @@ Usage:
 
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,17 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURE_FILE = os.path.join(HERE, "fixtures_more_dupe_indexes.sql")
+
+
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment
+    so the harness runs both locally and in CI. Locally SQLCMD_BIN defaults to
+    'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI sets SQLCMD_BIN to the
+    go-based sqlcmd and SQLCMD_CONN_ARGS to '-C -N disable' -- trust the
+    container's self-signed cert and disable encryption, which the modern Go
+    TLS stack needs to connect to the SQL Server 2017 container."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
 
 # Rows that represent a dedupe action. A COMPRESSION SCRIPT row is not one of
 # these: an index that gets no dedupe action still gets compression advice, and
@@ -61,7 +73,8 @@ def run_sqlcmd(server, password, input_file=None, query=None,
                database="StackOverflow2013", timeout=600):
     """Run SQL from a file or a query string and capture output."""
     cmd = [
-        "sqlcmd", "-S", server, "-U", "sa", "-P", password,
+        *_sqlcmd_prefix(),
+        "-S", server, "-U", "sa", "-P", password,
         "-d", database,
         "-W",  # trim trailing spaces
         "-s", "\t",  # tab delimiter

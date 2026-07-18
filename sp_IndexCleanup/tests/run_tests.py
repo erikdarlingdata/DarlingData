@@ -7,9 +7,25 @@ Usage:
     python run_tests.py [--server SQL2022] [--password "L!nt0044"]
 """
 
+import os
+import re
+import shlex
 import subprocess
 import sys
-import re
+
+
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment
+    so the harness runs both locally and in CI. Locally SQLCMD_BIN defaults to
+    'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI sets SQLCMD_BIN to the
+    go-based sqlcmd and SQLCMD_CONN_ARGS to '-C -N disable' -- trust the
+    container's self-signed cert and disable encryption, which the modern Go
+    TLS stack needs to connect to the SQL Server 2017 container."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
+
+
+HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def find_sql_errors(text):
@@ -28,9 +44,10 @@ def find_sql_errors(text):
 def run_sqlcmd(server, password):
     """Run the test SQL and capture output."""
     cmd = [
-        "sqlcmd", "-S", server, "-U", "sa", "-P", password,
+        *_sqlcmd_prefix(),
+        "-S", server, "-U", "sa", "-P", password,
         "-d", "StackOverflow2013",
-        "-i", "adversarial_test.sql",
+        "-i", os.path.join(HERE, "adversarial_test.sql"),
         "-W",  # trim trailing spaces
         "-s", "\t",  # tab delimiter
     ]
