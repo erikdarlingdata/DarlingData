@@ -200,3 +200,16 @@ jobs:
           SQLCMD_CONN_ARGS: "-C -N disable"
         run: |
           python3 sp_QueryReproBuilder/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+      # sp_QuickieStore is ~16k lines of dynamic SQL whose shape changes with
+      # almost every parameter, so this is a parameter matrix: all 39 sort
+      # orders, the wait filters, execution types, query types and the
+      # expert/format grid, each of which executes the statement it just built.
+      # It creates and drops its own Query Store scratch database.
+      - name: sp_QuickieStore assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_QuickieStore/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
