@@ -316,6 +316,14 @@ def structural_tests(server, password, R):
 def forced_condition_tests(server, password, R):
     """Bidirectional forced-condition assertions on the check_id 1000
     Non-Default Configuration check. Captures and restores exact originals."""
+    # Flush any pre-existing pending config change (value <> value_in_use) before
+    # baselining. Some images ship one: the SQL Server 2017 CI container has
+    # 'clr strict security' configured on but not yet in use. The harness's own
+    # RECONFIGURE calls would apply that staged change mid-run, and it would then
+    # surface as a spurious net change the harness never made. _sqlcmd does not
+    # raise on a SQL error, so a rejected RECONFIGURE is tolerated here.
+    _sqlcmd(server, password, "RECONFIGURE;", headers=False)
+
     # Snapshot the entire config before touching anything.
     before = snapshot_config(server, password)
 
