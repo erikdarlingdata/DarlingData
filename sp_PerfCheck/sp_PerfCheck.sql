@@ -1314,38 +1314,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 N'Resource Governor',
                 N'Enabled';
 
-            /* Add informational message about Resource Governor with query suggestion */
-            INSERT INTO
-                #results
-            (
-                check_id,
-                priority,
-                category,
-                finding,
-                details,
-                url
-            )
-            SELECT
-                check_id = 4107,
-                priority = 50, /* Informational: may be intentional */
-                category = N'Resource Governor',
-                finding = N'Resource Governor Enabled',
-                details =
-                    N'Resource Governor is enabled on this instance. This affects workload resource allocation and may ' +
-                    N'impact performance by limiting resources available to various workloads. ' +
-                    N'For more details, run these queries to explore your configuration:' + NCHAR(13) + NCHAR(10) +
-                    N'/* Resource Governor configuration */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT c.* FROM sys.resource_governor_configuration AS c;' + NCHAR(13) + NCHAR(10) +
-                    N'/* Resource pools and their settings */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT p.* FROM sys.dm_resource_governor_resource_pools AS p;' + NCHAR(13) + NCHAR(10) +
-                    N'/* Workload groups and their settings */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT wg.* FROM sys.dm_resource_governor_workload_groups AS wg;' + NCHAR(13) + NCHAR(10) +
-                    N'/* Classifier function (if configured) */' + NCHAR(13) + NCHAR(10) +
-                    N'SELECT cf.* FROM sys.resource_governor_configuration AS gc' + NCHAR(13) + NCHAR(10) +
-                    N'CROSS APPLY (SELECT OBJECT_NAME(gc.classifier_function_id) AS classifier_function_name) AS cf;',
-                url = N'https://erikdarling.com/sp_perfcheck/#ResourceGovernor'
-            FROM sys.resource_governor_configuration AS rgc
-            WHERE rgc.is_enabled = 1;
         END
         ELSE
         BEGIN
@@ -3194,87 +3162,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
     */
     IF @azure_sql_db = 0 /* Skip these checks for Azure SQL DB */
     BEGIN
-        /* Check for non-default configuration values */
-        INSERT INTO
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            object_name,
-            details,
-            url
-        )
-        SELECT
-            check_id = 1000,
-            priority = 50, /* Informational: non-default config */
-            category = N'Server Configuration',
-            /*
-            Stable label; the setting name that varies per row goes in
-            object_name so this finding groups and the setting is filterable.
-            */
-            finding = N'Non-Default Configuration',
-            object_name = c.name,
-            details =
-                N'Configuration option "' + c.name +
-                N'" has been changed from the default. Current: ' +
-                CONVERT(nvarchar(50), c.value_in_use) +
-                CASE
-                    /* Configuration options from your lists */
-                    WHEN c.name = N'access check cache bucket count' THEN N', Default: 0'
-                    WHEN c.name = N'access check cache quota' THEN N', Default: 0'
-                    WHEN c.name = N'Ad Hoc Distributed Queries' THEN N', Default: 0'
-                    WHEN c.name = N'ADR cleaner retry timeout (min)' THEN N', Default: 120'
-                    WHEN c.name = N'ADR Cleaner Thread Count' THEN N', Default: 1'
-                    WHEN c.name = N'ADR Preallocation Factor' THEN N', Default: 4'
-                    WHEN c.name = N'affinity mask' THEN N', Default: 0'
-                    WHEN c.name = N'affinity I/O mask' THEN N', Default: 0'
-                    WHEN c.name = N'affinity64 mask' THEN N', Default: 0'
-                    WHEN c.name = N'affinity64 I/O mask' THEN N', Default: 0'
-                    WHEN c.name = N'cost threshold for parallelism' THEN N', Default: 5'
-                    WHEN c.name = N'max degree of parallelism' THEN N', Default: 0'
-                    WHEN c.name = N'max server memory (MB)' THEN N', Default: 2147483647'
-                    WHEN c.name = N'max worker threads' THEN N', Default: 0'
-                    WHEN c.name = N'min memory per query (KB)' THEN N', Default: 1024'
-                    WHEN c.name = N'min server memory (MB)' THEN N', Default: 0'
-                    WHEN c.name = N'optimize for ad hoc workloads' THEN N', Default: 0'
-                    WHEN c.name = N'priority boost' THEN N', Default: 0'
-                    WHEN c.name = N'query governor cost limit' THEN N', Default: 0'
-                    WHEN c.name = N'recovery interval (min)' THEN N', Default: 0'
-                    WHEN c.name = N'tempdb metadata memory-optimized' THEN N', Default: 0'
-                    WHEN c.name = N'lightweight pooling' THEN N', Default: 0'
-                    ELSE N', Default: Unknown'
-                END,
-            url = N'https://erikdarling.com/sp_perfcheck/#ServerSettings'
-        FROM sys.configurations AS c
-        WHERE
-            /* Access check cache settings */
-               (c.name = N'access check cache bucket count' AND c.value_in_use <> 0)
-            OR (c.name = N'access check cache quota' AND c.value_in_use <> 0)
-            OR (c.name = N'Ad Hoc Distributed Queries' AND c.value_in_use <> 0)
-            /* ADR settings */
-            OR (c.name = N'ADR cleaner retry timeout (min)' AND c.value_in_use NOT IN (0, 15, 120))
-            OR (c.name = N'ADR Cleaner Thread Count' AND c.value_in_use <> 1)
-            OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use NOT IN (0, 4))
-            /*
-            Affinity masks (1008-1011), priority boost (1005), and lightweight
-            pooling (1006) have their own dedicated checks that fire on exactly
-            the same non-default condition, so they are excluded here - otherwise
-            each would be reported twice, once generically and once specifically.
-            */
-            /* Common performance settings */
-            OR (c.name = N'cost threshold for parallelism' AND c.value_in_use <> 5)
-            OR (c.name = N'max degree of parallelism' AND c.value_in_use <> 0)
-            OR (c.name = N'max server memory (MB)' AND c.value_in_use <> 2147483647)
-            OR (c.name = N'max worker threads' AND c.value_in_use <> 0)
-            OR (c.name = N'min memory per query (KB)' AND c.value_in_use <> 1024)
-            OR (c.name = N'min server memory (MB)' AND c.value_in_use NOT IN (0, 16))
-            OR (c.name = N'optimize for ad hoc workloads' AND c.value_in_use <> 0)
-            OR (c.name = N'query governor cost limit' AND c.value_in_use <> 0)
-            OR (c.name = N'recovery interval (min)' AND c.value_in_use <> 0)
-            OR (c.name = N'tempdb metadata memory-optimized' AND c.value_in_use <> 0);
-
         /*
         TempDB Configuration Checks (not applicable to Azure SQL DB)
         */
@@ -3721,8 +3608,14 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             );
         END;
 
-        /* Cost Threshold for Parallelism check */
-        IF @cost_threshold <= 5
+        /*
+        Cost threshold for parallelism set too low. The default of 5 is far too
+        low for modern hardware: it shoves trivial queries into parallel plans,
+        burning CPU and worker threads on work that runs faster single-threaded.
+        Flag anything under 50 (a sane starting point), escalating when it is
+        still at or near the terrible default.
+        */
+        IF @cost_threshold < 50
         BEGIN
             INSERT INTO
                 #results
@@ -3737,12 +3630,18 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             VALUES
             (
                 1004,
-                40, /* Low: config recommendation */
+                CASE
+                    WHEN @cost_threshold <= 5
+                    THEN 20 /* High: still at or near the default of 5 */
+                    ELSE 40 /* Low: configured, but lower than recommended */
+                END,
                 N'Server Configuration',
-                N'Low Cost Threshold for Parallelism',
+                N'Cost Threshold for Parallelism Too Low',
                 N'Cost threshold for parallelism is set to ' +
                 CONVERT(nvarchar(10), @cost_threshold) +
-                N'. Low values can cause excessive parallelism for small queries.',
+                N'. Low values push trivial queries into parallel plans, wasting CPU ' +
+                N'and worker threads on work that runs faster single-threaded. A ' +
+                N'starting point of 50 is far more reasonable than the default of 5.',
                 N'https://erikdarling.com/sp_perfcheck/#CostThreshold'
             );
         END;
@@ -4448,51 +4347,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
           OR d.is_auto_update_stats_on = 0
         );
 
-        /* Check ANSI settings that might cause issues */
-        INSERT INTO
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            details,
-            url
-        )
-        SELECT
-            check_id = 7005,
-            priority = 50, /* Informational */
-            category = N'Database Configuration',
-            finding = N'ANSI Settings Require Review',
-            database_name = d.name,
-            details =
-                N'One or more ANSI settings differ from recommended best practices: ' +
-                      CASE WHEN d.is_ansi_null_default_on = 0 THEN N'ANSI_NULL_DEFAULT OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_nulls_on = 0 THEN N'ANSI_NULLS OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_padding_on = 0 THEN N'ANSI_PADDING OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_ansi_warnings_on = 0 THEN N'ANSI_WARNINGS OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_arithabort_on = 0 THEN N'ARITHABORT OFF (recommended ON in many contexts), ' ELSE N'' END +
-                      CASE WHEN d.is_concat_null_yields_null_on = 0 THEN N'CONCAT_NULL_YIELDS_NULL OFF (recommended ON), ' ELSE N'' END +
-                      CASE WHEN d.is_numeric_roundabort_on = 1 THEN N'NUMERIC_ROUNDABORT ON (recommended OFF), ' ELSE N'' END +
-                      CASE WHEN d.is_quoted_identifier_on = 0 THEN N'QUOTED_IDENTIFIER OFF (recommended ON), ' ELSE N'' END +
-                N'These settings may lead to inconsistent behavior, reduced feature compatibility, or unexpected query results ' +
-                N'if they do not align with recommended best practices.',
-            url = N'https://erikdarling.com/sp_perfcheck/#ANSISettings'
-        FROM #databases AS d
-        WHERE d.database_id = @current_database_id
-        AND
-        (
-             d.is_ansi_null_default_on = 0
-          OR d.is_ansi_nulls_on = 0
-          OR d.is_ansi_padding_on = 0
-          OR d.is_ansi_warnings_on = 0
-          OR d.is_arithabort_on = 0
-          OR d.is_concat_null_yields_null_on = 0
-          OR d.is_numeric_roundabort_on = 1
-          OR d.is_quoted_identifier_on = 0
-        );
-
         /* Check Query Store Status */
         INSERT INTO
             #results
@@ -4888,33 +4742,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 RAISERROR(@message, 0, 1) WITH NOWAIT;
             END;
         END CATCH;
-
-        /* Check for non-default target recovery time */
-        INSERT INTO
-            #results
-        (
-            check_id,
-            priority,
-            category,
-            finding,
-            database_name,
-            details,
-            url
-        )
-        SELECT
-            check_id = 7007,
-            priority = 50, /* Informational */
-            category = N'Database Configuration',
-            finding = N'Non-Default Target Recovery Time',
-            database_name = d.name,
-            details =
-                N'Database target recovery time is ' +
-                CONVERT(nvarchar(20), d.target_recovery_time_in_seconds) +
-                N' seconds, which differs from the default of 60 seconds. This affects checkpoint frequency and recovery time.',
-            url = N'https://erikdarling.com/sp_perfcheck/#RecoveryTime'
-        FROM #databases AS d
-        WHERE d.database_id = @current_database_id
-        AND   d.target_recovery_time_in_seconds <> 60;
 
         /* Check transaction durability */
         INSERT INTO
