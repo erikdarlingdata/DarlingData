@@ -85,8 +85,9 @@ def _sqlcmd_prefix():
     """The sqlcmd binary plus any connection args, overridable via environment so
     one harness runs both locally and in CI. Locally SQLCMD_BIN defaults to the
     go-based 'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI points SQLCMD_BIN
-    at its own binary and sets SQLCMD_CONN_ARGS to the cert-trust flag its
-    container connection needs (e.g. '-C')."""
+    at its own binary and sets SQLCMD_CONN_ARGS to '-C -N disable' -- trust the
+    self-signed cert and disable encryption, since the modern Go TLS stack
+    rejects the SQL Server 2017 container's certificate outright."""
     return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
         os.environ.get("SQLCMD_CONN_ARGS", ""))
 

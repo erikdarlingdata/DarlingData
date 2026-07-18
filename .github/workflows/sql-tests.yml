@@ -145,14 +145,15 @@ jobs:
       # databases, sessions, and config); only PerfCheck and HumanEvents run
       # here so far - IndexCleanup and ReproBuilder need a data source the CI
       # containers do not have yet. They use the go-based sqlcmd via the
-      # SQLCMD_* environment overrides; -C trusts the container's self-signed
-      # certificate.
+      # SQLCMD_* environment overrides. Encryption is disabled (-N disable):
+      # the modern Go TLS stack rejects the SQL Server 2017 container's
+      # self-signed certificate outright, and -C (trust cert) does not bypass
+      # that; there is nothing to secure on a localhost throwaway container.
       - name: sp_PerfCheck assertion harness
-        continue-on-error: true  # TEMP: sp_PerfCheck errors on Linux containers (default trace); diagnosing
         env:
           SA_PASSWORD: CI_Test#2026!
           SQLCMD_BIN: /usr/local/bin/sqlcmd
-          SQLCMD_CONN_ARGS: "-C"
+          SQLCMD_CONN_ARGS: "-C -N disable"
         run: |
           python3 sp_PerfCheck/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
 
@@ -160,6 +161,6 @@ jobs:
         env:
           SA_PASSWORD: CI_Test#2026!
           SQLCMD_BIN: /usr/local/bin/sqlcmd
-          SQLCMD_CONN_ARGS: "-C"
+          SQLCMD_CONN_ARGS: "-C -N disable"
         run: |
           python3 sp_HumanEvents/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
