@@ -974,7 +974,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 4101,
             priority = 20, /* High: active memory spills */
             category = N'Memory Pressure',
-            finding = N'Memory-Starved Queries Detected',
+            finding = N'Memory-Starved Queries: Forced Grants',
             details =
                 N'dm_exec_query_resource_semaphores has ' +
                 CONVERT(nvarchar(10), MAX(ders.forced_grant_count)) +
@@ -1001,7 +1001,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 4103,
             priority = 20, /* High: queries can't get memory */
             category = N'Memory Pressure',
-            finding = N'Memory-Starved Queries Detected',
+            finding = N'Memory-Starved Queries: Grant Timeouts',
             details =
                 N'dm_exec_query_resource_semaphores has ' +
                 CONVERT(nvarchar(10), MAX(ders.timeout_error_count)) +
@@ -2073,6 +2073,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             priority,
             category,
             finding,
+            object_name,
             details,
             url
         )
@@ -2089,8 +2090,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     ELSE 40 /* Low: >=10% of uptime */
                 END,
             category = N'Wait Statistics',
-            finding =
-                N'High Impact Wait Type: ' +
+            finding = N'High Impact Wait Type',
+            object_name =
                 ws.wait_type +
                 N' (' +
                 ws.category +
@@ -2467,6 +2468,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     priority,
                     category,
                     finding,
+                    object_name,
                     details,
                     url
                 )
@@ -2474,9 +2476,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                     check_id = 6003,
                     priority = 50, /* Informational: memory context */
                     category = N'Memory Usage',
-                    finding =
-                        N'Top Memory Consumer: ' +
-                        domc.type,
+                    finding = N'Top Memory Consumer',
+                    object_name = domc.type,
                     details =
                         N'Memory clerk "' +
                         domc.type +
@@ -3166,6 +3167,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             priority,
             category,
             finding,
+            object_name,
             details,
             url
         )
@@ -3173,7 +3175,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 1000,
             priority = 50, /* Informational: non-default config */
             category = N'Server Configuration',
-            finding = N'Non-Default Configuration: ' + c.name,
+            /*
+            Stable label; the setting name that varies per row goes in
+            object_name so this finding groups and the setting is filterable.
+            */
+            finding = N'Non-Default Configuration',
+            object_name = c.name,
             details =
                 N'Configuration option "' + c.name +
                 N'" has been changed from the default. Current: ' +
@@ -3215,11 +3222,12 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OR (c.name = N'ADR cleaner retry timeout (min)' AND c.value_in_use NOT IN (0, 15, 120))
             OR (c.name = N'ADR Cleaner Thread Count' AND c.value_in_use <> 1)
             OR (c.name = N'ADR Preallocation Factor' AND c.value_in_use NOT IN (0, 4))
-            /* Affinity settings */
-            OR (c.name = N'affinity mask' AND c.value_in_use <> 0)
-            OR (c.name = N'affinity I/O mask' AND c.value_in_use <> 0)
-            OR (c.name = N'affinity64 mask' AND c.value_in_use <> 0)
-            OR (c.name = N'affinity64 I/O mask' AND c.value_in_use <> 0)
+            /*
+            Affinity masks (1008-1011), priority boost (1005), and lightweight
+            pooling (1006) have their own dedicated checks that fire on exactly
+            the same non-default condition, so they are excluded here - otherwise
+            each would be reported twice, once generically and once specifically.
+            */
             /* Common performance settings */
             OR (c.name = N'cost threshold for parallelism' AND c.value_in_use <> 5)
             OR (c.name = N'max degree of parallelism' AND c.value_in_use <> 0)
@@ -3228,11 +3236,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             OR (c.name = N'min memory per query (KB)' AND c.value_in_use <> 1024)
             OR (c.name = N'min server memory (MB)' AND c.value_in_use NOT IN (0, 16))
             OR (c.name = N'optimize for ad hoc workloads' AND c.value_in_use <> 0)
-            OR (c.name = N'priority boost' AND c.value_in_use <> 0)
             OR (c.name = N'query governor cost limit' AND c.value_in_use <> 0)
             OR (c.name = N'recovery interval (min)' AND c.value_in_use <> 0)
-            OR (c.name = N'tempdb metadata memory-optimized' AND c.value_in_use <> 0)
-            OR (c.name = N'lightweight pooling' AND c.value_in_use <> 0);
+            OR (c.name = N'tempdb metadata memory-optimized' AND c.value_in_use <> 0);
 
         /*
         TempDB Configuration Checks (not applicable to Azure SQL DB)
@@ -4339,6 +4345,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             category,
             finding,
             database_name,
+            object_name,
             details,
             url
         )
@@ -4346,10 +4353,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 7003,
             priority = 20, /* High: apps can't connect */
             category = N'Database Configuration',
-            finding =
-                N'Restricted Access Mode: ' +
-                d.user_access_desc,
+            finding = N'Restricted Access Mode',
             database_name = d.name,
+            object_name = d.user_access_desc,
             details =
                 N'Database is not in MULTI_USER mode. Current mode: ' +
                 d.user_access_desc +
@@ -4884,6 +4890,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             category,
             finding,
             database_name,
+            object_name,
             details,
             url
         )
@@ -4891,8 +4898,9 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
             check_id = 7008,
             priority = 30, /* Medium: data loss risk on crash */
             category = N'Database Configuration',
-            finding = N'Delayed Durability: ' + d.delayed_durability_desc,
+            finding = N'Delayed Durability',
             database_name = d.name,
+            object_name = d.delayed_durability_desc,
             details =
                 N'Database uses ' +
                 d.delayed_durability_desc +

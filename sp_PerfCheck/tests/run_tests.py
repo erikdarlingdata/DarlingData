@@ -198,10 +198,11 @@ def parse_result_rows(stdout):
 
 def find_config_finding(rows, option_name):
     """Return the #results row for a Non-Default Configuration finding on the
-    given option, or None."""
-    want = "Non-Default Configuration: " + option_name
+    given option, or None. finding is a stable label; the option name lives in
+    object_name (column 6), so matching here also proves that convention holds."""
     for r in rows:
-        if r[4] == want:
+        if (r[4] == "Non-Default Configuration"
+                and len(r) > 6 and r[6] == option_name):
             return r
     return None
 
@@ -356,11 +357,14 @@ def forced_condition_tests(server, password, R):
                     row is not None, "finding not emitted when forced")
             if row is not None:
                 well_formed = (row[0] == "1000" and row[1] == "50"
-                               and row[3] == "Server Configuration")
+                               and row[3] == "Server Configuration"
+                               and row[4] == "Non-Default Configuration"
+                               and row[6] == name)
                 R.check(grp, "forced finding row well-formed "
-                        "(check_id 1000, priority 50, Server Configuration)",
+                        "(stable finding, setting name in object_name)",
                         well_formed,
-                        "check_id=%s priority=%s category=%s" % (row[0], row[1], row[3]))
+                        "check_id=%s finding=%r object_name=%r"
+                        % (row[0], row[4], row[6]))
                 details = row[7] if len(row) > 7 else ""
                 names_option = (name in details
                                 and ("Current: %d" % forced_value) in details)
