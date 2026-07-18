@@ -1,4 +1,4 @@
-SET ANSI_NULLS ON;
+﻿SET ANSI_NULLS ON;
 SET ANSI_PADDING ON;
 SET ANSI_WARNINGS ON;
 SET ARITHABORT ON;
@@ -1541,70 +1541,105 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
                 (116, N'DBCC Event',            N'Database'),
                 (137, N'Server Memory Change',  N'Server');
 
-            /* Get relevant events from default trace */
-            INSERT INTO
-                #trace_events
-            (
-                event_time,
-                event_class,
-                event_subclass,
-                database_name,
-                database_id,
-                file_name,
-                object_name,
-                object_type,
-                duration_ms,
-                severity,
-                success,
-                error,
-                text_data,
-                file_growth,
-                is_auto,
-                spid
-            )
-            SELECT
-                event_time = t.StartTime,
-                event_class = t.EventClass,
-                event_subclass = t.EventSubClass,
-                database_name = DB_NAME(t.DatabaseID),
-                database_id = t.DatabaseID,
-                file_name = t.FileName,
-                object_name = t.ObjectName,
-                object_type = t.ObjectType,
-                duration_ms = t.Duration / 1000, /* Duration is in microseconds, convert to ms */
-                severity = t.Severity,
-                success = t.Success,
-                error = t.Error,
-                text_data = t.TextData,
-                file_growth = t.IntegerData, /* Size of growth in Data/Log Auto Grow event */
-                is_auto = t.IsSystem,
-                spid = t.SPID
-            FROM sys.fn_trace_gettable(@trace_path, DEFAULT) AS t
-            WHERE
-            (
-                /* Auto-grow and auto-shrink events */
-                t.EventClass IN (92, 93, 94, 95)
-                /* DBCC Events */
-                OR
+            /*
+            Get relevant events from the default trace. On Linux SQL Server
+            sys.traces still lists a default trace, but fn_trace_gettable cannot
+            read it there and raises Msg 19049; the same guard also covers a
+            missing or unreadable trace file. On failure, leave #trace_events
+            empty - the trace-based checks below then simply find nothing - and
+            record one informational note, rather than letting the error abort
+            the whole procedure before it returns any findings.
+            */
+            BEGIN TRY
+                INSERT INTO
+                    #trace_events
                 (
-                      t.EventClass = 116
-                  AND
-                  (
-                         t.TextData LIKE N'%FREEPROCCACHE%'
-                      OR t.TextData LIKE N'%FREESYSTEMCACHE%'
-                      OR t.TextData LIKE N'%DROPCLEANBUFFERS%'
-                      OR t.TextData LIKE N'%SHRINKDATABASE%'
-                      OR t.TextData LIKE N'%SHRINKFILE%'
-                      OR t.TextData LIKE N'%WRITEPAGE%'
-                  )
+                    event_time,
+                    event_class,
+                    event_subclass,
+                    database_name,
+                    database_id,
+                    file_name,
+                    object_name,
+                    object_type,
+                    duration_ms,
+                    severity,
+                    success,
+                    error,
+                    text_data,
+                    file_growth,
+                    is_auto,
+                    spid
                 )
-                /* Server memory change events */
-                OR t.EventClass = 137
-                /* Deadlock events - typically not in default trace but including for completeness */
-                OR t.EventClass = 148
-            )
-            /* Look back at the past 7 days of events at most */
-            AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
+                SELECT
+                    event_time = t.StartTime,
+                    event_class = t.EventClass,
+                    event_subclass = t.EventSubClass,
+                    database_name = DB_NAME(t.DatabaseID),
+                    database_id = t.DatabaseID,
+                    file_name = t.FileName,
+                    object_name = t.ObjectName,
+                    object_type = t.ObjectType,
+                    duration_ms = t.Duration / 1000, /* Duration is in microseconds, convert to ms */
+                    severity = t.Severity,
+                    success = t.Success,
+                    error = t.Error,
+                    text_data = t.TextData,
+                    file_growth = t.IntegerData, /* Size of growth in Data/Log Auto Grow event */
+                    is_auto = t.IsSystem,
+                    spid = t.SPID
+                FROM sys.fn_trace_gettable(@trace_path, DEFAULT) AS t
+                WHERE
+                (
+                    /* Auto-grow and auto-shrink events */
+                    t.EventClass IN (92, 93, 94, 95)
+                    /* DBCC Events */
+                    OR
+                    (
+                          t.EventClass = 116
+                      AND
+                      (
+                             t.TextData LIKE N'%FREEPROCCACHE%'
+                          OR t.TextData LIKE N'%FREESYSTEMCACHE%'
+                          OR t.TextData LIKE N'%DROPCLEANBUFFERS%'
+                          OR t.TextData LIKE N'%SHRINKDATABASE%'
+                          OR t.TextData LIKE N'%SHRINKFILE%'
+                          OR t.TextData LIKE N'%WRITEPAGE%'
+                      )
+                    )
+                    /* Server memory change events */
+                    OR t.EventClass = 137
+                    /* Deadlock events - typically not in default trace but including for completeness */
+                    OR t.EventClass = 148
+                )
+                /* Look back at the past 7 days of events at most */
+                AND t.StartTime > DATEADD(DAY, -7, SYSDATETIME());
+            END TRY
+            BEGIN CATCH
+                INSERT INTO
+                    #results
+                (
+                    check_id,
+                    priority,
+                    category,
+                    finding,
+                    details,
+                    url
+                )
+                VALUES
+                (
+                    5004,
+                    50, /* Informational: platform limitation, not a problem */
+                    N'Default Trace',
+                    N'Default Trace Not Readable',
+                    N'The default trace is registered but could not be read (' +
+                    ERROR_MESSAGE() +
+                    N'). Its auto-grow, auto-shrink, and DBCC findings are ' +
+                    N'unavailable. This is expected on Linux SQL Server, where ' +
+                    N'the default trace cannot be read via fn_trace_gettable.',
+                    N'https://erikdarling.com/sp_perfcheck/'
+                );
+            END CATCH;
 
             /* Update event names from map */
             UPDATE

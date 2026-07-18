@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install sqlcmd
+      - name: Install sqlcmd tools
         run: |
           # Ubuntu 24.04 runners have Microsoft repo pre-configured; avoid Signed-By conflicts
           if ! grep -rql 'packages.microsoft.com' /etc/apt/sources.list.d/ 2>/dev/null; then
@@ -51,6 +51,29 @@ jobs:
           fi
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18
+
+      - name: Install go-sqlcmd (for the assertion harnesses)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The Python assertion harnesses were written and validated against the
+          # go-based sqlcmd, not mssql-tools18, so install that to avoid
+          # output-parsing differences. It is not in the apt repo for these
+          # runners, so pull the latest linux-amd64 release binary.
+          set -euxo pipefail
+          assets=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/microsoft/go-sqlcmd/releases/latest \
+            | grep -oE 'https://[^"]+' | grep -iE 'linux[-_]amd64.*\.tar\.(bz2|gz)$')
+          echo "$assets"
+          url=$(echo "$assets" | head -1)
+          test -n "$url"
+          mkdir -p /tmp/gosqlcmd
+          curl -fsSL -o /tmp/gosqlcmd.tar "$url"
+          tar -xf /tmp/gosqlcmd.tar -C /tmp/gosqlcmd
+          bin=$(find /tmp/gosqlcmd -type f -name sqlcmd | head -1)
+          test -n "$bin"
+          sudo install "$bin" /usr/local/bin/sqlcmd
+          /usr/local/bin/sqlcmd --version
 
       - name: Create test database
         env:
@@ -105,3 +128,39 @@ jobs:
           SA_PASSWORD: CI_Test#2026!
         run: |
           /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d DarlingData_CI_Test -i ".github/sql/test_basic_execution.sql"
+
+      # The harnesses connect to master and run EXECUTE dbo.sp_... there (as they
+      # do on a local box, where these procs live in master), so install the
+      # bundle into master too. The smoke tests above use DarlingData_CI_Test.
+      - name: Install procedures into master (for the assertion harnesses)
+        env:
+          SA_PASSWORD: CI_Test#2026!
+        run: |
+          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "$SA_PASSWORD" -C -No -b -d master -i "Install-All/DarlingData.sql"
+
+      # Assertion harnesses. These EXECUTE the output the procedures generate
+      # (findings, session DDL) rather than just running them, which is what
+      # catches the "reads correctly but is wrong when run" bugs the smoke tests
+      # above cannot. They are self-contained (build and drop their own scratch
+      # databases, sessions, and config); only PerfCheck and HumanEvents run
+      # here so far - IndexCleanup and ReproBuilder need a data source the CI
+      # containers do not have yet. They use the go-based sqlcmd via the
+      # SQLCMD_* environment overrides. Encryption is disabled (-N disable):
+      # the modern Go TLS stack rejects the SQL Server 2017 container's
+      # self-signed certificate outright, and -C (trust cert) does not bypass
+      # that; there is nothing to secure on a localhost throwaway container.
+      - name: sp_PerfCheck assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_PerfCheck/tests/run_tests.py --server localhost --password "$SA_PASSWORD"
+
+      - name: sp_HumanEvents assertion harness
+        env:
+          SA_PASSWORD: CI_Test#2026!
+          SQLCMD_BIN: /usr/local/bin/sqlcmd
+          SQLCMD_CONN_ARGS: "-C -N disable"
+        run: |
+          python3 sp_HumanEvents/tests/run_tests.py --server localhost --password "$SA_PASSWORD"

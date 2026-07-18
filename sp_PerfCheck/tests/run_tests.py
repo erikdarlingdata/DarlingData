@@ -47,7 +47,9 @@ Exits 1 if any assertion fails.
 """
 
 import argparse
+import os
 import re
+import shlex
 import subprocess
 import sys
 
@@ -92,6 +94,17 @@ def find_sql_errors(text):
     return re.findall(r"Msg \d+, Level 1[6-9][^\n]*", text)
 
 
+def _sqlcmd_prefix():
+    """The sqlcmd binary plus any connection args, overridable via environment so
+    one harness runs both locally and in CI. Locally SQLCMD_BIN defaults to the
+    go-based 'sqlcmd' on PATH and SQLCMD_CONN_ARGS is empty; CI points SQLCMD_BIN
+    at its own binary and sets SQLCMD_CONN_ARGS to '-C -N disable' -- trust the
+    self-signed cert and disable encryption, since the modern Go TLS stack
+    rejects the SQL Server 2017 container's certificate outright."""
+    return [os.environ.get("SQLCMD_BIN", "sqlcmd")] + shlex.split(
+        os.environ.get("SQLCMD_CONN_ARGS", ""))
+
+
 def _sqlcmd(server, password, sql, headers=True):
     """Run a batch and return (stdout, stderr) decoded as UTF-8.
 
@@ -100,8 +113,8 @@ def _sqlcmd(server, password, sql, headers=True):
     that). Output is tab-delimited and trimmed (-W -s TAB) and the line width is
     maxed (-w 65535) so wide rows are not wrapped mid-row.
     """
-    cmd = [
-        "sqlcmd", "-S", server, "-U", "sa", "-P", password,
+    cmd = _sqlcmd_prefix() + [
+        "-S", server, "-U", "sa", "-P", password,
         "-d", "master",
         "-W",            # trim trailing spaces
         "-w", "65535",   # do not wrap wide rows
@@ -303,6 +316,14 @@ def structural_tests(server, password, R):
 def forced_condition_tests(server, password, R):
     """Bidirectional forced-condition assertions on the check_id 1000
     Non-Default Configuration check. Captures and restores exact originals."""
+    # Flush any pre-existing pending config change (value <> value_in_use) before
+    # baselining. Some images ship one: the SQL Server 2017 CI container has
+    # 'clr strict security' configured on but not yet in use. The harness's own
+    # RECONFIGURE calls would apply that staged change mid-run, and it would then
+    # surface as a spurious net change the harness never made. _sqlcmd does not
+    # raise on a SQL error, so a rejected RECONFIGURE is tolerated here.
+    _sqlcmd(server, password, "RECONFIGURE;", headers=False)
+
     # Snapshot the entire config before touching anything.
     before = snapshot_config(server, password)
 
